@@ -83,17 +83,15 @@ pub(super) struct LaneOwners<'a, G> {
     /// The admitted run's cold slot, where scalar assignments scan.
     pub(super) cold: &'a mut ColdOperationSlot<G>,
     pub(super) max_save_stack: &'a mut usize,
-    /// The admitted run's current rollback unit.
-    pub(super) operation_mark: &'a mut DirectOperationMark<G>,
+    /// The admitted run's current operation scope.
+    pub(super) operation: &'a DirectOperation,
 }
 
 /// Delivers commands and settles every lane command in place until one the
 /// lane does not own, a report, or the operation limit ends the lane.
 ///
-/// Each lane command settled in place settles its own rollback unit, exactly
-/// as the admitted run's roll does, so a later discard, whether for a
-/// resource suspension or an error, restores only the command that ends the
-/// lane.
+/// Each lane command settled in place settles its own scratch scope, exactly
+/// as the admitted run's roll does.
 ///
 /// `\relax` is TeX82 §1045's `any_mode(relax): do_nothing`. In an eligible
 /// context no character run is pending, so its §1030 word boundary flushes
@@ -243,7 +241,7 @@ fn run_compact<G>(
         slot.clear();
         destination.take();
         *operations += 1;
-        settle_unit(processor, owners.operation_mark);
+        settle_unit(processor, owners.operation);
     }
 }
 
@@ -476,15 +474,12 @@ fn apply_operation<G>(
     Ok(ReplayStep::Continue)
 }
 
-/// Settles the lane's rollback unit and opens its successor in place, as the
-/// admitted run's roll does. Lane commands never write the mode nest, and a
-/// lane run leaves the page list and active boxes untouched, so the state and
-/// command-attempt journals are the only ones with a suffix to settle.
-fn settle_unit<G>(processor: &mut CommandProcessor<'_, '_, G>, mark: &mut DirectOperationMark<G>) {
-    let (stores, command, _) = processor.lane_parts();
-    stores.roll_state_operation(&mut mark.state);
+/// Settles the lane command's scratch scope and opens its successor in place,
+/// as the admitted run's roll does.
+fn settle_unit<G>(processor: &mut CommandProcessor<'_, '_, G>, operation: &DirectOperation) {
+    let (_, command, _) = processor.lane_parts();
     command
-        .roll_attempt_operation(&mark.attempt)
+        .roll_attempt_operation(operation)
         .expect("the lane's unit owns a valid command-attempt scope");
 }
 

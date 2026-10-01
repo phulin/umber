@@ -1174,12 +1174,12 @@ fn foreign_deferred_child_is_rejected_without_consuming_the_live_operation() {
         Err(AttemptError::ForeignAttempt)
     );
     assert!(attempt.validate_operation(operation).is_ok());
-    assert_eq!(attempt.rollback_operation(operation), Ok(()));
+    assert_eq!(attempt.commit_operation(operation), Ok(()));
     assert!(attempt.is_empty());
 }
 
 #[test]
-fn rollback_truncates_a_child_that_inherited_the_operation_owner() {
+fn commit_truncates_a_child_that_inherited_the_operation_owner() {
     let mut attempt = CommandAttempt::<()>::default();
     let operation = attempt.begin_operation(0).expect("operation scope");
     let child = attempt.begin_child_scope().expect("scanner child");
@@ -1193,7 +1193,7 @@ fn rollback_truncates_a_child_that_inherited_the_operation_owner() {
         "the child directly inherits the operation"
     );
 
-    assert_eq!(attempt.rollback_operation(operation), Ok(()));
+    assert_eq!(attempt.commit_operation(operation), Ok(()));
     assert_eq!(
         attempt.arena().token_words(rejected),
         Err(AttemptError::InvalidCoordinate)

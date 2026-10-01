@@ -76,7 +76,7 @@ struct DurableMutation {
     alternate: Option<DurableOwnerId>,
     alternate_level: u32,
     /// Position of this save in the shared TeX group-save order. Checkpoint
-    /// and operation inverses do not participate in group restoration.
+    /// inverses do not participate in group restoration.
     group_save_position: u32,
 }
 
@@ -181,11 +181,6 @@ impl DurableOwnerStore {
         &mut self.slot_mut(id).owner
     }
 
-    fn restore(&mut self, id: DurableOwnerId, owner: DurableNodeClosure) {
-        let slot = self.slot_mut(id);
-        assert!(slot.owner.replace(owner).is_none());
-    }
-
     fn retire(&mut self, arena: &mut PageMaterialArena, id: DurableOwnerId) {
         assert_ne!(
             self.shipout_source,
@@ -242,33 +237,6 @@ pub(crate) struct DurableBoxPrefixReleaseReceipt {
     pub(crate) retained_groups: usize,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DurableBoxOperation {
-    depth: usize,
-    position: usize,
-    action_position: usize,
-    scalar_position: usize,
-    group_position: usize,
-    /// Existing saves survive operation rollback; only the newly created
-    /// suffix is retired, preserving TeX82 §283 group restoration.
-    group_entry_position: usize,
-}
-
-struct DurableBoxTransferLoan {
-    mutation_position: usize,
-    loan: crate::page_node_arena::DurableTransferLoan,
-}
-
-struct PageBoxTransferLoan {
-    owner: DurableOwnerId,
-    loan: crate::node_region::PageInteriorTransferLoan,
-}
-
-struct PageOutputCarrierLoan {
-    owner: DurableOwnerId,
-    loan: crate::page_node_arena::PageOutputRegionLoan,
-}
-
 pub(crate) struct OutputCarrierTarget {
     pub(crate) index: u16,
     pub(crate) scope: super::AssignmentScope,
@@ -276,57 +244,21 @@ pub(crate) struct OutputCarrierTarget {
     pub(crate) group_save_position: u32,
 }
 
-struct RegisterTakeLoan {
+/// The one register take between `make_box` clearing its source and the
+/// assignment that installs it. The cleared owner stays in the state's
+/// owner store; the state, not the receipt, holds its key.
+struct PendingRegisterTake {
     source: u16,
     destination: u16,
     owner: DurableOwnerId,
     serial: u64,
-    destination_binding: Option<usize>,
 }
 
-/// One take from this state's live register binding. The owner stays in the
-/// state-owned operation action; this opaque receipt carries no owner key.
+/// One take from this state's live register binding. This opaque receipt
+/// carries no owner key.
 pub struct UniqueBoxRegisterTake {
     state_id: u64,
     serial: u64,
-    action_position: usize,
-    operation_depth: usize,
-}
-
-/// The move-only closure and its exact page interval reversal travel together
-/// across the assignment boundary.
-pub(crate) struct PageBoxAssignment {
-    pub(crate) closure: DurableNodeClosure,
-    pub(crate) loan: crate::node_region::PageInteriorTransferLoan,
-}
-
-enum DurableOperationAction {
-    Binding(usize),
-    RegisterTake(RegisterTakeLoan),
-    DurableToPage(DurableBoxTransferLoan),
-    PageToDurable(PageBoxTransferLoan),
-    OutputCarrier(Box<PageOutputCarrierLoan>),
-    Dimension(DurableDimensionMutation),
-    PageScalar(crate::page::PageOutputBoxDimensionInverse),
-}
-
-impl DurableBoxState {
-    /// A live cross-region loan may still name the current page region.
-    pub(crate) fn has_pending_page_region_loan(&self) -> bool {
-        self.operation_actions.iter().any(|action| {
-            matches!(
-                action,
-                DurableOperationAction::DurableToPage(_)
-                    | DurableOperationAction::PageToDurable(_)
-                    | DurableOperationAction::OutputCarrier(_)
-            )
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn testing_fail_next_history_copy(&mut self) {
-        self.fail_history_copy_after = Some(0);
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -575,9 +507,7 @@ pub(crate) struct DurableBoxState {
     retained_group_base: usize,
     next_group_id: u64,
     semantic_identity: Option<crate::state_hash::SemanticMapIdentity>,
-    operation_entries: Vec<DurableMutation>,
-    operation_actions: Vec<DurableOperationAction>,
-    operation_depth: usize,
+    pending_take: Option<PendingRegisterTake>,
 }
 
 struct DurableFormEntry {
@@ -740,22 +670,16 @@ impl DurableBoxState {
             retained_group_base: 0,
             next_group_id: 0,
             semantic_identity: None,
-            operation_entries: Vec::new(),
-            operation_actions: Vec::new(),
-            operation_depth: 0,
+            pending_take: None,
         }
     }
 
     /// Reports whether this auxiliary state lane is at the level-zero
-    /// checkpoint boundary. Durable-box group saves and operation transfers
-    /// have the same admission rule as dense eqtb saves: a checkpoint never
-    /// captures an open group or a live transactional suffix.
+    /// checkpoint boundary. Durable-box group saves have the same admission
+    /// rule as dense eqtb saves: a checkpoint never captures an open group or
+    /// a register take between its source and destination.
     pub(crate) fn checkpoint_eligible(&self) -> bool {
-        self.groups.is_empty()
-            && self.retained_groups.is_empty()
-            && !self.operation_is_active()
-            && self.operation_entries.is_empty()
-            && self.operation_actions.is_empty()
+        self.groups.is_empty() && self.retained_groups.is_empty() && self.pending_take.is_none()
     }
 
     fn cell(&self, index: u16) -> Option<&DurableBoxCell> {
@@ -1171,32 +1095,16 @@ impl DurableBoxState {
         let checkpoint_needed = self.checkpoint_anchored
             && self.checkpoint_stamps.get(&index).copied() != Some(self.checkpoint_epoch);
         let group_needed = saved_at.is_some();
-        let operation_needed = self.operation_is_active();
         assert!(!group_needed || !self.groups.is_empty());
         let before = self
             .cell(index)
             .map_or((None, LEVEL_ONE), |cell| (cell.value, cell.level));
-        // Historical owners are copied before the live binding changes. If a
-        // later copy fails, the already staged copy retires and neither the
-        // cell nor any inverse lane has been published.
-        let checkpoint_copy = if checkpoint_needed && (group_needed || operation_needed) {
+        // A checkpoint and a group save each need their own historical
+        // owner. The copy is staged before the live binding changes, so a
+        // failed copy publishes nothing.
+        let checkpoint_copy = if checkpoint_needed && group_needed {
             self.check_history_copy_failure()?;
             Self::copy_value(&mut self.owners, arena, before.0)?
-        } else {
-            None
-        };
-        let group_copy = if group_needed && operation_needed {
-            if let Err(error) = self.check_history_copy_failure() {
-                Self::retire_value(&mut self.owners, arena, checkpoint_copy);
-                return Err(error);
-            }
-            match Self::copy_value(&mut self.owners, arena, before.0) {
-                Ok(copy) => copy,
-                Err(error) => {
-                    Self::retire_value(&mut self.owners, arena, checkpoint_copy);
-                    return Err(error);
-                }
-            }
         } else {
             None
         };
@@ -1214,20 +1122,16 @@ impl DurableBoxState {
             identity.replace(u64::from(index), old_identity, new_identity);
         }
 
-        let destinations = usize::from(checkpoint_needed)
-            + usize::from(group_needed)
-            + usize::from(operation_needed);
-        if destinations == 0 {
+        if !checkpoint_needed && !group_needed {
             Self::retire_value(&mut self.owners, arena, before.0);
             return Ok(());
         }
 
-        let mut owner = Some(before.0);
         if checkpoint_needed {
-            let alternate = if group_needed || operation_needed {
+            let alternate = if group_needed {
                 checkpoint_copy
             } else {
-                owner.take().expect("checkpoint owner")
+                before.0
             };
             self.checkpoint_entries.push(DurableMutation {
                 index,
@@ -1238,32 +1142,16 @@ impl DurableBoxState {
             self.checkpoint_stamps.insert(index, self.checkpoint_epoch);
         }
         if group_needed {
-            let alternate = if operation_needed {
-                group_copy
-            } else {
-                owner.take().expect("group owner")
-            };
             self.groups
                 .last_mut()
                 .expect("local save has an active group")
                 .entries
                 .push(DurableMutation {
                     index,
-                    alternate,
+                    alternate: before.0,
                     alternate_level: before.1,
                     group_save_position,
                 });
-        }
-        if operation_needed {
-            let position = self.operation_entries.len();
-            self.operation_entries.push(DurableMutation {
-                index,
-                alternate: owner.take().expect("operation owner"),
-                alternate_level: before.1,
-                group_save_position: 0,
-            });
-            self.operation_actions
-                .push(DurableOperationAction::Binding(position));
         }
         Ok(())
     }
@@ -1315,50 +1203,10 @@ impl DurableBoxState {
         self.install_mutation(arena, index, value, level, saved_at, group_save_position)
     }
 
-    pub(crate) fn assign_with_page_loan(
-        &mut self,
-        arena: &mut PageMaterialArena,
-        index: u16,
-        assignment: PageBoxAssignment,
-        scope: super::AssignmentScope,
-        current_level: u32,
-        group_save_position: u32,
-    ) -> Result<(), BankError> {
-        let PageBoxAssignment { closure, loan } = assignment;
-        let owner = self.owners.insert(closure);
-        // The interval moved before the binding changed. Record that order so
-        // rollback can reverse a later dimension edit, the binding swap, and
-        // finally the page loan without leaving a live cell on an empty slot.
-        if self.operation_is_active() {
-            self.operation_actions
-                .push(DurableOperationAction::PageToDurable(PageBoxTransferLoan {
-                    owner,
-                    loan,
-                }));
-        }
-        let before_level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
-        let level = match scope {
-            super::AssignmentScope::Global => LEVEL_ONE,
-            super::AssignmentScope::Local => current_level,
-        };
-        let saved_at = (scope == super::AssignmentScope::Local
-            && current_level != LEVEL_ONE
-            && before_level != current_level)
-            .then_some(current_level);
-        self.install_mutation(
-            arena,
-            index,
-            Some(owner),
-            level,
-            saved_at,
-            group_save_position,
-        )
-    }
-
     /// Publishes the consumed output carrier after its page-region swap.
     /// Historical destination copies remain fallible, so a rejected install
-    /// immediately returns the complete old region and builder slots before
-    /// the caller can attempt another assignment.
+    /// immediately returns the complete old region and builder slots; an
+    /// accepted install commits the loan and retires the emptied old region.
     pub(crate) fn assign_output_carrier(
         &mut self,
         arena: &mut PageMaterialArena,
@@ -1366,18 +1214,7 @@ impl DurableBoxState {
         target: OutputCarrierTarget,
         assignment: crate::page_node_arena::PageOutputCarrierAssignment,
     ) -> Result<(), BankError> {
-        assert!(
-            self.operation_is_active(),
-            "output carrier needs an operation"
-        );
         let owner = self.owners.insert(assignment.closure);
-        self.operation_actions
-            .push(DurableOperationAction::OutputCarrier(Box::new(
-                PageOutputCarrierLoan {
-                    owner,
-                    loan: assignment.loan,
-                },
-            )));
         let before_level = self.cell(target.index).map_or(LEVEL_ONE, |cell| cell.level);
         let level = match target.scope {
             super::AssignmentScope::Global => LEVEL_ONE,
@@ -1395,16 +1232,19 @@ impl DurableBoxState {
             saved_at,
             target.group_save_position,
         ) {
-            let Some(DurableOperationAction::OutputCarrier(loan)) = self.operation_actions.pop()
-            else {
-                unreachable!("rejected binding did not publish an inverse")
-            };
             arena
-                .rollback_output_carrier_loan(page, self.owners.owner_slot_mut(owner), loan.loan)
+                .rollback_output_carrier_loan(
+                    page,
+                    self.owners.owner_slot_mut(owner),
+                    assignment.loan,
+                )
                 .expect("rejected binding returns its exact output region");
             self.owners.retire(arena, owner);
             return Err(error);
         }
+        arena
+            .commit_output_carrier_loan(assignment.loan)
+            .expect("committed output loan retires its emptied old region");
         Ok(())
     }
 
@@ -1470,22 +1310,8 @@ impl DurableBoxState {
                 self.scalar_stamps
                     .insert((index, dimension), self.checkpoint_epoch);
             }
-            if self.operation_is_active() {
-                self.operation_actions
-                    .push(DurableOperationAction::Dimension(mutation));
-            }
         }
         Ok(true)
-    }
-
-    pub(crate) fn record_page_output_box_dimension(
-        &mut self,
-        inverse: crate::page::PageOutputBoxDimensionInverse,
-    ) {
-        if self.operation_is_active() {
-            self.operation_actions
-                .push(DurableOperationAction::PageScalar(inverse));
-        }
     }
 
     fn apply_dimension_inverse(
@@ -1558,9 +1384,9 @@ impl DurableBoxState {
         self.cell(index).and_then(|cell| cell.value).is_some() && self.can_take_unique(index)
     }
 
-    /// Clears the semantic source first, as TeX's `make_box` does, then leaves
-    /// its exclusive owner in the current operation until assignment. This
-    /// also makes same-register tracing observe a void old destination.
+    /// Clears the semantic source first, as TeX's `make_box` does, then parks
+    /// its exclusive owner in the pending take until assignment. This also
+    /// makes same-register tracing observe a void old destination.
     pub(crate) fn begin_unique_register_take(
         &mut self,
         source: u16,
@@ -1570,33 +1396,28 @@ impl DurableBoxState {
             return None;
         }
         assert!(
-            self.operation_is_active(),
-            "register take needs a rollback operation"
+            self.pending_take.is_none(),
+            "box take must finish before another begins"
         );
         let serial = self.next_take_serial.checked_add(1).expect("take serial");
         let owner = self.cell_mut(source).value.take().expect("admitted source");
         self.record_unique_take(source, owner);
         self.next_take_serial = serial;
-        let action_position = self.operation_actions.len();
-        self.operation_actions
-            .push(DurableOperationAction::RegisterTake(RegisterTakeLoan {
-                source,
-                destination,
-                owner,
-                serial,
-                destination_binding: None,
-            }));
+        self.pending_take = Some(PendingRegisterTake {
+            source,
+            destination,
+            owner,
+            serial,
+        });
         Some(UniqueBoxRegisterTake {
             state_id: self.state_id,
             serial,
-            action_position,
-            operation_depth: self.operation_depth,
         })
     }
 
     /// Assigns the previously cleared source. Historical destination copies
     /// are staged before any binding or journal changes; failure returns the
-    /// owner to its source and removes the pending operation action.
+    /// owner to its source.
     pub(crate) fn finish_unique_register_take(
         &mut self,
         arena: &mut PageMaterialArena,
@@ -1607,26 +1428,14 @@ impl DurableBoxState {
         group_save_position: u32,
     ) -> Result<(), BankError> {
         assert_eq!(take.state_id, self.state_id, "foreign box take");
-        assert_eq!(
-            take.operation_depth, self.operation_depth,
-            "stale box operation"
-        );
-        assert_eq!(
-            self.operation_actions.len(),
-            take.action_position + 1,
-            "box take must finish before another durable mutation"
-        );
-        let (source, owner) = match self.operation_actions.get(take.action_position) {
-            Some(DurableOperationAction::RegisterTake(loan))
-                if loan.serial == take.serial
-                    && loan.destination == destination
-                    && loan.destination_binding.is_none() =>
+        let (source, owner) = match self.pending_take.take() {
+            Some(pending)
+                if pending.serial == take.serial && pending.destination == destination =>
             {
-                (loan.source, loan.owner)
+                (pending.source, pending.owner)
             }
             _ => panic!("box take is not pending in its owner store"),
         };
-        let destination_binding = self.operation_entries.len();
         let before_level = self.cell(destination).map_or(LEVEL_ONE, |cell| cell.level);
         let level = match scope {
             super::AssignmentScope::Global => LEVEL_ONE,
@@ -1644,18 +1453,11 @@ impl DurableBoxState {
             saved_at,
             group_save_position,
         ) {
-            self.operation_actions.pop();
             assert!(self.cell(source).and_then(|cell| cell.value).is_none());
             self.cell_mut(source).value = Some(owner);
             self.record_failed_unique_take(source, owner);
             return Err(error);
         }
-        let Some(DurableOperationAction::RegisterTake(loan)) =
-            self.operation_actions.get_mut(take.action_position)
-        else {
-            unreachable!()
-        };
-        loan.destination_binding = Some(destination_binding);
         Ok(())
     }
 
@@ -1709,33 +1511,6 @@ impl DurableBoxState {
         };
         if self.can_take_unique(index) {
             self.record_unique_take(index, owner);
-            if self.operation_is_active() {
-                let level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
-                let transfer =
-                    arena.loan_durable_to_page_in_place(self.owners.owner_slot_mut(owner));
-                let (root, loan) = transfer.map_err(|_| {
-                    self.record_failed_unique_take(index, owner);
-                    self.cell_mut(index).value = Some(owner);
-                    BankError::AllocationFailed
-                })?;
-                let mutation_position = self.operation_entries.len();
-                self.operation_entries.push(DurableMutation {
-                    index,
-                    alternate: Some(owner),
-                    alternate_level: level,
-                    group_save_position: 0,
-                });
-                self.operation_actions
-                    .push(DurableOperationAction::Binding(mutation_position));
-                self.operation_actions
-                    .push(DurableOperationAction::DurableToPage(
-                        DurableBoxTransferLoan {
-                            mutation_position,
-                            loan,
-                        },
-                    ));
-                return Ok(Some(root));
-            }
             let moved = arena.move_durable_to_page_in_place(self.owners.owner_slot_mut(owner));
             return match moved {
                 Ok(root) => {
@@ -1946,216 +1721,6 @@ impl DurableBoxState {
         Ok(result)
     }
 
-    pub(crate) fn begin_operation(&mut self) -> DurableBoxOperation {
-        self.operation_depth = self
-            .operation_depth
-            .checked_add(1)
-            .expect("durable box operation depth exhausted");
-        DurableBoxOperation {
-            depth: self.operation_depth,
-            position: self.operation_entries.len(),
-            action_position: self.operation_actions.len(),
-            scalar_position: self.scalar_entries.len(),
-            group_position: self.groups.len(),
-            group_entry_position: self.groups.last().map_or(0, |group| group.entries.len()),
-        }
-    }
-
-    #[inline(always)]
-    fn operation_is_active(&self) -> bool {
-        self.operation_depth != 0
-    }
-
-    /// Settles an operation and reopens it in place. An operation that
-    /// recorded nothing is already its own successor, so only one that
-    /// touched a box register takes the full commit and begin.
-    #[inline]
-    pub(crate) fn roll_operation(
-        &mut self,
-        arena: &mut PageMaterialArena,
-        operation: &mut DurableBoxOperation,
-    ) {
-        let unchanged = operation.depth == self.operation_depth
-            && operation.position == self.operation_entries.len()
-            && operation.action_position == self.operation_actions.len()
-            && operation.scalar_position == self.scalar_entries.len()
-            && operation.group_position == self.groups.len()
-            && operation.group_entry_position
-                == self.groups.last().map_or(0, |group| group.entries.len());
-        if unchanged {
-            return;
-        }
-        self.commit_operation(arena, *operation);
-        *operation = self.begin_operation();
-    }
-
-    pub(crate) fn commit_operation(
-        &mut self,
-        arena: &mut PageMaterialArena,
-        operation: DurableBoxOperation,
-    ) {
-        assert_eq!(self.operation_depth, operation.depth);
-        assert!(
-            !self.operation_actions[operation.action_position..]
-                .iter()
-                .any(|action| {
-                    matches!(
-                        action,
-                        DurableOperationAction::RegisterTake(RegisterTakeLoan {
-                            destination_binding: None,
-                            ..
-                        })
-                    )
-                }),
-            "cannot commit an unfinished register take"
-        );
-        self.operation_depth -= 1;
-        if !self.operation_is_active() {
-            for action in self.operation_actions.drain(..) {
-                match action {
-                    DurableOperationAction::DurableToPage(loan) => {
-                        arena.commit_durable_transfer_loan(loan.loan);
-                    }
-                    DurableOperationAction::OutputCarrier(loan) => {
-                        arena
-                            .commit_output_carrier_loan(loan.loan)
-                            .expect("committed output loan retires its emptied old region");
-                    }
-                    DurableOperationAction::Binding(_)
-                    | DurableOperationAction::RegisterTake(RegisterTakeLoan {
-                        destination_binding: Some(_),
-                        ..
-                    })
-                    | DurableOperationAction::PageToDurable(_)
-                    | DurableOperationAction::Dimension(_)
-                    | DurableOperationAction::PageScalar(_) => {}
-                    DurableOperationAction::RegisterTake(RegisterTakeLoan {
-                        destination_binding: None,
-                        ..
-                    }) => unreachable!(),
-                }
-            }
-            for mutation in self.operation_entries.drain(..) {
-                Self::retire_value(&mut self.owners, arena, mutation.alternate);
-            }
-        }
-    }
-
-    pub(crate) fn rollback_operation(
-        &mut self,
-        arena: &mut PageMaterialArena,
-        page: &mut crate::page::PageBuilderState,
-        operation: DurableBoxOperation,
-    ) {
-        assert_eq!(self.operation_depth, operation.depth);
-        let actions = self.operation_actions.split_off(operation.action_position);
-        for action in actions.into_iter().rev() {
-            match action {
-                DurableOperationAction::Binding(position) => {
-                    let mut mutation = std::mem::replace(
-                        self.operation_entries
-                            .get_mut(position)
-                            .expect("operation binding event names its inverse"),
-                        DurableMutation {
-                            index: 0,
-                            alternate: None,
-                            alternate_level: LEVEL_ONE,
-                            group_save_position: 0,
-                        },
-                    );
-                    self.swap_mutation(&mut mutation);
-                    self.operation_entries[position] = mutation;
-                }
-                DurableOperationAction::RegisterTake(loan) => {
-                    let displaced = if let Some(position) = loan.destination_binding {
-                        self.operation_entries
-                            .get_mut(position)
-                            .expect("register take names its destination inverse")
-                            .alternate
-                            .take()
-                            .expect("destination inverse holds the exclusive source owner")
-                    } else {
-                        loan.owner
-                    };
-                    assert_eq!(displaced, loan.owner);
-                    assert!(self.cell(loan.source).and_then(|cell| cell.value).is_none());
-                    self.cell_mut(loan.source).value = Some(displaced);
-                    if self.semantic_identity.is_some() {
-                        self.record_failed_unique_take(loan.source, displaced);
-                    }
-                }
-                DurableOperationAction::DurableToPage(loan) => {
-                    let owner = arena
-                        .rollback_durable_transfer_loan(loan.loan)
-                        .expect("rollbackable durable transfer returns its exact owner");
-                    let mutation = self
-                        .operation_entries
-                        .get_mut(loan.mutation_position)
-                        .expect("durable transfer loan names its operation mutation");
-                    let owner_slot = mutation
-                        .alternate
-                        .expect("durable transfer mutation retains its owner slot");
-                    self.owners.restore(owner_slot, owner);
-                }
-                DurableOperationAction::PageToDurable(loan) => {
-                    arena
-                        .rollback_interleaved_page_box(
-                            self.owners.owner_slot_mut(loan.owner),
-                            loan.loan,
-                        )
-                        .expect("page interval loan restores its original chunks");
-                }
-                DurableOperationAction::OutputCarrier(loan) => {
-                    arena
-                        .rollback_output_carrier_loan(
-                            page,
-                            self.owners.owner_slot_mut(loan.owner),
-                            loan.loan,
-                        )
-                        .expect("page output loan restores its original region");
-                }
-                DurableOperationAction::Dimension(mutation) => {
-                    self.apply_dimension_inverse(arena, mutation);
-                }
-                DurableOperationAction::PageScalar(inverse) => {
-                    page.restore_output_box_dimension(arena, inverse)
-                        .expect("page output scalar inverse retains its wrapper coordinate");
-                }
-            }
-        }
-        self.scalar_entries.truncate(operation.scalar_position);
-        self.scalar_stamps.clear();
-        let suffix = self.operation_entries.split_off(operation.position);
-        for mutation in suffix {
-            Self::retire_value(&mut self.owners, arena, mutation.alternate);
-        }
-        while self.groups.len() > operation.group_position {
-            let group = self
-                .groups
-                .pop()
-                .expect("operation-created group remains live");
-            Self::retire_group(&mut self.owners, arena, group);
-        }
-        if operation.group_position != 0 {
-            let group = self
-                .groups
-                .last_mut()
-                .expect("operation's existing group remains live");
-            assert!(
-                operation.group_entry_position <= group.entries.len(),
-                "operation group save mark must remain within the live group"
-            );
-            while group.entries.len() > operation.group_entry_position {
-                let mutation = group
-                    .entries
-                    .pop()
-                    .expect("durable group save suffix is nonempty");
-                Self::retire_value(&mut self.owners, arena, mutation.alternate);
-            }
-        }
-        self.operation_depth -= 1;
-    }
-
     fn swap_checkpoint_suffix(&mut self, start: usize) {
         let mut suffix = self.checkpoint_entries.split_off(start);
         for mutation in suffix.iter_mut().rev() {
@@ -2164,7 +1729,24 @@ impl DurableBoxState {
         self.checkpoint_entries.append(&mut suffix);
     }
 
+    /// Returns an interrupted take's owner to its source, as if `make_box`
+    /// had not cleared it. A halted command can stop between the two halves
+    /// of a register take; the checkpoint restore that follows then sees the
+    /// source cell its journal expects.
+    fn abandon_pending_take(&mut self) {
+        if let Some(pending) = self.pending_take.take() {
+            assert!(
+                self.cell(pending.source)
+                    .and_then(|cell| cell.value)
+                    .is_none()
+            );
+            self.cell_mut(pending.source).value = Some(pending.owner);
+            self.record_failed_unique_take(pending.source, pending.owner);
+        }
+    }
+
     pub(crate) fn restore(&mut self, arena: &mut PageMaterialArena, cursor: DurableBoxCursor) {
+        self.abandon_pending_take();
         let rebased = self
             .rebase_cursor(cursor)
             .expect("validated durable cursor rebases");
@@ -2198,7 +1780,7 @@ impl DurableBoxState {
         arena: &mut PageMaterialArena,
         cursor: DurableBoxCursor,
     ) -> Result<AcceptedDurableBoxTail, BankError> {
-        assert!(!self.operation_is_active());
+        assert!(self.pending_take.is_none());
         let rebased = self
             .rebase_cursor(cursor)
             .expect("validated durable candidate cursor rebases");
@@ -2427,6 +2009,7 @@ impl DurableBoxState {
     }
 
     pub(crate) fn retire_all(mut self, arena: &mut PageMaterialArena) {
+        self.abandon_pending_take();
         for cell in &mut self.dense {
             Self::retire_value(&mut self.owners, arena, cell.value.take());
         }
@@ -2445,9 +2028,6 @@ impl DurableBoxState {
             for mutation in group.entries {
                 Self::retire_value(&mut self.owners, arena, mutation.alternate);
             }
-        }
-        for mutation in self.operation_entries.drain(..) {
-            Self::retire_value(&mut self.owners, arena, mutation.alternate);
         }
     }
 }

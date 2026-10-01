@@ -104,8 +104,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   demand-only semantic-root traversal. Ordinary meaning writes replace their
   dense row directly and never hash definition contents.
 - `src/env/durable_boxes.rs` and `src/env/durable_boxes/tests.rs`: move-only
-  durable node-closure register owners, exact group/operation/checkpoint
-  owner swaps, bounded history-preservation copies, and lifecycle tests.
+  durable node-closure register owners, exact group/checkpoint owner swaps,
+  one pending register take abandoned by checkpoint restore, bounded history-preservation copies, and lifecycle tests.
 - `src/env/restoration.rs`: one scalar/box unsave walk in dense save-stack
   and shared e-TeX sparse-chain order, with live trace controls captured at
   each restoration and no copying of the box mutation vector.
@@ -513,7 +513,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   cursors, semantically separate session, retained-generation, durable-node,
   operation-scratch, and page-region owners lent directly to admitted
   command/execution episodes, borrow-only pure-memo capability,
-  root-before-suffix shipout transactions, and whole-session retirement.
+  root-before-suffix shipout transactions (a failed shipout halts and is
+  rewound by checkpoint restore), and whole-session retirement.
 - `src/universe/tests.rs`: Session/generation admission, rollback-independent
   interning, foreign-session rejection, and retirement tests.
 - `src/world.rs`: External-effect boundary for files, atomic downstream

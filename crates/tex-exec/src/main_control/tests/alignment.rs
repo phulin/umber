@@ -1326,7 +1326,7 @@ fn observed_alignment_resource_need_rejects_same_control_retry() {
             .register_input("child.tex", child.clone());
         assert!(matches!(
             retried_control.advance_with_observer(retried_stores, &mut retried),
-            Err(ExecError::ResourceReplayRequired)
+            Err(ExecError::Halted)
         ));
         assert_eq!(retried.0.len(), observations_at_need);
     });
@@ -1376,7 +1376,7 @@ fn alignment_preamble_span_expansion_rejects_same_stack_retry() {
             );
             assert!(matches!(
                 control.advance_episode(stores),
-                Err(ExecError::ResourceReplayRequired)
+                Err(ExecError::Halted)
             ));
         });
     }

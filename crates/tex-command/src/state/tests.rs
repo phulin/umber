@@ -5,9 +5,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{DefinitionRef, GlueId, ProvenanceId, TokenListId};
 
 use super::{CommandGroupError, CommandSemanticDiagnostic, CommandState};
-use crate::execution_scratch::ArgumentSetId;
 use crate::processor::AlignmentIdentity;
-use crate::token_collector::ClassifiedToken;
 use crate::{
     AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptPromotionDestination,
     AttemptProvenanceId, AttemptTokenListId, CommandObservation, CommandObserver, InputReason,
@@ -17,54 +15,6 @@ use crate::{
 enum ResidentRoot<Attempt, Durable> {
     Attempt(Attempt),
     Durable(Durable),
-}
-
-fn admit_braced_macro_frame<G>(state: &mut CommandState<G>) -> ArgumentSetId<G> {
-    let matching = state.scratch.begin_macro_match().expect("macro match");
-    let mut writer = state
-        .scratch
-        .begin_argument_writer(&matching)
-        .expect("argument writer");
-    for (token, depth) in [
-        (
-            Token::Char {
-                ch: '[',
-                cat: Catcode::BeginGroup,
-            },
-            1,
-        ),
-        (
-            Token::Char {
-                ch: 'x',
-                cat: Catcode::Other,
-            },
-            1,
-        ),
-        (
-            Token::Char {
-                ch: ']',
-                cat: Catcode::EndGroup,
-            },
-            0,
-        ),
-    ] {
-        let word = TracedTokenWord::pack(token, OriginId::UNKNOWN);
-        assert_eq!(
-            state
-                .scratch
-                .append_argument_token(&mut writer, ClassifiedToken::from_word(word, None), true)
-                .expect("argument append"),
-            depth
-        );
-    }
-    state
-        .scratch
-        .publish_argument(writer)
-        .expect("argument publication");
-    state
-        .scratch
-        .commit_macro_match(matching)
-        .expect("sealed macro frame")
 }
 
 struct ResidentPromotion<G> {
@@ -930,8 +880,8 @@ fn stale_root_rejection_validates_complete_batch_before_mutation() {
             .allocate_token_list([word('b')])
             .expect("stale root");
         state
-            .rollback_attempt_operation(mark)
-            .expect("operation rolls back");
+            .commit_attempt_operation(mark)
+            .expect("operation commits");
 
         let mut destination = ResidentPromotion::new(&[valid, stale], &[], &[], &[]);
         assert!(matches!(
@@ -947,7 +897,7 @@ fn stale_root_rejection_validates_complete_batch_before_mutation() {
 }
 
 #[test]
-fn operation_discard_truncates_only_the_attempt_suffix() {
+fn operation_commit_truncates_only_the_attempt_suffix() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();
         let retained = state
@@ -963,27 +913,14 @@ fn operation_discard_truncates_only_the_attempt_suffix() {
             .expect("candidate list");
 
         state
-            .rollback_attempt_operation(mark)
-            .expect("operation rolls back");
+            .commit_attempt_operation(mark)
+            .expect("operation commits");
         assert_eq!(
             state.attempt_token_words(retained).expect("retained words"),
             &[word('a')]
         );
         assert!(state.attempt_token_words(rejected).is_err());
     });
-}
-
-#[test]
-fn operation_rollback_discards_nested_brace_argument_facts_with_the_frame() {
-    let mut state = CommandState::<()>::default();
-    let operation = state.begin_attempt_operation();
-    let _frame = admit_braced_macro_frame(&mut state);
-    assert_eq!(state.scratch.frame_len(), 1);
-
-    state
-        .rollback_attempt_operation(operation)
-        .expect("rollback retires operation-local macro frames");
-    assert!(state.scratch.is_quiescent());
 }
 
 #[test]

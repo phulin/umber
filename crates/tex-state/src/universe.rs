@@ -26,13 +26,11 @@ use crate::interner::{
     ControlSequenceKind, Interner, InternerAccessError, InternerBudget, InternerError,
     InternerRetirement, InternerUsage, Symbol, SymbolId,
 };
-use crate::journal::{JournalCursor, StateOperation};
+use crate::journal::JournalCursor;
 use crate::meaning::{Meaning, MeaningWord};
 use crate::node::Node;
 use crate::node_region::NodeCheckpointMark;
-use crate::page::{
-    AcceptedPageRegionHistoryTail, PageCheckpointMark, PageRegionCheckpointKey, PageRegionHistory,
-};
+use crate::page::{AcceptedPageRegionHistoryTail, PageRegionCheckpointKey, PageRegionHistory};
 use crate::page_node_arena::PageListId;
 use crate::pdf::PdfStateSlot;
 use crate::print::ErrorContextWidths;
@@ -206,17 +204,6 @@ impl<G> EngineBoundaryHasher<'_, G> {
             .expect("node token key belongs to the live boundary generation");
         self.hasher.str(&format!("{value:?}"));
     }
-}
-
-/// Aggregate rollback roots retained while one shipout is speculative.
-struct ShipoutRollback<G> {
-    state: StateOperation<G>,
-    page_nodes: OperationMark<PageMaterialLane>,
-    page: PageCheckpointMark,
-    pdf: crate::pdf::PdfStateSnapshot<G>,
-    world: crate::world::WorldSnapshot,
-    prepared_mag: Option<i32>,
-    engine_usage: crate::command_context::EngineUsageOperationMark,
 }
 
 pub(super) struct PrimitiveRegistry<G> {
@@ -557,9 +544,12 @@ impl SourceFontCheckpointHarness {
 }
 
 /// Exclusive aggregate transaction for one staged shipout.
+///
+/// A shipout that fails before [`Self::commit`] halts its run, so dropping
+/// the transaction only returns its scratch; the next checkpoint restore
+/// rewinds every other owner.
 pub struct ShipoutTransaction<'a, G> {
     universe: &'a mut Universe<G>,
-    rollback: Option<ShipoutRollback<G>>,
     scratch: Option<ShipoutScratchMark>,
     empty_tokens: TokenListId<G>,
 }
@@ -580,34 +570,6 @@ impl<G> std::ops::DerefMut for ShipoutTransaction<'_, G> {
 
 impl<G> Drop for ShipoutTransaction<'_, G> {
     fn drop(&mut self) {
-        if let Some(rollback) = self.rollback.take() {
-            self.universe
-                .page_region
-                .builder_mut()
-                .rollback_transaction(rollback.page);
-            let form_count = rollback.pdf.form_count();
-            self.universe.command_retained.pdf.rollback(rollback.pdf);
-            self.universe
-                .durable_forms
-                .truncate(&mut self.universe.page_region.nodes_mut(), form_count);
-            self.universe
-                .command_retained
-                .world
-                .rollback(&rollback.world);
-            self.universe.command_retained.prepared_mag = rollback.prepared_mag;
-            self.universe
-                .command_retained
-                .engine_usage
-                .rollback_operation(rollback.engine_usage);
-            self.universe
-                .restore_state(rollback.state)
-                .expect("validated shipout rollback remains restorable");
-            self.universe
-                .page_region
-                .nodes_mut()
-                .restore_operation(rollback.page_nodes)
-                .expect("shipout page cursor remains valid");
-        }
         self.universe.shipout_scratch.reset(
             self.scratch
                 .take()
@@ -2762,25 +2724,7 @@ impl<G> Universe<G> {
         Ok(self.live_state_mut()?.journal_cursor()?)
     }
 
-    pub fn begin_state_operation(&mut self) -> Result<StateOperation<G>, UniverseError> {
-        let mut operation = self.live_state_mut()?.begin_state_transaction();
-        operation.attach_durable_box(self.durable_boxes.begin_operation());
-        Ok(operation)
-    }
-
-    pub fn commit_state_operation(
-        &mut self,
-        mut operation: StateOperation<G>,
-    ) -> Result<(), UniverseError> {
-        let durable = operation.take_durable_box();
-        self.durable_boxes
-            .commit_operation(&mut self.page_region.nodes_mut(), durable);
-        self.live_state_mut()?
-            .commit_state_transaction(operation.transaction_position());
-        Ok(())
-    }
-
-    /// Current bytes retained by split group, checkpoint, and operation undo.
+    /// Current bytes retained by split group and checkpoint undo.
     ///
     /// This detached scalar exposes no journal entries or restoration cursor;
     /// outer execution hosts use it solely to enforce configured admission
@@ -2793,16 +2737,6 @@ impl<G> Universe<G> {
             .admit()
             .state()
             .journal_retained_bytes())
-    }
-
-    pub fn restore_state(&mut self, mut operation: StateOperation<G>) -> Result<(), UniverseError> {
-        let durable = operation.take_durable_box();
-        let (mut page_nodes, page) = self.page_region.parts_mut();
-        self.durable_boxes
-            .rollback_operation(&mut page_nodes, page, durable);
-        self.live_state_mut()?
-            .rollback_state_transaction(&operation)?;
-        Ok(())
     }
 
     /// Retains one coarse generation beside bounded state and arena cursors.
@@ -3352,28 +3286,15 @@ impl<G> Universe<G> {
             && self.page_region.validates_checkpoint(checkpoint.page)
     }
 
-    /// Begins one exclusive, rollback-capable artifact publication.
+    /// Begins one exclusive artifact publication.
     #[must_use]
     pub fn begin_shipout(&mut self) -> ShipoutTransaction<'_, G> {
-        let engine_usage = self.command_retained.engine_usage.begin_operation();
-        let rollback = ShipoutRollback {
-            state: self
-                .begin_state_operation()
-                .expect("live shipout generation has an operation journal"),
-            page_nodes: self.page_region.nodes().operation_mark(),
-            page: self.page_region.builder_mut().checkpoint_mark(),
-            pdf: self.command_retained.pdf.snapshot(),
-            world: self.command_retained.world.snapshot(),
-            prepared_mag: self.command_retained.prepared_mag,
-            engine_usage,
-        };
         let empty_tokens = self
             .allocate_token_list(&[])
             .expect("shipout can allocate its canonical empty token root");
         ShipoutTransaction {
             scratch: Some(self.shipout_scratch.mark()),
             universe: self,
-            rollback: Some(rollback),
             empty_tokens,
         }
     }
@@ -3707,32 +3628,7 @@ impl<G> Drop for Universe<G> {
 }
 
 impl<G> ShipoutTransaction<'_, G> {
-    fn commit_state_operation(&mut self) {
-        let rollback = self
-            .rollback
-            .take()
-            .expect("shipout owns its rollback mark");
-        self.universe
-            .commit_state_operation(rollback.state)
-            .expect("shipout owns the active state operation");
-        self.universe
-            .page_region
-            .builder_mut()
-            .commit_transaction(rollback.page);
-        self.universe
-            .command_retained
-            .engine_usage
-            .commit_operation(rollback.engine_usage);
-    }
-
-    #[cfg(test)]
-    fn commit_for_test(mut self) {
-        self.commit_state_operation();
-    }
-
-    /// Atomically commits the staged artifact, effect prefix, and fixed PDF
-    /// page record. Dropping before this point restores aggregate roots before
-    /// it truncates the state/page suffixes they address.
+    /// Commits the staged artifact, effect prefix, and fixed PDF page record.
     pub fn commit(
         mut self,
         artifact: crate::VerifiedArtifact,
@@ -3754,14 +3650,8 @@ impl<G> ShipoutTransaction<'_, G> {
             .command_retained
             .world
             .store_verified_artifact(&artifact)?;
-        if self.command_retained.world.commit_mode() != crate::WorldCommitMode::Retained
-            && let Err(error) = self.command_retained.world.commit_effects(effect_pos)
-        {
-            // A partially materialized effect prefix is irreversible. Preserve
-            // that canonical state and prevent Drop from pretending rollback
-            // remained possible.
-            self.commit_state_operation();
-            return Err(error);
+        if self.command_retained.world.commit_mode() != crate::WorldCommitMode::Retained {
+            self.command_retained.world.commit_effects(effect_pos)?;
         }
         self.universe
             .page_region
@@ -3786,7 +3676,6 @@ impl<G> ShipoutTransaction<'_, G> {
             reservation,
         );
         self.command_retained.world.finish_page_effect_interval();
-        self.commit_state_operation();
         Ok((hash, record))
     }
 }

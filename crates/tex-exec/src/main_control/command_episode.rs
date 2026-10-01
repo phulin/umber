@@ -27,7 +27,6 @@ pub(super) enum PreflightCommandPhase {
     Prefixed {
         global: bool,
     },
-    ImmediatePdfRetry(UnexpandablePrimitive),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -182,16 +181,6 @@ impl<G> CommandEpisode<G> {
 
     pub(super) fn mark_resident_raw(&mut self, cursor: Option<tex_command::CommandDeliveryCursor>) {
         self.mark_resident_command(PreflightCommandPhase::Raw, cursor);
-    }
-
-    pub(super) fn admit_immediate_pdf(&mut self, primitive: UnexpandablePrimitive) {
-        assert!(self.command.is_none());
-        assert!(
-            self.phase
-                .replace(PreflightCommandPhase::ImmediatePdfRetry(primitive))
-                .is_none()
-        );
-        self.cursor = None;
     }
 
     pub(super) fn current(&self) -> &tex_command::CurrentCommand<G> {

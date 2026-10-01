@@ -350,10 +350,7 @@ fn unified_operation_resource_need_is_observation_independent() {
             "absent-resource.tex",
             SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
         );
-        assert!(matches!(
-            control.advance(stores),
-            Err(ExecError::ResourceReplayRequired)
-        ));
+        assert!(matches!(control.advance(stores), Err(ExecError::Halted)));
         (need, stores.world().effect_records().to_vec())
     });
     let (observed_need, observed_effects, evidence) = support::with_plain_universe(|stores| {

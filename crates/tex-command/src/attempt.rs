@@ -1660,7 +1660,7 @@ pub struct CommandAttempt<G> {
     active_operation_origin: Option<AttemptScopeCoordinate>,
 }
 
-/// Fixed-size rollback coordinate for one command operation.
+/// Fixed-size settlement coordinate for one command operation.
 ///
 /// Construction is restricted to [`crate::CommandState`]. The coordinate
 /// carries no storage owner and is valid only while the matching live attempt
@@ -1669,7 +1669,6 @@ pub struct CommandAttempt<G> {
 pub(crate) struct CommandAttemptMark {
     opening: AttemptMark,
     operation: AttemptScopeCoordinate,
-    parent: AttemptScopeSerial,
     macro_depth: u32,
 }
 
@@ -1677,8 +1676,8 @@ pub(crate) struct CommandAttemptMark {
 ///
 /// Command state is the sole ordinary-path coordinate owner. The executor
 /// consumes this opaque lifecycle edge at the same synchronous boundary that
-/// commits or rolls the operation back; a resource miss drops the operation
-/// and replays from a full checkpoint.
+/// commits the operation; a failure or resource miss drops the operation and
+/// replays from a full checkpoint.
 #[derive(Debug)]
 #[must_use = "an active command operation must be finished before the caller returns"]
 pub struct CommandAttemptOperation {
@@ -1700,13 +1699,8 @@ impl CommandAttemptMark {
         Ok(Self {
             opening,
             operation: operation.coordinate(),
-            parent: operation.parent,
             macro_depth: u32::try_from(macro_depth).map_err(|_| AttemptError::CapacityOverflow)?,
         })
-    }
-
-    pub(crate) const fn macro_depth(self) -> usize {
-        self.macro_depth as usize
     }
 }
 
@@ -1841,22 +1835,6 @@ impl<G> CommandAttempt<G> {
             .ok_or(AttemptError::InvalidCoordinate)?;
         self.active_operation_origin = None;
         self.arena.close_owned_scope(operation)
-    }
-
-    pub(crate) fn rollback_operation(
-        &mut self,
-        mark: CommandAttemptMark,
-    ) -> Result<(), AttemptError> {
-        self.validate_operation(mark)?;
-        let _operation = self
-            .active_operation
-            .take()
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        self.active_operation_origin = None;
-        self.arena.validate_mark(mark.opening)?;
-        self.arena.truncate(mark.opening)?;
-        self.arena.top_scope = mark.parent;
-        Ok(())
     }
 
     pub(crate) fn abandon_operation(&mut self) {

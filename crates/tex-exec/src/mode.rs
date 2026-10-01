@@ -21,9 +21,6 @@ thread_local! {
     static MODE_IDENTITY_CAPTURE_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-mod journal;
-pub(crate) use journal::Cursor as ModeJournalCursor;
-
 /// TeX's sentinel depth used before any vertical-list box has established a baseline.
 pub const IGNORE_DEPTH: Scaled = Scaled::from_raw(-65_536_000);
 
@@ -406,52 +403,6 @@ impl ModeList {
         Some(result)
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_reconstitution_target<G, R>(
-        &mut self,
-        stores: &mut CommandContext<'_, G>,
-        mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
-    ) -> R {
-        let mut nodes = self.nodes(stores).iter().cloned().collect::<Vec<_>>();
-        let result = mutate(&mut nodes);
-        let published = stores.publish_page_nodes(nodes);
-        self.nodes.replace_retained(
-            stores
-                .admit_page_node_span(published)
-                .expect("published test mode list admits a checked span"),
-        );
-        result
-    }
-
-    #[cfg(test)]
-    pub(crate) fn push_reconstituted<G>(
-        &mut self,
-        stores: &mut CommandContext<'_, G>,
-        insertion: Option<(usize, Node)>,
-        first: Node,
-        second: Option<Node>,
-        third: Option<Node>,
-    ) {
-        self.with_reconstitution_target(stores, |target| {
-            target.reserve(
-                usize::from(insertion.is_some())
-                    + 1
-                    + usize::from(second.is_some())
-                    + usize::from(third.is_some()),
-            );
-            if let Some((index, node)) = insertion {
-                target.insert(index, node);
-            }
-            target.push(first);
-            if let Some(node) = second {
-                target.push(node);
-            }
-            if let Some(node) = third {
-                target.push(node);
-            }
-        });
-    }
-
     fn begin_pending_hchars(
         &mut self,
         mut source: Vec<PendingHChar>,
@@ -717,58 +668,13 @@ impl ModeList {
 /// The capability deliberately does not implement `DerefMut` or expose its
 /// backing list. Operations either consume/replace owned values or execute a
 /// higher-ranked closure whose mutable borrow cannot escape.
-enum ModeListBorrow<'a> {
-    Direct(&'a mut ModeList),
-}
-
-impl std::ops::Deref for ModeListBorrow<'_> {
-    type Target = ModeList;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Direct(list) => list,
-        }
-    }
-}
-
-impl std::ops::DerefMut for ModeListBorrow<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Direct(list) => list,
-        }
-    }
-}
-
-enum ModeListJournalBorrow<'a> {
-    None,
-    Journaled {
-        journal: &'a mut journal::ModeJournal,
-        index: usize,
-    },
-}
-
 pub(crate) struct ModeListMutation<'a> {
-    list: ModeListBorrow<'a>,
-    journal: ModeListJournalBorrow<'a>,
+    list: &'a mut ModeList,
     scratch: Option<&'a mut HorizontalModeScratch>,
 }
 
 impl ModeListMutation<'_> {
-    fn journal_is_active(&self) -> bool {
-        match &self.journal {
-            ModeListJournalBorrow::None => false,
-            ModeListJournalBorrow::Journaled { journal, .. } => journal.has_active_frame(),
-        }
-    }
-    fn list_journal(&mut self) -> Option<journal::ListJournal<'_>> {
-        match &mut self.journal {
-            ModeListJournalBorrow::None => None,
-            ModeListJournalBorrow::Journaled { journal, index } => journal.list(*index),
-        }
-    }
-
     pub(crate) fn push<G>(&mut self, stores: &mut CommandContext<'_, G>, node: Node) {
-        self.record_nodes();
         self.list.push(stores, node);
     }
 
@@ -777,7 +683,6 @@ impl ModeListMutation<'_> {
         stores: &mut CommandContext<'_, G>,
         initialize: impl FnOnce(tex_state::NodeDestination<'_>),
     ) {
-        self.record_nodes();
         self.list.construct(stores, initialize);
     }
 
@@ -790,7 +695,6 @@ impl ModeListMutation<'_> {
         stores: &mut CommandContext<'_, G>,
         nodes: impl IntoIterator<Item = Node>,
     ) {
-        self.record_nodes();
         self.list.append(stores, nodes);
     }
 
@@ -809,8 +713,7 @@ impl ModeListMutation<'_> {
             &mut PageMaterialActiveListBuilder,
         ) -> Result<(), ExecError>,
     ) -> Result<(), ExecError> {
-        self.record_nodes();
-        let ModeListBorrow::Direct(list) = &mut self.list;
+        let list = &mut *self.list;
         assert!(list.admit_page_region(stores));
         let pending = list
             .pending_hchars
@@ -840,7 +743,6 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn take_nodes(&mut self) -> PageListId {
-        self.record_nodes();
         self.list.take_nodes()
     }
 
@@ -854,13 +756,7 @@ impl ModeListMutation<'_> {
         PageListId,
         Option<tex_state::page_node_arena::ConsumedPageSource>,
     ) {
-        let journal_retains_root = self.journal_is_active();
-        self.record_nodes();
-        let ModeListBorrow::Direct(list) = &mut self.list;
-        if journal_retains_root {
-            list.nodes.replace_retained(list.nodes.span());
-        }
-        stores.take_generated_mode_source(&mut list.nodes)
+        stores.take_generated_mode_source(&mut self.list.nodes)
     }
 
     pub(crate) fn append_unique_list<G>(
@@ -868,17 +764,14 @@ impl ModeListMutation<'_> {
         stores: &mut CommandContext<'_, G>,
         nodes: tex_state::page_node_arena::UniquePageList,
     ) {
-        self.record_nodes();
         self.list.append_unique_list(stores, nodes);
     }
 
     pub(crate) fn take_span(&mut self) -> PageListSpan {
-        self.record_nodes();
         self.list.take_span()
     }
 
     pub(crate) fn pop_last_node<G>(&mut self, stores: &mut CommandContext<'_, G>) -> Option<Node> {
-        self.record_nodes();
         self.list.pop_last_node(stores)
     }
 
@@ -887,7 +780,6 @@ impl ModeListMutation<'_> {
         stores: &mut CommandContext<'_, G>,
         range: std::ops::RangeInclusive<usize>,
     ) -> PageListId {
-        self.record_nodes();
         self.list.remove_node_range(stores, range)
     }
 
@@ -897,7 +789,6 @@ impl ModeListMutation<'_> {
         index: usize,
         mutate: impl for<'a> FnOnce(&'a mut Node) -> R,
     ) -> Option<R> {
-        self.record_node(index);
         self.list.with_node_mut(stores, index, mutate)
     }
 
@@ -906,49 +797,10 @@ impl ModeListMutation<'_> {
         stores: &mut CommandContext<'_, G>,
         mutate: impl for<'a> FnOnce(&'a mut Node) -> R,
     ) -> Option<R> {
-        if let Some(index) = self.list.nodes.len().checked_sub(1) {
-            self.record_node(index);
-        }
         self.list.with_last_node_mut(stores, mutate)
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_reconstitution_target<G, R>(
-        &mut self,
-        stores: &mut CommandContext<'_, G>,
-        mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
-    ) -> R {
-        self.record_nodes();
-        self.list.with_reconstitution_target(stores, mutate)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn push_reconstituted<G>(
-        &mut self,
-        stores: &mut CommandContext<'_, G>,
-        insertion: Option<(usize, Node)>,
-        first: Node,
-        second: Option<Node>,
-        third: Option<Node>,
-    ) {
-        if insertion.is_some() {
-            self.record_nodes();
-        }
-        self.list
-            .push_reconstituted(stores, insertion, first, second, third);
-    }
-
     pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
-        if self.journal_is_active() {
-            let old = self
-                .list
-                .pending_hchars
-                .as_ref()
-                .map(journal::PendingHRunProjection::capture);
-            if let Some(mut journal) = self.list_journal() {
-                journal.record_pending_projection(old);
-            }
-        }
         let scratch = self
             .scratch
             .as_deref_mut()
@@ -957,26 +809,17 @@ impl ModeListMutation<'_> {
         self.list.begin_pending_hchars(source, font, ch, origin);
     }
 
-    /// Retires the pending word after its output has been built successfully.
-    ///
-    /// The word remains borrowed in place while TFM shaping can fail. Only the
-    /// successful edge moves its sole owner into the rollback journal, so the
-    /// journal retains a move-only receipt rather than a cloned `Vec` owner.
+    /// Retires the pending word after its output has been built successfully,
+    /// returning its source vector to the scratch owner for the next run.
     pub(crate) fn clear_pending_hchars(&mut self) -> bool {
-        let mut old = self.list.take_pending_hchars();
-        let present = old.is_some();
-        if self.journal_is_active()
-            && let Some(mut journal) = self.list_journal()
-        {
-            journal.record_pending_owned(&mut old);
-        }
-        if let Some(old) = old {
-            self.scratch
-                .as_deref_mut()
-                .expect("pending horizontal runs require the mode scratch owner")
-                .recycle_pending_source(old.source);
-        }
-        present
+        let Some(old) = self.list.take_pending_hchars() else {
+            return false;
+        };
+        self.scratch
+            .as_deref_mut()
+            .expect("pending horizontal runs require the mode scratch owner")
+            .recycle_pending_source(old.source);
+        true
     }
 
     #[cfg(test)]
@@ -985,16 +828,6 @@ impl ModeListMutation<'_> {
         &mut self,
         mutate: impl FnOnce(&mut PendingHRun) -> R,
     ) -> Option<R> {
-        if self.journal_is_active() {
-            let old = self
-                .list
-                .pending_hchars
-                .as_ref()
-                .map(journal::PendingHRunProjection::capture);
-            if let Some(mut journal) = self.list_journal() {
-                journal.record_pending_projection(old);
-            }
-        }
         let pending = self.list.pending_hchars.as_mut()?;
         Some(mutate(pending))
     }
@@ -1006,16 +839,6 @@ impl ModeListMutation<'_> {
         origin: OriginId,
         script: Option<tex_fonts::Script>,
     ) -> bool {
-        if self.journal_is_active() {
-            let old = self
-                .list
-                .pending_hchars
-                .as_ref()
-                .map(journal::PendingHRunProjection::capture);
-            if let Some(mut journal) = self.list_journal() {
-                journal.record_pending_projection(old);
-            }
-        }
         let Some(pending) = self.list.pending_hchars.as_mut() else {
             return false;
         };
@@ -1027,9 +850,8 @@ impl ModeListMutation<'_> {
     ///
     /// The producer is called once per candidate byte and returns `None` at
     /// the first semantic boundary. Capacity is reserved immediately before
-    /// the first accepted character, so a rejected prefix leaves the list and
-    /// its journal untouched while a new run avoids the first-character
-    /// growth step.
+    /// the first accepted character, so a rejected prefix leaves the list
+    /// untouched while a new run avoids the first-character growth step.
     pub(crate) fn append_pending_hchars<F>(
         &mut self,
         font: FontId,
@@ -1047,16 +869,6 @@ impl ModeListMutation<'_> {
                 break;
             };
             if appended == 0 {
-                if self.journal_is_active() {
-                    let old = self
-                        .list
-                        .pending_hchars
-                        .as_ref()
-                        .map(journal::PendingHRunProjection::capture);
-                    if let Some(mut journal) = self.list_journal() {
-                        journal.record_pending_projection(old);
-                    }
-                }
                 if let Some(pending) = self.list.pending_hchars.as_mut() {
                     pending.source.reserve(capacity);
                 } else {
@@ -1088,10 +900,6 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn set_space_factor(&mut self, value: i32) {
-        let old = self.list.space_factor;
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_space_factor(old);
-        }
         self.list.set_space_factor(value);
     }
 
@@ -1100,22 +908,10 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn set_no_boundary(&mut self, value: bool) {
-        let old = self.list.no_boundary;
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_no_boundary(old);
-        }
         self.list.set_no_boundary(value);
     }
 
     pub(crate) fn set_hyphen_context(&mut self, language: u8, left: u8, right: u8) {
-        let old = (
-            self.list.hyphen_language,
-            self.list.left_hyphen_min,
-            self.list.right_hyphen_min,
-        );
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_hyphen_context(old);
-        }
         self.list.set_hyphen_context(language, left, right);
     }
 
@@ -1126,63 +922,17 @@ impl ModeListMutation<'_> {
         self.list.initial_hyphen_context = (language, left, right);
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_hyphen_language(&mut self, language: u8) {
-        let old = (
-            self.list.hyphen_language,
-            self.list.left_hyphen_min,
-            self.list.right_hyphen_min,
-        );
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_hyphen_context(old);
-        }
-        self.list.set_hyphen_language(language);
-    }
-
     pub(crate) fn set_prev_depth(&mut self, depth: Scaled) {
-        let old = self.list.prev_depth;
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_prev_depth(old);
-        }
         self.list.set_prev_depth(depth);
     }
 
     pub(crate) fn set_prev_graf(&mut self, lines: i32) {
-        let old = self.list.prev_graf;
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_prev_graf(old);
-        }
         self.list.set_prev_graf(lines);
     }
 
     #[cfg(test)]
     pub(crate) fn set_align_state(&mut self, state: AlignState) {
-        let old = self.list.take_align_state();
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_align_state(old);
-        }
         self.list.set_align_state(state);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_align_state_mut<R>(
-        &mut self,
-        mutate: impl for<'a> FnOnce(&'a mut AlignState) -> R,
-    ) -> Option<R> {
-        let old = self.list.align_state.clone();
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_align_state(old);
-        }
-        self.list.with_align_state_mut(mutate)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_align_state(&mut self) -> Option<AlignState> {
-        let old = self.list.align_state.clone();
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_align_state(old);
-        }
-        self.list.take_align_state()
     }
 
     pub(crate) fn set_incomplete_fraction<G>(
@@ -1191,19 +941,11 @@ impl ModeListMutation<'_> {
         fraction: IncompleteFraction,
     ) {
         assert!(stores.page_node_span(fraction.numerator).is_ok());
-        let old = self.list.take_incomplete_fraction();
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_incomplete_fraction(old);
-        }
         self.list.set_incomplete_fraction(fraction);
         assert!(self.list.admit_page_region(stores));
     }
 
     pub(crate) fn take_incomplete_fraction(&mut self) -> Option<IncompleteFraction> {
-        let old = self.list.incomplete_fraction.clone();
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_incomplete_fraction(old);
-        }
         self.list.take_incomplete_fraction()
     }
 
@@ -1222,19 +964,11 @@ impl ModeListMutation<'_> {
                 assert!(stores.page_node_span(diagnostic).is_ok());
             }
         }
-        let old = self.list.take_display_interrupt();
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_display_interrupt(old);
-        }
         self.list.set_display_interrupt(interrupt);
         assert!(self.list.admit_page_region(stores));
     }
 
     pub(crate) fn take_display_interrupt(&mut self) -> Option<DisplayInterrupt> {
-        let old = self.list.display_interrupt.clone();
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_display_interrupt(old);
-        }
         self.list.take_display_interrupt()
     }
 
@@ -1244,19 +978,11 @@ impl ModeListMutation<'_> {
         eq_no: DisplayEqNo,
     ) {
         assert!(stores.page_node_span(eq_no.display).is_ok());
-        let old = self.list.take_display_eq_no();
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_display_eq_no(old);
-        }
         self.list.set_display_eq_no(eq_no);
         assert!(self.list.admit_page_region(stores));
     }
 
     pub(crate) fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
-        let old = self.list.display_eq_no.clone();
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_display_eq_no(old);
-        }
         self.list.take_display_eq_no()
     }
 
@@ -1270,59 +996,12 @@ impl ModeListMutation<'_> {
             .list
             .admit_new_root(stores, nodes)
             .expect("display alignment belongs to the live page region");
-        self.record_nodes();
-        let old_prev_depth = self.list.prev_depth;
-        let old_display_alignment = self.list.display_alignment;
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_prev_depth(old_prev_depth);
-            journal.record_display_alignment(old_display_alignment);
-        }
         self.list.set_display_alignment(nodes, prev_depth);
         assert!(self.list.admit_page_region(stores));
     }
 
     pub(crate) fn take_display_alignment(&mut self) -> Option<(PageListId, Option<Scaled>)> {
-        if self.list.display_alignment {
-            self.record_nodes();
-        }
-        let old_prev_depth = self.list.prev_depth;
-        let old_display_alignment = self.list.display_alignment;
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_prev_depth(old_prev_depth);
-            journal.record_display_alignment(old_display_alignment);
-        }
         self.list.take_display_alignment()
-    }
-
-    fn record_node(&mut self, index: usize) {
-        if self.journal_is_active() && index < self.list.nodes.len() {
-            let needs_nodes = self
-                .list_journal()
-                .is_some_and(|journal| journal.needs_nodes());
-            if !needs_nodes {
-                return;
-            }
-            let old = self.list.nodes.span();
-            if let Some(mut journal) = self.list_journal() {
-                journal.record_nodes(old);
-            }
-        }
-    }
-
-    fn record_nodes(&mut self) {
-        if !self.journal_is_active() {
-            return;
-        }
-        let needs_nodes = self
-            .list_journal()
-            .is_some_and(|journal| journal.needs_nodes());
-        if !needs_nodes {
-            return;
-        }
-        let old = self.list.nodes.span();
-        if let Some(mut journal) = self.list_journal() {
-            journal.record_nodes(old);
-        }
     }
 }
 
@@ -1505,7 +1184,7 @@ pub struct PendingHChar {
 
 /// Reusable storage for horizontal text operations.
 ///
-/// The buffers are deliberately outside [`ModeList`] and the mode journal:
+/// The buffers are deliberately outside [`ModeList`]:
 /// only their capacity survives a handoff. A pending run owns its source
 /// values while it is semantic state; once that owner is no longer needed,
 /// its cleared source vector can return here for the next run. The TFM cursor
@@ -1714,6 +1393,7 @@ pub struct ModeLevelSummary {
 }
 
 impl ModeLevelSummary {
+    #[cfg(test)]
     fn clone_operation_projection(&self) -> Self {
         Self {
             mode: self.mode,
@@ -1767,8 +1447,7 @@ impl ModeLevelSummary {
 
     pub(crate) fn list_mutation(&mut self) -> ModeListMutation<'_> {
         ModeListMutation {
-            list: ModeListBorrow::Direct(&mut self.list),
-            journal: ModeListJournalBorrow::None,
+            list: &mut self.list,
             scratch: None,
         }
     }
@@ -2112,7 +1791,6 @@ fn mode_nest_semantic_identity(levels: &[ModeLevelSummary]) -> u64 {
 /// Explicit stack of TeX mode levels.
 struct ModeNestStorage {
     levels: Vec<ModeLevelSummary>,
-    journal: journal::ModeJournal,
     scratch: HorizontalModeScratch,
 }
 
@@ -2287,7 +1965,6 @@ impl ModeNest {
         Self {
             storage: ModeNestStorage {
                 levels,
-                journal: journal::ModeJournal::enabled(1),
                 scratch: HorizontalModeScratch::default(),
             },
             lifecycle: ModeNestLifecycle::Independent,
@@ -2308,7 +1985,6 @@ impl ModeNest {
         }
         Ok(Self {
             storage: ModeNestStorage {
-                journal: journal::ModeJournal::enabled(summary.levels.len()),
                 levels: summary.levels,
                 scratch: HorizontalModeScratch::default(),
             },
@@ -2395,7 +2071,6 @@ impl ModeNest {
             .levels
             .iter()
             .any(|level| level.list.has_node_roots())
-            || self.storage.journal.retains_page_node_handles()
     }
 
     /// Preflights the mode half of page succession without cloning a mode
@@ -2426,7 +2101,6 @@ impl ModeNest {
         self.storage.recycle_level_pending_sources();
         self.storage.levels.clear();
         self.storage.levels.push(checkpoint.outer.clone_rootless());
-        self.storage.journal = journal::ModeJournal::enabled(1);
         self.storage.scratch.clear();
         Ok(())
     }
@@ -2460,7 +2134,6 @@ impl ModeNest {
                 self.storage.recycle_level_pending_sources();
                 self.storage.levels.clear();
                 self.storage.levels.push(checkpoint.outer.clone_rootless());
-                self.storage.journal = journal::ModeJournal::enabled(1);
                 self.storage.scratch.clear();
                 Ok(())
             }
@@ -2473,7 +2146,7 @@ impl ModeNest {
             {
                 self.restore_checkpoint(checkpoint)
             }
-            _ => Err(ExecError::ResourceReplayRequired),
+            _ => Err(ExecError::Halted),
         }
     }
 
@@ -2483,7 +2156,6 @@ impl ModeNest {
         Ok(Self {
             storage: ModeNestStorage {
                 levels,
-                journal: journal::ModeJournal::enabled(1),
                 scratch: HorizontalModeScratch::default(),
             },
             lifecycle: ModeNestLifecycle::CheckpointCandidate,
@@ -2523,7 +2195,7 @@ impl ModeNest {
     ///
     /// TeX82 §216 checks `nest_size` before copying `cur_list` into the
     /// semantic stack. Accordingly, a rejected push leaves every live level
-    /// and the journal unchanged.
+    /// unchanged.
     pub fn push(&mut self, mode: Mode) -> Result<(), ExecError> {
         self.push_at_line(mode, 0)
     }
@@ -2544,9 +2216,7 @@ impl ModeNest {
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
             level.mutate_list(|list| list.set_space_factor(1000));
         }
-        let storage = &mut self.storage;
-        storage.levels.push(level);
-        storage.journal.record_level_push();
+        self.storage.levels.push(level);
         Ok(())
     }
 
@@ -2557,15 +2227,12 @@ impl ModeNest {
         if self.current_list().pending_hchars().is_some() {
             return Err(ExecError::UncommittedPendingHchars);
         }
-        let storage = &mut self.storage;
-        let popped = storage
+        let popped = self
+            .storage
             .levels
             .pop()
             .expect("length checked before popping mode level");
-        storage
-            .journal
-            .record_level_pop(popped.clone_operation_projection());
-        storage.scratch.clear();
+        self.storage.scratch.clear();
         Ok(popped)
     }
 
@@ -2591,44 +2258,29 @@ impl ModeNest {
             .reshape_open_type_runs_list(stores, source)
     }
 
-    /// Appends one owned node to the current mode list through its journaled
-    /// mutation boundary.
+    /// Appends one owned node to the current mode list.
     pub fn push_current_node<G>(&mut self, stores: &mut CommandContext<'_, G>, node: Node) {
         self.current_list_mutation().push(stores, node);
     }
 
     pub(crate) fn current_list_mutation(&mut self) -> ModeListMutation<'_> {
         let storage = &mut self.storage;
-        let index = storage.levels.len() - 1;
-        let (levels, journal, scratch) = (
-            &mut storage.levels,
-            &mut storage.journal,
-            &mut storage.scratch,
-        );
-        let list = &mut levels
+        let list = &mut storage
+            .levels
             .last_mut()
             .expect("ModeNest always has at least one level")
             .list;
         ModeListMutation {
-            list: ModeListBorrow::Direct(list),
-            journal: ModeListJournalBorrow::Journaled { journal, index },
-            scratch: Some(scratch),
+            list,
+            scratch: Some(&mut storage.scratch),
         }
     }
 
     pub(crate) fn list_mutation(&mut self, index: usize) -> Option<ModeListMutation<'_>> {
         let storage = &mut self.storage;
-        storage.levels.get(index)?;
-        let (levels, journal, scratch) = (
-            &mut storage.levels,
-            &mut storage.journal,
-            &mut storage.scratch,
-        );
-        let list = &mut levels[index].list;
         Some(ModeListMutation {
-            list: ModeListBorrow::Direct(list),
-            journal: ModeListJournalBorrow::Journaled { journal, index },
-            scratch: Some(scratch),
+            list: &mut storage.levels.get_mut(index)?.list,
+            scratch: Some(&mut storage.scratch),
         })
     }
 

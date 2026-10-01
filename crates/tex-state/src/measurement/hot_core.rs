@@ -323,11 +323,6 @@ pub struct SaveJournalCensus {
     pub checkpoint_entries: u64,
     pub checkpoint_capacity: u64,
     pub checkpoint_entry_size: u64,
-    pub operation_entries: u64,
-    pub operation_capacity: u64,
-    pub operation_entry_size: u64,
-    pub stamp_entries: u64,
-    pub stamp_capacity: u64,
     pub mutations: u64,
     pub mutation_words: [u64; 7],
     pub group_enters: u64,
@@ -630,11 +625,6 @@ static SAVE_JOURNAL_GROUP_ENTRY_SIZE: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_CHECKPOINT_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_CHECKPOINT_CAPACITY: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_CHECKPOINT_ENTRY_SIZE: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_OPERATION_ENTRIES: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_OPERATION_CAPACITY: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_OPERATION_ENTRY_SIZE: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_STAMP_ENTRIES: AtomicU64 = AtomicU64::new(0);
-static SAVE_JOURNAL_STAMP_CAPACITY: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_MUTATIONS: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_MUTATION_WORDS: [AtomicU64; 7] = [const { AtomicU64::new(0) }; 7];
 static SAVE_JOURNAL_GROUP_ENTERS: AtomicU64 = AtomicU64::new(0);
@@ -991,11 +981,6 @@ pub(crate) fn record_save_journal_census(census: SaveJournalCensus) {
     SAVE_JOURNAL_CHECKPOINT_ENTRIES.fetch_max(census.checkpoint_entries, Ordering::Relaxed);
     SAVE_JOURNAL_CHECKPOINT_CAPACITY.fetch_max(census.checkpoint_capacity, Ordering::Relaxed);
     SAVE_JOURNAL_CHECKPOINT_ENTRY_SIZE.fetch_max(census.checkpoint_entry_size, Ordering::Relaxed);
-    SAVE_JOURNAL_OPERATION_ENTRIES.fetch_max(census.operation_entries, Ordering::Relaxed);
-    SAVE_JOURNAL_OPERATION_CAPACITY.fetch_max(census.operation_capacity, Ordering::Relaxed);
-    SAVE_JOURNAL_OPERATION_ENTRY_SIZE.fetch_max(census.operation_entry_size, Ordering::Relaxed);
-    SAVE_JOURNAL_STAMP_ENTRIES.fetch_max(census.stamp_entries, Ordering::Relaxed);
-    SAVE_JOURNAL_STAMP_CAPACITY.fetch_max(census.stamp_capacity, Ordering::Relaxed);
     SAVE_JOURNAL_MUTATIONS.fetch_max(census.mutations, Ordering::Relaxed);
     for (counter, value) in SAVE_JOURNAL_MUTATION_WORDS
         .iter()
@@ -1028,11 +1013,6 @@ pub fn save_journal_census() -> SaveJournalCensus {
         checkpoint_entries: SAVE_JOURNAL_CHECKPOINT_ENTRIES.load(Ordering::Relaxed),
         checkpoint_capacity: SAVE_JOURNAL_CHECKPOINT_CAPACITY.load(Ordering::Relaxed),
         checkpoint_entry_size: SAVE_JOURNAL_CHECKPOINT_ENTRY_SIZE.load(Ordering::Relaxed),
-        operation_entries: SAVE_JOURNAL_OPERATION_ENTRIES.load(Ordering::Relaxed),
-        operation_capacity: SAVE_JOURNAL_OPERATION_CAPACITY.load(Ordering::Relaxed),
-        operation_entry_size: SAVE_JOURNAL_OPERATION_ENTRY_SIZE.load(Ordering::Relaxed),
-        stamp_entries: SAVE_JOURNAL_STAMP_ENTRIES.load(Ordering::Relaxed),
-        stamp_capacity: SAVE_JOURNAL_STAMP_CAPACITY.load(Ordering::Relaxed),
         mutations: SAVE_JOURNAL_MUTATIONS.load(Ordering::Relaxed),
         mutation_words: core::array::from_fn(|index| {
             SAVE_JOURNAL_MUTATION_WORDS[index].load(Ordering::Relaxed)

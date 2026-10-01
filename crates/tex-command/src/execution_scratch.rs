@@ -1389,13 +1389,6 @@ impl<G> ExecutionScratch<G> {
         self.macro_depth as usize
     }
 
-    pub(crate) fn active_argument_set(&self) -> Option<ArgumentSetId<G>> {
-        let slot = self.macro_slots.get(self.active_macro_slot as usize)?;
-        (slot.live && slot.sealed)
-            .then(|| ArgumentSetId::new(self.active_macro_slot, slot.serial).ok())
-            .flatten()
-    }
-
     pub(crate) fn begin_transient(&mut self) -> ExecutionScratchTransientMark {
         self.transient_depth = self
             .transient_depth

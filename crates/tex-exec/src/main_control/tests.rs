@@ -741,15 +741,6 @@ fn ordinary_command_episode_evidence(
         let mut frame = CommandEpisode::<()>::default();
         let stationary_address = std::ptr::addr_of!(frame);
         for _ in 0..repetitions {
-            frame.admit_immediate_pdf(UnexpandablePrimitive::PdfObject);
-            assert!(matches!(
-                frame.phase,
-                Some(PreflightCommandPhase::ImmediatePdfRetry(
-                    UnexpandablePrimitive::PdfObject
-                ))
-            ));
-            scalar_transitions += 1;
-            whole_frame_copies += usize::from(std::ptr::addr_of!(frame) != stationary_address);
             frame.clear_preflight();
             frame.assert_empty();
             scalar_transitions += 1;

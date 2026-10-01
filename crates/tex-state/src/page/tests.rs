@@ -51,7 +51,7 @@ fn output_width(arena: &PageMaterialArena, root: PageListId) -> Scaled {
 }
 
 #[test]
-fn output_box_scalar_edit_keeps_page_closure_and_restores_after_root_rewind() {
+fn output_box_scalar_edit_keeps_page_closure() {
     page_arena!(arena, pool, state);
     arena.enable_semantic_identity();
     let child = publish_nodes(&mut arena, [kern(47)]);
@@ -61,49 +61,15 @@ fn output_box_scalar_edit_keeps_page_closure_and_restores_after_root_rewind() {
     page.install_output_box(&arena, root)
         .expect("page output root");
     let old_identity = page.output_box().semantic_identity();
-    let mark = page.checkpoint_mark();
     let copies = arena.durable_transition_counters();
 
-    let inverse = page
-        .set_output_box_dimension(&mut arena, BoxDimension::Width, Scaled::from_raw(40))
-        .expect("exclusive output wrapper")
-        .expect("changed scalar records an inverse");
+    page.set_output_box_dimension(&mut arena, BoxDimension::Width, Scaled::from_raw(40))
+        .expect("exclusive output wrapper");
     assert_eq!(page.output_box().coordinate(), root.coordinate());
     assert_ne!(page.output_box().semantic_identity(), old_identity);
     assert_eq!(output_width(&arena, root), Scaled::from_raw(40));
     assert_eq!(list_nodes(&arena, child), [kern(47)]);
     assert_eq!(arena.durable_transition_counters(), copies);
-
-    let _consumed = page.take_output_box();
-    page.rollback_transaction(mark);
-    page.restore_output_box_dimension(&mut arena, inverse)
-        .expect("operation restores captured wrapper after root rewind");
-    assert_eq!(page.output_box().coordinate(), root.coordinate());
-    assert_eq!(page.output_box().semantic_identity(), old_identity);
-    assert_eq!(output_width(&arena, root), Scaled::from_raw(10));
-}
-
-#[test]
-fn output_box_scalar_inverse_targets_original_wrapper_after_replacement() {
-    page_arena!(arena, pool, state);
-    let child = publish_nodes(&mut arena, [kern(1)]);
-    let original = publish_nodes(&mut arena, [output_box(child, 10)]);
-    let replacement = publish_nodes(&mut arena, [output_box(child, 80)]);
-    let mut page = PageBuilderState::default();
-    page.install_output_box(&arena, original)
-        .expect("original output root");
-    let inverse = page
-        .set_output_box_dimension(&mut arena, BoxDimension::Width, Scaled::from_raw(40))
-        .expect("exclusive output wrapper")
-        .expect("changed scalar records an inverse");
-    page.install_output_box(&arena, replacement)
-        .expect("replacement output root");
-
-    page.restore_output_box_dimension(&mut arena, inverse)
-        .expect("original wrapper is still page-owned");
-    assert_eq!(page.output_box().coordinate(), replacement.coordinate());
-    assert_eq!(output_width(&arena, original), Scaled::from_raw(10));
-    assert_eq!(output_width(&arena, replacement), Scaled::from_raw(80));
 }
 
 fn tokens(tokens: &[Token]) -> NodeTokenKey {
@@ -414,49 +380,6 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
     page.finish_checkpoint_candidate_rejection(tail);
 
     assert_eq!(hash_page(&page, &arena), accepted_hash);
-    assert_eq!(page.contribution(&arena).len(), 4_097);
-}
-
-#[test]
-fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
-    page_arena!(arena, pool, state);
-    let mut page = PageBuilderState::default();
-    page.push_contribution(&mut arena, kern(-1));
-    page.push_current_page(&mut arena, kern(-2));
-    page.push_page_discard(&mut arena, kern(-3));
-    set_split_discards(&mut page, &mut arena, [kern(-4)]);
-    let checkpoint = page.checkpoint_mark();
-    for index in 0..4_096 {
-        page.push_contribution(&mut arena, kern(index));
-        page.push_current_page(&mut arena, kern(index));
-        page.push_page_discard(&mut arena, kern(index));
-    }
-
-    let tail = page.begin_checkpoint_candidate(checkpoint);
-    let shipout = page.checkpoint_mark();
-    let carrier = page
-        .pop_contribution_front(&mut arena)
-        .expect("root contribution");
-    assert_eq!(carrier_node(&arena, &carrier), kern(-1));
-    page.discard_carrier(carrier);
-    assert_eq!(page.pop_current_page(&mut arena), Some(kern(-2)));
-    page.clear_page_discards(&arena);
-    page.clear_split_discards(&arena);
-    page.rollback_transaction(shipout);
-
-    assert_eq!(page.contribution(&arena).to_vec(), [kern(-1)]);
-    assert_eq!(
-        page.current_page(&arena)
-            .map(|node| node.to_owned())
-            .collect::<Vec<_>>(),
-        [kern(-2)]
-    );
-    let page_discards = page.take_page_discards(&arena);
-    let split_discards = page.take_split_discards(&arena);
-    assert_eq!(list_nodes(&arena, page_discards), [kern(-3)]);
-    assert_eq!(list_nodes(&arena, split_discards), [kern(-4)]);
-    page.prepare_checkpoint_candidate_rejection(&tail);
-    page.finish_checkpoint_candidate_rejection(tail);
     assert_eq!(page.contribution(&arena).len(), 4_097);
 }
 
@@ -1715,12 +1638,12 @@ fn end_job_progress_fence_rejects_identical_replay_and_survives_rollback_and_suc
         .expect("candidate builder progresses");
     page.discard_carrier(carrier);
     assert!(page.complete_end_job_ejection(attempt));
-    page.rollback_transaction(mark);
+    page.restore_checkpoint_mark(mark);
     assert_eq!(page.progress_token(), checkpoint_position);
     assert_eq!(
         page.begin_end_job_ejection(),
         Ok(checkpoint_position),
-        "rollback restores both the page position and replay fence"
+        "restore rewinds both the page position and replay fence"
     );
 
     let mut history = PageRegionHistory::default();

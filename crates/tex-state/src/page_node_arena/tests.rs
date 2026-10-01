@@ -1,6 +1,6 @@
 use super::{
-    ConsumedPageSource, ModePageListSlot, PageBoxCutRange, PageBoxPositiveKey, PageListId,
-    PageListSpan, PageMaterialActiveListBuilder, PageMaterialArena, PageMaterialRegion,
+    BuiltBoxOrigin, ConsumedPageSource, ModePageListSlot, PageBoxCutRange, PageBoxPositiveKey,
+    PageListId, PageListSpan, PageMaterialActiveListBuilder, PageMaterialArena, PageMaterialRegion,
 };
 use crate::fork_arena::ForkArenaError;
 use crate::glue::Order;
@@ -142,7 +142,7 @@ fn generated_segment_rejects_reclaimed_unique_source() {
 }
 
 #[test]
-fn stamped_box_interval_moves_and_rollback_restores_original_nodes() {
+fn stamped_box_interval_moves_exclusively() {
     page_arena!(arena, pool, state, 65_536);
     let neighbor = arena
         .publish_owned(penalties(&[7]))
@@ -174,19 +174,12 @@ fn stamped_box_interval_moves_and_rollback_restores_original_nodes() {
         .expect("original metadata");
     assert!(arena.can_finish_interleaved_page_box(root, &metadata, false));
 
-    let (owner, loan) = arena
+    let owner = arena
         .finish_interleaved_page_box(root, metadata, false)
         .expect("exclusive interval moves");
     assert!(!arena.contains(root));
     assert!(arena.contains(neighbor));
-    let mut owner = Some(owner);
-    arena
-        .rollback_interleaved_page_box(&mut owner, loan)
-        .expect("operation rollback returns original chunks");
-    assert!(owner.is_none());
-    assert!(arena.contains(root));
-    assert!(arena.contains(child));
-    assert!(arena.contains(neighbor));
+    arena.retire_durable(owner).expect("retire moved box");
 }
 
 #[test]
@@ -508,7 +501,7 @@ fn consumed_unbox_projection_rebinds_sibling_boxes_without_copying_their_bodies(
         .box_migration_metadata(taken)
         .expect("current wrapper authorizes its body");
     assert!(arena.can_finish_interleaved_page_box(taken, &metadata, false));
-    let (owner, loan) = arena
+    let owner = arena
         .finish_interleaved_page_box(taken, metadata, false)
         .expect("selected child body moves without a closure copy");
     assert_eq!(
@@ -522,16 +515,7 @@ fn consumed_unbox_projection_rebinds_sibling_boxes_without_copying_their_bodies(
         panic!("surviving wrapper remains live");
     };
     assert_eq!(resolved(&arena, sibling.children), penalties(&[31]));
-    let mut owner = Some(owner);
-    arena
-        .rollback_interleaved_page_box(&mut owner, loan)
-        .expect("selected body returns to its original page slots");
-    assert!(owner.is_none());
-    let restored_nodes = resolved(&arena, taken);
-    let [Node::HList(restored)] = restored_nodes.as_slice() else {
-        panic!("rolled-back wrapper remains live");
-    };
-    assert_eq!(resolved(&arena, restored.children), penalties(&[47]));
+    arena.retire_durable(owner).expect("retire moved box");
 }
 
 #[test]
@@ -557,7 +541,7 @@ fn nested_original_box_stamp_rebases_after_whole_region_moves() {
 
     let outer = arena.publish_owned([boxed(inner)]).expect("outer wrapper");
     let durable = arena
-        .finish_built_page_root_to_durable(outer_start, outer)
+        .finish_built_page_root_to_durable_from(outer_start, outer, BuiltBoxOrigin::Other)
         .expect("outer construction moves into durable owner");
     arena
         .publish_owned(penalties(&[11]))
@@ -1386,7 +1370,7 @@ fn generated_inline_descriptor_matches_only_its_final_child_chain() {
 }
 
 #[test]
-fn generated_inline_mixed_cuts_move_interior_and_restore_siblings() {
+fn generated_inline_mixed_cuts_move_interior_and_keep_siblings() {
     page_arena!(arena, pool, state, 512);
     arena.enable_semantic_identity();
     let source = arena
@@ -1420,7 +1404,7 @@ fn generated_inline_mixed_cuts_move_interior_and_restore_siblings() {
     assert!(arena.can_finish_interleaved_page_box(root, &metadata, false));
     let copied_before = arena.durable_transitions.page_to_durable_nodes_copied;
 
-    let (owner, loan) = arena
+    let owner = arena
         .finish_interleaved_page_box(root, metadata, false)
         .expect("project cuts and move complete interior");
     let moved = owner
@@ -1439,18 +1423,7 @@ fn generated_inline_mixed_cuts_move_interior_and_restore_siblings() {
     );
     assert_eq!(resolved(&arena, left), penalties(&[0, 1, 2]));
     assert_eq!(resolved(&arena, right), penalties(&[35, 36, 37, 38, 39]));
-    let mut owner = Some(owner);
-    arena
-        .rollback_interleaved_page_box(&mut owner, loan)
-        .expect("restore head edges, floors, holes, and cut projection");
-    assert!(owner.is_none());
-    assert_eq!(
-        resolved(&arena, child),
-        penalties(&(3..35).collect::<Vec<_>>())
-    );
-    assert_eq!(child.semantic_identity(), Some(child_identity));
-    assert_eq!(resolved(&arena, left), penalties(&[0, 1, 2]));
-    assert_eq!(resolved(&arena, right), penalties(&[35, 36, 37, 38, 39]));
+    arena.retire_durable(owner).expect("retire moved box");
 }
 
 #[test]
@@ -2071,7 +2044,7 @@ fn built_closure_with_unrelated_prior_annex_dependency_copies_selected_root() {
         .expect("independent selected root");
 
     let durable = arena
-        .finish_built_page_root_to_durable(build, selected)
+        .finish_built_page_root_to_durable_from(build, selected, BuiltBoxOrigin::Other)
         .expect("paired dependency selects structural copy");
     assert_eq!(resolved(&arena, prior), [boxed(leaf)]);
     assert_eq!(
@@ -2171,7 +2144,7 @@ fn copied_box_wrapper_selects_only_its_stamped_child_blocks() {
         .expect("copied child envelope");
     assert!(metadata.wrapper_rebuild);
     assert!(arena.can_finish_interleaved_page_box(copied, &metadata, false));
-    let (moved, loan) = arena
+    let moved = arena
         .finish_interleaved_page_box(copied, metadata, false)
         .expect("selected copied child transfers");
     assert!(
@@ -2179,17 +2152,12 @@ fn copied_box_wrapper_selects_only_its_stamped_child_blocks() {
         "shared wrapper chunk stays page-owned"
     );
     assert!(arena.contains(original));
-    let mut moved = Some(moved);
-    arena
-        .rollback_interleaved_page_box(&mut moved, loan)
-        .expect("rollback restores copied body");
-    assert!(moved.is_none());
-    assert!(arena.contains(copied));
+    arena.retire_durable(moved).expect("retire moved body");
     arena.retire_durable(durable_source).expect("retire source");
 }
 
 #[test]
-fn nested_copied_boxes_isolate_actual_annex_writes_and_rollback() {
+fn nested_copied_boxes_isolate_actual_annex_writes() {
     page_arena!(arena, pool, region, 512);
     let special = |byte| {
         Node::Whatsit(Whatsit::Special {
@@ -2234,15 +2202,11 @@ fn nested_copied_boxes_isolate_actual_annex_writes_and_rollback() {
         .box_migration_metadata(copied)
         .expect("outer copied body envelope");
     assert!(arena.can_finish_interleaved_page_box(copied, &metadata, false));
-    let (moved, loan) = arena
+    let moved = arena
         .finish_interleaved_page_box(copied, metadata, false)
         .expect("move exact nested body");
-    let mut moved = Some(moved);
-    arena
-        .rollback_interleaved_page_box(&mut moved, loan)
-        .expect("rollback nested body");
-    assert!(moved.is_none());
     assert!(arena.contains(copied));
+    arena.retire_durable(moved).expect("retire moved body");
     arena.retire_durable(durable_source).expect("retire source");
 }
 

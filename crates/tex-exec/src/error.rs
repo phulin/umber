@@ -129,10 +129,10 @@ impl FrozenDiagnosticContext {
 #[derive(Debug)]
 pub enum ExecError {
     ExecutionAlreadyTerminated,
-    /// A direct execution was unwound at a host resource boundary.  The
-    /// caller must restore a full checkpoint before entering main control
-    /// again; the direct control object is not a resumable continuation.
-    ResourceReplayRequired,
+    /// A command failed or suspended mid-flight and left its owners in
+    /// place. The caller must restore a full checkpoint before entering main
+    /// control again; the halted control object is not a continuation.
+    Halted,
     ExecutionCancelled,
     CumulativeFuelExceeded {
         limit: u64,
@@ -432,8 +432,8 @@ impl fmt::Display for ExecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ExecutionAlreadyTerminated => f.write_str("execution run is already terminal"),
-            Self::ResourceReplayRequired => f.write_str(
-                "resource suspension invalidated this execution; restore a full checkpoint before continuing",
+            Self::Halted => f.write_str(
+                "execution halted mid-command; restore a full checkpoint before continuing",
             ),
             Self::ExecutionCancelled => f.write_str("execution run was cancelled"),
             Self::CumulativeFuelExceeded { limit, attempted } => write!(
@@ -704,7 +704,7 @@ impl std::error::Error for ExecError {
             Self::Command(err) => Some(err),
             Self::ResourceFailure { failure, .. } => Some(failure),
             Self::ExecutionAlreadyTerminated
-            | Self::ResourceReplayRequired
+            | Self::Halted
             | Self::ExecutionCancelled
             | Self::CumulativeFuelExceeded { .. }
             | Self::ResourceBudgetExceeded { .. }
@@ -803,7 +803,7 @@ impl ExecError {
         match self {
             Self::Captured { site, .. } => site.primary_origin(),
             Self::ExecutionAlreadyTerminated
-            | Self::ResourceReplayRequired
+            | Self::Halted
             | Self::ExecutionCancelled
             | Self::CumulativeFuelExceeded { .. }
             | Self::ResourceBudgetExceeded { .. } => None,

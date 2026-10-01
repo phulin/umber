@@ -26,26 +26,19 @@ pub(super) struct DirectFailureContext {
     pub(super) initial_effect_pos: tex_state::EffectPos,
 }
 
-/// Fixed-size rollback coordinates for one direct command operation.
+/// One direct command operation's scratch scope.
 ///
-/// Mode roots are restored first; only then may the attempt and page-arena
-/// suffixes be truncated.
-#[derive(Debug)]
-pub(super) struct DirectOperationMark<G> {
-    pub(super) state: tex_state::StateOperation<G>,
-    pub(super) mode: crate::mode::ModeJournalCursor,
-    pub(super) attempt: tex_command::CommandAttemptOperation,
-    pub(super) page: tex_state::fork_arena::OperationMark<tex_state::fork_arena::PageMaterialLane>,
-    pub(super) active_box_len: usize,
-}
+/// It holds no rollback coordinates. TeX has no per-command undo: a command
+/// that fails halts the session in place, and only a full checkpoint restore
+/// can resume it (see `docs/minimal_hot_loop.md`, "Errors and halts").
+pub(super) type DirectOperation = tex_command::CommandAttemptOperation;
 
 impl<G> MainControl<G> {
     /// Promotes one operation-local recoverable report at its commit seam.
     ///
-    /// The candidate is moved out of the detached collector before any state
-    /// or mode journal is committed. A later operation can therefore never
-    /// replace it, while a rollback simply drops the collector that still
-    /// owns an unpromoted candidate.
+    /// The candidate is moved out of the detached collector when its
+    /// operation commits, so a later operation can never replace it. A halted
+    /// operation drops the collector with its unpromoted candidate.
     pub(super) fn promote_first_recoverable(
         &mut self,
         stores: &mut Universe<G>,
@@ -128,32 +121,6 @@ impl<G> MainControl<G> {
             scanner_status,
             interaction: candidate.interaction,
         }));
-    }
-
-    /// Moves an uncommitted candidate into the run's sole suspension owner.
-    /// The operation's detached effects remain the source of truth until this
-    /// handoff, so rollback paths never publish it accidentally.
-    pub(super) fn retain_first_recoverable_for_retry(
-        &mut self,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) {
-        if let Some(candidate) = diagnostic_effects.take_first_recoverable() {
-            assert!(
-                self.pending_first_recoverable_diagnostic
-                    .replace(candidate)
-                    .is_none(),
-                "one suspended operation owns at most one first recoverable diagnostic"
-            );
-        }
-    }
-
-    pub(super) fn restore_first_recoverable_after_retry(
-        &mut self,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) {
-        if let Some(candidate) = self.pending_first_recoverable_diagnostic.take() {
-            diagnostic_effects.restore_first_recoverable(candidate);
-        }
     }
 
     pub(super) fn capture_first_causal_context(
@@ -383,110 +350,33 @@ impl<G> MainControl<G> {
         self.advance_telemetry.commits += 1;
     }
 
-    pub(super) fn begin_direct_operation(
-        &mut self,
-        stores: &mut Universe<G>,
-        attempt: Option<tex_command::CommandAttemptOperation>,
-    ) -> DirectOperationMark<G> {
-        DirectOperationMark {
-            state: stores
-                .begin_state_operation()
-                .expect("live generation has a state operation journal"),
-            mode: self.modes.begin_journal(),
-            attempt: attempt.unwrap_or_else(|| self.command.begin_attempt_operation()),
-            page: stores.page_node_cursor(),
-            active_box_len: self.boxes.active_boxes.len(),
-        }
-    }
-
-    /// Opens the next ordinary operation while the surrounding command run
-    /// still owns its single admitted state/page context.
-    pub(super) fn begin_admitted_direct_operation(
-        &mut self,
-        stores: &mut CommandContext<'_, G>,
-    ) -> DirectOperationMark<G> {
-        DirectOperationMark {
-            state: stores.begin_state_operation(),
-            mode: self.modes.begin_journal(),
-            attempt: self.command.begin_attempt_operation(),
-            page: stores.page_node_cursor(),
-            active_box_len: self.boxes.active_boxes.len(),
-        }
-    }
-
-    /// Settles an ordinary operation without releasing and reconstructing the
-    /// command context.  Page-region succession is intentionally absent: a
-    /// command which requests it is an enclosing-Universe boundary and never
-    /// reaches this continuation seam.
-    pub(super) fn commit_admitted_direct_operation(
-        &mut self,
-        stores: &mut CommandContext<'_, G>,
-        mark: DirectOperationMark<G>,
-    ) {
-        let DirectOperationMark {
-            state,
-            mode,
-            attempt,
-            ..
-        } = mark;
-        stores.commit_state_operation(state);
-        self.modes
-            .commit_journal(mode)
-            .expect("direct operation owns the top mode journal frame");
-        self.command
-            .commit_attempt_operation(attempt)
-            .expect("committed operation owns a valid command-attempt scope");
-        debug_assert!(
-            !self.page_region_succession_pending,
-            "page-region succession ends an admitted command run"
-        );
+    pub(super) fn begin_direct_operation(&mut self) -> DirectOperation {
+        self.command.begin_attempt_operation()
     }
 
     /// Settles an ordinary admitted operation and opens the next one in
-    /// place. Each journal keeps its current frame when the settled operation
-    /// left nothing to discard, so a run of commands that only read input or
-    /// assign scalars does not re-capture every coordinate per command.
-    pub(super) fn roll_admitted_direct_operation(
-        &mut self,
-        stores: &mut CommandContext<'_, G>,
-        mark: &mut DirectOperationMark<G>,
-    ) {
+    /// place. Page-region succession is intentionally absent: a command which
+    /// requests it is an enclosing-Universe boundary and never reaches this
+    /// continuation seam.
+    pub(super) fn roll_admitted_direct_operation(&mut self, operation: &DirectOperation) {
         debug_assert!(
             !self.page_region_succession_pending,
             "page-region succession ends an admitted command run"
         );
-        stores.roll_state_operation(&mut mark.state);
-        self.modes
-            .roll_journal(&mut mark.mode)
-            .expect("direct operation owns the top mode journal frame");
         self.command
-            .roll_attempt_operation(&mark.attempt)
+            .roll_attempt_operation(operation)
             .expect("committed operation owns a valid command-attempt scope");
-        mark.page = stores.page_node_cursor();
-        mark.active_box_len = self.boxes.active_boxes.len();
     }
 
     pub(super) fn commit_direct_operation(
         &mut self,
         stores: &mut Universe<G>,
-        mark: DirectOperationMark<G>,
+        operation: DirectOperation,
         diagnostic_effects: &mut DiagnosticEffects,
     ) {
         self.promote_first_recoverable(stores, diagnostic_effects);
-        let DirectOperationMark {
-            state,
-            mode,
-            attempt,
-            ..
-        } = mark;
-        stores
-            .commit_state_operation(state)
-            .expect("direct operation owns the active state operation");
-        self.modes
-            .commit_journal(mode)
-            .expect("direct operation owns the top mode journal frame");
         self.command
-            .commit_attempt_operation(attempt)
+            .commit_attempt_operation(operation)
             .expect("committed operation owns a valid command-attempt scope");
         self.finish_pending_page_region_succession(stores);
     }
@@ -494,15 +384,12 @@ impl<G> MainControl<G> {
     /// Finishes a failed prepared-resource preflight while the operation
     /// capability still has exactly one structural location.
     ///
-    /// Diagnostic classification runs before suspension moves the attempt out
-    /// of command state. A genuine resource suspension then moves it into the
-    /// pending continuation and retains the other journals; every terminal
-    /// result commits while the owner is still installed. Callers therefore
-    /// cannot commit an emptied command attempt after moving its owner.
+    /// A genuine resource suspension halts the operation in place; every
+    /// terminal result commits while the attempt owner is still installed.
     pub(super) fn finish_unavailable_prepared_resource_operation(
         &mut self,
         stores: &mut Universe<G>,
-        mark: DirectOperationMark<G>,
+        operation: DirectOperation,
         mut frame: CommandEpisode<G>,
         cold: ColdOperationSlot<G>,
         _barrier: Option<crate::transaction_protocol::CommandBarrier>,
@@ -517,13 +404,12 @@ impl<G> MainControl<G> {
         if matches!(result, Ok(StepResult::Suspended(_))) {
             // The resource need is the only owned value that escapes this
             // operation. Its diagnostic origin and host outcome live outside
-            // the rewindable engine roots; the command/scanner/cold frame is
-            // discarded before any full-checkpoint restore can run.
-            self.discard_direct_operation(stores, mark);
+            // the engine roots, which only a full-checkpoint restore resumes.
+            self.halt_direct_operation(operation);
             return result;
         }
         let Err(error) = result else {
-            self.commit_direct_operation(stores, mark, diagnostic_effects);
+            self.commit_direct_operation(stores, operation, diagnostic_effects);
             return result;
         };
         let error = {
@@ -536,37 +422,22 @@ impl<G> MainControl<G> {
         }
         let evidence_error = self.commit_direct_operation_after_error(
             stores,
-            mark,
+            operation,
             diagnostic_effects,
             OperationTermination::Failed,
         );
         evidence_error.map_or(Err(error), Err)
     }
 
-    pub(super) fn discard_direct_operation(
-        &mut self,
-        stores: &mut Universe<G>,
-        mark: DirectOperationMark<G>,
-    ) {
-        stores
-            .restore_state(mark.state)
-            .expect("direct operation state cursor belongs to the live generation");
-        self.modes
-            .rollback_journal(mark.mode)
-            .expect("direct operation owns the top mode journal frame");
-        // ReplayBoxes is deliberately outside Universe and ModeNest. Any box
-        // construction opened inside the rejected operation belongs to the
-        // same retryable suffix as those transactional roots, so discard its
-        // move-only owner before replay. BoxEndGroup retains pre-existing
-        // owners until its own fallible completion has succeeded, hence a
-        // rollback never needs to recreate an entry below this cursor.
-        self.boxes.active_boxes.truncate(mark.active_box_len);
-        self.command
-            .rollback_attempt_operation(mark.attempt)
-            .expect("rollback owns valid command-attempt coordinates");
-        stores
-            .truncate_page_nodes(mark.page)
-            .expect("direct operation page cursor belongs to the live page arena");
+    /// Halts the session at a failed operation without undoing it.
+    ///
+    /// pdfTeX has no per-command rollback, and nothing a halted session does
+    /// afterwards is observable: the host either ends the run or restores a
+    /// full checkpoint, which replaces every root this operation touched and
+    /// abandons its attempt scope. The latch refuses any other entry.
+    pub(super) fn halt_direct_operation(&mut self, operation: DirectOperation) {
+        let _ = operation;
+        self.halted = true;
     }
 
     /// Closes the observed receipt before committing a direct operation that
@@ -576,20 +447,20 @@ impl<G> MainControl<G> {
     pub(super) fn commit_direct_operation_after_error(
         &mut self,
         stores: &mut Universe<G>,
-        operation_mark: DirectOperationMark<G>,
+        operation: DirectOperation,
         diagnostic_effects: &mut DiagnosticEffects,
         termination: OperationTermination,
     ) -> Option<ExecError> {
         let evidence_error = self.admit_observed_receipt(stores, termination);
         self.error_operation_committed = true;
-        self.commit_direct_operation(stores, operation_mark, diagnostic_effects);
+        self.commit_direct_operation(stores, operation, diagnostic_effects);
         evidence_error
     }
 
     pub(super) fn finish_direct_failure(
         &mut self,
         stores: &mut Universe<G>,
-        operation_mark: DirectOperationMark<G>,
+        operation: DirectOperation,
         error: ExecError,
         context: DirectFailureContext,
         mut diagnostic_effects: DiagnosticEffects,
@@ -604,12 +475,10 @@ impl<G> MainControl<G> {
             let mut stores = stores.command_context().expect("live generation");
             error.freeze_diagnostic_origin(&mut stores, self.command.diagnostic_input_context(8))
         };
-        // pdftex.web §32b's `pdf_error` calls TeX82 §93 `succumb`; §53's
-        // shipout traversal can report that fatal after BoxEndGroup has
-        // already popped the enclosing operation's pre-existing group. The
-        // same state cursor is also not a retry point for an invalid output
-        // artifact. Settle these output failures by commit after the nested
-        // shipout has rolled back its own speculative suffix.
+        // pdftex.web §32b's `pdf_error` calls TeX82 §93 `succumb`. These
+        // output failures and an invalid output artifact publish their
+        // committed receipt after the nested shipout has rolled back its own
+        // speculative suffix.
         if error.requires_terminal_settlement() {
             if error.is_pdftex_output_fatal() {
                 Self::publish_pdf_fatal_error(stores, &error)?;
@@ -617,7 +486,7 @@ impl<G> MainControl<G> {
             }
             let evidence_error = self.commit_direct_operation_after_error(
                 stores,
-                operation_mark,
+                operation,
                 &mut diagnostic_effects,
                 OperationTermination::Failed,
             );
@@ -632,7 +501,7 @@ impl<G> MainControl<G> {
             return evidence_error.map_or(Err(error), Err);
         }
         let Some(fatal) = error.as_fatal() else {
-            self.discard_direct_operation(stores, operation_mark);
+            self.halt_direct_operation(operation);
             return Err(error);
         };
         self.promote_first_recoverable(stores, &mut diagnostic_effects);
@@ -676,7 +545,7 @@ impl<G> MainControl<G> {
             .publish_diagnostic_effects_preserving(&mut diagnostic_effects);
         let evidence_error = self.commit_direct_operation_after_error(
             stores,
-            operation_mark,
+            operation,
             &mut diagnostic_effects,
             OperationTermination::Fatal(fatal),
         );
@@ -955,11 +824,10 @@ impl<G> MainControl<G> {
     }
 
     pub(super) fn observed_suspension(&mut self, need: ResourceNeed) -> StepResult {
-        // The direct operation has already discarded its transient command
-        // attempt before this value escapes.  A host answer is retained by
-        // the outer candidate, but it cannot revive this MainControl object;
-        // only full checkpoint replay clears the latch.
-        self.resource_replay_required = true;
+        // A host answer is retained by the outer candidate, but it cannot
+        // revive this MainControl object; only full checkpoint replay clears
+        // the latch.
+        self.halted = true;
         if let Some(pending) = self.operation_observations.as_mut() {
             pending.record_resource(need.clone());
             pending

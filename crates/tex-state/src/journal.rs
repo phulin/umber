@@ -1,10 +1,10 @@
-//! Separate TeX group-save, checkpoint-delta, and operation-undo journals.
+//! Separate TeX group-save and checkpoint-delta journals.
 //!
 //! The group-save lane is one fixed-chunk sequence of ordered records.  A
 //! group keeps only a scalar mark into that sequence; entering a group does
 //! not allocate an entry-sized owner and an ordinary lookup maps an absolute
-//! save index directly to a chunk and slot.  Checkpoint deltas and operation
-//! inverses retain their existing independent representations.
+//! save index directly to a chunk and slot.  Checkpoint deltas keep their own
+//! fork-arena representation.
 
 use core::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -112,117 +112,7 @@ impl<G> JournalCursor<G> {
     }
 }
 
-/// Aggregate operation token for the independently transactional durable-box
-/// lane. Ordinary eqtb assignments have TeX's immediate semantics and are not
-/// mirrored into an executor-operation undo log.
-pub struct StateOperation<G> {
-    transaction_position: usize,
-    group_depth: usize,
-    save_stack: SaveStackProjection,
-    save_position: u32,
-    group_entries: usize,
-    group_sparse_start: Option<usize>,
-    durable_box: Option<crate::env::DurableBoxOperation>,
-    _brand: PhantomData<fn(&G) -> &G>,
-}
-
-impl<G> core::fmt::Debug for StateOperation<G> {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str("StateOperation(..)")
-    }
-}
-
-impl<G> StateOperation<G> {
-    pub(crate) const fn transaction(
-        position: usize,
-        group_depth: usize,
-        save_stack: SaveStackProjection,
-        save_position: u32,
-        group_entries: usize,
-        group_sparse_start: Option<usize>,
-    ) -> Self {
-        Self {
-            transaction_position: position,
-            group_depth,
-            save_stack,
-            save_position,
-            group_entries,
-            group_sparse_start,
-            durable_box: None,
-            _brand: PhantomData,
-        }
-    }
-
-    /// Reopens this operation in place at a new transaction position and
-    /// group coordinate, keeping its durable-box token.
-    #[inline]
-    pub(crate) fn reopen(
-        &mut self,
-        position: usize,
-        group_depth: usize,
-        save_stack: SaveStackProjection,
-        save_position: u32,
-        group_entries: usize,
-        group_sparse_start: Option<usize>,
-    ) {
-        self.transaction_position = position;
-        self.group_depth = group_depth;
-        self.save_stack = save_stack;
-        self.save_position = save_position;
-        self.group_entries = group_entries;
-        self.group_sparse_start = group_sparse_start;
-    }
-
-    pub(crate) fn durable_box_mut(&mut self) -> &mut crate::env::DurableBoxOperation {
-        self.durable_box
-            .as_mut()
-            .expect("aggregate operation carries its durable box lane")
-    }
-
-    pub(crate) const fn transaction_position(&self) -> usize {
-        self.transaction_position
-    }
-
-    pub(crate) const fn group_depth(&self) -> usize {
-        self.group_depth
-    }
-
-    /// The execution-group depth at which this operation opened. Restoring
-    /// the operation cannot reopen a group closed below this depth, so an
-    /// owner that closes one must settle the operation first.
-    #[must_use]
-    pub const fn opening_group_depth(&self) -> usize {
-        self.group_depth
-    }
-
-    pub(crate) const fn save_stack(&self) -> SaveStackProjection {
-        self.save_stack
-    }
-
-    pub(crate) const fn save_position(&self) -> u32 {
-        self.save_position
-    }
-
-    pub(crate) const fn group_entries(&self) -> usize {
-        self.group_entries
-    }
-
-    pub(crate) const fn group_sparse_start(&self) -> Option<usize> {
-        self.group_sparse_start
-    }
-
-    pub(crate) fn attach_durable_box(&mut self, operation: crate::env::DurableBoxOperation) {
-        assert!(self.durable_box.replace(operation).is_none());
-    }
-
-    pub(crate) fn take_durable_box(&mut self) -> crate::env::DurableBoxOperation {
-        self.durable_box
-            .take()
-            .expect("aggregate operation carries its durable box lane")
-    }
-}
-
-/// One exact prior cell value for group or operation rollback.
+/// One exact prior cell value for group or checkpoint rollback.
 pub(crate) struct Mutation<G> {
     cell: JournalCell,
     pub(crate) before: StateWord<G>,
@@ -514,8 +404,6 @@ pub(crate) struct SaveJournal<G> {
     checkpoint_entries: usize,
     save_serial: u64,
     checkpoint_fork: bool,
-    transaction_entries: Vec<Mutation<G>>,
-    transaction_depth: usize,
     save_stack: SaveStackProjection,
     save_position: u32,
     /// Reusable scratch for sparse-array records deferred to the restore
@@ -571,8 +459,6 @@ impl<G> SaveJournal<G> {
             // makes its first subsequent write capture one alternate.
             save_serial: 0,
             checkpoint_fork: false,
-            transaction_entries: Vec::new(),
-            transaction_depth: 0,
             save_stack: SaveStackProjection::default(),
             save_position: 0,
             sparse_scratch: Vec::new(),
@@ -597,12 +483,7 @@ impl<G> SaveJournal<G> {
         &mut self,
         group_depth: usize,
     ) -> Result<JournalCursor<G>, crate::StateError> {
-        if group_depth != 0
-            || !self.active_groups.is_empty()
-            || self.active_sequence.len != 0
-            || self.transaction_depth != 0
-            || !self.transaction_entries.is_empty()
-        {
+        if group_depth != 0 || !self.active_groups.is_empty() || self.active_sequence.len != 0 {
             return Err(crate::StateError::CheckpointIneligible);
         }
         let group_depth =
@@ -630,10 +511,7 @@ impl<G> SaveJournal<G> {
 
     #[must_use]
     pub(crate) fn checkpoint_eligible(&self) -> bool {
-        self.active_groups.is_empty()
-            && self.active_sequence.len == 0
-            && self.transaction_depth == 0
-            && self.transaction_entries.is_empty()
+        self.active_groups.is_empty() && self.active_sequence.len == 0
     }
 
     pub(crate) fn record_mutation(&mut self, mutation: Mutation<G>) {
@@ -681,12 +559,6 @@ impl<G> SaveJournal<G> {
                 .expect("group save stack exceeds u32 entries");
             let entry = JournalEntry::Mutation(mutation);
             self.save_stack.push(&entry, position);
-            if self.transaction_depth != 0 {
-                let JournalEntry::Mutation(mutation) = &entry else {
-                    unreachable!("group save entry is a mutation")
-                };
-                self.transaction_entries.push(mutation.clone());
-            }
             #[cfg(feature = "profiling")]
             self.record_profile_group_append();
             let grew = self.active_sequence.append(entry);
@@ -712,8 +584,6 @@ impl<G> SaveJournal<G> {
                 group.sparse_start = Some(index);
             }
             self.save_position = position;
-        } else if self.transaction_depth != 0 {
-            self.transaction_entries.push(mutation);
         }
         self.refresh_group_capacity_bytes();
         #[cfg(feature = "profiling")]
@@ -732,27 +602,7 @@ impl<G> SaveJournal<G> {
         before_save_serial: u64,
         saved_at: Option<u32>,
     ) -> bool {
-        before_save_serial != self.save_serial || saved_at.is_some() || self.transaction_depth != 0
-    }
-
-    pub(crate) fn begin_transaction(&mut self) -> usize {
-        let position = self.transaction_entries.len();
-        self.transaction_depth = self.transaction_depth.saturating_add(1);
-        position
-    }
-
-    pub(crate) const fn current_save_stack(&self) -> SaveStackProjection {
-        self.save_stack
-    }
-
-    pub(crate) const fn current_save_position(&self) -> u32 {
-        self.save_position
-    }
-
-    pub(crate) fn current_group_save_metadata(&self) -> (usize, Option<usize>) {
-        self.active_groups
-            .last()
-            .map_or((0, None), |group| (group.entries, group.sparse_start))
+        before_save_serial != self.save_serial || saved_at.is_some()
     }
 
     pub(crate) fn take_sparse_scratch(&mut self) -> Vec<(usize, Mutation<G>)> {
@@ -763,75 +613,6 @@ impl<G> SaveJournal<G> {
         scratch.clear();
         self.sparse_scratch = scratch;
         self.refresh_group_capacity_bytes();
-    }
-
-    /// Settles the innermost transaction's suffix and reopens it in place,
-    /// keeping the transaction depth. At depth one every entry belongs to
-    /// the settled operation, so the whole suffix is dead.
-    #[inline]
-    pub(crate) fn roll_transaction(&mut self) -> usize {
-        debug_assert!(self.transaction_depth != 0, "state transaction is active");
-        if self.transaction_depth == 1 {
-            self.transaction_entries.clear();
-        }
-        self.transaction_entries.len()
-    }
-
-    pub(crate) fn commit_transaction(&mut self, position: usize) {
-        assert!(self.transaction_depth != 0, "state transaction is active");
-        assert!(position <= self.transaction_entries.len());
-        self.transaction_depth -= 1;
-        if self.transaction_depth == 0 {
-            self.transaction_entries.clear();
-        }
-    }
-
-    pub(crate) fn transaction_entry(&self, index: usize) -> Option<Mutation<G>> {
-        self.transaction_entries.get(index).cloned()
-    }
-
-    pub(crate) fn transaction_len(&self) -> usize {
-        self.transaction_entries.len()
-    }
-
-    pub(crate) fn finish_transaction_rollback(&mut self, position: usize) {
-        assert!(self.transaction_depth != 0, "state transaction is active");
-        self.transaction_entries.truncate(position);
-        self.transaction_depth -= 1;
-    }
-
-    pub(crate) fn rollback_group_suffix(
-        &mut self,
-        group_depth: usize,
-        save_stack: SaveStackProjection,
-        save_position: u32,
-        group_entries: usize,
-        group_sparse_start: Option<usize>,
-    ) -> bool {
-        if self.active_groups.len() < group_depth {
-            return false;
-        }
-        while self.active_groups.len() > group_depth {
-            let group = self.active_groups.pop().expect("group suffix is nonempty");
-            self.active_sequence.truncate(group.start);
-        }
-        let save_position = usize::try_from(save_position).ok();
-        let Some(save_position) = save_position else {
-            return false;
-        };
-        if save_position > self.active_sequence.len {
-            return false;
-        }
-        self.active_sequence.truncate(save_position);
-        if let Some(group) = self.active_groups.last_mut() {
-            group.entries = group_entries;
-            group.sparse_start = group_sparse_start;
-        }
-        self.save_stack = save_stack;
-        self.save_position =
-            u32::try_from(save_position).expect("group save stack position fits u32");
-        self.refresh_group_capacity_bytes();
-        true
     }
 
     /// The monotonic serial written directly into every cell mutated in the
@@ -930,18 +711,12 @@ impl<G> SaveJournal<G> {
     pub(crate) fn retained_len(&self) -> usize {
         self.group_save_len()
             .saturating_add(self.checkpoint_entries)
-            .saturating_add(self.transaction_entries.len())
     }
 
     #[must_use]
     pub(crate) const fn retained_bytes(&self) -> usize {
         self.group_capacity_bytes
             .saturating_add(self.checkpoint_capacity_bytes)
-            .saturating_add(
-                self.transaction_entries
-                    .capacity()
-                    .saturating_mul(core::mem::size_of::<Mutation<G>>()),
-            )
     }
 
     #[cfg(test)]
@@ -1148,10 +923,7 @@ impl<G> SaveJournal<G> {
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self) -> Result<(), crate::StateError> {
-        if !self.checkpoint_fork
-            || !self.active_groups.is_empty()
-            || self.active_sequence.len != 0
-            || self.transaction_depth != 0
+        if !self.checkpoint_fork || !self.active_groups.is_empty() || self.active_sequence.len != 0
         {
             return Err(crate::StateError::CheckpointIneligible);
         }
@@ -1207,10 +979,7 @@ impl<G> SaveJournal<G> {
     /// Prefix reclamation does not restore state or consume ordinary group
     /// saves. It remains valid during TeX's final cleanup with open groups.
     pub(crate) fn validate_release_cursor(&self, cursor: JournalCursor<G>) -> bool {
-        self.validate_cursor_shape(cursor)
-            && self.transaction_depth == 0
-            && self.transaction_entries.is_empty()
-            && !self.checkpoint_fork
+        self.validate_cursor_shape(cursor) && !self.checkpoint_fork
     }
 
     #[must_use]
@@ -1218,20 +987,14 @@ impl<G> SaveJournal<G> {
         self.validate_cursor_shape(cursor)
             && self.active_groups.is_empty()
             && self.active_sequence.len == 0
-            && self.transaction_depth == 0
-            && self.transaction_entries.is_empty()
     }
 
-    /// Validates the retained checkpoint coordinate after a direct execution
-    /// attempt has been discarded.  The target is still an outer level-zero
-    /// mark, but the abandoned scanner may have left ordinary group-save
-    /// records in the live suffix; the restore operation owns replacing that
-    /// suffix.  A live state transaction is not permitted across this seam:
-    /// `discard_direct_operation` must have closed it first.
+    /// Validates the retained checkpoint coordinate after a halted session.
+    /// The target is still an outer level-zero mark, but the interrupted
+    /// command may have left ordinary group-save records in the live suffix;
+    /// the restore operation owns replacing that suffix.
     pub(crate) fn validate_cursor_after_replay(&self, cursor: JournalCursor<G>) -> bool {
         self.validate_cursor_shape(cursor)
-            && self.transaction_depth == 0
-            && self.transaction_entries.is_empty()
     }
 
     fn validate_cursor_shape(&self, cursor: JournalCursor<G>) -> bool {
@@ -1281,11 +1044,6 @@ impl<G> SaveJournal<G> {
     fn retained_bytes_census(&self) -> usize {
         self.group_capacity_bytes_census()
             .saturating_add(self.checkpoint_pool.allocated_heap_bytes())
-            .saturating_add(
-                self.transaction_entries
-                    .capacity()
-                    .saturating_mul(core::mem::size_of::<Mutation<G>>()),
-            )
     }
 
     #[cfg(test)]
@@ -1394,8 +1152,7 @@ impl<G> Drop for SaveJournal<G> {
             entries: u64::try_from(self.retained_len()).unwrap_or(u64::MAX),
             capacity: u64::try_from(
                 self.group_mutation_capacity()
-                    .saturating_add(self.checkpoint_pool.chunk_capacity())
-                    .saturating_add(self.transaction_entries.capacity()),
+                    .saturating_add(self.checkpoint_pool.chunk_capacity()),
             )
             .unwrap_or(u64::MAX),
             peak_entries: u64::try_from(self.profile.peak_entries).unwrap_or(u64::MAX),
@@ -1411,16 +1168,6 @@ impl<G> Drop for SaveJournal<G> {
                 .unwrap_or(u64::MAX),
             checkpoint_entry_size: u64::try_from(core::mem::size_of::<CheckpointDelta<G>>())
                 .unwrap_or(u64::MAX),
-            operation_entries: u64::try_from(self.transaction_entries.len()).unwrap_or(u64::MAX),
-            operation_capacity: u64::try_from(self.transaction_entries.capacity())
-                .unwrap_or(u64::MAX),
-            operation_entry_size: u64::try_from(core::mem::size_of::<Mutation<G>>())
-                .unwrap_or(u64::MAX),
-            // Direct stamps live in their authoritative dense cells. The old
-            // hash-table occupancy controls remain zero for profile schema
-            // compatibility.
-            stamp_entries: 0,
-            stamp_capacity: 0,
             mutations: self.profile.mutations,
             mutation_words: self.profile.mutation_words,
             group_enters: self.profile.group_enters,

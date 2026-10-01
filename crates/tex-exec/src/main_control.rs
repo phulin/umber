@@ -437,16 +437,10 @@ pub struct MainControl<G> {
     /// checkpointed, compared for resource identity, or retained across the
     /// next drive.
     declined_resource_attempt: Option<ResourceNeed>,
-    /// A direct operation has been fully unwound at a resource boundary.
-    /// Only aggregate checkpoint replay clears this latch; answering the
-    /// detached request in-place must not make the old execution object look
-    /// resumable, since executor-side alignment/output/scanner roots are not
-    /// part of the direct-operation rollback mark.
-    resource_replay_required: bool,
-    /// First recoverable evidence retained with whichever typed operation is
-    /// currently suspended. This is run-owned, never checkpointed, and is
-    /// restored into that operation's DiagnosticEffects exactly once.
-    pending_first_recoverable_diagnostic: Option<tex_state::diagnostic::RecoverableDiagnostic>,
+    /// A command failed or suspended mid-flight. Owners keep whatever the
+    /// command had already written, so only a full checkpoint restore clears
+    /// this latch; nothing here unwinds a partial command.
+    halted: bool,
     /// Set exactly when the runner receives End. No later delivery is legal.
     ended: bool,
     /// TeX82 §76's `history=fatal_error_stop`, carrying §93/§94/§95's payload.
@@ -1276,8 +1270,7 @@ impl<G> Default for MainControl<G> {
             job_start_eligibility: Some(crate::checkpoint::CheckpointEligibility::job_start()),
             pending_resource_site: None,
             declined_resource_attempt: None,
-            resource_replay_required: false,
-            pending_first_recoverable_diagnostic: None,
+            halted: false,
             ended: false,
             fatal: None,
             captured_fatal_origin: None,
@@ -1387,22 +1380,7 @@ impl<G> MainControl<G> {
         self
     }
 
-    /// Clears detached diagnostic evidence before the command timeline returns
-    /// to its accepted checkpoint lineage. Resource operations are already
-    /// fully unwound at the NeedResource boundary, so no command attempt or
-    /// caller continuation needs a second settlement path here.
-    pub(crate) fn cancel_external_attempt_for_checkpoint_settlement(
-        &mut self,
-        _stores: &Universe<G>,
-    ) {
-        self.pending_first_recoverable_diagnostic = None;
-    }
-
-    pub(crate) fn into_rejected_checkpoint_command_with_state(
-        mut self,
-        stores: &Universe<G>,
-    ) -> CommandState<G> {
-        self.cancel_external_attempt_for_checkpoint_settlement(stores);
+    pub(crate) fn into_rejected_checkpoint_command(self) -> CommandState<G> {
         let (mut command, control) = self.into_checkpoint_candidate_parts();
         control.reject();
         command.reject_checkpoint_candidate();
@@ -1418,8 +1396,7 @@ impl<G> MainControl<G> {
             && !self.page_region_succession_pending
             && self.immediate_prints.is_empty()
             && self.pending_resource_site.is_none()
-            && !self.resource_replay_required
-            && self.pending_first_recoverable_diagnostic.is_none()
+            && !self.halted
             && !self.boxes.output_routine_active
             && !PendingPageOutputFacts::capture(
                 &stores.command_context().expect("terminal owner admission"),
@@ -2012,7 +1989,7 @@ impl<G> MainControl<G> {
         self.paragraph_checkpoint_cut = false;
         self.pending_resource_site = None;
         self.declined_resource_attempt = None;
-        self.resource_replay_required = false;
+        self.halted = false;
         self.ended = false;
         self.fatal = None;
         self.captured_fatal_origin = None;
@@ -2420,9 +2397,9 @@ impl<G> MainControl<G> {
         self.declined_resource_attempt.take()
     }
 
-    fn ensure_resource_replay_boundary(&self) -> Result<(), ExecError> {
-        if self.resource_replay_required {
-            Err(ExecError::ResourceReplayRequired)
+    fn ensure_not_halted(&self) -> Result<(), ExecError> {
+        if self.halted {
+            Err(ExecError::Halted)
         } else {
             Ok(())
         }
@@ -2461,7 +2438,7 @@ impl<G> MainControl<G> {
             && !self.page_region_succession_pending
             && self.immediate_prints.is_empty()
             && self.pending_resource_site.is_none()
-            && !self.resource_replay_required
+            && !self.halted
             && !self.boxes.output_routine_active
             && self.modes.restart_checkpoint_is_quiescent();
         restartable.then(|| {
@@ -2516,7 +2493,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         request: AlignmentRequest,
     ) -> Result<(), ExecError> {
-        self.ensure_resource_replay_boundary()?;
+        self.ensure_not_halted()?;
         let finished = matches!(request, AlignmentRequest::Finish(_));
         let preamble = matches!(request, AlignmentRequest::Preamble(_));
         let identity = match request {
@@ -2884,17 +2861,14 @@ impl<G> MainControl<G> {
 
         loop {
             let mut host_preparation = OperationPreparation::new();
-            // Resource misses unwind this entire direct operation. The next
-            // host drive starts from the retained full checkpoint (or, for a
-            // direct caller, from the ordinary semantic rollback point); no
-            // command, scanner, expansion, or caller frame is parked here.
-            let mut operation_mark = self.begin_direct_operation(stores, None);
+            // A resource miss or error halts this session in place. The next
+            // host drive starts from the retained full checkpoint; no command,
+            // scanner, expansion, or caller frame is parked here.
+            let mut operation = self.begin_direct_operation();
             let mut diagnostic_effects = DiagnosticEffects::new();
-            self.restore_first_recoverable_after_retry(&mut diagnostic_effects);
-            // A cascading §1026 page break can become ready while the prior
-            // operation still owns a rollback-restorable mode root. Resume
-            // that builder continuation in its own journaled operation before
-            // delivering another TeX command.
+            // A cascading §1026 page break can become ready after the prior
+            // operation. Resume that builder continuation in its own
+            // operation before delivering another TeX command.
             let pending_page_output = if !self.page_region_succession_pending
                 && !self.boxes.output_routine_active
             {
@@ -2924,7 +2898,7 @@ impl<G> MainControl<G> {
                     Err(error) => {
                         return self.finish_direct_failure(
                             stores,
-                            operation_mark,
+                            operation,
                             error,
                             DirectFailureContext {
                                 operations: 1,
@@ -2942,10 +2916,10 @@ impl<G> MainControl<G> {
                 if let Some(error) =
                     self.admit_observed_receipt(stores, OperationTermination::Continue)
                 {
-                    self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                    self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                     return Err(error);
                 }
-                self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                 self.record_direct_episode_commit(
                     stores,
                     1,
@@ -2962,10 +2936,9 @@ impl<G> MainControl<G> {
                 // when that scanner requests one.
                 PreflightReadiness::Ready
             } else {
-                let mut admitted_operation_mark = Some(operation_mark);
-                let readiness = self.preflight_replay_delivery(
+                self.preflight_replay_delivery(
                     stores,
-                    &mut admitted_operation_mark,
+                    &mut operation,
                     &mut operations,
                     max_operations,
                     &mut host_preparation,
@@ -2973,10 +2946,7 @@ impl<G> MainControl<G> {
                     &mut command_episode,
                     &mut cold_operation,
                     &mut resource_provider,
-                );
-                operation_mark =
-                    admitted_operation_mark.expect("preflight returns its current operation mark");
-                readiness
+                )
             };
             if preflight_readiness == PreflightReadiness::Failed {
                 let error = command_episode.take_error();
@@ -3007,18 +2977,18 @@ impl<G> MainControl<G> {
                         .record_rollback(crate::SemanticEpisodeBarrier::Resource);
                 }
                 if matches!(result, Ok(StepResult::Suspended(_))) {
-                    self.discard_direct_operation(stores, operation_mark);
+                    self.halt_direct_operation(operation);
                 } else {
                     if result.is_err() {
                         let evidence_error = self.commit_direct_operation_after_error(
                             stores,
-                            operation_mark,
+                            operation,
                             &mut diagnostic_effects,
                             OperationTermination::Failed,
                         );
                         return evidence_error.map_or(result, Err);
                     }
-                    self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                    self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                 }
                 return result;
             }
@@ -3078,7 +3048,7 @@ impl<G> MainControl<G> {
                         if command_episode.has_unavailable(&cold_operation) {
                             let result = self.finish_unavailable_prepared_resource_operation(
                                 stores,
-                                operation_mark,
+                                operation,
                                 command_episode,
                                 cold_operation,
                                 barrier,
@@ -3101,7 +3071,7 @@ impl<G> MainControl<G> {
                             &mut diagnostic_effects,
                         );
                         if matches!(result, Ok(StepResult::Suspended(_))) {
-                            self.discard_direct_operation(stores, operation_mark);
+                            self.halt_direct_operation(operation);
                             self.advance_telemetry.rollbacks += 1;
                             #[cfg(feature = "profiling")]
                             self.episode_telemetry
@@ -3114,7 +3084,7 @@ impl<G> MainControl<G> {
                             let Err(error) = result else {
                                 self.commit_direct_operation(
                                     stores,
-                                    operation_mark,
+                                    operation,
                                     &mut diagnostic_effects,
                                 );
                                 return result;
@@ -3127,7 +3097,7 @@ impl<G> MainControl<G> {
                             }
                             let evidence_error = self.commit_direct_operation_after_error(
                                 stores,
-                                operation_mark,
+                                operation,
                                 &mut diagnostic_effects,
                                 OperationTermination::Failed,
                             );
@@ -3156,7 +3126,7 @@ impl<G> MainControl<G> {
                     Err(error) => {
                         return self.finish_direct_failure(
                             stores,
-                            operation_mark,
+                            operation,
                             error,
                             DirectFailureContext {
                                 operations: 1,
@@ -3174,10 +3144,10 @@ impl<G> MainControl<G> {
                 if let Some(error) =
                     self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
                 {
-                    self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                    self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                     return Err(error);
                 }
-                self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                 let tracked_result = tracked_mark.map(|mark| {
                     stores
                         .finish_dependency_region(mark)
@@ -3240,7 +3210,7 @@ impl<G> MainControl<G> {
                         if command_episode.has_unavailable(&cold_operation) {
                             let result = self.finish_unavailable_prepared_resource_operation(
                                 stores,
-                                operation_mark,
+                                operation,
                                 command_episode,
                                 cold_operation,
                                 barrier,
@@ -3255,19 +3225,19 @@ impl<G> MainControl<G> {
                         );
                         match result {
                             Ok(step @ StepResult::Suspended(_)) => {
-                                self.discard_direct_operation(stores, operation_mark);
+                                self.halt_direct_operation(operation);
                                 return Ok(step);
                             }
                             Ok(step) => {
                                 self.commit_direct_operation(
                                     stores,
-                                    operation_mark,
+                                    operation,
                                     &mut diagnostic_effects,
                                 );
                                 return Ok(step);
                             }
                             Err(error) => {
-                                self.discard_direct_operation(stores, operation_mark);
+                                self.halt_direct_operation(operation);
                                 Self::publish_pdf_fatal_error(stores, &error)?;
                                 return Err(error);
                             }
@@ -3311,14 +3281,7 @@ impl<G> MainControl<G> {
                             }
                         }
                         if error.as_fatal().is_none() && !error.requires_terminal_settlement() {
-                            if matches!(
-                                command_episode.phase,
-                                Some(PreflightCommandPhase::ImmediatePdfRetry(_))
-                            ) {
-                                command_episode.clear_cold(&mut cold_operation);
-                            }
-                            self.discard_direct_operation(stores, operation_mark);
-                            self.advance_telemetry.commits += 1;
+                            self.halt_direct_operation(operation);
                             let error = {
                                 let mut context =
                                     stores.command_context().expect("diagnostic admission");
@@ -3332,7 +3295,7 @@ impl<G> MainControl<G> {
                         }
                         return self.finish_direct_failure(
                             stores,
-                            operation_mark,
+                            operation,
                             error,
                             DirectFailureContext {
                                 operations: 1,
@@ -3350,10 +3313,10 @@ impl<G> MainControl<G> {
                 if let Some(error) =
                     self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
                 {
-                    self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                    self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                     return Err(error);
                 }
-                self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                 let tracked_result = tracked_mark.map(|mark| {
                     stores
                         .finish_dependency_region(mark)
@@ -3426,7 +3389,7 @@ impl<G> MainControl<G> {
                         if command_episode.has_unavailable(&cold_operation) {
                             return self.finish_unavailable_prepared_resource_operation(
                                 stores,
-                                operation_mark,
+                                operation,
                                 command_episode,
                                 cold_operation,
                                 barrier,
@@ -3439,13 +3402,13 @@ impl<G> MainControl<G> {
                             &mut diagnostic_effects,
                         );
                         if matches!(result, Ok(StepResult::Suspended(_))) {
-                            self.discard_direct_operation(stores, operation_mark);
+                            self.halt_direct_operation(operation);
                             return result;
                         }
                         let Err(error) = result else {
                             self.commit_direct_operation(
                                 stores,
-                                operation_mark,
+                                operation,
                                 &mut diagnostic_effects,
                             );
                             return result;
@@ -3466,7 +3429,7 @@ impl<G> MainControl<G> {
                         }
                         let evidence_error = self.commit_direct_operation_after_error(
                             stores,
-                            operation_mark,
+                            operation,
                             &mut diagnostic_effects,
                             OperationTermination::Failed,
                         );
@@ -3522,8 +3485,7 @@ impl<G> MainControl<G> {
                                 command_episode.has_unavailable(&cold_operation),
                                 "nested resource suspension reports its enclosing operation"
                             );
-                            self.discard_direct_operation(stores, operation_mark);
-                            self.retain_first_recoverable_for_retry(&mut diagnostic_effects);
+                            self.halt_direct_operation(operation);
                             self.advance_telemetry.rollbacks += 1;
                             #[cfg(feature = "profiling")]
                             self.episode_telemetry
@@ -3536,7 +3498,7 @@ impl<G> MainControl<G> {
                     }
                     return self.finish_direct_failure(
                         stores,
-                        operation_mark,
+                        operation,
                         error,
                         DirectFailureContext {
                             operations,
@@ -3554,10 +3516,10 @@ impl<G> MainControl<G> {
             if let Some(error) =
                 self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
             {
-                self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                 return Err(error);
             }
-            self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+            self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
             let tracked_result = tracked_mark.map(|mark| {
                 stores
                     .finish_dependency_region(mark)
@@ -3582,47 +3544,36 @@ impl<G> MainControl<G> {
         }
     }
 
+    /// Runs up to `max_operations` commands. Every error leaves owners
+    /// wherever the failing command stopped, so it latches [`Self::halted`]
+    /// until a full checkpoint restore replaces this control.
     fn execute_operation(
         &mut self,
         stores: &mut Universe<G>,
         max_operations: usize,
         tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
+        resource_provider: Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<StepResult, ExecError> {
         // Once execution begins, this control can no longer truthfully
         // produce job-start restart eligibility even if the caller skipped
         // the ordinary initial publication hook.
         self.job_start_eligibility = None;
-        self.execute_direct_episode(stores, max_operations, tracked_region, None)
+        let result =
+            self.execute_direct_episode(stores, max_operations, tracked_region, resource_provider);
+        if result.is_err() {
+            self.halted = true;
+        }
+        result
     }
 
-    fn execute_operation_with_resource_provider(
-        &mut self,
-        stores: &mut Universe<G>,
-        max_operations: usize,
-        tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
-        resource_provider: &mut dyn ResourceProvider<G>,
-    ) -> Result<StepResult, ExecError> {
-        self.job_start_eligibility = None;
-        self.execute_direct_episode(
-            stores,
-            max_operations,
-            tracked_region,
-            Some(resource_provider),
-        )
-    }
-
-    /// Attempts one atomic main-control operation.
-    ///
-    /// Missing retained input is returned as a typed suspension after the
-    /// direct operation has unwound completely. The outer checkpoint owner
-    /// must restore a full checkpoint before entering this control again;
-    /// this object never resumes a parked scanner or caller frame.
-    pub fn advance(&mut self, stores: &mut Universe<G>) -> Result<StepResult, ExecError> {
+    /// Shared entry preamble. Returns `false` when a recorded fatal stop
+    /// leaves only the terminal `End` step to deliver.
+    fn begin_advance(&mut self, stores: &mut Universe<G>) -> Result<bool, ExecError> {
         if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
         self.declined_resource_attempt = None;
-        self.ensure_resource_replay_boundary()?;
+        self.ensure_not_halted()?;
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -3631,10 +3582,43 @@ impl<G> MainControl<G> {
             self.install_pure_memo_runtime(runtime);
         }
         stores.attach_pure_memo_capability(&self.pure_memo);
-        if self.fatal.is_some() {
+        Ok(self.fatal.is_none())
+    }
+
+    fn advance_chunk(
+        &mut self,
+        stores: &mut Universe<G>,
+        max_operations: usize,
+        resource_provider: Option<&mut dyn ResourceProvider<G>>,
+    ) -> Result<StepResult, ExecError> {
+        if !self.begin_advance(stores)? {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
-        self.execute_operation(stores, 1, None)
+        self.execute_operation(stores, max_operations, None, resource_provider)
+    }
+
+    fn advance_tracked(
+        &mut self,
+        stores: &mut Universe<G>,
+        resource_provider: Option<&mut dyn ResourceProvider<G>>,
+    ) -> Result<TrackedStepResult, ExecError> {
+        let mut region = None;
+        let step = if self.begin_advance(stores)? {
+            self.execute_operation(stores, 1, Some(&mut region), resource_provider)?
+        } else {
+            StepResult::Progress(MainControlStep::End)
+        };
+        Ok(TrackedStepResult { step, region })
+    }
+
+    /// Attempts one main-control operation.
+    ///
+    /// Missing retained input is returned as a typed suspension that halts
+    /// this control. The outer checkpoint owner must restore a full
+    /// checkpoint before entering main control again; this object never
+    /// resumes a parked scanner or caller frame.
+    pub fn advance(&mut self, stores: &mut Universe<G>) -> Result<StepResult, ExecError> {
+        self.advance_chunk(stores, 1, None)
     }
 
     /// Provider-aware ordinary advance. A ready or unavailable resource is
@@ -3645,46 +3629,14 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         resource_provider: &mut dyn ResourceProvider<G>,
     ) -> Result<StepResult, ExecError> {
-        if self.ended {
-            return Err(ExecError::ExecutionAlreadyTerminated);
-        }
-        self.declined_resource_attempt = None;
-        self.ensure_resource_replay_boundary()?;
-        if !self.pure_memo_initialized {
-            let runtime = stores.take_pure_memo_config().map_or_else(
-                tex_state::PureMemoRuntime::default,
-                tex_state::PureMemoRuntime::new,
-            );
-            self.install_pure_memo_runtime(runtime);
-        }
-        stores.attach_pure_memo_capability(&self.pure_memo);
-        if self.fatal.is_some() {
-            return Ok(StepResult::Progress(MainControlStep::End));
-        }
-        self.execute_operation_with_resource_provider(stores, 1, None, resource_provider)
+        self.advance_chunk(stores, 1, Some(resource_provider))
     }
 
-    /// Advances one production driver chunk under a single bounded retry
-    /// point. The public one-operation [`Self::advance`] contract remains
-    /// available to diagnostic and focused-test callers.
+    /// Advances one production driver chunk. The public one-operation
+    /// [`Self::advance`] contract remains available to diagnostic and
+    /// focused-test callers.
     pub fn advance_episode(&mut self, stores: &mut Universe<G>) -> Result<StepResult, ExecError> {
-        if self.ended {
-            return Err(ExecError::ExecutionAlreadyTerminated);
-        }
-        self.declined_resource_attempt = None;
-        self.ensure_resource_replay_boundary()?;
-        if !self.pure_memo_initialized {
-            let runtime = stores.take_pure_memo_config().map_or_else(
-                tex_state::PureMemoRuntime::default,
-                tex_state::PureMemoRuntime::new,
-            );
-            self.install_pure_memo_runtime(runtime);
-        }
-        stores.attach_pure_memo_capability(&self.pure_memo);
-        if self.fatal.is_some() {
-            return Ok(StepResult::Progress(MainControlStep::End));
-        }
-        self.execute_operation(stores, 256, None)
+        self.advance_chunk(stores, 256, None)
     }
 
     /// Provider-aware production-sized episode advance.
@@ -3693,23 +3645,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         resource_provider: &mut dyn ResourceProvider<G>,
     ) -> Result<StepResult, ExecError> {
-        if self.ended {
-            return Err(ExecError::ExecutionAlreadyTerminated);
-        }
-        self.declined_resource_attempt = None;
-        self.ensure_resource_replay_boundary()?;
-        if !self.pure_memo_initialized {
-            let runtime = stores.take_pure_memo_config().map_or_else(
-                tex_state::PureMemoRuntime::default,
-                tex_state::PureMemoRuntime::new,
-            );
-            self.install_pure_memo_runtime(runtime);
-        }
-        stores.attach_pure_memo_capability(&self.pure_memo);
-        if self.fatal.is_some() {
-            return Ok(StepResult::Progress(MainControlStep::End));
-        }
-        self.execute_operation_with_resource_provider(stores, 256, None, resource_provider)
+        self.advance_chunk(stores, 256, Some(resource_provider))
     }
 
     /// Attempts one ordinary main-control operation while collecting detached
@@ -3717,33 +3653,12 @@ impl<G> MainControl<G> {
     ///
     /// Recording failure never changes the TeX result. A committed supported
     /// operation returns a record, a fail-closed barrier returns its typed
-    /// rejection, and rollback or resource suspension returns no region.
+    /// rejection, and a failure or resource suspension returns no region.
     pub fn advance_with_tracked_region(
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<TrackedStepResult, ExecError> {
-        if self.ended {
-            return Err(ExecError::ExecutionAlreadyTerminated);
-        }
-        self.declined_resource_attempt = None;
-        self.ensure_resource_replay_boundary()?;
-        if !self.pure_memo_initialized {
-            let runtime = stores.take_pure_memo_config().map_or_else(
-                tex_state::PureMemoRuntime::default,
-                tex_state::PureMemoRuntime::new,
-            );
-            self.install_pure_memo_runtime(runtime);
-        }
-        stores.attach_pure_memo_capability(&self.pure_memo);
-        if self.fatal.is_some() {
-            return Ok(TrackedStepResult {
-                step: StepResult::Progress(MainControlStep::End),
-                region: None,
-            });
-        }
-        let mut region = None;
-        let step = self.execute_operation(stores, 1, Some(&mut region))?;
-        Ok(TrackedStepResult { step, region })
+        self.advance_tracked(stores, None)
     }
 
     /// Provider-aware tracked advance used by observed dependency routes.
@@ -3752,33 +3667,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         resource_provider: &mut dyn ResourceProvider<G>,
     ) -> Result<TrackedStepResult, ExecError> {
-        if self.ended {
-            return Err(ExecError::ExecutionAlreadyTerminated);
-        }
-        self.declined_resource_attempt = None;
-        self.ensure_resource_replay_boundary()?;
-        if !self.pure_memo_initialized {
-            let runtime = stores.take_pure_memo_config().map_or_else(
-                tex_state::PureMemoRuntime::default,
-                tex_state::PureMemoRuntime::new,
-            );
-            self.install_pure_memo_runtime(runtime);
-        }
-        stores.attach_pure_memo_capability(&self.pure_memo);
-        if self.fatal.is_some() {
-            return Ok(TrackedStepResult {
-                step: StepResult::Progress(MainControlStep::End),
-                region: None,
-            });
-        }
-        let mut region = None;
-        let step = self.execute_operation_with_resource_provider(
-            stores,
-            1,
-            Some(&mut region),
-            resource_provider,
-        )?;
-        Ok(TrackedStepResult { step, region })
+        self.advance_tracked(stores, Some(resource_provider))
     }
 
     /// Expands one command for an analysis host without entering ordinary
@@ -3810,13 +3699,12 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         mut resource_provider: Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<DiagnosticStepResult, ExecError> {
-        self.ensure_resource_replay_boundary()?;
+        self.ensure_not_halted()?;
         let mut command_episode = CommandEpisode::default();
         let mut cold_operation = ColdOperationSlot::default();
         let mut host_preparation = OperationPreparation::new();
-        let operation_mark = self.begin_direct_operation(stores, None);
+        let operation = self.begin_direct_operation();
         let mut diagnostic_effects = DiagnosticEffects::new();
-        self.restore_first_recoverable_after_retry(&mut diagnostic_effects);
         if !host_preparation.has_delivery() {
             self.ensure_primitive_handles(stores);
             let (status, destination, cursor, source_provenance) = {
@@ -3875,13 +3763,9 @@ impl<G> MainControl<G> {
                     if matches!(result, Ok(StepResult::Suspended(_))) {
                         // The host retry starts from a retained full
                         // checkpoint; no expansion or caller frame survives.
-                        self.discard_direct_operation(stores, operation_mark);
+                        self.halt_direct_operation(operation);
                     } else {
-                        self.commit_direct_operation(
-                            stores,
-                            operation_mark,
-                            &mut diagnostic_effects,
-                        );
+                        self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                     }
                     return match result? {
                         StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
@@ -3897,7 +3781,7 @@ impl<G> MainControl<G> {
                 }
                 tex_command::DeliveryStatus::End => {
                     debug_assert!(destination.is_none());
-                    self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                    self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                     return Ok(DiagnosticStepResult::Progress(DiagnosticStep::EndOfInput));
                 }
                 _ => unreachable!("diagnostic expanded delivery returns command or end"),
@@ -3909,13 +3793,12 @@ impl<G> MainControl<G> {
                     control_sequence: command.control_sequence(),
                     source_provenance,
                 };
-                self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                 return Ok(DiagnosticStepResult::Progress(step));
             }
             command_episode.admit_settled(command, Some(cursor));
             host_preparation.fill_delivery(OperationDelivery::Command);
         }
-        let mode_mark = self.modes.begin_journal();
         let applied = match self.execute_typed_operation(
             stores,
             &mut host_preparation,
@@ -3933,14 +3816,11 @@ impl<G> MainControl<G> {
                     command_episode.take_error(),
                     &mut diagnostic_effects,
                 );
-                self.modes
-                    .rollback_journal(mode_mark)
-                    .expect("diagnostic assignment owns the mode mark");
                 if matches!(result, Ok(StepResult::Suspended(_))) {
                     let _ = unavailable;
-                    self.discard_direct_operation(stores, operation_mark);
+                    self.halt_direct_operation(operation);
                 } else {
-                    self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                    self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                 }
                 return match result? {
                     StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
@@ -3954,20 +3834,14 @@ impl<G> MainControl<G> {
         };
         match applied {
             Ok(_) => {
-                self.modes
-                    .commit_journal(mode_mark)
-                    .expect("diagnostic assignment owns the mode mark");
-                self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                self.commit_direct_operation(stores, operation, &mut diagnostic_effects);
                 stores
                     .world_mut()
                     .publish_diagnostic_effects_preserving(&mut diagnostic_effects);
                 Ok(DiagnosticStepResult::Progress(DiagnosticStep::Assignment))
             }
             Err(error) => {
-                self.modes
-                    .rollback_journal(mode_mark)
-                    .expect("diagnostic assignment owns the mode mark");
-                self.discard_direct_operation(stores, operation_mark);
+                self.halt_direct_operation(operation);
                 let mut stores = stores.command_context().expect("live generation");
                 Err(error.freeze_diagnostic_origin(
                     &mut stores,
@@ -6007,22 +5881,9 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         observer: &mut dyn CommandObserver,
-        mut resource_provider: Option<&mut dyn ResourceProvider<G>>,
+        resource_provider: Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<StepResult, ExecError> {
-        if self.ended {
-            return Err(ExecError::ExecutionAlreadyTerminated);
-        }
-        self.declined_resource_attempt = None;
-        self.ensure_resource_replay_boundary()?;
-        if !self.pure_memo_initialized {
-            let runtime = stores.take_pure_memo_config().map_or_else(
-                tex_state::PureMemoRuntime::default,
-                tex_state::PureMemoRuntime::new,
-            );
-            self.install_pure_memo_runtime(runtime);
-        }
-        stores.attach_pure_memo_capability(&self.pure_memo);
-        if self.fatal.is_some() {
+        if !self.begin_advance(stores)? {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
         let effect_start = stores.world().effect_pos();
@@ -6035,15 +5896,7 @@ impl<G> MainControl<G> {
             effect: effect_start.raw(),
             artifact: artifact_start,
         });
-        let stepped = match resource_provider.as_mut() {
-            Some(resource_provider) => self.execute_operation_with_resource_provider(
-                stores,
-                1,
-                None,
-                &mut **resource_provider,
-            ),
-            None => self.execute_operation(stores, 1, None),
-        };
+        let stepped = self.execute_operation(stores, 1, None, resource_provider);
         let mut pending = self.operation_observations.take().unwrap_or_default();
         self.operation_receipt_start.take();
         match &stepped {
@@ -6526,13 +6379,7 @@ impl<G> MainControl<G> {
                         return Err(TypedOperationError::Preparation(frame.take_error()));
                     }
                 };
-                if frame.command.is_none()
-                    && frame.has_preflight()
-                    && !matches!(
-                        frame.phase,
-                        Some(PreflightCommandPhase::ImmediatePdfRetry(_))
-                    )
-                {
+                if frame.command.is_none() && frame.has_preflight() {
                     frame.clear_preflight();
                 }
                 #[cfg(feature = "profiling")]
@@ -6612,16 +6459,6 @@ impl<G> MainControl<G> {
         output_start: OperationOutputStart,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, TypedOperationError> {
-        let immediate_pdf_retry = match frame.unavailable_mut(cold) {
-            ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfExtensionInDviMode(
-                primitive,
-            )) => Some(*primitive),
-            _ => None,
-        };
-        if let Some(primitive) = immediate_pdf_retry {
-            frame.clear_preflight();
-            frame.admit_immediate_pdf(primitive);
-        }
         let episode = self.prepare_cold_execution_episode(
             stores,
             frame.unavailable_mut(cold),

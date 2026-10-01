@@ -228,7 +228,7 @@ impl Drop for HotCoreProfilingReport {
         );
         let journal = tex_state::measurement::save_journal_census();
         eprintln!(
-            "SAVE_JOURNAL_CENSUS entries={} capacity={} peak_entries={} entry_size={} mutation_size={} group_frame_size={} semantic_live_bytes={} spare_capacity_bytes={} group_entries={} group_capacity={} group_entry_size={} checkpoint_entries={} checkpoint_capacity={} checkpoint_entry_size={} operation_entries={} operation_capacity={} operation_entry_size={} stamp_entries={} stamp_capacity={} mutations={} mutation_words={:?} group_enters={} group_exits={} append_calls={} growths={} bytes_moved_by_growth={} maximum_group_depth={} entries_at_maximum_group_depth={}",
+            "SAVE_JOURNAL_CENSUS entries={} capacity={} peak_entries={} entry_size={} mutation_size={} group_frame_size={} semantic_live_bytes={} spare_capacity_bytes={} group_entries={} group_capacity={} group_entry_size={} checkpoint_entries={} checkpoint_capacity={} checkpoint_entry_size={} mutations={} mutation_words={:?} group_enters={} group_exits={} append_calls={} growths={} bytes_moved_by_growth={} maximum_group_depth={} entries_at_maximum_group_depth={}",
             journal.entries,
             journal.capacity,
             journal.peak_entries,
@@ -243,11 +243,7 @@ impl Drop for HotCoreProfilingReport {
                         .checkpoint_entries
                         .saturating_mul(journal.checkpoint_entry_size)
                 )
-                .saturating_add(
-                    journal
-                        .operation_entries
-                        .saturating_mul(journal.operation_entry_size)
-                ),
+
             journal
                 .group_capacity
                 .saturating_sub(journal.group_entries)
@@ -258,23 +254,13 @@ impl Drop for HotCoreProfilingReport {
                         .saturating_sub(journal.checkpoint_entries)
                         .saturating_mul(journal.checkpoint_entry_size)
                 )
-                .saturating_add(
-                    journal
-                        .operation_capacity
-                        .saturating_sub(journal.operation_entries)
-                        .saturating_mul(journal.operation_entry_size)
-                ),
+
             journal.group_entries,
             journal.group_capacity,
             journal.group_entry_size,
             journal.checkpoint_entries,
             journal.checkpoint_capacity,
             journal.checkpoint_entry_size,
-            journal.operation_entries,
-            journal.operation_capacity,
-            journal.operation_entry_size,
-            journal.stamp_entries,
-            journal.stamp_capacity,
             journal.mutations,
             journal.mutation_words,
             journal.group_enters,

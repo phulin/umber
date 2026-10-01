@@ -404,8 +404,8 @@ fn expanded_unterminated_body_recovers_at_end_and_exposes_collected_text() {
                 && partial == "A"
         ));
         command
-            .rollback_attempt_operation(operation)
-            .expect("rollback after unterminated expanded body");
+            .commit_attempt_operation(operation)
+            .expect("commit after unterminated expanded body");
         assert!(command.scratch.is_quiescent());
         assert!(command.attempt.is_empty());
     });

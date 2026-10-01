@@ -282,8 +282,12 @@ impl<G> CommandState<G> {
         self
     }
 
+    /// Returns a discarded candidate's owners to the accepted prefix. A
+    /// candidate is discarded whole, so an operation it halted mid-flight is
+    /// dropped with it.
     #[doc(hidden)]
     pub fn reject_checkpoint_candidate(&mut self) {
+        self.abandon_attempt_after_checkpoint_restore();
         self.alignment.suspended.reject_checkpoint_candidate();
         self.alignment.align_stack.reject_checkpoint_candidate();
         self.aftergroup_payloads.reject_checkpoint_candidate();

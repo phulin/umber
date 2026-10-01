@@ -369,20 +369,6 @@ mod main_memory_tests {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct EngineUsageOperationMark {
-    profile: crate::EngineCapacityProfile,
-    strings: usize,
-    characters: usize,
-    init_str_ptr: usize,
-    init_pool_ptr: usize,
-    max_strings: usize,
-    pool_size: usize,
-    recycled: crate::string_pool::RecycledStringPoolMark,
-    operation_depth: usize,
-    memory: MainMemoryRuntime,
-}
-
-#[derive(Clone, Copy, Debug)]
 pub(crate) struct EngineUsageCheckpoint {
     profile: crate::EngineCapacityProfile,
     strings: usize,
@@ -392,7 +378,6 @@ pub(crate) struct EngineUsageCheckpoint {
     max_strings: usize,
     pool_size: usize,
     recycled: crate::string_pool::RecycledStringPoolMark,
-    operation_depth: usize,
     memory: MainMemoryRuntime,
 }
 
@@ -413,7 +398,6 @@ pub(crate) struct EngineUsageRuntime {
     max_strings: usize,
     pool_size: usize,
     recycled: crate::string_pool::RecycledStringPool,
-    operation_depth: usize,
     memory: MainMemoryRuntime,
 }
 
@@ -430,7 +414,6 @@ impl Default for EngineUsageRuntime {
             max_strings: capacities.max_strings,
             pool_size: capacities.pool_size,
             recycled: crate::string_pool::RecycledStringPool::default(),
-            operation_depth: 0,
             memory: MainMemoryRuntime::default(),
         }
     }
@@ -447,7 +430,6 @@ impl EngineUsageRuntime {
             max_strings: self.max_strings,
             pool_size: self.pool_size,
             recycled: self.recycled.mark(),
-            operation_depth: self.operation_depth,
             memory: self.memory,
         }
     }
@@ -485,7 +467,6 @@ impl EngineUsageRuntime {
         self.init_pool_ptr = checkpoint.init_pool_ptr;
         self.max_strings = checkpoint.max_strings;
         self.pool_size = checkpoint.pool_size;
-        self.operation_depth = checkpoint.operation_depth;
         self.memory = checkpoint.memory;
     }
 
@@ -503,54 +484,6 @@ impl EngineUsageRuntime {
         if self.recycled.insert(value) {
             self.allocate_strings(1, value.len());
         }
-    }
-
-    pub(crate) fn begin_operation(&mut self) -> EngineUsageOperationMark {
-        let mark = EngineUsageOperationMark {
-            profile: self.profile,
-            strings: self.strings,
-            characters: self.characters,
-            init_str_ptr: self.init_str_ptr,
-            init_pool_ptr: self.init_pool_ptr,
-            max_strings: self.max_strings,
-            pool_size: self.pool_size,
-            recycled: self.recycled.mark(),
-            operation_depth: self.operation_depth,
-            memory: self.memory,
-        };
-        self.operation_depth = self
-            .operation_depth
-            .checked_add(1)
-            .expect("engine-usage operation nesting overflow");
-        mark
-    }
-
-    fn validate_operation(&self, mark: EngineUsageOperationMark) {
-        assert_eq!(
-            self.operation_depth,
-            mark.operation_depth + 1,
-            "engine-usage operations settle in strict nesting order"
-        );
-        self.recycled.assert_contains_mark(mark.recycled);
-    }
-
-    pub(crate) fn commit_operation(&mut self, mark: EngineUsageOperationMark) {
-        self.validate_operation(mark);
-        self.operation_depth = mark.operation_depth;
-    }
-
-    pub(crate) fn rollback_operation(&mut self, mark: EngineUsageOperationMark) {
-        self.validate_operation(mark);
-        self.recycled.rollback_to(mark.recycled);
-        self.profile = mark.profile;
-        self.strings = mark.strings;
-        self.characters = mark.characters;
-        self.init_str_ptr = mark.init_str_ptr;
-        self.init_pool_ptr = mark.init_pool_ptr;
-        self.max_strings = mark.max_strings;
-        self.pool_size = mark.pool_size;
-        self.memory = mark.memory;
-        self.operation_depth = mark.operation_depth;
     }
 
     pub(crate) fn select_etex26_profile(&mut self) {
@@ -647,7 +580,6 @@ impl EngineUsageRuntime {
             max_strings: state.max_strings,
             pool_size: state.pool_size,
             recycled: crate::string_pool::RecycledStringPool::from_format_strings(&state.recycled),
-            operation_depth: 0,
             memory,
         })
     }
@@ -718,18 +650,6 @@ impl<'a, G> CommandContext<'a, G> {
         }
     }
 
-    /// Opens one rollback suffix without ending the admitted command run.
-    ///
-    /// Main control uses this between adjacent ordinary commands.  Both the
-    /// dense state journal and durable-box owner are already borrowed by this
-    /// context, so rebuilding a [`crate::Universe`] admission here would add
-    /// no ownership proof.
-    pub fn begin_state_operation(&mut self) -> crate::StateOperation<G> {
-        let mut operation = self.admitted.state().begin_state_transaction();
-        operation.attach_durable_box(self.durable_boxes.begin_operation());
-        operation
-    }
-
     /// Reborrows the operation's World through the narrow input-resource
     /// capability. The provider call must finish before this closure returns;
     /// no World or input-state borrow can therefore survive a checkpoint or
@@ -739,38 +659,6 @@ impl<'a, G> CommandContext<'a, G> {
         operation: impl FnOnce(&mut dyn crate::InputReadState) -> T,
     ) -> T {
         operation(&mut self.resident.world.input_open_context())
-    }
-
-    /// Commits an operation opened by [`Self::begin_state_operation`].
-    pub fn commit_state_operation(&mut self, mut operation: crate::StateOperation<G>) {
-        let durable = operation.take_durable_box();
-        self.durable_boxes
-            .commit_operation(&mut self.page_nodes, durable);
-        self.admitted
-            .state()
-            .commit_state_transaction(operation.transaction_position());
-    }
-
-    /// Commits an operation opened by [`Self::begin_state_operation`] and
-    /// opens its successor in the same slot.
-    ///
-    /// The roll keeps the enclosing transaction open and updates the
-    /// operation in place; see `docs/positional_journal_marks.md`.
-    pub fn roll_state_operation(&mut self, operation: &mut crate::StateOperation<G>) {
-        self.durable_boxes
-            .roll_operation(&mut self.page_nodes, operation.durable_box_mut());
-        self.admitted.state().roll_state_transaction(operation);
-    }
-
-    /// Restores an operation opened by [`Self::begin_state_operation`].
-    pub fn restore_state_operation(
-        &mut self,
-        mut operation: crate::StateOperation<G>,
-    ) -> Result<(), StateError> {
-        let durable = operation.take_durable_box();
-        self.durable_boxes
-            .rollback_operation(&mut self.page_nodes, self.page, durable);
-        self.admitted.state().rollback_state_transaction(&operation)
     }
 
     /// Captures the current page suffix inside an admitted command run.
@@ -1734,8 +1622,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     /// Assigns a box whose original wrapper was consumed from an older
-    /// isolated page interval. The operation journal owns the reverse loan
-    /// until the command commits.
+    /// isolated page interval.
     pub fn assign_interleaved_page_box(
         &mut self,
         index: u16,
@@ -1748,20 +1635,17 @@ impl<'a, G> CommandContext<'a, G> {
         self.page_nodes
             .cancel_closure_build(build)
             .map_err(crate::NodePromotionError::Nodes)?;
-        let (durable, loan) = self
+        let durable = self
             .page_nodes
             .finish_interleaved_page_box(root, metadata, reset_shift)
             .map_err(crate::NodePromotionError::Nodes)?;
         let current_level = self.admitted.state_ref().current_level();
         let group_save_position = self.admitted.state_ref().save_stack_order_position();
         self.durable_boxes
-            .assign_with_page_loan(
+            .assign_with_group_position(
                 &mut self.page_nodes,
                 index,
-                crate::env::PageBoxAssignment {
-                    closure: durable,
-                    loan,
-                },
+                Some(durable),
                 scope,
                 current_level,
                 group_save_position,
@@ -1907,17 +1791,11 @@ impl<'a, G> CommandContext<'a, G> {
         source == u16::from(u8::MAX)
             && !self.page.output_box().is_empty()
             && self.page_nodes.can_take_output_carrier()
-            && !self.durable_boxes.has_pending_page_region_loan()
     }
 
     #[cfg(test)]
     pub(crate) fn testing_reject_output_carrier_after_seal(&mut self) {
         self.page_nodes.testing_reject_output_after_seal();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn testing_fail_next_box_history_copy(&mut self) {
-        self.durable_boxes.testing_fail_next_history_copy();
     }
 
     /// Formats the source and destination before the page carrier moves.
@@ -1999,8 +1877,6 @@ impl<'a, G> CommandContext<'a, G> {
                         BuiltBoxOrigin::SetBoxRegisterTakeOutputModeRoots
                     } else if !replay_boxes_clear {
                         BuiltBoxOrigin::SetBoxRegisterTakeOutputActiveBox
-                    } else if self.durable_boxes.has_pending_page_region_loan() {
-                        BuiltBoxOrigin::SetBoxRegisterTakeOutputPendingLoan
                     } else if self.page.has_output_successor_build() {
                         BuiltBoxOrigin::SetBoxRegisterTakeOutputReadyArmed
                     } else {
@@ -2387,13 +2263,9 @@ impl<'a, G> CommandContext<'a, G> {
         value: Scaled,
     ) -> bool {
         if index == u16::from(u8::MAX) && !self.page.output_box().is_empty() {
-            let inverse = self
-                .page
+            self.page
                 .set_output_box_dimension(&mut self.page_nodes, dimension, value)
                 .expect("page-owned output box has an exclusive root wrapper");
-            if let Some(inverse) = inverse {
-                self.durable_boxes.record_page_output_box_dimension(inverse);
-            }
             return true;
         }
         self.durable_boxes

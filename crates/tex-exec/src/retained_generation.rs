@@ -167,18 +167,13 @@ impl<'a, G> AttachedCheckpointControl<'a, G> {
     }
 
     /// Consumes a rooted live episode into the production aggregate
-    /// settlement shape. Any panic while cancelling a retained attempt occurs
-    /// before control leaves this guard, so `Drop` still parks both owners.
+    /// settlement shape.
     pub fn prepare_live_settlement(
         mut self,
     ) -> Result<crate::PreparedCheckpointControl, RetainedEngineAccessError> {
         if self.sidecars.command.is_some() {
             return Err(RetainedEngineAccessError::LiveAttachment);
         }
-        self.control
-            .as_mut()
-            .expect("the attached episode owns main control")
-            .cancel_external_attempt_for_checkpoint_settlement(self.universe);
         let control = self
             .control
             .take()
@@ -377,8 +372,7 @@ impl<G> AdmittedEngineGeneration<'_, G> {
     pub fn prepare_live_checkpoint_control(
         &mut self,
     ) -> Result<crate::PreparedCheckpointControl, RetainedEngineAccessError> {
-        let mut control = self.take_checkpoint_control()?;
-        control.cancel_external_attempt_for_checkpoint_settlement(self.universe);
+        let control = self.take_checkpoint_control()?;
         self.prepare_checkpoint_control(control)
     }
 
@@ -1214,7 +1208,7 @@ impl RetainedStateCandidateOperation for SettleOutputLedger {
                 } else {
                     control
                         .ok_or(RetainedStateAccessError::StaleAttachment)?
-                        .into_rejected_checkpoint_command_with_state(candidate.universe())
+                        .into_rejected_checkpoint_command()
                 };
                 let candidate = candidate.sole_attachment_mut::<EngineGenerationSidecars<G>>()?;
                 let ledger = candidate
@@ -2560,9 +2554,8 @@ mod tests {
             );
             assert!(matches!(
                 control.advance_episode(admitted.universe()),
-                Err(crate::ExecError::ResourceReplayRequired)
+                Err(crate::ExecError::Halted)
             ));
-            control.cancel_external_attempt_for_checkpoint_settlement(admitted.universe());
             admitted
                 .prepare_checkpoint_control(control)
                 .expect("invalidated control settles before replay")

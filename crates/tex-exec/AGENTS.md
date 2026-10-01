@@ -49,7 +49,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
   Resource misses unwind command processing; scanner operands are call-local,
   with no parked expansion, scanner, or caller-resume frame retained here.
 - `src/main_control/settlement.rs`: direct-operation evidence ownership,
-  begin/commit/rollback, resource-need and diagnostic settlement, ordered
+  begin/commit/halt, resource-need and diagnostic settlement, ordered
   semantic/effect/artifact publication, and exact-cut main-source paragraph
   checkpoint sealing. Shipout contributes only output-ledger evidence. Its direct-operation mark
   moves only tex-command's opaque lifecycle edge; the authoritative ordinary
@@ -79,9 +79,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   layout.
   Canonical dispatch applies ordinary character, spacing, paragraph-start,
   grouping, definition, let, and catcode results directly in one context
-  admitted for the uninterrupted ordinary run. That context settles each
-  operation's state, mode, command-attempt, and page suffix and immediately
-  delivers the next command; the outer loop regains `Universe` only at a
+  admitted for the uninterrupted ordinary run. That context commits each
+  operation's command-attempt scope and immediately delivers the next
+  command; no owner journals a per-command rollback unit, because any `Err`
+  or suspension latches `MainControl` halted until a full checkpoint restore; the outer loop regains `Universe` only at a
   semantic or host boundary. It settles the final `AppliedDirect` without
   reclassifying or entering `dispatch_typed_operation`. Only a retained cold branch constructs
   a borrow-typed `ColdExecutionEpisode`; there is no generic prepare/apply
@@ -186,8 +187,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
   plan co-emission in the same borrow-scoped traversal, canonical-byte replay
   for restored artifacts and leader pages, transactions, publication, and
   demand-selected render-origin column controls. Successful page detachment
-  releases the exact page-arena closure; failed staging truncates only its
-  speculative suffix so aggregate rollback can restore the original roots.
+  releases the exact page-arena closure; failed staging or commit halts the
+  run, and checkpoint restore rewinds the original roots.
   Artifact effect sidecars use DTO-local `ArtifactEffectOrdinal` values;
   runtime `EffectPos` cursors remain inside the live World transaction. A
   successful page publication emits `ShipoutGeometry` through
@@ -228,13 +229,12 @@ Command operands are scanned by `tex-command` into typed request and result valu
   unified executor's optional append-bounded evidence publication seam; every
   allocating category closes before operation commit while warmed category
   capacity remains with the operation owner.
-- `src/mode.rs` and `src/mode/`: mode nest, page-arena list roots with detached
-  active builders, checked `PageListSpan` live roots carried only within their
-  admitting `PageRegion`, an owned mode-list slot that downgrades restored or
-  journal-retained roots, a journaled move-only removal seam for generated
-  paragraph and alignment source ownership, direct-value paragraph/alignment glue, copy-only
-  pending-character provenance, rootless retained summaries, and the
-  same-region operation-local rollback journal. Restart
+- `src/mode.rs` and `src/mode/tests.rs`: mode nest, page-arena list roots with
+  detached active builders, checked `PageListSpan` live roots carried only
+  within their admitting `PageRegion`, an owned mode-list slot that downgrades
+  restored roots, a move-only removal seam for generated paragraph and
+  alignment source ownership, direct-value paragraph/alignment glue, copy-only
+  pending-character provenance, and rootless retained summaries. Restart
   eligibility proves a sole empty outer vertical level, so a named boundary
   stores that fixed scalar level directly and candidate forks retain no shared
   mode tail or transient mode payload. Candidate accept/reject consume one

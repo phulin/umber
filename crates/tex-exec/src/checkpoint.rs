@@ -727,7 +727,7 @@ impl<G> EngineCheckpoint<G> {
     ) -> Result<u64, CheckpointRestoreError> {
         let (mut candidate, control) = self.fork_state(source, command_owner, output)?;
         let checksum = control.command_profile().fingerprint().get();
-        let command = control.into_rejected_checkpoint_command_with_state(&candidate);
+        let command = control.into_rejected_checkpoint_command();
         output.reject_checkpoint_candidate();
         source.reject_checkpoint_candidate(&mut candidate);
         let displaced = command_owner.replace(command);

@@ -45,7 +45,7 @@ fn output_box_node(children: crate::page_node_arena::PageListId, width: i32) -> 
 }
 
 #[test]
-fn command_operation_restores_page_owned_box_dimension_without_promotion() {
+fn page_owned_box_dimension_edit_does_not_promote() {
     with_universe(budget(), |universe| {
         universe.enable_reachable_state_identity();
         let before = universe.page_region_counters();
@@ -56,21 +56,12 @@ fn command_operation_restores_page_owned_box_dimension_without_promotion() {
             .install_page_output_box(root)
             .expect("page-owned output wrapper");
         let original = context.box_register(255).expect("box 255 metadata");
-        let operation = context.begin_state_operation();
         assert!(context.set_box_dimension(255, BoxDimension::Width, Scaled::from_raw(40),));
         assert_eq!(
             context.box_dimension(255, BoxDimension::Width),
             Some(Scaled::from_raw(40))
         );
         assert_ne!(context.box_register(255), Some(original));
-        context
-            .restore_state_operation(operation)
-            .expect("command state rollback");
-        assert_eq!(context.box_register(255), Some(original));
-        assert_eq!(
-            context.box_dimension(255, BoxDimension::Width),
-            Some(Scaled::from_raw(10))
-        );
         drop(context);
         let after = universe.page_region_counters();
         assert_eq!(
@@ -86,44 +77,6 @@ fn command_operation_restores_page_owned_box_dimension_without_promotion() {
 }
 
 #[test]
-fn consumed_output_carrier_restores_page_owner_before_command_rollback() {
-    with_universe(budget(), |universe| {
-        let mut context = universe.command_context().expect("command context");
-        let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
-        let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
-        context
-            .install_page_output_box(root)
-            .expect("page-owned output wrapper");
-        let original = context.box_register(255).expect("output metadata");
-        let operation = context.begin_state_operation();
-        let modes = context.seal_mode_list_region_preflight();
-        context
-            .assign_output_carrier_take(modes, 7, AssignmentScope::Global)
-            .expect("unretained page owner moves");
-        assert!(context.box_register(255).is_none());
-        assert!(context.box_register(7).is_some());
-        context
-            .restore_state_operation(operation)
-            .expect("durable loan reverses before page state");
-        assert_eq!(context.box_register(255), Some(original));
-        assert!(context.box_register(7).is_none());
-        assert_eq!(
-            context.box_dimension(255, BoxDimension::Width),
-            Some(Scaled::from_raw(10))
-        );
-        let retry = context.begin_state_operation();
-        let modes = context.seal_mode_list_region_preflight();
-        context
-            .assign_output_carrier_take(modes, 7, AssignmentScope::Global)
-            .expect("rollback returns the one-use page owner permit");
-        context.commit_state_operation(retry);
-        assert!(context.box_register(255).is_none());
-        assert!(context.box_register(7).is_some());
-    })
-    .expect("universe allocation");
-}
-
-#[test]
 fn committed_output_carrier_keeps_exclusive_durable_root() {
     with_universe(budget(), |universe| {
         let mut context = universe.command_context().expect("command context");
@@ -132,57 +85,16 @@ fn committed_output_carrier_keeps_exclusive_durable_root() {
         context
             .install_page_output_box(root)
             .expect("page-owned output wrapper");
-        let operation = context.begin_state_operation();
         let modes = context.seal_mode_list_region_preflight();
         context
             .assign_output_carrier_take(modes, 7, AssignmentScope::Global)
             .expect("unretained page owner moves");
-        context.commit_state_operation(operation);
         assert!(context.box_register(255).is_none());
         assert!(context.box_register(7).is_some());
         assert_eq!(
             context.box_dimension(7, BoxDimension::Width),
             Some(Scaled::from_raw(10))
         );
-    })
-    .expect("universe allocation");
-}
-
-#[test]
-fn shipout_rollback_restores_output_carrier_after_region_swap() {
-    with_universe(budget(), |universe| {
-        let original = {
-            let mut context = universe.command_context().expect("command context");
-            let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
-            let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
-            context
-                .install_page_output_box(root)
-                .expect("page-owned output wrapper");
-            let sibling = context.publish_page_nodes(vec![Node::Penalty(91)]);
-            context.push_current_page_list(sibling);
-            context.box_register(255).expect("output metadata")
-        };
-        {
-            let mut shipout = universe.begin_shipout();
-            let mut context = shipout.command_context().expect("shipout context");
-            let operation = context.begin_state_operation();
-            let modes = context.seal_mode_list_region_preflight();
-            context
-                .assign_output_carrier_take(modes, 7, AssignmentScope::Global)
-                .expect("output carrier moves before shipout rollback");
-            context.commit_state_operation(operation);
-            assert!(context.box_register(255).is_none());
-            assert!(context.box_register(7).is_some());
-            assert_eq!(context.current_page_nodes().count(), 1);
-        }
-        let context = universe.command_context().expect("restored context");
-        assert_eq!(context.box_register(255), Some(original));
-        assert!(context.box_register(7).is_none());
-        assert_eq!(context.current_page_nodes().count(), 1);
-        assert!(matches!(
-            context.current_page_nodes().next(),
-            Some(crate::NodeView::Penalty(91))
-        ));
     })
     .expect("universe allocation");
 }
@@ -199,7 +111,6 @@ fn rejected_output_transfer_after_seal_keeps_source_and_survivor_owned() {
         let heldover = context.publish_page_nodes(vec![Node::Penalty(91)]);
         context.push_current_page_list(heldover);
         let original = context.box_register(255).expect("output metadata");
-        let operation = context.begin_state_operation();
         context.testing_reject_output_carrier_after_seal();
         let modes = context.seal_mode_list_region_preflight();
         assert!(matches!(
@@ -220,106 +131,9 @@ fn rejected_output_transfer_after_seal_keeps_source_and_survivor_owned() {
             context.box_dimension(7, BoxDimension::Width),
             Some(Scaled::from_raw(10))
         );
-        context
-            .restore_state_operation(operation)
-            .expect("copy and rejected transfer leave operation reversible");
-        // The ordinary `\box255` path consumes the page slot outside the
-        // destination binding journal; its existing rollback leaves it void.
-        assert!(context.box_register(255).is_none());
-        assert!(context.box_register(7).is_none());
         assert_eq!(context.current_page_nodes().count(), 1);
     })
     .expect("universe allocation");
-}
-
-#[test]
-fn rejected_output_destination_history_returns_exclusive_page_owner() {
-    with_universe(budget(), |universe| {
-        let mut context = universe.command_context().expect("command context");
-        let destination = context.publish_page_nodes(vec![output_box_node(
-            crate::page_node_arena::PageListId::empty(),
-            22,
-        )]);
-        context
-            .assign_page_box(7, Some(destination), AssignmentScope::Global)
-            .expect("old destination");
-        let old_destination = context.box_register(7).expect("destination metadata");
-        let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
-        let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
-        context
-            .install_page_output_box(root)
-            .expect("page-owned output wrapper");
-        let old_output = context.box_register(255).expect("output metadata");
-        context
-            .begin_group(GroupKind::Simple, 1)
-            .expect("local group");
-        let operation = context.begin_state_operation();
-        context.testing_fail_next_box_history_copy();
-        let modes = context.seal_mode_list_region_preflight();
-        assert!(matches!(
-            context.assign_output_carrier_take(modes, 7, AssignmentScope::Local),
-            Err(crate::page_node_arena::OutputCarrierTakeError::Promotion(
-                crate::NodePromotionError::Values(_)
-            ))
-        ));
-        assert_eq!(context.box_register(255), Some(old_output));
-        assert_eq!(context.box_register(7), Some(old_destination));
-        context
-            .restore_state_operation(operation)
-            .expect("failed assignment retained its operation journal");
-        assert_eq!(context.box_register(255), Some(old_output));
-        assert_eq!(context.box_register(7), Some(old_destination));
-    })
-    .expect("universe allocation");
-}
-
-#[test]
-fn shipout_rollback_restores_edited_output_box_after_take_or_replacement() {
-    for replace in [false, true] {
-        with_universe(budget(), |universe| {
-            universe.enable_reachable_state_identity();
-            let root = {
-                let mut context = universe.command_context().expect("command context");
-                let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
-                let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
-                context
-                    .install_page_output_box(root)
-                    .expect("output wrapper");
-                root
-            };
-            let original = universe.page_region.builder().output_box();
-            let before = universe.page_region_counters();
-            {
-                let mut transaction = universe.begin_shipout();
-                let mut context = transaction.command_context().expect("shipout context");
-                assert!(context.set_box_dimension(255, BoxDimension::Width, Scaled::from_raw(40),));
-                let taken = context.take_box_to_page(255).expect("consumed output box");
-                assert_eq!(taken.coordinate(), root.coordinate());
-                if replace {
-                    let replacement = context.publish_page_nodes(vec![output_box_node(root, 80)]);
-                    context
-                        .install_page_output_box(replacement)
-                        .expect("replacement output wrapper");
-                }
-            }
-            let restored = universe.page_region.builder().output_box();
-            assert_eq!(restored.coordinate(), original.coordinate());
-            assert_eq!(restored.semantic_identity(), original.semantic_identity());
-            assert_eq!(
-                universe
-                    .command_context()
-                    .expect("restored context")
-                    .box_dimension(255, BoxDimension::Width),
-                Some(Scaled::from_raw(10))
-            );
-            let after = universe.page_region_counters();
-            assert_eq!(
-                after.page_to_durable_nodes_copied,
-                before.page_to_durable_nodes_copied
-            );
-        })
-        .expect("universe allocation");
-    }
 }
 
 #[test]
@@ -1035,23 +849,11 @@ fn prepared_magnification_is_job_scoped_and_checkpointed() {
         universe
             .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
             .expect("restore checkpoint");
-        {
-            let mut transaction = universe.begin_shipout();
-            assert_eq!(
-                transaction
-                    .command_context()
-                    .expect("context")
-                    .prepare_mag(),
-                (1_200, None)
-            );
-        }
-        {
-            let mut context = universe.command_context().expect("context");
-            context
-                .assign_int_param(IntParam::MAG, 2_000, AssignmentScope::Global)
-                .expect("mag assignment");
-            assert_eq!(context.prepare_mag(), (2_000, None));
-        }
+        let mut context = universe.command_context().expect("context");
+        context
+            .assign_int_param(IntParam::MAG, 2_000, AssignmentScope::Global)
+            .expect("mag assignment");
+        assert_eq!(context.prepare_mag(), (2_000, None));
     })
     .expect("universe allocation");
 }
@@ -1278,38 +1080,6 @@ fn null_font_and_scalar_meanings_keep_their_existing_round_trips() {
         assert_eq!(
             context.meaning(scalar.symbol()),
             ResolvedMeaning::Static(Meaning::CharGiven('A'))
-        );
-    })
-    .expect("universe allocation");
-}
-
-#[test]
-fn rollback_never_recycles_an_interned_symbol() {
-    with_universe(budget(), |universe| {
-        let first = universe.intern("first").expect("intern first");
-        let cursor = universe.begin_state_operation().expect("operation");
-        let second = universe.intern("second").expect("intern second");
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("usage before rollback")
-                .detach_engine_usage_statistics()
-                .control_sequences,
-            2
-        );
-        universe.restore_state(cursor).expect("state rollback");
-
-        assert_eq!(universe.resolve_symbol(first), Ok("first"));
-        assert_eq!(universe.resolve_symbol(second), Ok("second"));
-        assert_eq!(universe.intern("second"), Ok(second));
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("usage after rollback")
-                .detach_engine_usage_statistics()
-                .control_sequences,
-            2,
-            "§256 occupancy survives state rollback and repeated lookup"
         );
     })
     .expect("universe allocation");
@@ -1580,77 +1350,6 @@ fn nested_shipout_scratch_resets_suffixes_and_reuses_high_water() {
             );
         }
         assert_eq!(universe.shipout_scratch_high_water(), warmed);
-    })
-    .expect("universe allocation");
-}
-
-#[test]
-fn nested_shipout_engine_usage_accept_and_reject_restore_exact_membership() {
-    with_universe(budget(), |universe| {
-        {
-            let mut context = universe.command_context().expect("context");
-            context.slow_make_string_pool_string("retained");
-        }
-        let baseline = universe
-            .command_context()
-            .expect("baseline context")
-            .detach_engine_usage_statistics();
-
-        {
-            let mut outer = universe.begin_shipout();
-            outer
-                .command_context()
-                .expect("outer context")
-                .slow_make_string_pool_string("outer-speculative");
-            {
-                let mut inner = outer.begin_shipout();
-                inner
-                    .command_context()
-                    .expect("inner context")
-                    .slow_make_string_pool_string("inner-accepted");
-                inner.commit_for_test();
-            }
-            let nested = outer
-                .command_context()
-                .expect("nested context")
-                .detach_engine_usage_statistics();
-            assert_eq!(nested.strings, baseline.strings + 2);
-        }
-
-        let mut context = universe.command_context().expect("restored context");
-        assert_eq!(context.detach_engine_usage_statistics(), baseline);
-        context.slow_make_string_pool_string("outer-speculative");
-        context.slow_make_string_pool_string("inner-accepted");
-        assert_eq!(
-            context.detach_engine_usage_statistics().strings,
-            baseline.strings + 2,
-            "outer rejection removes its own and nested accepted membership suffixes"
-        );
-        drop(context);
-
-        let before_accept = universe
-            .command_context()
-            .expect("pre-accept context")
-            .detach_engine_usage_statistics();
-        {
-            let mut accepted = universe.begin_shipout();
-            accepted
-                .command_context()
-                .expect("accepted context")
-                .slow_make_string_pool_string("top-level-accepted");
-            accepted.commit_for_test();
-        }
-        let mut context = universe.command_context().expect("committed context");
-        assert_eq!(
-            context.detach_engine_usage_statistics().strings,
-            before_accept.strings + 1
-        );
-        context.slow_make_string_pool_string("top-level-accepted");
-        assert_eq!(
-            context.detach_engine_usage_statistics().strings,
-            before_accept.strings + 1,
-            "accepted membership remains visible after the transaction mark settles"
-        );
     })
     .expect("universe allocation");
 }
@@ -2117,83 +1816,6 @@ fn admitted_assignment_rendering_never_reopens_the_universe() {
         assert_eq!(
             context.box_assignment_trace_text(Some(root)),
             "\\vbox(0.0+0.0)x0.0, glue set - 0.5fill, shifted 1.0, reversed []"
-        );
-    })
-    .expect("universe allocation");
-}
-
-#[test]
-fn dropped_shipout_restores_aggregate_roots_before_page_suffix_truncation() {
-    with_universe(budget(), |universe| {
-        universe
-            .assign_count(0, 7, AssignmentScope::Global)
-            .expect("baseline count");
-        let retained_root = universe.publish_page_nodes(&[Node::Penalty(3)]);
-        universe
-            .command_context()
-            .expect("context")
-            .append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
-                width: Scaled::from_raw(0),
-                height: Scaled::from_raw(0),
-                depth: Scaled::from_raw(0),
-                shift: Scaled::from_raw(0),
-                box_lr: BoxLr::Normal,
-                glue_set: GlueSetRatio::ZERO,
-                glue_sign: Sign::Normal,
-                glue_order: crate::glue::Order::Normal,
-                children: retained_root,
-            })));
-        let failed_region = universe.begin_page_node_region();
-        let failed_operand = universe.publish_page_nodes(&[Node::Penalty(11)]);
-        let speculative_root = {
-            let mut transaction = universe.begin_shipout();
-            transaction
-                .assign_count(0, 99, AssignmentScope::Global)
-                .expect("speculative count");
-            transaction
-                .world_mut()
-                .write_text(crate::PrintSink::Terminal, "speculative");
-            let mut context = transaction.command_context().expect("context");
-            let children = context.publish_page_nodes(vec![Node::Penalty(17)]);
-            context.append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
-                width: Scaled::from_raw(0),
-                height: Scaled::from_raw(0),
-                depth: Scaled::from_raw(0),
-                shift: Scaled::from_raw(0),
-                box_lr: BoxLr::Normal,
-                glue_set: GlueSetRatio::ZERO,
-                glue_sign: Sign::Normal,
-                glue_order: crate::glue::Order::Normal,
-                children,
-            })));
-            children
-        };
-
-        assert_eq!(universe.count(0).expect("count"), 7);
-        assert!(universe.page_node_list(speculative_root).is_err());
-        assert!(universe.page_node_list(failed_operand).is_ok());
-        assert!(universe.world().effect_records().is_empty());
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("context")
-                .page_contributions()
-                .len(),
-            1
-        );
-
-        universe
-            .release_page_node_region(failed_region)
-            .expect("failed shipout releases only its operand region");
-        assert!(universe.page_node_list(failed_operand).is_err());
-        assert!(universe.page_node_list(retained_root).is_ok());
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("context")
-                .page_contributions()
-                .len(),
-            1
         );
     })
     .expect("universe allocation");

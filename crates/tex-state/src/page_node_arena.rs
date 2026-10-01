@@ -36,7 +36,7 @@ pub use consumed_source::{
     ConsumedPageSource, ConsumedPageWindow, GeneratedLineBody, PageDirectChunkSelection,
     PublishedGeneratedBoxBody,
 };
-pub(crate) use output_carrier::{PageOutputCarrierAssignment, PageOutputRegionLoan};
+pub(crate) use output_carrier::PageOutputCarrierAssignment;
 
 /// A consumed output carrier whose complete physical envelope cannot move may
 /// still take the ordinary, independent structural-copy path.
@@ -926,14 +926,6 @@ pub struct PageMaterialRegion {
 /// Move-only durable node closure owned by an eqtb or PDF carrier.
 pub(crate) type DurableNodeClosure = OwnedNodeClosure<DurableRole>;
 
-/// Rollback authority for a unique durable closure temporarily moved into
-/// page ownership by one active command operation.
-pub(crate) struct DurableTransferLoan {
-    build: ClosureBuildMark<PageRole>,
-    root: PageListId,
-    settled: OperationMark<PageMaterialLane>,
-}
-
 type BuiltClosureMoveResult =
     Result<(PageListId, u64), (ForkArenaError, Option<ClosureBuildMark<PageRole>>)>;
 
@@ -1415,14 +1407,6 @@ impl<'a> PageMaterialArena<'a> {
     /// If a nested child predates the build mark, the suffix is not
     /// self-contained. That explicit structural case copies exactly the
     /// selected recursive closure, then rolls the construction suffix back.
-    pub(crate) fn finish_built_page_root_to_durable(
-        &mut self,
-        mark: ClosureBuildMark<PageRole>,
-        root: PageListId,
-    ) -> Result<DurableNodeClosure, ForkArenaError> {
-        self.finish_built_page_root_to_durable_from(mark, root, BuiltBoxOrigin::Other)
-    }
-
     fn finish_built_page_root_to_durable_from(
         &mut self,
         mark: ClosureBuildMark<PageRole>,
@@ -1530,18 +1514,14 @@ impl<'a> PageMaterialArena<'a> {
         root: PageListId,
         metadata: PageBoxMigrationMetadata,
         reset_shift: bool,
-    ) -> Result<
-        (
-            DurableNodeClosure,
-            crate::node_region::PageInteriorTransferLoan,
-        ),
-        ForkArenaError,
-    > {
+    ) -> Result<DurableNodeClosure, ForkArenaError> {
+        // A committed transfer has no use for the loan's reverse authority;
+        // it serves only the failed-wrapper rollbacks below.
         if metadata.positive.is_some() {
             let mut durable = self.pool.start_region::<DurableRole>()?;
             let result =
                 self.finish_generated_inline_box(root, &metadata, reset_shift, &mut durable);
-            let (durable_root, loan) = match result {
+            let (durable_root, _loan) = match result {
                 Ok(value) => value,
                 Err(error) => {
                     assert!(self.pool.retire_region(durable).is_ok());
@@ -1555,7 +1535,7 @@ impl<'a> PageMaterialArena<'a> {
             let owner = durable
                 .into_closure(self.pool, durable_root)
                 .unwrap_or_else(|(error, _)| panic!("preflighted generated root: {error:?}"));
-            return Ok((owner, loan));
+            return Ok(owner);
         }
         if self.box_migration_metadata(root).as_ref() != Some(&metadata) {
             return Err(ForkArenaError::InvalidRegion);
@@ -1657,7 +1637,7 @@ impl<'a> PageMaterialArena<'a> {
                 }
             })
         };
-        let (durable_root, loan) = match result {
+        let (durable_root, _loan) = match result {
             Ok(result) => result,
             Err(error) => {
                 assert!(self.pool.retire_region(durable).is_ok());
@@ -1673,7 +1653,7 @@ impl<'a> PageMaterialArena<'a> {
         let owner = durable
             .into_closure(self.pool, durable_root)
             .unwrap_or_else(|(error, _)| panic!("preflighted durable root: {error:?}"));
-        Ok((owner, loan))
+        Ok(owner)
     }
 
     /// Determines whether this consumed box's exact sealed interval can be
@@ -1880,19 +1860,6 @@ impl<'a> PageMaterialArena<'a> {
         Ok((wrapper, nodes, annex))
     }
 
-    pub(crate) fn rollback_interleaved_page_box(
-        &mut self,
-        owner: &mut Option<DurableNodeClosure>,
-        loan: crate::node_region::PageInteriorTransferLoan,
-    ) -> Result<(), ForkArenaError> {
-        let region = owner
-            .as_mut()
-            .ok_or(ForkArenaError::InvalidRegion)?
-            .region_mut();
-        rollback_page_interior_closure(self.pool, self.region, region, loan)?;
-        self.retire_durable_in_place(owner)
-    }
-
     /// Publishes a built closure without detaching a construction-suffix root
     /// still owned by the page builder.
     pub(crate) fn finish_built_page_root_to_durable_preserving_roots<const N: usize>(
@@ -1961,50 +1928,6 @@ impl<'a> PageMaterialArena<'a> {
         let root = transfer_closure_into(self.pool, owner, self.region)?.list();
         *closure = None;
         Ok(root)
-    }
-
-    pub(crate) fn loan_durable_to_page_in_place(
-        &mut self,
-        closure: &mut Option<DurableNodeClosure>,
-    ) -> Result<(PageListId, DurableTransferLoan), ForkArenaError> {
-        let build = self.region.begin_closure_build(self.pool)?;
-        let owner = closure.as_mut().ok_or(ForkArenaError::InvalidRegion)?;
-        let root = match transfer_closure_into(self.pool, owner, self.region) {
-            Ok(root) => root.list(),
-            Err(error) => {
-                self.region
-                    .cancel_closure_build(self.pool, build)
-                    .expect("empty failed transfer suffix rolls back");
-                return Err(error);
-            }
-        };
-        *closure = None;
-        let settled = self.region.pub_arena.operation_mark(&self.pool.chunks);
-        Ok((
-            root,
-            DurableTransferLoan {
-                build,
-                root,
-                settled,
-            },
-        ))
-    }
-
-    pub(crate) fn commit_durable_transfer_loan(&mut self, _loan: DurableTransferLoan) {
-        // The page carrier may already have nested the root, shipped it, or
-        // rotated the complete page region before the command commit barrier.
-        // Committing consumes rollback authority; it does not need a second
-        // liveness scan or representation.
-    }
-
-    pub(crate) fn rollback_durable_transfer_loan(
-        &mut self,
-        loan: DurableTransferLoan,
-    ) -> Result<DurableNodeClosure, ForkArenaError> {
-        self.region
-            .pub_arena
-            .restore_operation(&mut self.pool.chunks, loan.settled)?;
-        self.finish_built_page_root_to_durable(loan.build, loan.root)
     }
 
     /// Freezes a copied durable box's body so this and later explicit

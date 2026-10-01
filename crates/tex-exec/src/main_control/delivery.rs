@@ -127,16 +127,9 @@ pub(super) fn operation_barrier<G>(
     frame: &CommandEpisode<G>,
 ) -> Option<crate::transaction_protocol::CommandBarrier> {
     match delivery {
-        OperationDelivery::Command => match frame.phase {
-            Some(PreflightCommandPhase::ImmediatePdfRetry(primitive)) => {
-                crate::transaction_protocol::canonical_static_command_barrier(
-                    Meaning::UnexpandablePrimitive(primitive),
-                )
-            }
-            _ => frame.current_option().and_then(|command| {
-                crate::transaction_protocol::canonical_command_barrier(command.meaning())
-            }),
-        },
+        OperationDelivery::Command => frame.current_option().and_then(|command| {
+            crate::transaction_protocol::canonical_command_barrier(command.meaning())
+        }),
         OperationDelivery::AppliedDirect => None,
         _ => None,
     }
@@ -221,7 +214,7 @@ impl<G> MainControl<G> {
     pub(super) fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe<G>,
-        operation_mark: &mut Option<DirectOperationMark<G>>,
+        operation: &mut DirectOperation,
         operations: &mut usize,
         max_operations: usize,
         host_preparation: &mut OperationPreparation<G>,
@@ -328,12 +321,7 @@ impl<G> MainControl<G> {
                                 frame.clear_operation_origin();
                                 frame.assert_empty();
                                 *operations += 1;
-                                let completed_mark = operation_mark
-                                    .take()
-                                    .expect("source run owns its operation mark");
-                                self.commit_admitted_direct_operation(context, completed_mark);
-                                *operation_mark =
-                                    Some(self.begin_admitted_direct_operation(context));
+                                self.roll_admitted_direct_operation(operation);
                                 *host_preparation = OperationPreparation::new();
                                 continue 'admitted;
                             }
@@ -423,9 +411,7 @@ impl<G> MainControl<G> {
                             boxes: &self.boxes,
                             cold: &mut *cold,
                             max_save_stack: &mut self.max_save_stack,
-                            operation_mark: operation_mark
-                                .as_mut()
-                                .expect("admitted run owns its current operation mark"),
+                            operation,
                         };
                         let exit = super::lane::run(
                             &mut processor,
@@ -763,12 +749,7 @@ impl<G> MainControl<G> {
                 frame.clear_operation_origin();
                 frame.assert_empty();
                 *operations += 1;
-                self.roll_admitted_direct_operation(
-                    context,
-                    operation_mark
-                        .as_mut()
-                        .expect("admitted run owns its current operation mark"),
-                );
+                self.roll_admitted_direct_operation(operation);
                 *host_preparation = OperationPreparation::new();
                 continue 'admitted;
             }
@@ -1527,64 +1508,29 @@ pub(super) fn scan_preflight_command<G>(
     if let Some(cursor) = command.cursor {
         processor.resume_delivery_cursor(cursor);
     }
-    match command
+    let phase = command
         .phase
-        .expect("operation frame owns its delivery phase")
-    {
-        phase @ (PreflightCommandPhase::Settled
-        | PreflightCommandPhase::Raw
-        | PreflightCommandPhase::Prefixed { .. }) => {
-            processor.resume_current_command(command.current());
-            let prefix = match phase {
-                PreflightCommandPhase::Prefixed { global } => Some((global, MeaningFlags::EMPTY)),
-                _ => None,
-            };
-            dispatch_main_control_command(
-                processor,
-                command,
-                cold,
-                mode,
-                boxes,
-                innermost_group,
-                job_is_all_over,
-                display_eq_no,
-                shown_mode,
-                diagnostics,
-                None,
-                true,
-                prefix,
-            )
-        }
-        PreflightCommandPhase::ImmediatePdfRetry(primitive) => {
-            let operation = match primitive {
-                UnexpandablePrimitive::PdfObject => ColdOperation::<G>::ImmediateExtension(
-                    ImmediateExtension::PdfObject(
-                        processor.scan_pdf_object_request().map_err(command_error)?,
-                    )
-                    .into(),
-                ),
-                UnexpandablePrimitive::PdfXForm => ColdOperation::<G>::ImmediateExtension(
-                    ImmediateExtension::PdfForm(
-                        processor
-                            .scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)
-                            .map_err(command_error)?,
-                    )
-                    .into(),
-                ),
-                UnexpandablePrimitive::PdfXImage => ColdOperation::<G>::PdfXImage {
-                    request: processor
-                        .scan_pdf_image_request()
-                        .map_err(command_error)?
-                        .into(),
-                    resource: PdfImageResource::Unavailable,
-                },
-                _ => unreachable!("only immediate PDF retries reach this delivery"),
-            };
-            write_cold_scan!(cold, operation);
-            command.mark_resident_cold(cold);
-            Ok(ScannedOperation::Cold)
-        }
-    }
+        .expect("operation frame owns its delivery phase");
+    processor.resume_current_command(command.current());
+    let prefix = match phase {
+        PreflightCommandPhase::Prefixed { global } => Some((global, MeaningFlags::EMPTY)),
+        PreflightCommandPhase::Settled | PreflightCommandPhase::Raw => None,
+    };
+    dispatch_main_control_command(
+        processor,
+        command,
+        cold,
+        mode,
+        boxes,
+        innermost_group,
+        job_is_all_over,
+        display_eq_no,
+        shown_mode,
+        diagnostics,
+        None,
+        true,
+        prefix,
+    )
 }
 
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts

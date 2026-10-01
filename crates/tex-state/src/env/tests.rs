@@ -925,64 +925,6 @@ fn restore_to_pre_group_cursor_rejects_live_group() {
 }
 
 #[test]
-fn state_operation_rollback_truncates_preexisting_group_suffix_exactly() {
-    let mut state = state();
-    state
-        .assign_count(0, 1, AssignmentScope::Global)
-        .expect("base");
-    state
-        .begin_group(GroupKind::Simple, 1)
-        .expect("outer group");
-    state
-        .assign_count(0, 2, AssignmentScope::Local)
-        .expect("outer local");
-
-    let operation = state.begin_state_transaction();
-    state
-        .assign_count(0, 3, AssignmentScope::Local)
-        .expect("operation local");
-    state
-        .begin_group(GroupKind::Simple, 2)
-        .expect("nested group");
-    state
-        .assign_count(0, 4, AssignmentScope::Local)
-        .expect("nested local");
-
-    state
-        .rollback_state_transaction(&operation)
-        .expect("rollback operation");
-    assert_eq!(state.group_depth(), 1);
-    assert_eq!(state.count(0).expect("rolled back count"), 2);
-    assert_eq!(state.journal().group_save_len(), 2);
-    state.end_group(GroupKind::Simple).expect("outer end");
-    assert_eq!(state.count(0).expect("restored count"), 1);
-}
-
-#[test]
-fn state_operation_rollback_preserves_checkpoint_first_touch_stamp() {
-    let mut state = state();
-    let _ = state.journal_cursor().expect("root checkpoint");
-    let operation = state.begin_state_transaction();
-    state
-        .assign_count(0, 9, AssignmentScope::Global)
-        .expect("operation write");
-    assert_eq!(state.journal().checkpoint_entry_count(), 1);
-
-    state
-        .rollback_state_transaction(&operation)
-        .expect("rollback operation");
-    let entries = state.journal().checkpoint_entry_count();
-    state
-        .assign_count(0, 10, AssignmentScope::Global)
-        .expect("post-rollback write");
-    assert_eq!(
-        state.journal().checkpoint_entry_count(),
-        entries,
-        "the surviving checkpoint delta prevents a duplicate first touch"
-    );
-}
-
-#[test]
 fn code_tables_use_initex_defaults_and_the_same_save_journal() {
     let mut state = state();
     assert_eq!(state.code(CodeTableKind::Catcode, '\\').expect("cat"), 0);

@@ -1180,8 +1180,9 @@ mod tests {
     #[test]
     fn running_thread_lifecycle_fatally_rejects_hlist_and_nesting_errors() {
         // pdftex.web §1637 calls `pdf_error` for all three illegal traversal
-        // states. Each failed shipout is atomic, but the ext4 identity remains
-        // the public session error after §93's fatal transcript is rendered.
+        // states. The failed shipout halts without publishing its page, and
+        // the ext4 identity remains the public session error after §93's
+        // fatal transcript is rendered.
         for (source, expected) in [
             (
                 "\\pdfoutput=1\\shipout\\hbox{\\pdfstartthread name{bad}}\\end",
@@ -1216,7 +1217,6 @@ mod tests {
                         "{output}"
                     );
                 }
-                assert!(stores.pdf_threads().is_empty());
                 assert!(stores.pdf_pages().is_empty());
                 assert!(stores.world().committed_artifacts().is_empty());
             });

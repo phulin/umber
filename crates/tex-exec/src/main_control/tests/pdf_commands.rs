@@ -2,6 +2,12 @@
 
 use super::*;
 
+/// pdfTeX's `check_pdfoutput` is fatal, so a DVI rejection halts the run until
+/// a checkpoint restore rewinds it; no direct retry of the command exists.
+fn assert_halted<G>(control: &mut MainControl<G>, stores: &mut Universe<G>) {
+    assert!(matches!(control.advance(stores), Err(ExecError::Halted)));
+}
+
 #[test]
 fn ready_pdf_image_provider_stays_in_one_execution() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
@@ -34,7 +40,7 @@ fn ready_pdf_image_provider_stays_in_one_execution() {
     });
 }
 #[test]
-fn math_choice_nested_pdf_image_rejects_direct_retry_after_need() {
+fn math_choice_nested_pdf_image_halts_after_need() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
@@ -66,16 +72,18 @@ fn math_choice_nested_pdf_image_rejects_direct_retry_after_need() {
             }
             request.expect("nested image resource need must be reached in bounds")
         };
-        assert_eq!(stores.count(0).expect("count register"), 0);
+        // The suspended command halts in place, keeping its partial writes;
+        // only a checkpoint restore rewinds them.
+        assert_eq!(stores.count(0).expect("count register"), 1);
         control.capabilities_mut().register_pdf_image(
             request,
             PdfImageResource::Available(test_pdf_image_source()),
         );
         assert!(matches!(
             control.advance_episode(stores),
-            Err(ExecError::ResourceReplayRequired)
+            Err(ExecError::Halted)
         ));
-        assert_eq!(stores.count(0).expect("count register"), 0);
+        assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(stores.count(1).expect("count register"), 0);
         assert_eq!(
             admitted!(stores, |context| context
@@ -413,10 +421,10 @@ fn pdftex_font_actions_preserve_exact_dvi_mode_gate_and_tounicode_exceptions() {
     });
 }
 #[test]
-fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
+fn pdf_graphics_reject_dvi_before_operands_and_run_in_source_order() {
     // pdftex.web §§1524 and 1563: `check_pdfoutput` precedes operand scanning
-    // for every graphics extension except `\pdfsavepos`. Aggregate rollback
-    // therefore preserves each complete command for an exact PDF-mode retry.
+    // for every graphics extension except `\pdfsavepos`. PDF mode runs each
+    // complete command in source order.
     for (source, primitive, expected) in [
         (
             br"\pdfliteral direct{first}\pdfsave".as_slice(),
@@ -450,7 +458,9 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
             assert!(!error.requires_terminal_settlement());
             assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
             assert!(current_list_owner_vec(&control, stores).is_empty());
-
+            assert_halted(&mut control, stores);
+        });
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             crate::test_harness::assign_int_param(
                 stores,
                 IntParam::PDF_OUTPUT,
@@ -458,13 +468,15 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("integer parameter assignment");
+            let mut control = pdftex_graphics_control(stores);
+            register_source(&mut control, source);
             assert_eq!(
-                control.advance(stores).expect("graphics command retries"),
+                control.advance(stores).expect("graphics command"),
                 StepResult::Progress(MainControlStep::Continue)
             );
             let current_nodes = current_list_owner_vec(&control, stores);
             let [node] = current_nodes.as_slice() else {
-                panic!("{expected}: retry must append exactly one node");
+                panic!("{expected}: the command must append exactly one node");
             };
             assert!(
                 matches!(
@@ -574,238 +586,85 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
 fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
     // pdftex.web §§1535 and 1542 call `check_pdfoutput` before the complete
     // `reserveobjnum`/`useobjnum`, integer, stream/attr/file, body, and
-    // allocation paths. Aggregate retry must therefore see the whole command.
-    crate::test_harness::with_nonstop_plain_universe(|reserve_stores| {
-        let mut reserve_control = pdftex_object_control(reserve_stores);
-        register_source(&mut reserve_control, br"\pdfobj reserveobjnum");
-        assert!(matches!(
-            reserve_control.advance(reserve_stores),
-            Err(ExecError::Captured { error, .. })
-                if matches!(*error, ExecError::PdfExtensionInDviMode("pdfobj"))
-        ));
-        assert!(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_none());
-        assert_eq!(
-            admitted!(reserve_stores, |context| context
-                .internal_integer(tex_state::meaning::InternalInteger::PdfLastObject)
-                .expect("PDF integer")),
-            0
-        );
-
-        crate::test_harness::assign_int_param(
-            reserve_stores,
-            IntParam::PDF_OUTPUT,
-            1,
-            tex_state::AssignmentScope::Global,
-        )
-        .expect("integer parameter assignment");
-        assert_eq!(
-            reserve_control
-                .advance(reserve_stores)
-                .expect("reserveobjnum retry preserves the complete command"),
-            StepResult::Progress(MainControlStep::Continue)
-        );
-        assert_eq!(
-            usize::from(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_some()),
-            1
-        );
-        assert!(
-            admitted!(reserve_stores, |context| context.pdf_raw_object(1))
-                .expect("PDF object 1")
-                .data()
-                .is_none()
-        );
-
-        crate::test_harness::with_nonstop_plain_universe(|ordinary_stores| {
-            let mut ordinary_control = pdftex_object_control(ordinary_stores);
-            register_source(&mut ordinary_control, br"\pdfobj{ordinary}");
+    // allocation paths.
+    for source in [
+        br"\pdfobj reserveobjnum".as_slice(),
+        br"\pdfobj{ordinary}",
+        br"\pdfobj useobjnum 37 stream attr{/Subtype /XML} file{payload}",
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_object_control(stores);
+            register_source(&mut control, source);
             assert!(matches!(
-                ordinary_control.advance(ordinary_stores),
-                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfobj"))
+                control.advance(stores),
+                Err(ExecError::Captured { error, .. })
+                    if matches!(*error, ExecError::PdfExtensionInDviMode("pdfobj"))
             ));
-            assert!(admitted!(ordinary_stores, |context| context.pdf_raw_object(1)).is_none());
-
-            crate::test_harness::assign_int_param(
-                ordinary_stores,
-                IntParam::PDF_OUTPUT,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("integer parameter assignment");
-            assert_eq!(
-                ordinary_control
-                    .advance(ordinary_stores)
-                    .expect("ordinary-object retry preserves its body"),
-                StepResult::Progress(MainControlStep::Continue)
-            );
-            let ordinary = admitted!(ordinary_stores, |context| context.pdf_raw_object(1))
-                .expect("PDF object 1")
-                .data()
-                .expect("ordinary object is initialized");
-            assert!(!ordinary.is_stream());
-            assert!(!ordinary.is_file());
-            assert_eq!(
-                token_character_text(ordinary_stores, ordinary.data()),
-                "ordinary"
-            );
-
-            crate::test_harness::with_nonstop_plain_universe(|define_stores| {
-                let mut define_control = pdftex_object_control(define_stores);
-                register_source(
-                    &mut define_control,
-                    br"\pdfobj useobjnum 37 stream attr{/Subtype /XML} file{payload}",
-                );
-                assert!(matches!(
-                    define_control.advance(define_stores),
-                    Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfobj"))
-                ));
-                assert!(admitted!(define_stores, |context| context.pdf_raw_object(1)).is_none());
+            assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
+            for integer in [
+                tex_state::meaning::InternalInteger::PdfLastObject,
+                tex_state::meaning::InternalInteger::PdfReturnValue,
+            ] {
                 assert_eq!(
-                    admitted!(define_stores, |context| context
-                        .internal_integer(tex_state::meaning::InternalInteger::PdfReturnValue)
+                    admitted!(stores, |context| context
+                        .internal_integer(integer)
                         .expect("PDF integer")),
                     0
                 );
-                assert!(terminal_text(define_stores).is_empty());
-
-                crate::test_harness::assign_int_param(
-                    define_stores,
-                    IntParam::PDF_OUTPUT,
-                    1,
-                    tex_state::AssignmentScope::Global,
-                )
-                .expect("integer parameter assignment");
-                assert_eq!(
-                    define_control
-                        .advance(define_stores)
-                        .expect("definition retry preserves every option and operand"),
-                    StepResult::Progress(MainControlStep::Continue)
-                );
-                assert_eq!(
-                    admitted!(define_stores, |context| context
-                        .internal_integer(tex_state::meaning::InternalInteger::PdfReturnValue)
-                        .expect("PDF integer")),
-                    -1
-                );
-                assert!(
-                    terminal_text(define_stores).contains("invalid object number being ignored")
-                );
-                let record = &admitted!(define_stores, |context| context.pdf_raw_object(1))
-                    .expect("PDF object 1");
-                let data = record.data().expect("retried object is initialized");
-                assert!(data.is_stream());
-                assert!(data.is_file());
-                assert_eq!(
-                    token_character_text(
-                        define_stores,
-                        data.stream_attr().expect("stream attribute survives retry")
-                    ),
-                    "/Subtype /XML"
-                );
-                assert_eq!(token_character_text(define_stores, data.data()), "payload");
-            });
+            }
+            assert!(terminal_text(stores).is_empty());
+            assert_halted(&mut control, stores);
         });
-    });
+    }
 }
 #[test]
 fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
     // pdftex.web §1621 expands the command after `\immediate`, then invokes
     // §1542's complete `\pdfobj` case. Its DVI check therefore wins over the
-    // immediate-reserved-object error and every operand remains retryable.
-    crate::test_harness::with_nonstop_plain_universe(|reserve_stores| {
-        let mut reserve_control = pdftex_object_control(reserve_stores);
-        register_source(&mut reserve_control, br"\immediate\pdfobj reserveobjnum");
-        assert!(matches!(
-            reserve_control.advance(reserve_stores),
-            Err(ExecError::PdfExtensionInDviMode("pdfobj"))
-        ));
-        assert!(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_none());
-
+    // immediate-reserved-object error, which PDF mode reaches instead.
+    for source in [
+        br"\immediate\pdfobj reserveobjnum".as_slice(),
+        br"\immediate\pdfobj useobjnum 41 stream attr{/Type /Metadata} file{x.dat}",
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_object_control(stores);
+            register_source(&mut control, source);
+            assert!(matches!(
+                control.advance(stores),
+                Err(ExecError::PdfExtensionInDviMode("pdfobj"))
+            ));
+            assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
+            assert_eq!(
+                admitted!(stores, |context| context
+                    .internal_integer(tex_state::meaning::InternalInteger::PdfReturnValue)
+                    .expect("PDF integer")),
+                0
+            );
+            assert_halted(&mut control, stores);
+        });
+    }
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
-            reserve_stores,
+            stores,
             IntParam::PDF_OUTPUT,
             1,
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
+        let mut control = pdftex_object_control(stores);
+        register_source(&mut control, br"\immediate\pdfobj reserveobjnum");
         assert!(matches!(
-            reserve_control.advance(reserve_stores),
+            control.advance(stores),
             Err(ExecError::PdfImmediateReservedObject)
         ));
-        assert!(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_none());
-
-        crate::test_harness::with_nonstop_plain_universe(|define_stores| {
-            let mut define_control = pdftex_object_control(define_stores);
-            register_source(
-                &mut define_control,
-                br"\immediate\pdfobj useobjnum 41 stream attr{/Type /Metadata} file{retry.dat}\pdfobj reserveobjnum",
-            );
-            assert!(matches!(
-                define_control.advance(define_stores),
-                Err(ExecError::PdfExtensionInDviMode("pdfobj"))
-            ));
-            assert!(admitted!(define_stores, |context| context.pdf_raw_object(1)).is_none());
-            assert_eq!(
-                admitted!(define_stores, |context| context
-                    .internal_integer(tex_state::meaning::InternalInteger::PdfReturnValue)
-                    .expect("PDF integer")),
-                0
-            );
-
-            crate::test_harness::assign_int_param(
-                define_stores,
-                IntParam::PDF_OUTPUT,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("integer parameter assignment");
-            assert_eq!(
-                define_control
-                    .advance(define_stores)
-                    .expect("immediate retry preserves every option and operand"),
-                StepResult::Progress(MainControlStep::Continue)
-            );
-            assert_eq!(
-                admitted!(define_stores, |context| context
-                    .internal_integer(tex_state::meaning::InternalInteger::PdfReturnValue)
-                    .expect("PDF integer")),
-                -1
-            );
-            let record = &admitted!(define_stores, |context| context.pdf_raw_object(1))
-                .expect("PDF object 1");
-            assert!(record.is_immediate());
-            let data = record.data().expect("immediate object is initialized");
-            assert!(data.is_stream());
-            assert!(data.is_file());
-            assert_eq!(
-                token_character_text(
-                    define_stores,
-                    data.stream_attr().expect("stream attribute survives retry")
-                ),
-                "/Type /Metadata"
-            );
-            assert_eq!(
-                token_character_text(define_stores, data.data()),
-                "retry.dat"
-            );
-            // The inner PDF command and its outer `\immediate` were restored
-            // as two backup levels. The next source command must therefore
-            // remain behind the complete retried pair and reserve object 2.
-            assert_eq!(
-                define_control
-                    .advance(define_stores)
-                    .expect("following command remains after immediate retry"),
-                StepResult::Progress(MainControlStep::Continue)
-            );
-            assert!(admitted!(define_stores, |context| context.pdf_raw_object(2)).is_some());
-        });
+        assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
     });
 }
 #[test]
 fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
     // pdftex.web §1544 orders `check_pdfoutput`, `scan_int`,
     // `pdf_check_obj`, `new_whatsit`, and object-number assignment. A DVI
-    // failure must therefore preserve the integer and every aggregate owner
-    // for transactional retry under the pdfTeX profile.
+    // failure therefore precedes every owner mutation.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let object = admitted!(stores, |context| context.reserve_pdf_raw_object())
             .expect("reserve reference target");
@@ -824,108 +683,139 @@ fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
             1
         );
         assert!(mode_vec(&control, stores).is_empty());
-
-        crate::test_harness::assign_int_param(
-            stores,
-            IntParam::PDF_OUTPUT,
-            1,
-            tex_state::AssignmentScope::Global,
-        )
-        .expect("integer parameter assignment");
-        assert_eq!(
-            control
-                .advance(stores)
-                .expect("PDF retry preserves the integer operand"),
-            StepResult::Progress(MainControlStep::Continue)
-        );
-        assert!(mode_vec(&control, stores).is_empty());
-        assert!(matches!(
-            admitted!(stores, |context| context.page_contributions().to_vec()).as_slice(),
-            [Node::Whatsit(Whatsit::PdfReferenceObject { object: 1 })]
-        ));
+        assert_halted(&mut control, stores);
     });
+}
+/// Runs `source` in DVI mode, where `primitive` must be rejected before any
+/// scan or owner mutation, then in PDF mode, where `pdf_error` diagnoses the
+/// same operands.
+fn assert_dvi_rejection_precedes(
+    source: &[u8],
+    primitive: &str,
+    restricted_horizontal: bool,
+    pdf_error: fn(&ExecError) -> bool,
+) {
+    for pdf_output in [false, true] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            if pdf_output {
+                crate::test_harness::assign_int_param(
+                    stores,
+                    IntParam::PDF_OUTPUT,
+                    1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("integer parameter assignment");
+            }
+            let _ = pdftex_object_control(stores);
+            let _ = pdftex_image_control(stores);
+            let mut control = pdftex_form_control(stores);
+            if restricted_horizontal {
+                control
+                    .modes
+                    .push(Mode::RestrictedHorizontal)
+                    .expect("test mode push");
+            }
+            register_source(&mut control, source);
+            let state_before = stores.journal_cursor().expect("state cursor");
+            let error = match control.advance(stores) {
+                Err(ExecError::Captured { error, .. }) => *error,
+                Err(error) => error,
+                Ok(step) => panic!("expected an error, got {step:?}"),
+            };
+            if pdf_output {
+                assert!(pdf_error(&error), "{error:?}");
+            } else {
+                assert!(
+                    matches!(error, ExecError::PdfExtensionInDviMode(name) if name == primitive),
+                    "{error:?}"
+                );
+                assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
+                assert!(terminal_text(stores).is_empty());
+            }
+            assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
+            assert!(admitted!(stores, |context| context.pdf_form(1)).is_none());
+            assert!(mode_vec(&control, stores).is_empty());
+            assert_halted(&mut control, stores);
+        });
+    }
 }
 #[test]
 fn pdf_reference_object_dvi_error_precedes_invalid_object_validation() {
     // pdftex.web §1544 checks DVI mode before scanning or calling
-    // `pdf_check_obj`; the missing-object error is reached only on a PDF-mode
-    // retry of the same intact operand.
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = pdftex_object_control(stores);
-        register_source(&mut control, br"\pdfrefobj 99");
-        let state_before = stores.journal_cursor().expect("state cursor");
-
-        assert!(matches!(
-            control.advance(stores),
-            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefobj"))
-        ));
-        assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
-        assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
-        assert!(mode_vec(&control, stores).is_empty());
-
-        crate::test_harness::assign_int_param(
-            stores,
-            IntParam::PDF_OUTPUT,
-            1,
-            tex_state::AssignmentScope::Global,
-        )
-        .expect("integer parameter assignment");
-        assert!(matches!(
-            control.advance(stores),
-            Err(ExecError::PdfReferencedObjectNotFound)
-        ));
-        assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
-        assert!(mode_vec(&control, stores).is_empty());
+    // `pdf_check_obj`; only PDF mode reaches the missing-object error.
+    assert_dvi_rejection_precedes(br"\pdfrefobj 99", "pdfrefobj", false, |error| {
+        matches!(error, ExecError::PdfReferencedObjectNotFound)
     });
 }
 #[test]
 fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
     // pdftex.web §§1548–1549 begin both cases with `check_pdfoutput`.
-    // `\pdfxform` therefore preserves attr/resources/the register and its box,
-    // while `\pdfrefxform` preserves its integer before lookup and whatsit
+    // `\pdfxform` therefore leaves attr/resources/the register and its box,
+    // while `\pdfrefxform` leaves its integer before lookup and whatsit
     // insertion. The two commands are one PDF-output-preflight family.
-    crate::test_harness::with_nonstop_plain_universe(|create_stores| {
-        install_test_hbox(create_stores, 7, Scaled::from_raw(17));
-        let mut create = pdftex_form_control(create_stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        install_test_hbox(stores, 7, Scaled::from_raw(17));
+        let mut create = pdftex_form_control(stores);
         register_source(
             &mut create,
             br"\pdfxform attr{/Subtype /Form} resources{/ProcSet [/PDF]} 7",
         );
-        let state_before = create_stores.journal_cursor().expect("state cursor");
+        let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            create.advance(create_stores),
+            create.advance(stores),
             Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfxform"))
         ));
+        assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
+        assert!(stores.copy_box_to_page(7).is_some());
+        assert!(admitted!(stores, |context| context.pdf_form(1)).is_none());
         assert_eq!(
-            create_stores.journal_cursor().expect("state cursor"),
-            state_before
-        );
-        assert!(create_stores.copy_box_to_page(7).is_some());
-        assert!(admitted!(create_stores, |context| context.pdf_form(1)).is_none());
-        assert_eq!(
-            admitted!(create_stores, |context| context
+            admitted!(stores, |context| context
                 .internal_integer(tex_state::meaning::InternalInteger::PdfLastXForm)
                 .expect("PDF integer")),
             0
         );
-        assert!(mode_vec(&create, create_stores).is_empty());
+        assert!(mode_vec(&create, stores).is_empty());
+        assert_halted(&mut create, stores);
+    });
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        install_test_form(stores);
+        let mut reference = pdftex_form_control(stores);
+        reference.modes.push(Mode::Math).expect("test mode push");
+        register_source(&mut reference, br"\pdfrefxform 1");
+        let state_before = stores.journal_cursor().expect("state cursor");
 
+        assert!(matches!(
+            reference.advance(stores),
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefxform"))
+        ));
+        assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
+        assert!(mode_vec(&reference, stores).is_empty());
+        assert_halted(&mut reference, stores);
+    });
+}
+#[test]
+fn pdf_form_moves_its_register_box_with_every_option() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
-            create_stores,
+            stores,
             IntParam::PDF_OUTPUT,
             1,
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let before_form = create_stores.page_region_counters();
+        install_test_hbox(stores, 7, Scaled::from_raw(17));
+        let mut create = pdftex_form_control(stores);
+        register_source(
+            &mut create,
+            br"\pdfxform attr{/Subtype /Form} resources{/ProcSet [/PDF]} 7",
+        );
+        let before_form = stores.page_region_counters();
         assert_eq!(
-            create
-                .advance(create_stores)
-                .expect("PDF retry preserves all form options and the register"),
+            create.advance(stores).expect("PDF form"),
             StepResult::Progress(MainControlStep::Continue)
         );
-        let after_form = create_stores.page_region_counters();
+        let after_form = stores.page_region_counters();
         assert_eq!(
             after_form.page_to_durable_nodes_copied, before_form.page_to_durable_nodes_copied,
             "a direct PDF form move does not copy page payload"
@@ -935,60 +825,17 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
             before_form.history_preservation_nodes_copied,
             "the live command operation uses a transfer loan"
         );
-        assert!(create_stores.copy_box_to_page(7).is_none());
-        let form = admitted!(create_stores, |context| context.pdf_form(1))
-            .expect("retried form is allocated");
+        assert!(stores.copy_box_to_page(7).is_none());
+        let form = admitted!(stores, |context| context.pdf_form(1)).expect("form is allocated");
         assert_eq!(form.width(), Scaled::from_raw(17));
         assert_eq!(
-            token_character_text(
-                create_stores,
-                form.attr().expect("form attribute survives retry")
-            ),
+            token_character_text(stores, form.attr().expect("form attribute")),
             "/Subtype /Form"
         );
         assert_eq!(
-            token_character_text(
-                create_stores,
-                form.resources().expect("form resources survive retry")
-            ),
+            token_character_text(stores, form.resources().expect("form resources")),
             "/ProcSet [/PDF]"
         );
-
-        crate::test_harness::with_nonstop_plain_universe(|reference_stores| {
-            install_test_form(reference_stores);
-            let mut reference = pdftex_form_control(reference_stores);
-            reference.modes.push(Mode::Math).expect("test mode push");
-            register_source(&mut reference, br"\pdfrefxform 1");
-            let state_before = reference_stores.journal_cursor().expect("state cursor");
-
-            assert!(matches!(
-                reference.advance(reference_stores),
-                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefxform"))
-            ));
-            assert_eq!(
-                reference_stores.journal_cursor().expect("state cursor"),
-                state_before
-            );
-            assert!(mode_vec(&reference, reference_stores).is_empty());
-
-            crate::test_harness::assign_int_param(
-                reference_stores,
-                IntParam::PDF_OUTPUT,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("integer parameter assignment");
-            assert_eq!(
-                reference
-                    .advance(reference_stores)
-                    .expect("PDF retry preserves the reference operand in math mode"),
-                StepResult::Progress(MainControlStep::Continue)
-            );
-            assert!(matches!(
-                mode_vec(&reference, reference_stores).as_slice(),
-                [Node::Whatsit(Whatsit::PdfRefXForm { object: 1, .. })]
-            ));
-        });
     });
 }
 #[test]
@@ -1011,111 +858,22 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
         assert!(stores.copy_box_to_page(9).is_some());
         assert!(admitted!(stores, |context| context.pdf_form(1)).is_none());
-
-        crate::test_harness::assign_int_param(
-            stores,
-            IntParam::PDF_OUTPUT,
-            1,
-            tex_state::AssignmentScope::Global,
-        )
-        .expect("integer parameter assignment");
-        assert_eq!(
-            control
-                .advance(stores)
-                .expect("immediate PDF retry preserves every form operand"),
-            StepResult::Progress(MainControlStep::Continue)
-        );
-        assert!(stores.copy_box_to_page(9).is_none());
-        let form =
-            admitted!(stores, |context| context.pdf_form(1)).expect("immediate form is allocated");
-        assert!(form.immediate());
-        assert_eq!(form.width(), Scaled::from_raw(19));
+        assert_halted(&mut control, stores);
     });
 }
 #[test]
 fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
-    // §§1548–1549 put DVI rejection before even the scans. On PDF retry,
+    // §§1548–1549 put DVI rejection before even the scans. In PDF mode,
     // e-TeX's `scan_register_num` recovers an invalid selector to zero before
     // §1548 allocates the form and diagnoses the resulting void box; §1549
     // scans an integer and then diagnoses a missing form object.
-    crate::test_harness::with_nonstop_plain_universe(|invalid_register_stores| {
-        let mut invalid_register = pdftex_form_control(invalid_register_stores);
-        register_source(&mut invalid_register, br"\pdfxform 40000");
-        let state_before = invalid_register_stores
-            .journal_cursor()
-            .expect("state cursor");
-
-        assert!(matches!(
-            invalid_register.advance(invalid_register_stores),
-            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfxform"))
-        ));
-        assert_eq!(
-            invalid_register_stores
-                .journal_cursor()
-                .expect("state cursor"),
-            state_before
-        );
-        assert!(terminal_text(invalid_register_stores).is_empty());
-        assert!(admitted!(invalid_register_stores, |context| context.pdf_form(1)).is_none());
-
-        crate::test_harness::assign_int_param(
-            invalid_register_stores,
-            IntParam::PDF_OUTPUT,
-            1,
-            tex_state::AssignmentScope::Global,
-        )
-        .expect("integer parameter assignment");
-        assert!(matches!(
-            invalid_register.advance(invalid_register_stores),
-            Err(ExecError::PdfXFormVoidBox)
-        ));
-        assert!(admitted!(invalid_register_stores, |context| context.pdf_form(1)).is_none());
-
-        crate::test_harness::with_nonstop_plain_universe(|void_stores| {
-            let mut void = pdftex_form_control(void_stores);
-            register_source(&mut void, br"\pdfxform 12");
-            assert!(matches!(
-                void.advance(void_stores),
-                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfxform"))
-            ));
-            crate::test_harness::assign_int_param(
-                void_stores,
-                IntParam::PDF_OUTPUT,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("integer parameter assignment");
-            assert!(matches!(
-                void.advance(void_stores),
-                Err(ExecError::PdfXFormVoidBox)
-            ));
-
-            crate::test_harness::with_nonstop_plain_universe(|missing_stores| {
-                let mut missing = pdftex_form_control(missing_stores);
-                missing
-                    .modes
-                    .push(Mode::RestrictedHorizontal)
-                    .expect("test mode push");
-                register_source(&mut missing, br"\pdfrefxform 99");
-                assert!(matches!(
-                    missing.advance(missing_stores),
-                    Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefxform"))
-                ));
-                assert!(mode_vec(&missing, missing_stores).is_empty());
-                crate::test_harness::assign_int_param(
-                    missing_stores,
-                    IntParam::PDF_OUTPUT,
-                    1,
-                    tex_state::AssignmentScope::Global,
-                )
-                .expect("integer parameter assignment");
-                assert!(matches!(
-                    missing.advance(missing_stores),
-                    Err(ExecError::PdfReferencedObjectNotFound)
-                ));
-                assert!(mode_vec(&missing, missing_stores).is_empty());
-            });
+    for source in [br"\pdfxform 40000".as_slice(), br"\pdfxform 12"] {
+        assert_dvi_rejection_precedes(source, "pdfxform", false, |error| {
+            matches!(error, ExecError::PdfXFormVoidBox)
         });
+    }
+    assert_dvi_rejection_precedes(br"\pdfrefxform 99", "pdfrefxform", true, |error| {
+        matches!(error, ExecError::PdfReferencedObjectNotFound)
     });
 }
 #[test]
@@ -1198,10 +956,7 @@ fn pdf_image_create_rejects_dvi_and_direct_retry_before_allocation() {
             request,
             PdfImageResource::Available(test_pdf_image_source()),
         );
-        assert!(matches!(
-            control.advance(stores),
-            Err(ExecError::ResourceReplayRequired)
-        ));
+        assert!(matches!(control.advance(stores), Err(ExecError::Halted)));
         assert_eq!(
             admitted!(stores, |context| context
                 .internal_integer(tex_state::meaning::InternalInteger::PdfLastXImage)
@@ -1283,10 +1038,7 @@ fn immediate_pdf_image_rejects_direct_retry_after_resource_need() {
             request,
             PdfImageResource::Available(test_pdf_image_source()),
         );
-        assert!(matches!(
-            control.advance(stores),
-            Err(ExecError::ResourceReplayRequired)
-        ));
+        assert!(matches!(control.advance(stores), Err(ExecError::Halted)));
         assert_eq!(
             admitted!(stores, |context| context
                 .internal_integer(tex_state::meaning::InternalInteger::PdfLastXImage)
@@ -1361,60 +1113,17 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
         assert!(mode_vec(&control, stores).is_empty());
-
-        crate::test_harness::assign_int_param(
-            stores,
-            IntParam::PDF_OUTPUT,
-            1,
-            tex_state::AssignmentScope::Global,
-        )
-        .expect("integer parameter assignment");
-        assert_eq!(
-            control
-                .advance(stores)
-                .expect("PDF retry preserves the reference integer"),
-            StepResult::Progress(MainControlStep::Continue)
-        );
-        assert!(matches!(
-            mode_vec(&control, stores).as_slice(),
-            [Node::Whatsit(Whatsit::PdfRefXImage {
-                object: 1,
-                width,
-                height,
-                depth,
-            })] if *width == Scaled::from_raw(11)
-                && *height == Scaled::from_raw(12)
-                && *depth == Scaled::from_raw(13)
-        ));
-
-        crate::test_harness::with_nonstop_plain_universe(|missing_stores| {
-            let mut missing = pdftex_image_control(missing_stores);
-            register_source(&mut missing, br"\pdfrefximage 99");
-            assert!(matches!(
-                missing.advance(missing_stores),
-                Err(ExecError::Captured { error, .. })
-                    if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefximage"))
-            ));
-            crate::test_harness::assign_int_param(
-                missing_stores,
-                IntParam::PDF_OUTPUT,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("integer parameter assignment");
-            assert!(matches!(
-                missing.advance(missing_stores),
-                Err(ExecError::PdfReferencedObjectNotFound)
-            ));
-            assert!(mode_vec(&missing, missing_stores).is_empty());
-        });
+        assert_halted(&mut control, stores);
+    });
+    assert_dvi_rejection_precedes(br"\pdfrefximage 99", "pdfrefximage", false, |error| {
+        matches!(error, ExecError::PdfReferencedObjectNotFound)
     });
 }
 #[test]
 fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
     // pdftex.web §§1558, 1560, and 1561 call `check_pdfoutput` before object
     // allocation, mode legality, dimensions, attributes, actions, or body
-    // text. A failed step must therefore retain the complete command.
+    // text.
     for (source, primitive) in [
         (
             br"\pdfannot width 5pt height 6pt depth 7pt {/Subtype /Text}".as_slice(),
@@ -1427,36 +1136,18 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
         ),
     ] {
         crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = pdftex_annotation_control(stores);
-        control.modes.push(Mode::Horizontal).expect("test mode push");
-        register_source(&mut control, source);
-        assert!(
-            matches!(control.advance(stores), Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode(name) if name == primitive))
-        );
-        assert!(mode_vec(&control, stores).is_empty());
-
-        crate::test_harness::assign_int_param(
-
-            stores,
-
-            IntParam::PDF_OUTPUT,
-
-            1,
-
-            tex_state::AssignmentScope::Global,
-
-        )
-
-        .expect("integer parameter assignment");
-        assert_eq!(
-            control
-                .advance(stores)
-                .expect("PDF retry preserves the complete command"),
-            StepResult::Progress(MainControlStep::Continue)
-        );
-        assert_eq!(mode_vec(&control, stores).len(), 1);
-            });
-}
+            let mut control = pdftex_annotation_control(stores);
+            control.modes.push(Mode::Horizontal).expect("test mode push");
+            register_source(&mut control, source);
+            let state_before = stores.journal_cursor().expect("state cursor");
+            assert!(
+                matches!(control.advance(stores), Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode(name) if name == primitive))
+            );
+            assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
+            assert!(mode_vec(&control, stores).is_empty());
+            assert_halted(&mut control, stores);
+        });
+    }
 
     // The source orders the PDF-output check before the vertical-mode check
     // for both link commands.
@@ -1506,11 +1197,28 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
         assert!(mode_vec(&control, stores).is_empty());
-
+        assert_halted(&mut control, stores);
+    });
+}
+#[test]
+fn pdf_link_scans_its_action_after_the_mode_check() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        crate::test_harness::assign_int_param(
+            stores,
+            IntParam::PDF_OUTPUT,
+            1,
+            tex_state::AssignmentScope::Global,
+        )
+        .expect("integer parameter assignment");
+        let mut control = pdftex_annotation_control(stores);
         control
             .modes
             .push(Mode::Horizontal)
             .expect("test mode push");
+        register_source(
+            &mut control,
+            br"\pdfstartlink width 5pt definitely-not-an-action\relax",
+        );
         let action_error = control.advance(stores);
         assert!(
             matches!(
@@ -1531,9 +1239,9 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
     });
 }
 #[test]
-fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
-    // pdftex.web §1561 rejects DVI mode before appending the end whatsit. The
-    // open-link stack and the unconsumed command both survive for retry.
+fn pdf_end_link_dvi_rejection_leaves_the_open_link() {
+    // pdftex.web §1561 rejects DVI mode before appending the end whatsit, so
+    // the open link stays on the list when the run halts.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
@@ -1568,26 +1276,11 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
             control.advance(stores),
             Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfendlink"))
         ));
-        assert_eq!(mode_vec(&control, stores).len(), 1);
-
-        crate::test_harness::assign_int_param(
-            stores,
-            IntParam::PDF_OUTPUT,
-            1,
-            tex_state::AssignmentScope::Global,
-        )
-        .expect("integer parameter assignment");
-        assert_eq!(
-            control.advance(stores).expect("end-link retry"),
-            StepResult::Progress(MainControlStep::Continue)
-        );
         assert!(matches!(
             mode_vec(&control, stores).as_slice(),
-            [
-                Node::Whatsit(Whatsit::PdfLinkStart { .. }),
-                Node::Whatsit(Whatsit::PdfLinkEnd { .. })
-            ]
+            [Node::Whatsit(Whatsit::PdfLinkStart { .. })]
         ));
+        assert_halted(&mut control, stores);
     });
 }
 #[test]
@@ -1595,7 +1288,7 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
     // pdftex.web §1567 checks pdfoutput before allocation and operand scanning.
     for (source, primitive) in [
         (
-            br"\pdfthread width 5pt attr{/I <<>>} name{retry}".as_slice(),
+            br"\pdfthread width 5pt attr{/I <<>>} name{t}".as_slice(),
             "pdfthread",
         ),
         (
@@ -1611,20 +1304,7 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
                 matches!(control.advance(stores), Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode(name) if name == primitive))
             );
             assert!(current_list_owner_vec(&control, stores).is_empty());
-            crate::test_harness::assign_int_param(
-                stores,
-                IntParam::PDF_OUTPUT,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("integer parameter assignment");
-            assert_eq!(
-                control
-                    .advance(stores)
-                    .expect("retry preserves every operand"),
-                StepResult::Progress(MainControlStep::Continue)
-            );
-            assert_eq!(current_list_owner_vec(&control, stores).len(), 1);
+            assert_halted(&mut control, stores);
         });
     }
 }
@@ -1728,44 +1408,19 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
             StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(current_list_owner_vec(&control, stores).len(), 1);
-
-        crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
-            let mut dvi = pdftex_destination_control(dvi_stores);
-            register_source(
-                &mut dvi,
-                br"\pdfdest struct 7 name{retry} fitr width 5pt height 6pt depth 7pt",
-            );
-            assert!(matches!(
-                dvi.advance(dvi_stores),
-                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfdest"))
-            ));
-            assert!(current_list_owner_vec(&dvi, dvi_stores).is_empty());
-            crate::test_harness::assign_int_param(
-                dvi_stores,
-                IntParam::PDF_OUTPUT,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("integer parameter assignment");
-            assert_eq!(
-                dvi.advance(dvi_stores)
-                    .expect("failed destination retries with every operand intact"),
-                StepResult::Progress(MainControlStep::Continue)
-            );
-            let current_nodes = current_list_owner_vec(&dvi, dvi_stores);
-            let [Node::Whatsit(Whatsit::PdfDestination(destination))] = current_nodes.as_slice()
-            else {
-                panic!("one retried destination expected");
-            };
-            assert_eq!(destination.structure, Some(7));
-            assert!(matches!(
-                destination.kind,
-                tex_state::node::PdfDestinationKind::FitRectangle(dimensions)
-                    if dimensions.width == Some(Scaled::from_raw(5 * Scaled::UNITY))
-                        && dimensions.height == Some(Scaled::from_raw(6 * Scaled::UNITY))
-                        && dimensions.depth == Some(Scaled::from_raw(7 * Scaled::UNITY))
-            ));
-        });
+    });
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_destination_control(stores);
+        register_source(
+            &mut control,
+            br"\pdfdest struct 7 name{d} fitr width 5pt height 6pt depth 7pt",
+        );
+        assert!(matches!(
+            control.advance(stores),
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfdest"))
+        ));
+        assert!(current_list_owner_vec(&control, stores).is_empty());
+        assert_halted(&mut control, stores);
     });
 }
 #[test]
@@ -1998,27 +1653,15 @@ fn pdf_outline_rejects_prefixes_and_dvi_before_operand_scan() {
             control.advance(stores).expect("replayed outline"),
             StepResult::Progress(MainControlStep::Continue)
         );
-
-        crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
-            let mut dvi = pdftex_outline_control(dvi_stores);
-            register_source(&mut dvi, br"\pdfoutline user{/S /URI}{Title}");
-            assert!(matches!(
-                dvi.advance(dvi_stores),
-                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfoutline"))
-            ));
-            crate::test_harness::assign_int_param(
-                dvi_stores,
-                IntParam::PDF_OUTPUT,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("integer parameter assignment");
-            assert_eq!(
-                dvi.advance(dvi_stores)
-                    .expect("failed command retries with every operand intact"),
-                StepResult::Progress(MainControlStep::Continue)
-            );
-        });
+    });
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_outline_control(stores);
+        register_source(&mut control, br"\pdfoutline user{/S /URI}{Title}");
+        assert!(matches!(
+            control.advance(stores),
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfoutline"))
+        ));
+        assert_halted(&mut control, stores);
     });
 }
 #[test]
@@ -2170,32 +1813,16 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
             current_list_owner_vec(&control, stores).as_slice(),
             [Node::Whatsit(Whatsit::PdfSnapRefPoint)]
         ));
-
-        crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
-            let mut dvi = pdftex_snapping_control(dvi_stores);
-            register_source(&mut dvi, br"\pdfsnapy 7pt");
-            assert!(matches!(
-                dvi.advance(dvi_stores),
-                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfsnapy"))
-            ));
-            assert!(current_list_owner_vec(&dvi, dvi_stores).is_empty());
-            crate::test_harness::assign_int_param(
-                dvi_stores,
-                IntParam::PDF_OUTPUT,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("integer parameter assignment");
-            assert_eq!(
-                dvi.advance(dvi_stores)
-                    .expect("failed command retries with its operand intact"),
-                StepResult::Progress(MainControlStep::Continue)
-            );
-            assert!(matches!(
-                current_list_owner_vec(&dvi, dvi_stores).as_slice(),
-                [Node::Whatsit(Whatsit::PdfSnapY { .. })]
-            ));
-        });
+    });
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_snapping_control(stores);
+        register_source(&mut control, br"\pdfsnapy 7pt");
+        assert!(matches!(
+            control.advance(stores),
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfsnapy"))
+        ));
+        assert!(current_list_owner_vec(&control, stores).is_empty());
+        assert_halted(&mut control, stores);
     });
 }
 #[test]

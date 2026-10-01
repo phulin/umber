@@ -230,8 +230,8 @@ fn assert_read_failure_is_fully_cleaned(finalize: bool) {
         assert_eq!(processor.state.meaning(target), before_meaning);
         drop(processor);
         command
-            .rollback_attempt_operation(operation)
-            .expect("failed read leaves an exact operation scope");
+            .commit_attempt_operation(operation)
+            .expect("failed read leaves an exact operation scope to commit");
         assert!(command.attempt.is_empty());
     });
 }
@@ -620,8 +620,8 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
                 run_mixed_scan_workload(&mut processor, owner, rounds);
             }
             command
-                .rollback_attempt_operation(warm_operation)
-                .expect("warm scanner scratch rollback");
+                .commit_attempt_operation(warm_operation)
+                .expect("warm scanner scratch commit");
 
             crate::test_harness::push(&mut command, mixed_scan_workload(rounds));
             let measured_operation = command.begin_attempt_operation();
@@ -678,8 +678,8 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
             );
 
             command
-                .rollback_attempt_operation(measured_operation)
-                .expect("measured scanner scratch rollback");
+                .commit_attempt_operation(measured_operation)
+                .expect("measured scanner scratch commit");
         });
     }
 }

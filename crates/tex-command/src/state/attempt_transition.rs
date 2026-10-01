@@ -80,44 +80,14 @@ impl<G> CommandState<G> {
         self.attempt.close_child_scope(scope)
     }
 
-    /// Rejects the attempt-local suffix created by the active operation.
-    ///
-    /// Executor aggregate rollback restores semantic roots before invoking
-    /// this method, so no surviving command coordinate can name the suffix.
-    pub fn rollback_attempt_operation(
-        &mut self,
-        _operation: crate::CommandAttemptOperation,
-    ) -> Result<(), crate::AttemptError> {
-        let mark = self
-            .active_attempt_operation
-            .take()
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        let result = (|| {
-            while self.scratch.frame_len() > mark.macro_depth() {
-                let frame = self
-                    .scratch
-                    .active_argument_set()
-                    .ok_or(crate::AttemptError::InvalidCoordinate)?;
-                self.scratch
-                    .release_argument_set(frame)
-                    .map_err(|_| crate::AttemptError::InvalidCoordinate)?;
-            }
-            self.attempt.rollback_operation(mark)
-        })();
-        if result.is_err() {
-            self.active_attempt_operation = Some(mark);
-        }
-        result
-    }
-
     /// Drops an attempt owner after an aggregate checkpoint has already
     /// restored and truncated its command roots.
     ///
-    /// Ordinary rollback must consume the linear operation capability through
-    /// [`Self::rollback_attempt_operation`]. Checkpoint replay is the one
-    /// coarse transaction that restores the aggregate command cursor first;
-    /// its old operation coordinates are consequently no longer valid and
-    /// must be discarded rather than replayed against the restored arena.
+    /// No operation is ever rolled back in place: a failed or suspended
+    /// command halts, and checkpoint replay is the one coarse transaction
+    /// that restores the aggregate command cursor. The halted operation's
+    /// coordinates are consequently no longer valid and must be discarded
+    /// rather than replayed against the restored arena.
     #[doc(hidden)]
     pub fn abandon_attempt_after_checkpoint_restore(&mut self) {
         // Aggregate restore has already truncated every semantic root and

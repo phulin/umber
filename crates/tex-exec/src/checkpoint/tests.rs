@@ -557,7 +557,7 @@ fn candidate_replay_preflight_rejects_foreign_output_without_mutation() {
             "output preflight must leave the candidate ledger untouched"
         );
 
-        let command = control.into_rejected_checkpoint_command_with_state(&candidate);
+        let command = control.into_rejected_checkpoint_command();
         output.reject_checkpoint_candidate();
         universe.reject_checkpoint_candidate(&mut candidate);
         command_owner = Some(command);

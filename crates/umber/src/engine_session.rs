@@ -1311,14 +1311,10 @@ impl<'a, G> EngineSession<'a, G> {
                 answer: pending_answer,
             } = pending
             else {
-                return Err(SessionError::Execution(
-                    tex_exec::ExecError::ResourceReplayRequired,
-                ));
+                return Err(SessionError::Execution(tex_exec::ExecError::Halted));
             };
             if pending_need != need || pending_answer.is_some() {
-                return Err(SessionError::Execution(
-                    tex_exec::ExecError::ResourceReplayRequired,
-                ));
+                return Err(SessionError::Execution(tex_exec::ExecError::Halted));
             }
             *pending_answer = answer;
         } else {
@@ -1341,7 +1337,7 @@ impl<'a, G> EngineSession<'a, G> {
         let pending = self
             .pending_resource
             .as_ref()
-            .ok_or_else(|| SessionError::Execution(tex_exec::ExecError::ResourceReplayRequired))?;
+            .ok_or_else(|| SessionError::Execution(tex_exec::ExecError::Halted))?;
         let need = pending.need().clone();
         let checkpoint = checkpoints.latest_replay_checkpoint().ok_or_else(|| {
             SessionError::ReplayCheckpointUnavailable {

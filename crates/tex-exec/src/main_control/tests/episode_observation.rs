@@ -111,8 +111,8 @@ fn one_and_4096_ordinary_episodes_construct_zero_operation_frames() {
     assert_eq!(one_allocations.requested_bytes, 0);
     assert_eq!(many_allocations.calls, 0);
     assert_eq!(many_allocations.requested_bytes, 0);
-    assert_eq!(one_transitions, 4);
-    assert_eq!(many_transitions, 16_384);
+    assert_eq!(one_transitions, 3);
+    assert_eq!(many_transitions, 12_288);
     assert_eq!(one_copies, 0);
     assert_eq!(many_copies, 0);
     assert_eq!(one_overlapping_moves, 0);

@@ -7,8 +7,8 @@ mod durable_boxes;
 mod meaning_bank;
 mod restoration;
 pub(crate) use durable_boxes::{
-    AcceptedDurableBoxTail, DurableBoxCursor, DurableBoxOperation, DurableBoxState,
-    DurableFormState, OutputCarrierTarget, PageBoxAssignment,
+    AcceptedDurableBoxTail, DurableBoxCursor, DurableBoxState, DurableFormState,
+    OutputCarrierTarget,
 };
 pub use durable_boxes::{DurableNodeMetadata, UniqueBoxRegisterTake};
 mod font_runtime;
@@ -30,7 +30,6 @@ use crate::ids::FontId;
 use crate::interner::Symbol;
 use crate::journal::{
     AcceptedJournalTail, JournalCursor, JournalEntry, Mutation, RestoredGroups, SaveJournal,
-    StateOperation,
 };
 use crate::meaning::{MeaningWord, ResolvedMeaning};
 use crate::scaled::Scaled;
@@ -1905,79 +1904,6 @@ impl<G> DenseState<G> {
     ) -> Result<(), StateError> {
         self.journal_mut().accept_checkpoint_candidate()?;
         drop(tail);
-        Ok(())
-    }
-
-    pub(crate) fn begin_state_transaction(&mut self) -> StateOperation<G> {
-        let group_depth = self.groups.len();
-        let save_stack = self.journal().current_save_stack();
-        let save_position = self.journal().current_save_position();
-        let (group_entries, group_sparse_start) = self.journal().current_group_save_metadata();
-        let position = self.journal_mut().begin_transaction();
-        StateOperation::transaction(
-            position,
-            group_depth,
-            save_stack,
-            save_position,
-            group_entries,
-            group_sparse_start,
-        )
-    }
-
-    /// Settles the operation's state suffix and reopens it in place at the
-    /// current group coordinate, without ending the enclosing transaction.
-    #[inline]
-    pub(crate) fn roll_state_transaction(&mut self, operation: &mut StateOperation<G>) {
-        let group_depth = self.groups.len();
-        let journal = self.journal_mut();
-        let position = journal.roll_transaction();
-        let (group_entries, group_sparse_start) = journal.current_group_save_metadata();
-        operation.reopen(
-            position,
-            group_depth,
-            journal.current_save_stack(),
-            journal.current_save_position(),
-            group_entries,
-            group_sparse_start,
-        );
-    }
-
-    pub(crate) fn commit_state_transaction(&mut self, position: usize) {
-        self.journal_mut().commit_transaction(position);
-    }
-
-    pub(crate) fn rollback_state_transaction(
-        &mut self,
-        operation: &StateOperation<G>,
-    ) -> Result<(), StateError> {
-        let position = operation.transaction_position();
-        let suffix_len = self.journal().transaction_len();
-        for index in (position..suffix_len).rev() {
-            let mutation = self
-                .journal()
-                .transaction_entry(index)
-                .expect("transaction suffix length remains stable");
-            // The checkpoint lane is independent of this operation lane. If
-            // the operation's first write also created a checkpoint delta,
-            // restoring the old value must retain the current interval serial
-            // or the next write would look like a second first touch.
-            let save_serial = self.journal().save_serial();
-            self.write_cell(
-                mutation.cell(),
-                BankCell::new(mutation.before, mutation.before_level, save_serial),
-            )?;
-        }
-        if !self.journal_mut().rollback_group_suffix(
-            operation.group_depth(),
-            operation.save_stack(),
-            operation.save_position(),
-            operation.group_entries(),
-            operation.group_sparse_start(),
-        ) {
-            return Err(StateError::InvalidCursor);
-        }
-        self.groups.truncate(operation.group_depth());
-        self.journal_mut().finish_transaction_rollback(position);
         Ok(())
     }
 

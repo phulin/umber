@@ -305,10 +305,7 @@ fn bare_macro_parameter_commit_survives_later_input_need_without_duplication() {
                 .message,
             first_message
         );
-        assert!(matches!(
-            control.advance(stores),
-            Err(ExecError::ResourceReplayRequired)
-        ));
+        assert!(matches!(control.advance(stores), Err(ExecError::Halted)));
     });
 }
 #[test]
@@ -350,10 +347,7 @@ fn committed_recoverable_diagnostic_survives_later_input_need() {
         assert_eq!(first.kind, "command-recoverable");
         assert!(first.message.contains("\\badness"));
         assert_eq!(first.message, first_message);
-        assert!(matches!(
-            control.advance(stores),
-            Err(ExecError::ResourceReplayRequired)
-        ));
+        assert!(matches!(control.advance(stores), Err(ExecError::Halted)));
     });
 }
 #[test]
@@ -392,7 +386,7 @@ fn production_batch_keeps_ordinary_prefix_and_rejects_direct_retry() {
         );
         assert!(matches!(
             control.advance_episode(stores),
-            Err(ExecError::ResourceReplayRequired)
+            Err(ExecError::Halted)
         ));
         assert_eq!(stores.count(0).expect("count register"), 11);
         let telemetry = control.advance_telemetry();
@@ -569,46 +563,6 @@ fn retained_native_probe_actual_use_tracks_pending_and_committed_overwrites() {
         assert_eq!(
             current_dependency.access(),
             tex_state::InputDependencyAccess::AuthoritativeProbe
-        );
-
-        let generated_only = {
-            let mut transaction = stores.begin_shipout();
-            let generated_path = Path::new("rolled-back.tex");
-            let generated_slot = tex_state::StreamSlot::new(2);
-            transaction
-                .world_mut()
-                .open_out(generated_slot, generated_path);
-            transaction
-                .world_mut()
-                .write_text(tex_state::PrintSink::Stream(generated_slot), "discarded");
-            transaction.world_mut().close_out(generated_slot);
-            let content = transaction
-                .world_mut()
-                .read_file(generated_path)
-                .expect("generated-only content reads before rollback");
-            let hash = content.hash();
-            control
-                .capabilities_mut()
-                .register_input_probe_with_dependencies(
-                    "rolled-back.tex",
-                    tex_command::FileEnquiryResource::world(content),
-                    vec![tex_state::InputDependency::new(
-                        generated_path,
-                        tex_state::InputDependencyOutcome::Present(hash),
-                        tex_state::InputDependencyAccess::AuthoritativeProbe,
-                    )],
-                );
-            control
-                .capabilities_mut()
-                .input_probe_resource("rolled-back.tex")
-                .expect("generated-only retained capability")
-        };
-        let after_rollback = generated_only
-            .actual_use(&mut stores.input_open_context())
-            .expect("rolled-back generated-only probe checks current output");
-        assert!(
-            after_rollback.is_none(),
-            "a generated-only capability must not revive bytes after rollback"
         );
     });
 }
@@ -965,7 +919,7 @@ fn unavailable_input_probe_releases_its_diagnostic_site_before_direct_retry_reje
             crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation),
             crate::CanonicalStepResult::Failed(crate::CanonicalStepFailure::Execution(
-                ExecError::ResourceReplayRequired
+                ExecError::Halted
             ))
         ));
     });
@@ -981,7 +935,7 @@ fn prefixed_definition_scanner_rejects_stale_retry_after_first_child_need() {
         register_file_size_probe(&mut control, &first, b"ABCD");
         assert!(matches!(
             control.advance_episode(stores),
-            Err(ExecError::ResourceReplayRequired)
+            Err(ExecError::Halted)
         ));
     });
 }
@@ -1086,7 +1040,7 @@ fn observed_resource_need_publishes_no_uncommitted_prefix() {
             .register_input("child.tex", child.clone());
         assert!(matches!(
             control.advance_with_observer(stores, &mut retried),
-            Err(ExecError::ResourceReplayRequired)
+            Err(ExecError::Halted)
         ));
         assert!(
             retried.0.is_empty(),
@@ -1128,7 +1082,7 @@ fn committed_token_scanner_attempt_is_discarded_before_named_checkpoint() {
     });
 }
 #[test]
-fn diagnostic_assignment_discards_font_need_before_checkpoint_capture() {
+fn diagnostic_font_need_halts_and_refuses_checkpoint_capture() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         let checkpoint = control
@@ -1146,24 +1100,19 @@ fn diagnostic_assignment_discards_font_need_before_checkpoint_capture() {
                 .expect("font request suspends"),
             DiagnosticStepResult::Suspended(ResourceNeed::Font { .. })
         ));
-        let state_before = stores.journal_cursor().expect("state cursor");
-        control
-            .capture_checkpoint(
+        assert!(matches!(
+            control.capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
                 stores,
                 crate::ExecutionBudgetCounters::default(),
-            )
-            .expect("discarded diagnostic need leaves a quiescent control");
-        assert_eq!(
-            stores.journal_cursor().expect("state cursor"),
-            state_before,
-            "discarding the attempt must not mutate the semantic state"
-        );
+            ),
+            Err(tex_command::CommandSummaryError::AttemptSuspended)
+        ));
         drop(checkpoint);
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
         assert!(matches!(
             control.diagnostic_expand_step(stores),
-            Err(ExecError::ResourceReplayRequired)
+            Err(ExecError::Halted)
         ));
         assert_eq!(
             control.pending_resource_site(),
@@ -1199,7 +1148,7 @@ fn diagnostic_input_retry_rejects_the_discarded_delivery_attempt() {
         );
         assert!(matches!(
             control.diagnostic_expand_step(stores),
-            Err(ExecError::ResourceReplayRequired)
+            Err(ExecError::Halted)
         ));
         assert_eq!(
             control.pending_resource_site(),
@@ -1531,10 +1480,7 @@ fn invalid_arithmetic_target_commit_survives_later_resource_need() {
         ));
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(terminal_text(stores), committed);
-        assert!(matches!(
-            control.advance(stores),
-            Err(ExecError::ResourceReplayRequired)
-        ));
+        assert!(matches!(control.advance(stores), Err(ExecError::Halted)));
     });
 }
 #[test]
@@ -1579,7 +1525,7 @@ fn unavailable_font_need_rejects_direct_retry_without_mode_drift() {
                 &mut ObservationRecorder::default(),
             ),
             crate::CanonicalStepResult::Failed(crate::CanonicalStepFailure::Execution(
-                ExecError::ResourceReplayRequired
+                ExecError::Halted
             ))
         ));
 

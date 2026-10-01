@@ -283,8 +283,8 @@ fn timeline_capture_rejects_nonempty_attempts_and_retains_only_empty_marks() {
         ));
 
         command
-            .rollback_attempt_operation(empty)
-            .expect("empty operation rolls back");
+            .commit_attempt_operation(empty)
+            .expect("empty operation commits");
         let snapshot = command
             .snapshot(universe)
             .expect("empty command attempt snapshots");

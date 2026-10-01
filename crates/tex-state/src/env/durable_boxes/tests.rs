@@ -70,17 +70,8 @@ fn assign_box(state: &mut DurableBoxState, arena: &mut PageMaterialArena, index:
         .expect("box assignment");
 }
 
-fn rollback_box_operation(
-    state: &mut DurableBoxState,
-    arena: &mut PageMaterialArena,
-    operation: DurableBoxOperation,
-) {
-    let mut page = crate::page::PageBuilderState::default();
-    state.rollback_operation(arena, &mut page, operation);
-}
-
 #[test]
-fn direct_register_take_moves_one_owner_and_reverses_later_dimension_edit() {
+fn direct_register_take_moves_one_owner_without_copying() {
     page_arena!(arena, pool, region, 65_536);
     arena.enable_semantic_identity();
     let mut state = DurableBoxState::new();
@@ -91,7 +82,6 @@ fn direct_register_take_moves_one_owner_and_reverses_later_dimension_edit() {
     let overwritten = current_region(&state, 4).expect("destination owner");
     let identity = state.semantic_identity_root();
     let before = arena.durable_transition_counters();
-    let operation = state.begin_operation();
 
     assert!(
         state
@@ -107,16 +97,18 @@ fn direct_register_take_moves_one_owner_and_reverses_later_dimension_edit() {
     );
     assert_eq!(current_region(&state, 3), None);
     assert_eq!(current_region(&state, 4), Some(source));
+    assert!(!arena.durable_region_is_live(overwritten));
+    assert_ne!(state.semantic_identity_root(), identity);
+    assert_eq!(
+        arena
+            .durable_transition_counters()
+            .history_preservation_nodes_copied,
+        before.history_preservation_nodes_copied
+    );
     state
         .set_box_dimension(&mut arena, 4, BoxDimension::Width, Scaled::from_raw(81))
         .expect("later scalar edit");
-    rollback_box_operation(&mut state, &mut arena, operation);
-
-    assert_eq!(current_region(&state, 3), Some(source));
-    assert_eq!(current_region(&state, 4), Some(overwritten));
-    assert_eq!(dimensions(&state, &arena, 4).0, Scaled::from_raw(10));
-    assert_eq!(state.semantic_identity_root(), identity);
-    assert_eq!(arena.durable_transition_counters(), before);
+    assert_eq!(dimensions(&state, &arena, 4).0, Scaled::from_raw(81));
     state.retire_all(&mut arena);
 }
 
@@ -127,7 +119,6 @@ fn same_register_local_take_restores_void_after_group_exit() {
     assign_box(&mut state, &mut arena, 0);
     let moved = current_region(&state, 0);
     state.begin_group(2);
-    let operation = state.begin_operation();
     assert!(
         state
             .assign_unique_register_take(
@@ -140,7 +131,6 @@ fn same_register_local_take_restores_void_after_group_exit() {
             )
             .expect("same-register handoff")
     );
-    state.commit_operation(&mut arena, operation);
     assert_eq!(current_region(&state, 0), moved);
     state.end_group(&mut arena, 2).expect("group exit");
     assert_eq!(current_region(&state, 0), None);
@@ -165,7 +155,6 @@ fn direct_take_respects_saved_group_source_and_checkpoint_history() {
         )
         .expect("group-local source");
     let inner = current_region(&state, 8);
-    let move_operation = state.begin_operation();
     assert!(
         state
             .assign_unique_register_take(
@@ -178,7 +167,6 @@ fn direct_take_respects_saved_group_source_and_checkpoint_history() {
             )
             .expect("move current source")
     );
-    state.commit_operation(&mut arena, move_operation);
     assert_eq!(current_region(&state, 8), None);
     assert_eq!(current_region(&state, 9), inner);
     state
@@ -208,134 +196,73 @@ fn direct_take_respects_saved_group_source_and_checkpoint_history() {
 }
 
 #[test]
-fn failed_destination_history_staging_restores_pending_source_without_journal_changes() {
-    for fail_after in 0..=1 {
-        page_arena!(arena, pool, region, 65_536);
-        let mut state = DurableBoxState::new();
-        assign_box(&mut state, &mut arena, 4);
-        let checkpoint = state.checkpoint_cursor();
-        assign_box(&mut state, &mut arena, 3);
-        let source = current_region(&state, 3);
-        let destination = current_region(&state, 4);
-        state.begin_group(2);
-        let operation = state.begin_operation();
-        let entry_count = state.operation_entries.len();
-        let action_count = state.operation_actions.len();
-        let checkpoint_count = state.checkpoint_entries.len();
-        let group_count = state.groups.last().expect("open group").entries.len();
-        let stamps = state.checkpoint_stamps.clone();
-        let live_count = state.owners.slots.iter().filter(|slot| slot.live).count();
+fn failed_destination_history_staging_restores_pending_source_without_history_changes() {
+    page_arena!(arena, pool, region, 65_536);
+    let mut state = DurableBoxState::new();
+    assign_box(&mut state, &mut arena, 4);
+    let checkpoint = state.checkpoint_cursor();
+    assign_box(&mut state, &mut arena, 3);
+    let source = current_region(&state, 3);
+    let destination = current_region(&state, 4);
+    state.begin_group(2);
+    let checkpoint_count = state.checkpoint_entries.len();
+    let group_count = state.groups.last().expect("open group").entries.len();
+    let stamps = state.checkpoint_stamps.clone();
+    let live_count = state.owners.slots.iter().filter(|slot| slot.live).count();
 
-        let take = state
-            .begin_unique_register_take(3, 4)
-            .expect("unique source");
-        assert_eq!(current_region(&state, 3), None);
-        state.fail_history_copy_after = Some(fail_after);
-        assert!(matches!(
-            state.finish_unique_register_take(
-                &mut arena,
-                take,
-                4,
-                super::super::AssignmentScope::Local,
-                2,
-                0,
-            ),
-            Err(BankError::AllocationFailed)
-        ));
-        assert_eq!(current_region(&state, 3), source);
-        assert_eq!(current_region(&state, 4), destination);
-        assert_eq!(state.operation_entries.len(), entry_count);
-        assert_eq!(state.operation_actions.len(), action_count);
-        assert_eq!(state.checkpoint_entries.len(), checkpoint_count);
-        assert_eq!(
-            state.groups.last().expect("open group").entries.len(),
-            group_count
-        );
-        assert_eq!(state.checkpoint_stamps, stamps);
-        assert_eq!(
-            state.owners.slots.iter().filter(|slot| slot.live).count(),
-            live_count
-        );
+    let take = state
+        .begin_unique_register_take(3, 4)
+        .expect("unique source");
+    assert_eq!(current_region(&state, 3), None);
+    state.fail_history_copy_after = Some(0);
+    assert!(matches!(
+        state.finish_unique_register_take(
+            &mut arena,
+            take,
+            4,
+            super::super::AssignmentScope::Local,
+            2,
+            0,
+        ),
+        Err(BankError::AllocationFailed)
+    ));
+    assert_eq!(current_region(&state, 3), source);
+    assert_eq!(current_region(&state, 4), destination);
+    assert_eq!(state.checkpoint_entries.len(), checkpoint_count);
+    assert_eq!(
+        state.groups.last().expect("open group").entries.len(),
+        group_count
+    );
+    assert_eq!(state.checkpoint_stamps, stamps);
+    assert_eq!(
+        state.owners.slots.iter().filter(|slot| slot.live).count(),
+        live_count
+    );
 
-        rollback_box_operation(&mut state, &mut arena, operation);
-        state.end_group(&mut arena, 2).expect("empty group exit");
-        state.restore(&mut arena, checkpoint);
-        state.retire_all(&mut arena);
-    }
+    state.end_group(&mut arena, 2).expect("empty group exit");
+    state.restore(&mut arena, checkpoint);
+    state.retire_all(&mut arena);
 }
 
 #[test]
-fn rollback_of_unfinished_register_take_restores_source_without_destination_inverse() {
+fn checkpoint_restore_abandons_unfinished_register_take() {
     page_arena!(arena, pool, region, 65_536);
     let mut state = DurableBoxState::new();
+    let checkpoint = state.checkpoint_cursor();
     assign_box(&mut state, &mut arena, 3);
     assign_box(&mut state, &mut arena, 4);
-    let source = current_region(&state, 3);
-    let destination = current_region(&state, 4);
-    let operation = state.begin_operation();
     let _take = state
         .begin_unique_register_take(3, 4)
         .expect("unique source");
     assert_eq!(current_region(&state, 3), None);
-    rollback_box_operation(&mut state, &mut arena, operation);
-    assert_eq!(current_region(&state, 3), source);
-    assert_eq!(current_region(&state, 4), destination);
-    state.retire_all(&mut arena);
-}
-
-#[test]
-fn unfinished_take_rejects_commit_before_draining_rollback_action() {
-    page_arena!(arena, pool, region, 65_536);
-    let mut state = DurableBoxState::new();
-    assign_box(&mut state, &mut arena, 3);
-    let source = current_region(&state, 3);
-    let operation = state.begin_operation();
-    let _take = state
-        .begin_unique_register_take(3, 4)
-        .expect("unique source");
-    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        state.commit_operation(&mut arena, operation);
-    }));
-    assert!(rejected.is_err());
-    assert_eq!(state.operation_depth, operation.depth);
-    assert_eq!(state.operation_actions.len(), operation.action_position + 1);
-    rollback_box_operation(&mut state, &mut arena, operation);
-    assert_eq!(current_region(&state, 3), source);
+    state.restore(&mut arena, checkpoint);
+    assert_eq!(current_region(&state, 3), None);
     assert_eq!(current_region(&state, 4), None);
-    state.retire_all(&mut arena);
-}
-
-#[test]
-fn interleaved_durable_mutation_rejects_pending_take_before_destination_publication() {
-    page_arena!(arena, pool, region, 65_536);
-    let mut state = DurableBoxState::new();
-    assign_box(&mut state, &mut arena, 3);
-    assign_box(&mut state, &mut arena, 4);
-    let source = current_region(&state, 3);
-    let destination = current_region(&state, 4);
-    let operation = state.begin_operation();
-    let take = state
-        .begin_unique_register_take(3, 4)
-        .expect("unique source");
-    assign_box(&mut state, &mut arena, 5);
-    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        state
-            .finish_unique_register_take(
-                &mut arena,
-                take,
-                4,
-                super::super::AssignmentScope::Global,
-                LEVEL_ONE,
-                0,
-            )
-            .expect("interleaved receipt must reject")
-    }));
-    assert!(rejected.is_err());
-    assert_eq!(current_region(&state, 4), destination);
-    rollback_box_operation(&mut state, &mut arena, operation);
-    assert_eq!(current_region(&state, 3), source);
-    assert_eq!(current_region(&state, 4), destination);
-    assert_eq!(current_region(&state, 5), None);
+    assert!(state.pending_take.is_none());
+    assert_eq!(
+        state.owners.slots.iter().filter(|slot| slot.live).count(),
+        0
+    );
     state.retire_all(&mut arena);
 }
 
@@ -346,7 +273,6 @@ fn same_register_global_take_survives_group_exit() {
     assign_box(&mut state, &mut arena, 0);
     let moved = current_region(&state, 0);
     state.begin_group(2);
-    let operation = state.begin_operation();
     let take = state
         .begin_unique_register_take(0, 0)
         .expect("unique source");
@@ -360,127 +286,13 @@ fn same_register_global_take_survives_group_exit() {
             0,
         )
         .expect("global same-register assignment");
-    state.commit_operation(&mut arena, operation);
     state.end_group(&mut arena, 2).expect("group exit");
     assert_eq!(current_region(&state, 0), moved);
     state.retire_all(&mut arena);
 }
 
 #[test]
-fn empty_operations_leave_box_journals_unallocated() {
-    page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
-    for _ in 0..1_000 {
-        let outer = state.begin_operation();
-        let inner = state.begin_operation();
-        state.commit_operation(&mut arena, inner);
-        state.commit_operation(&mut arena, outer);
-    }
-    assert_eq!(state.operation_depth, 0);
-    assert!(state.operation_entries.is_empty());
-    assert!(state.operation_actions.is_empty());
-    assert_eq!(state.operation_entries.capacity(), 0);
-}
-
-#[test]
-fn nested_operation_depth_keeps_outer_box_inverse() {
-    page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
-    let outer = state.begin_operation();
-    let inner = state.begin_operation();
-    assign_box(&mut state, &mut arena, 15);
-    state.commit_operation(&mut arena, inner);
-    assert!(state.value(15).is_some());
-    rollback_box_operation(&mut state, &mut arena, outer);
-    assert!(state.value(15).is_none());
-    assert_eq!(state.operation_depth, 0);
-}
-
-#[test]
-fn page_loan_then_dimension_edit_replays_scalar_before_returning_interval() {
-    page_arena!(arena, pool, region, 65_536);
-    let mut state = DurableBoxState::new();
-    let start = arena.begin_closure_build().expect("box interval start");
-    let child = arena.publish_owned([Node::Penalty(47)]).expect("box child");
-    arena.rotate_box_wrapper_tail().expect("wrapper boundary");
-    let root = arena
-        .publish_owned([Node::HList(BoxNode::new(BoxNodeFields {
-            width: Scaled::from_raw(10),
-            height: Scaled::from_raw(20),
-            depth: Scaled::from_raw(3),
-            shift: Scaled::from_raw(0),
-            box_lr: BoxLr::Normal,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children: child,
-        }))])
-        .expect("box wrapper");
-    let segment = arena
-        .stamp_box_segment(&start, root, None)
-        .expect("immutable interval stamp");
-    assert_eq!(arena.close_box_segment(start).expect("box end"), segment);
-    let operation = state.begin_operation();
-    let metadata = arena
-        .box_migration_metadata(root)
-        .expect("original metadata");
-    let (owner, loan) = arena
-        .finish_interleaved_page_box(root, metadata, false)
-        .expect("move page interval");
-    state
-        .assign_with_page_loan(
-            &mut arena,
-            22,
-            PageBoxAssignment {
-                closure: owner,
-                loan,
-            },
-            super::super::AssignmentScope::Global,
-            LEVEL_ONE,
-            0,
-        )
-        .expect("durable binding");
-    state
-        .set_box_dimension(&mut arena, 22, BoxDimension::Width, Scaled::from_raw(40))
-        .expect("durable scalar edit");
-    rollback_box_operation(&mut state, &mut arena, operation);
-
-    assert!(state.value(22).is_none());
-    assert!(arena.contains(root));
-    let list = arena.node_cursor(root).expect("returned wrapper");
-    let Some(crate::NodeView::HList(node)) = list.get(0) else {
-        panic!("returned wrapper is an hbox")
-    };
-    assert_eq!(node.width, Scaled::from_raw(10));
-}
-
-#[test]
-fn durable_take_then_replacement_rolls_back_in_event_order() {
-    page_arena!(arena, pool, region, 65_536);
-    let mut state = DurableBoxState::new();
-    assign_box(&mut state, &mut arena, 23);
-    let original_region = current_region(&state, 23);
-    let operation = state.begin_operation();
-    let moved = state
-        .take_to_page(&mut arena, 23)
-        .expect("durable loan")
-        .expect("occupied box");
-    let replacement = boxed_owner(&mut arena);
-    state
-        .replace(&mut arena, 23, Some(replacement))
-        .expect("replacement binding");
-    assert_ne!(current_region(&state, 23), original_region);
-    let copies = arena.durable_transition_counters();
-    rollback_box_operation(&mut state, &mut arena, operation);
-
-    assert!(current_region(&state, 23).is_some());
-    assert_eq!(dimensions(&state, &arena, 23).0, Scaled::from_raw(10));
-    assert!(!arena.contains(moved));
-    assert_eq!(arena.durable_transition_counters(), copies);
-}
-
-#[test]
-fn scalar_box_root_mutation_preserves_closure_and_rolls_back() {
+fn scalar_box_root_mutation_preserves_closure() {
     page_arena!(arena, pool, region, 64);
     arena.enable_semantic_identity();
     let mut state = DurableBoxState::new();
@@ -498,7 +310,6 @@ fn scalar_box_root_mutation_preserves_closure_and_rolls_back() {
     let original_region = current_region(&state, 8);
     let original_identity = state.semantic_identity_root();
     let before = arena.durable_transition_counters();
-    let operation = state.begin_operation();
     for (dimension, raw) in [
         (BoxDimension::Width, 40),
         (BoxDimension::Height, 50),
@@ -524,17 +335,6 @@ fn scalar_box_root_mutation_preserves_closure_and_rolls_back() {
             .history_preservation_nodes_copied,
         before.history_preservation_nodes_copied
     );
-    rollback_box_operation(&mut state, &mut arena, operation);
-    assert_eq!(
-        dimensions(&state, &arena, 8),
-        (
-            Scaled::from_raw(10),
-            Scaled::from_raw(20),
-            Scaled::from_raw(3)
-        )
-    );
-    assert_eq!(current_region(&state, 8), original_region);
-    assert_eq!(state.semantic_identity_root(), original_identity);
     state.retire_all(&mut arena);
 }
 
@@ -576,12 +376,10 @@ fn checkpoint_scalar_history_restores_through_overwrite_and_destructive_take() {
     state
         .set_box_dimension(&mut arena, 8, BoxDimension::Height, Scaled::from_raw(60))
         .expect("height edit");
-    let operation = state.begin_operation();
     let _ = state
         .take_to_page(&mut arena, 8)
         .expect("take")
         .expect("nonvoid box");
-    state.commit_operation(&mut arena, operation);
     assert!(state.value(8).is_none());
     state.restore(&mut arena, checkpoint);
     assert_eq!(dimensions(&state, &arena, 8).1, Scaled::from_raw(20));
@@ -625,27 +423,6 @@ fn scalar_checkpoint_candidate_reject_and_accept_keep_separate_root_values() {
     assert_eq!(current_region(&state, 9), candidate_region);
     assert_ne!(candidate_region, accepted_region);
     assert_eq!(dimensions(&state, &arena, 9).0, Scaled::from_raw(10));
-    state.retire_all(&mut arena);
-}
-
-#[test]
-fn rolled_back_scalar_first_touch_can_be_recorded_again() {
-    page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
-    assign_box(&mut state, &mut arena, 10);
-    let checkpoint = state.checkpoint_cursor();
-    let operation = state.begin_operation();
-    state
-        .set_box_dimension(&mut arena, 10, BoxDimension::Depth, Scaled::from_raw(8))
-        .expect("transient edit");
-    rollback_box_operation(&mut state, &mut arena, operation);
-    assert!(state.scalar_entries.is_empty());
-    state
-        .set_box_dimension(&mut arena, 10, BoxDimension::Depth, Scaled::from_raw(9))
-        .expect("lasting edit");
-    assert_eq!(state.scalar_entries.len(), 1);
-    state.restore(&mut arena, checkpoint);
-    assert_eq!(dimensions(&state, &arena, 10).2, Scaled::from_raw(3));
     state.retire_all(&mut arena);
 }
 
@@ -869,98 +646,7 @@ fn retained_checkpoint_rewinds_and_reject_restores_exact_owners() {
 }
 
 #[test]
-fn operation_rollback_moves_the_original_owner_back_without_copying() {
-    page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
-    let original = owner(&mut arena, 29);
-    let original_id = original.region_id();
-    state
-        .assign(
-            &mut arena,
-            7,
-            Some(original),
-            super::super::AssignmentScope::Global,
-            LEVEL_ONE,
-        )
-        .expect("original assignment");
-    let operation = state.begin_operation();
-    let replacement = owner(&mut arena, 31);
-    let replacement_id = replacement.region_id();
-    let before = arena.durable_transition_counters();
-    state
-        .replace(&mut arena, 7, Some(replacement))
-        .expect("operation replacement");
-    rollback_box_operation(&mut state, &mut arena, operation);
-
-    assert_eq!(current_region(&state, 7), Some(original_id));
-    assert!(!arena.durable_region_is_live(replacement_id));
-    assert_eq!(arena.durable_transition_counters(), before);
-    state.retire_all(&mut arena);
-}
-
-#[test]
-fn operation_rollback_discards_existing_group_box_save_before_group_close() {
-    page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
-    let original = owner(&mut arena, 29);
-    let original_id = original.region_id();
-    state
-        .assign(
-            &mut arena,
-            7,
-            Some(original),
-            super::super::AssignmentScope::Global,
-            LEVEL_ONE,
-        )
-        .expect("original assignment");
-
-    state.begin_group(2);
-    let operation = state.begin_operation();
-    let transient = owner(&mut arena, 31);
-    let transient_id = transient.region_id();
-    state
-        .assign(
-            &mut arena,
-            7,
-            Some(transient),
-            super::super::AssignmentScope::Local,
-            2,
-        )
-        .expect("operation-local assignment");
-    rollback_box_operation(&mut state, &mut arena, operation);
-
-    assert_eq!(current_region(&state, 7), Some(original_id));
-    assert!(!arena.durable_region_is_live(transient_id));
-
-    // TeX82 §283 restores the surviving local save exactly once when the
-    // enclosing group closes; the rolled-back operation save is no longer a
-    // group record.
-    let replacement = owner(&mut arena, 37);
-    let replacement_id = replacement.region_id();
-    state
-        .assign(
-            &mut arena,
-            7,
-            Some(replacement),
-            super::super::AssignmentScope::Local,
-            2,
-        )
-        .expect("post-rollback local assignment");
-    let restorations = state.end_group(&mut arena, 2).expect("group restore");
-
-    assert_eq!(restorations.len(), 1);
-    assert_eq!(restorations[0].index, 7);
-    assert_eq!(
-        restorations[0].outcome,
-        super::super::GroupRestorationOutcome::Restored
-    );
-    assert_eq!(current_region(&state, 7), Some(original_id));
-    assert!(!arena.durable_region_is_live(replacement_id));
-    state.retire_all(&mut arena);
-}
-
-#[test]
-fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
+fn take_moves_the_owner_to_the_page_without_copying() {
     page_arena!(arena, pool, region, 64);
     let mut state = DurableBoxState::new();
     let original = owner(&mut arena, 33);
@@ -978,7 +664,6 @@ fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
             LEVEL_ONE,
         )
         .expect("original assignment");
-    let operation = state.begin_operation();
     let before = arena.durable_transition_counters();
 
     let page = state
@@ -990,22 +675,6 @@ fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
         arena
             .node_cursor(page)
             .expect("loaned page list")
-            .testing_node_address(0),
-        Some(original_address)
-    );
-    assert_eq!(
-        arena
-            .durable_transition_counters()
-            .history_preservation_nodes_copied,
-        before.history_preservation_nodes_copied
-    );
-
-    rollback_box_operation(&mut state, &mut arena, operation);
-    let restored = state.value(8).expect("rollback restores durable owner");
-    assert_eq!(
-        arena
-            .durable_list(restored)
-            .expect("restored durable list")
             .testing_node_address(0),
         Some(original_address)
     );
@@ -1038,7 +707,6 @@ fn open_groups_without_a_saved_current_owner_keep_destructive_take_unique() {
             3,
         )
         .expect("box assignment");
-    let operation = state.begin_operation();
     let before = arena.durable_transition_counters();
     let page = state
         .take_to_page(&mut arena, 8)
@@ -1057,46 +725,9 @@ fn open_groups_without_a_saved_current_owner_keep_destructive_take_unique() {
             .history_preservation_nodes_copied,
         before.history_preservation_nodes_copied
     );
-    rollback_box_operation(&mut state, &mut arena, operation);
-    assert_eq!(
-        arena
-            .durable_list(state.value(8).expect("restored source"))
-            .expect("restored list")
-            .testing_node_address(0),
-        address
-    );
+    assert!(state.value(8).is_none());
     state.end_group(&mut arena, 3).expect("inner group");
     state.end_group(&mut arena, 2).expect("outer group");
-    state.retire_all(&mut arena);
-}
-
-#[test]
-fn operation_rollback_restores_the_maintained_semantic_root() {
-    page_arena!(arena, pool, region, 64);
-    arena.enable_semantic_identity();
-    let mut state = DurableBoxState::new();
-    assert!(state.enable_semantic_identity());
-    let original = owner(&mut arena, 31);
-    state
-        .assign(
-            &mut arena,
-            8,
-            Some(original),
-            super::super::AssignmentScope::Global,
-            LEVEL_ONE,
-        )
-        .expect("original assignment");
-    let original_identity = state.semantic_identity_root();
-    let operation = state.begin_operation();
-    let replacement = owner(&mut arena, 37);
-    state
-        .replace(&mut arena, 8, Some(replacement))
-        .expect("operation replacement");
-
-    assert_ne!(state.semantic_identity_root(), original_identity);
-    rollback_box_operation(&mut state, &mut arena, operation);
-
-    assert_eq!(state.semantic_identity_root(), original_identity);
     state.retire_all(&mut arena);
 }
 
