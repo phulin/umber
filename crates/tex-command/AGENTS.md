@@ -177,28 +177,22 @@ collector (see `src/conditionals.rs`).
   conversion rendering. These contain no expansion driver or semantic owner.
 - `src/processor/mod.rs`: processor construction plus the episode-local
   observation delivery cursor used at a direct executor boundary; it restores
-  observation ordering but owns no command/input semantics or retry state. The
-  processor's ordinary immediate-delivery freshness proof compares the
-  command's stable input-level/position coordinate with the authoritative
-  resident cursor and one episode-local availability bit; it does not mirror
-  the coordinate after each stored or macro delivery. Direct-source positions,
-  synthetic `endv`, and a settled command without a resident predecessor use
-  the one explicit exceptional coordinate. Neither ordinary nor profiling
-  delivery updates a parallel
-  freshness-publication census; focused fixtures derive their known delivery
-  volume at the measurement boundary. `CurrentCommand` owns no observation
+  observation ordering but owns no command/input semantics or retry state.
+  There is no delivery stamp or backup freshness proof: §325 `back_input`
+  accepts the delivered command it is handed, exactly as TeX's `cur_tok`, and
+  ordinary delivery publishes no freshness census. Focused fixtures derive their
+  known delivery volume at the measurement boundary. `CurrentCommand` owns no observation
   sequence; a resource miss drops the cursor with the call-local processor and
   full-checkpoint replay starts a new observation episode.
   Every construction uses `CommandProcessor::new`, which takes the
   caller-owned admitted context, session-owned fuel, observer, and
   operation-local diagnostic-effects collector directly and constructs no
   temporary owned ledger or whole-context handoff.
-- `src/command.rs`: test builds count resolved-command and delivery-stamp
-  writes for structural assertions. Profiling builds derive that exact
-  one-write-per-raw-delivery volume from the singular command-work ledger, so
-  the resident loop does not maintain a parallel ownership census. Genuine
-  backup copies remain separately counted because they are not implied by the
-  raw-delivery vector.
+- `src/command.rs`: test builds count resolved-command writes for structural
+  assertions. Profiling builds derive that exact one-write-per-raw-delivery
+  volume from the singular command-work ledger, so the resident loop does not
+  maintain a parallel ownership census. Genuine backup copies remain separately
+  counted because they are not implied by the raw-delivery vector.
 - `src/error.rs`: command error and resource-need representation plus the
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.

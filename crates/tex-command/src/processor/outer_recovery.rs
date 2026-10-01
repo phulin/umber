@@ -50,13 +50,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         // one-line source remains live until §483's `end_file_reading`, so
         // the recovery context must continue to name that read frame rather
         // than manufacture a `<to be read again>` token-list level.
-        let delivered_by_read = self.command.input.levels.iter().any(|level| {
-            let InputLevel::Source(source) = level else {
-                return false;
-            };
-            source.identity().0 == command.delivery_stamp().input_level()
-                && matches!(source.slot.name_class, SourceNameClass::ReadStream(_))
-        });
+        let delivered_by_read = command.is_direct_source_delivery()
+            && matches!(
+                self.command.input.levels.last(),
+                Some(InputLevel::Source(source))
+                    if matches!(source.slot.name_class, SourceNameClass::ReadStream(_))
+            );
         if !delivered_by_read {
             self.back_input(command.copy_for_backup())?;
         }
@@ -154,7 +153,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .or_else(|| Some(self.observed_token(token)))
             })
             .collect();
-        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::transient(std::iter::once(first_token).chain(second_token)),
             TokenBehavior::Ordinary,

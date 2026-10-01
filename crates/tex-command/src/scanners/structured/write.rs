@@ -315,7 +315,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .take()
                 .ok_or_else(|| CommandError::input_invariant())?;
         }
-        self.retire_delivery_level(stopper.delivery_stamp())?;
+        self.retire_delivery_level()?;
         if unbalanced {
             self.retire_exhausted_through(stopper_level)?;
         }
@@ -344,7 +344,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         tokens: impl IntoIterator<Item = Token>,
         observed: Token,
     ) -> InputLevelId {
-        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::transient(
                 tokens

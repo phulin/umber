@@ -14,14 +14,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         parameters: Option<(u8, Option<Symbol>)>,
         collector: &mut TokenCollector<G>,
     ) -> Result<(), CommandError> {
-        self.invalidate_delivery_freshness();
         let result = if self.is_observed() {
             self.collect_unexpanded_words::<true>(parameters, collector)
         } else {
             self.collect_unexpanded_words::<false>(parameters, collector)
         };
         // Collection returns a token-list owner, never a delivered command.
-        self.invalidate_delivery_freshness();
         result
     }
 
@@ -101,7 +99,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if exceptional {
                 let meaning = meaning.unwrap_or_else(|| self.resolve_read(&word).0);
                 let mut command = word.materialize(&meaning);
-                self.admit_materialized_read(&word, &command);
+                self.admit_materialized_read(&word);
                 self.settle_hot_delivery_in::<OBSERVED>(&mut command, literal)?;
                 if matches!(
                     command.alignment_adjustment(),
@@ -144,7 +142,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     meaning.unwrap_or_else(|| processor.resolve_read(&word).0);
                 let mut command: HotCommand<G> = word.materialize(&meaning);
                 command.set_alignment_adjustment(adjustment);
-                processor.admit_materialized_read(&word, &command);
+                processor.admit_materialized_read(&word);
                 processor.back_input_hot(command)
             })? {
                 return Ok(());

@@ -295,8 +295,6 @@ fn definition_target_projection_uses_spelling_and_active_map() {
             let context = universe.command_context().expect("command context");
             crate::CurrentCommand::resolve(
                 TracedTokenWord::pack(token, OriginId::UNKNOWN),
-                crate::DeliveryStamp::new(1, 0),
-                None,
                 false,
                 None,
                 &context,

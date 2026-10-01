@@ -18,12 +18,12 @@ use super::CommandProcessor;
 use super::alignment::AlignmentDeliveryState;
 
 impl<G> CommandProcessor<'_, '_, G> {
-    /// Restores the immediately preceding raw delivery to TeX's input.
+    /// TeX82 §325's `back_input`: pushes the command's token back onto
+    /// input and reverses its literal brace accounting.
     ///
-    /// This is TeX.web's `back_input`: token equality is insufficient because
-    /// equal spellings can be delivered by distinct input transitions. The
-    /// consumed command proves the exact live transition and ensures literal
-    /// brace accounting is undone at most once.
+    /// §326's `cur_tok:=p; back_input` restores a saved token the same way,
+    /// so a command superseded by a later delivery is backed up through this
+    /// same call.
     pub fn back_input(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
         self.back_input_with_treatment(command, BackupTreatment::Ordinary)
     }
@@ -32,26 +32,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     ///
     /// Delimiter scanners retain the terminal `HotCommand` until they have
     /// classified it. Recovery must reverse that command's exact alignment
-    /// adjustment and provenance without manufacturing a rich command just
-    /// to put one rejected token back on input.
+    /// adjustment without manufacturing a rich command just to put one
+    /// rejected token back on input. Like §326, it also restores a token
+    /// saved before a later delivery superseded it.
     pub(crate) fn back_input_hot(&mut self, command: HotCommand<G>) -> Result<(), CommandError> {
-        if !self.delivery_stamp_is_fresh(command.delivery_stamp()) {
-            return Err(CommandError::StaleDelivery);
-        }
-        self.back_input_hot_unchecked(command)
-    }
-
-    /// [`Self::back_input_saved`] for a compact delivery: TeX82 §326's
-    /// restoration of a token saved before a later delivery superseded it.
-    pub(crate) fn back_input_saved_hot(
-        &mut self,
-        command: HotCommand<G>,
-    ) -> Result<(), CommandError> {
-        self.back_input_hot_unchecked(command)
-    }
-
-    fn back_input_hot_unchecked(&mut self, command: HotCommand<G>) -> Result<(), CommandError> {
-        self.invalidate_delivery_freshness();
         self.conserve_input_stack_for_descendant()?;
         let previous_align_state = self.command.alignment.align_state;
         let adjustment = command.alignment_adjustment();
@@ -182,7 +166,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// caller's business; pushing one here would observe a level that retires
     /// without ever delivering a token.
     pub(crate) fn back_list(&mut self, tokens: impl IntoIterator<Item = BackedUpToken>) {
-        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::backed_up(tokens),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
@@ -208,8 +191,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// §325 requires only that `cur_tok` name the token to be reread. It runs
     /// the stack-conservation loop, derives its `align_state` change from
     /// `cur_tok`'s own category ([`AlignmentDeliveryState::back_input_adjustment`]),
-    /// and pushes a one-token `backed_up` list. No delivery stamp is involved,
-    /// so this serves every caller whose token is not the last raw delivery:
+    /// and pushes a one-token `backed_up` list. It serves every caller whose
+    /// token is not a delivered command:
     ///
     /// - §372's `\\csname`: `cur_tok:=cur_cs+cs_token_flag; back_input` backs
     ///   up a control sequence that was never delivered at all.
@@ -217,7 +200,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ///   `\\aftergroup` is backed up as the group's save-stack level is
     ///   cleared off, long after that token was scanned.
     ///
-    /// [`Self::back_input_saved`] is the sibling for a caller that still holds
+    /// [`Self::back_input`] is the sibling for a caller that still holds
     /// the `CurrentCommand<G>`: §342's alignment interception records transitions
     /// that set `align_state` outright rather than stepping it, so a delivery
     /// that is available must have its own adjustment reversed, not one
@@ -234,7 +217,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         spelling: TracedTokenWord,
         storage: impl crate::input::PackedTokenSpanSource<G>,
     ) -> Result<(), CommandError> {
-        self.invalidate_delivery_freshness();
         self.conserve_input_stack_for_descendant()?;
         self.command
             .alignment
@@ -350,43 +332,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: CurrentCommand<G>,
         treatment: BackupTreatment,
     ) -> Result<(), CommandError> {
-        if !self.delivery_is_fresh(&command) {
-            return Err(CommandError::StaleDelivery);
-        }
-        self.back_input_unchecked(command, treatment)
-    }
-    /// TeX82 §326's `@<Insert token |p| into \TeX's input@>`:
-    /// `t:=cur_tok; cur_tok:=p; back_input; cur_tok:=t`.
-    ///
-    /// This is a full §325 `back_input` -- stack-conservation loop, literal
-    /// brace `align_state` reversal, backup push, and recovery record -- run
-    /// against a raw delivery the caller saved earlier instead of against the
-    /// live one. §325 requires only that `cur_tok` hold the token to replace,
-    /// and §326 exists precisely so a caller may point `cur_tok` at a saved
-    /// token first, so the delivery stamp is not part of the mechanism.
-    ///
-    /// §1221's `\futurelet` is the canonical caller: `get_token; q:=cur_tok;
-    /// get_token; back_input; cur_tok:=q; back_input`. The second token is
-    /// restored by the ordinary `back_input` above and the saved first token
-    /// by this one, so the pair is reread in its original order from two
-    /// separate backup levels.
-    ///
-    /// Unlike [`Self::back_input`], this accepts a command whose freshness
-    /// stamp was superseded by a nested delivery. Callers must have retained
-    /// that command from the immediately preceding canonical delivery and use
-    /// this only for TeX82 §326's saved-token restoration; it is not a general
-    /// escape from ordinary stale-delivery validation. Main-control PDF
-    /// preflight uses it for the outer `\immediate` after its looked-ahead PDF
-    /// primitive has been backed up.
-    pub fn back_input_saved(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
-        self.back_input_unchecked(command, BackupTreatment::Ordinary)
-    }
-    fn back_input_unchecked(
-        &mut self,
-        command: CurrentCommand<G>,
-        treatment: BackupTreatment,
-    ) -> Result<(), CommandError> {
-        self.invalidate_delivery_freshness();
         // §325 runs the stack-conservation loop before it touches
         // `align_state` and before it pushes the `backed_up` list, so every
         // depleted level retires ahead of the backup.

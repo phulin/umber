@@ -115,9 +115,6 @@ impl ResidentWord {
         let mut command = HotCommand::delivery_storage(
             self.word,
             self.origin,
-            self.identity,
-            self.position,
-            self.active_source,
             matches!(self.site, ReadSite::Source(_)),
             line,
             self.suppress_expandable,
@@ -270,7 +267,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.command.roots.alignment.align_state += brace_delta;
         }
         if consumed != 0 {
-            self.enter_resident_delivery();
             #[cfg(test)]
             if argument {
                 self.command
@@ -391,7 +387,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(ExpansionCandidate::ExpandedMacro);
         }
         let command = destination.insert(word.materialize(&meaning));
-        self.admit_materialized_read(&word, command);
+        self.admit_materialized_read(&word);
         self.settle_hot_delivery_in::<OBSERVED>(command, resolution.literal_catcode())?;
         Ok(ExpansionCandidate::Command)
     }
@@ -434,7 +430,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     #[inline(always)]
-    pub(super) fn admit_materialized_read(&mut self, word: &ResidentWord, command: &HotCommand<G>) {
+    pub(super) fn admit_materialized_read(&mut self, word: &ResidentWord) {
         #[cfg(test)]
         match word.storage_kind {
             super::ResidentStorageKind::Stored => {
@@ -448,12 +444,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             _ => {}
         }
-        match word.site {
-            ReadSite::Resident => self.enter_resident_delivery(),
-            ReadSite::Source(_) | ReadSite::Synthetic => {
-                self.readmit_delivery_stamp(command.delivery_stamp())
-            }
-        }
+        #[cfg(not(test))]
+        let _ = word;
     }
 
     /// The ordinary expansion consumer owns one read/interpret back edge.
@@ -548,7 +540,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         definition: tex_state::DefinitionRef<G>,
         name: Symbol,
     ) -> Result<(), CommandError> {
-        self.invalidate_delivery_freshness();
         self.record_macro_expansion();
         match self.macro_call_parts(flags, definition, name, spelling.origin(), |processor| {
             processor.report_unobserved_macro_prefix_mismatch(spelling, flags, definition, name);

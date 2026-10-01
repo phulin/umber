@@ -1554,7 +1554,7 @@ mod tests {
                 }
                 let current = destination.expect("expanded delivery filled caller slot");
                 if let Token::Char { ch, .. } = current.spelling().semantic_token() {
-                    delivered.push((ch, current.delivery_stamp().input_level()));
+                    delivered.push((ch, processor.top_input_level()));
                 }
             }
             delivered

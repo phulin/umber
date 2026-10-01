@@ -12,10 +12,7 @@ use crate::command::{CommandIdentity, CurrentCommand};
 use crate::profile::CommandProfile;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::{
-    DeliveryStamp, DiagnosticLocation, SourceLocation, SourceNameClass, SourceProvenance,
-    SourceRange,
-};
+use crate::{DiagnosticLocation, SourceLocation, SourceNameClass, SourceProvenance, SourceRange};
 
 pub mod canonical_names;
 mod primitive_identity;
@@ -89,15 +86,15 @@ impl PartialEq for CommandProvenance {
 }
 
 impl CommandProvenance {
-    pub(crate) fn from_stamp(
-        stamp: DeliveryStamp,
+    pub(crate) fn new(
+        (input_level, position): (u64, u64),
         delivery_sequence: u64,
         origin: OriginId,
         source_provenance: Option<SourceProvenance>,
     ) -> Self {
         Self {
-            input_level: stamp.input_level(),
-            position: stamp.position(),
+            input_level,
+            position,
             delivery_sequence,
             has_origin: origin != OriginId::UNKNOWN,
             origin,

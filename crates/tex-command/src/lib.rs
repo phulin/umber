@@ -86,7 +86,7 @@ mod tracing_nesting;
 #[cfg(test)]
 mod test_harness;
 
-pub use command::{CurrentCommand, DeliveryStamp};
+pub use command::CurrentCommand;
 #[cfg(feature = "profiling")]
 pub use direct_command_delivery::{DirectCommandDeliveryBenchmark, DirectCommandDeliveryReceipt};
 pub use error::{CommandError, DimensionDiagnostic, InsertedUnit};

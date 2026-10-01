@@ -1179,7 +1179,7 @@ pub(in crate::main_control) fn scan<G>(
                 // scanner. Back up `\immediate` after it so the outer command
                 // is delivered first on the next retry.
                 processor
-                    .back_input_saved(command.take_current())
+                    .back_input(command.take_current())
                     .map_err(command_error)?;
             }
             if processor.command_trace_count() != trace_count {

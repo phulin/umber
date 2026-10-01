@@ -64,17 +64,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<(), CommandError> {
         let (saved_delimiter, delimiter_line) = match event {
             AlignmentDeliveryEvent::EndTemplate(delimiter) => {
-                if !self.delivery_is_fresh(&delimiter)
-                    || !matches!(
-                        delimiter.meaning(),
-                        tex_state::ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                            ExpandablePrimitive::EndTemplate
-                        ))
-                    )
-                {
-                    return Err(CommandError::StaleDelivery);
+                if !matches!(
+                    delimiter.meaning(),
+                    tex_state::ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                        ExpandablePrimitive::EndTemplate
+                    ))
+                ) {
+                    return Err(CommandError::input_invariant());
                 }
-                self.invalidate_delivery_freshness();
                 (
                     Self::saved_alignment_delimiter(&delimiter)?,
                     delimiter
@@ -141,7 +138,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "(interwoven alignment preambles are not allowed)",
             )));
         }
-        self.invalidate_delivery_freshness();
         self.command
             .finish_alignment_cell_after_input_proof(alignment)
             .map_err(|_| CommandError::input_invariant())
@@ -214,17 +210,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         let delimiter_line = command
             .direct_source_line_number()
             .unwrap_or_else(|| self.command.current_file_line_number());
-        if !self.delivery_is_fresh(command) {
-            return Err(CommandError::StaleDelivery);
-        }
-        self.invalidate_delivery_freshness();
         self.start_alignment_v_template(alignment, delimiter, delimiter_line)
     }
 
     /// Compact sibling of [`Self::begin_scalar_alignment_v_template`].  Raw
     /// macro matching uses the same `get_next` alignment interception but its
     /// terminal token remains a hot delivery; entering the v-template must
-    /// therefore consume the exact stamp and adjustment without constructing
+    /// therefore consume the exact adjustment without constructing
     /// a `CurrentCommand` solely for this boundary.
     pub(crate) fn begin_scalar_alignment_v_template_hot(
         &mut self,
@@ -251,10 +243,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let delimiter_line = delivery
             .direct_source_line_number()
             .unwrap_or_else(|| self.command.current_file_line_number());
-        if !self.delivery_stamp_is_fresh(delivery.delivery_stamp()) {
-            return Err(CommandError::StaleDelivery);
-        }
-        self.invalidate_delivery_freshness();
         self.start_alignment_v_template(alignment, delimiter, delimiter_line)
     }
 }

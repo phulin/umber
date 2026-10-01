@@ -50,23 +50,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let mut top = ResidentSourceTop { source };
         let force_eof = top.force_eof(force_eof_requested);
-        let identity = top.source.identity();
-        // The source cursor advances the physical-line pointer when it loads
-        // a line, so `next_physical_offset` names the following line rather
-        // than this token.  Stamp the token's actual pre-advance byte cursor
-        // instead; otherwise every token on one source line would share a
-        // coordinate and a backed-up stale copy could pass after a later
-        // direct delivery.
-        let position = top
-            .source
-            .slot
-            .cursor
-            .line
-            .as_ref()
-            .map_or(top.source.slot.cursor.next_physical_offset, |line| {
-                line.cursor.byte_cursor
-            });
-        let active_source = top.source.frame.source_context();
 
         match top
             .advance(profile, force_eof, state, create_control_sequences)
@@ -91,9 +74,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(ResidentColdOutcome::Word(ResidentWord {
                     word,
                     origin,
-                    identity: identity.0,
-                    position,
-                    active_source,
                     suppress_expandable: false,
                     site: ReadSite::Source(direct_source_line),
                     #[cfg(test)]
@@ -269,7 +249,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         transition: InputFrameTransition<G>,
     ) -> Result<ResidentColdOutcome, CommandError> {
-        self.invalidate_delivery_freshness();
         let cold = match transition {
             InputFrameTransition::Boundary(boundary) => boundary,
             InputFrameTransition::ResidentExhausted {
@@ -386,32 +365,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .exhaustion_status_relays
                         .saturating_add(1);
                 }
-                let Some((index, active_source)) =
-                    self.command
-                        .input
-                        .levels
-                        .last()
-                        .and_then(|level| match level {
-                            level
-                                if level
-                                    .stored_common()
-                                    .is_some_and(|cursor| cursor.identity() == identity) =>
-                            {
-                                level.stored_common().map(|cursor| {
-                                    (
-                                        u32::try_from(
-                                            level.stored_position().expect("stored row position"),
-                                        )
-                                        .expect("stored row position fits u32"),
-                                        cursor.frame.source_context(),
-                                    )
-                                })
-                            }
-                            _ => None,
-                        })
-                else {
+                if !self
+                    .command
+                    .input
+                    .levels
+                    .last()
+                    .and_then(|level| level.stored_common())
+                    .is_some_and(|cursor| cursor.identity() == identity)
+                {
                     return Err(CommandError::input_invariant());
-                };
+                }
                 let handoff = self.retire_input_top(identity)?;
                 match handoff {
                     RetirementHandoff::Stop => match self.raw_end_restarts() {
@@ -423,12 +386,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     RetirementHandoff::Completed(episode) => Ok(ResidentColdOutcome::Finished(
                         DeliveryStatus::ReplayCompleted(episode),
                     )),
-                    RetirementHandoff::EndV(level) => Ok(ResidentColdOutcome::Word(ResidentWord {
+                    RetirementHandoff::EndV => Ok(ResidentColdOutcome::Word(ResidentWord {
                         word: TokenWord::pack(self.state.frozen_end_template_token()),
                         origin: OriginId::UNKNOWN,
-                        identity: level.0,
-                        position: u64::from(index),
-                        active_source,
                         suppress_expandable: false,
                         site: ReadSite::Synthetic,
                         #[cfg(test)]

@@ -99,7 +99,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         tokens: tex_state::TokenListId<G>,
     ) -> Result<crate::attempt::AttemptTokenListId, CommandError> {
-        self.invalidate_delivery_freshness();
         let episode = self.command.push_output_replay_episode(self.state, tokens);
         let expanded = self
             .command

@@ -1741,14 +1741,13 @@ pub struct CurrentCommand {
     spelling: TracedTokenWord,
     meaning: Meaning,
     control_sequence: Option<Symbol>,
-    delivery: DeliveryStamp,
 }
 ```
 
 The production value is 72 bytes. It keeps
 the packed spelling, resolved static meaning or sole macro owner, control-
-sequence identity, immediate-delivery coordinate, compact source role, and
-alignment/recovery flags. It does not repeat a decoded physical source range,
+sequence identity, and alignment/recovery flags. It carries no delivery
+coordinate or source role. It does not repeat a decoded physical source range,
 active source identity, or diagnostic ancestry. There is no per-command box,
 allocation, provenance sidecar, or alternate fast representation.
 
@@ -3618,12 +3617,11 @@ share that node. Span operations allocate or intern origins in batches.
 
 ### 26.4 Backup identity
 
-`DeliveryStamp` is not provenance. It proves an execution-local delivery and
-is invalid after unrelated input movement or snapshot restoration. The
-processor temporarily mirrors that required coordinate to reject a stale
-move-only backup. Neither ordinary nor profiling delivery updates a parallel
-freshness-publication census; focused fixtures derive exact delivery volume at
-their measurement boundary.
+Backup carries no identity. Like TeX's `cur_tok`, the command handed to
+`back_input` is trusted to be the current delivery; there is no stamp,
+coordinate mirror, or freshness proof. Neither ordinary nor profiling delivery
+updates a freshness-publication census; focused fixtures derive exact delivery
+volume at their measurement boundary.
 
 ### 26.5 Rollback and incremental history
 
@@ -4975,7 +4973,7 @@ Rereading therefore restores save order, and the layer that hands the payload
 over in save order must back it up in reverse.
 
 Two `back_input` entry points exist because §325 says `cur_tok` is the token,
-not the delivery. `back_input_saved` is for a caller that still holds the
+not the delivery. `back_input` is for a caller that still holds the
 `CurrentCommand`, because §342's alignment interception records transitions
 that set `align_state` outright rather than stepping it, and those must be
 reversed as recorded. `back_input_token` is for every caller whose token is

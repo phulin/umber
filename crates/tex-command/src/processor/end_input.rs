@@ -3,7 +3,6 @@
 use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::token::{Catcode, Token};
 
-use crate::DeliveryStamp;
 use crate::error::CommandError;
 use crate::input::SourceNameClass;
 use crate::input::{
@@ -27,7 +26,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// only the startup filename), so the terminal stop is reported here once
     /// the stack is empty, exactly as ordinary exhaustion reports it.
     pub fn final_cleanup(&mut self) -> Vec<crate::IncompleteCondition> {
-        self.invalidate_delivery_freshness();
         let mut terminal_stopped = false;
         while let Some(retirement) = self.command.pop_input_level_at_end_of_job() {
             let terminal = matches!(retirement.action, InputRetirementAction::TerminalStop);
@@ -69,16 +67,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// after `scan_toks` has restored scanner status.  The stopper's level
     /// must retire before the caller publishes the write effect, but the
     /// following source token must remain untouched (§53).
-    pub(crate) fn retire_delivery_level(
-        &mut self,
-        stamp: DeliveryStamp,
-    ) -> Result<(), CommandError> {
-        if !self.delivery_stamp_is_fresh(stamp) {
-            return Err(CommandError::StaleDelivery);
-        }
-        match self.retire_input_top(InputLevelId(stamp.input_level()))? {
+    pub(crate) fn retire_delivery_level(&mut self) -> Result<(), CommandError> {
+        let top = self
+            .command
+            .top_input_level_identity()
+            .ok_or_else(CommandError::input_invariant)?;
+        match self.retire_input_top(top)? {
             RetirementHandoff::Continue | RetirementHandoff::Completed(_) => Ok(()),
-            RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
+            RetirementHandoff::Stop | RetirementHandoff::EndV => {
                 Err(CommandError::input_invariant())
             }
         }
@@ -97,7 +93,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             RetirementHandoff::Continue
             | RetirementHandoff::Completed(_)
             | RetirementHandoff::Stop
-            | RetirementHandoff::EndV(_) => Err(CommandError::input_invariant()),
+            | RetirementHandoff::EndV => Err(CommandError::input_invariant()),
         }
     }
     pub(crate) fn retire_exhausted_through(
@@ -115,7 +111,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let reached = top == level;
             match self.retire_input_top(top)? {
                 RetirementHandoff::Continue | RetirementHandoff::Completed(_) => {}
-                RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
+                RetirementHandoff::Stop | RetirementHandoff::EndV => {
                     return Err(CommandError::input_invariant());
                 }
             }
@@ -156,7 +152,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 RetirementHandoff::Continue | RetirementHandoff::Completed(_) => {
                     retired = retired.saturating_add(1);
                 }
-                RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
+                RetirementHandoff::Stop | RetirementHandoff::EndV => {
                     return Err(CommandError::input_invariant());
                 }
             }
@@ -177,7 +173,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             .expect("output routine entry requires a configured token list");
         self.report_named_token_list("output", output.clone());
         let words = self.state.token_list(output.clone());
-        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::durable(words),
             TokenBehavior::Ordinary,
@@ -340,9 +335,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         match self.retire_input_top(row.header.identity())? {
             RetirementHandoff::Continue => Ok(()),
-            RetirementHandoff::Stop
-            | RetirementHandoff::EndV(_)
-            | RetirementHandoff::Completed(_) => Err(CommandError::input_invariant()),
+            RetirementHandoff::Stop | RetirementHandoff::EndV | RetirementHandoff::Completed(_) => {
+                Err(CommandError::input_invariant())
+            }
         }
     }
     /// Settles an input-end transition after every raw typestate borrow has
@@ -397,7 +392,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let _ = self.recover_runaway_eof()?;
                 Ok(SourceExhaustionStatus::Continue)
             }
-            RetirementHandoff::EndV(_) => Err(CommandError::input_invariant()),
+            RetirementHandoff::EndV => Err(CommandError::input_invariant()),
         }
     }
     fn acquire_source_line_with_pending(
@@ -406,7 +401,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         pending_acquired_line: bool,
     ) -> Result<Option<crate::PhysicalLine>, CommandError> {
         let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
-        self.invalidate_delivery_freshness();
         self.command
             .acquire_input_top_line(
                 self.state,
@@ -429,7 +423,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         identity: InputLevelId,
     ) -> Result<RetirementHandoff, CommandError> {
-        self.invalidate_delivery_freshness();
         let nesting_context = self
             .pending_file_warning_context
             .take()
@@ -481,7 +474,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // The exhausted frame remains live while `get_next` delivers
                 // frozen end-template. Its expanded `endv` is then handled by
                 // typed `do_endv`, which retires this exact frame.
-                Ok(RetirementHandoff::EndV(identity))
+                Ok(RetirementHandoff::EndV)
             }
             InputRetirementAction::SourcePopped
             | InputRetirementAction::TokenListPopped
@@ -578,7 +571,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             // included, retires through the resident path directly: no
             // source ancestry, file warning, or file close can apply to it.
             let retirement = if retirement == RetirementBehavior::Pop {
-                self.invalidate_delivery_freshness();
                 let index = self.command.input.levels.len() - 1;
                 match self
                     .command
@@ -606,7 +598,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.command.defer_replay_completion(Some(episode), owner);
                     }
                 }
-                RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
+                RetirementHandoff::Stop | RetirementHandoff::EndV => {
                     return Err(CommandError::input_invariant());
                 }
             }
@@ -643,7 +635,7 @@ pub(super) enum SourceExhaustionStatus {
 pub(super) enum RetirementHandoff {
     Stop,
     Continue,
-    EndV(InputLevelId),
+    EndV,
     Completed(crate::CommandReplayEpisode),
 }
 

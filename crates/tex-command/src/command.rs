@@ -10,8 +10,6 @@ use tex_state::meaning::{
 };
 use tex_state::token::{Catcode, OriginId, PackedCommandTarget, Token, TokenWord, TracedTokenWord};
 
-use crate::SourceProvenance;
-
 /// Profiling-only proof of how current-command ownership changes.
 ///
 /// The counter is thread-local and absent from shipping builds. It records
@@ -25,7 +23,6 @@ pub(crate) struct CommandOwnershipCounters {
     pub(crate) expansion_moves_out: u64,
     pub(crate) slot_initializations: u64,
     pub(crate) resolved_writes: u64,
-    pub(crate) delivery_stamp_writes: u64,
     pub(crate) rich_materializations: u64,
     pub(crate) hot_reconstructions: u64,
 }
@@ -40,7 +37,6 @@ thread_local! {
             expansion_moves_out: 0,
             slot_initializations: 0,
             resolved_writes: 0,
-            delivery_stamp_writes: 0,
             rich_materializations: 0,
             hot_reconstructions: 0,
         }) };
@@ -246,9 +242,7 @@ const _: () = assert!(core::mem::size_of::<CommandWord<()>>() == 16);
 /// Compact coordinates and one-delivery policy attached to a hot token.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct DeliverySite {
-    delivery: DeliveryStamp,
     control_sequence: Option<Symbol>,
-    active_source_role: Option<crate::SourceRole>,
     direct_source_line: u32,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
     delivery_flags: CommandDeliveryFlags,
@@ -320,11 +314,6 @@ pub struct CurrentCommand<G> {
     meaning: ResolvedMeaning<G>,
     identity: CommandIdentity,
     control_sequence: Option<Symbol>,
-    delivery: DeliveryStamp,
-    /// Compact policy projection of the external source active at delivery.
-    /// Its identity and physical spelling range remain recoverable from the
-    /// token origin or live input coordinate and are not copied here.
-    active_source_role: Option<crate::SourceRole>,
     direct_source_line: u32,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
     delivery_flags: CommandDeliveryFlags,
@@ -378,8 +367,6 @@ impl<G> Clone for CurrentCommand<G> {
             meaning: self.meaning,
             identity: self.identity,
             control_sequence: self.control_sequence,
-            delivery: self.delivery,
-            active_source_role: self.active_source_role,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
             delivery_flags: self.delivery_flags,
@@ -393,8 +380,6 @@ impl<G> PartialEq for CurrentCommand<G> {
             && self.meaning == other.meaning
             && self.identity == other.identity
             && self.control_sequence == other.control_sequence
-            && self.delivery == other.delivery
-            && self.active_source_role == other.active_source_role
             && self.direct_source_line == other.direct_source_line
             && self.alignment_adjustment == other.alignment_adjustment
             && self.delivery_flags == other.delivery_flags
@@ -409,8 +394,6 @@ impl<G> core::hash::Hash for CurrentCommand<G> {
         self.meaning.hash(state);
         self.identity.hash(state);
         self.control_sequence.hash(state);
-        self.delivery.hash(state);
-        self.active_source_role.hash(state);
         self.direct_source_line.hash(state);
         self.alignment_adjustment.hash(state);
         self.delivery_flags.hash(state);
@@ -592,9 +575,6 @@ impl<G> HotCommand<G> {
         destination: &mut Option<Self>,
         word: TokenWord,
         origin: OriginId,
-        input_level: u64,
-        position: u64,
-        active_source: Option<tex_state::packed_input::SourceContext>,
         direct_source: bool,
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
@@ -604,9 +584,6 @@ impl<G> HotCommand<G> {
             command.write_resolved_delivery(
                 word,
                 origin,
-                input_level,
-                position,
-                active_source,
                 direct_source,
                 direct_source_line,
                 suppress_expandable,
@@ -616,9 +593,6 @@ impl<G> HotCommand<G> {
             let (command, resolution) = HotCommand::from_resolved_delivery(
                 word,
                 origin,
-                input_level,
-                position,
-                active_source,
                 direct_source,
                 direct_source_line,
                 suppress_expandable,
@@ -640,9 +614,6 @@ impl<G> HotCommand<G> {
     pub(crate) fn from_resolved_delivery(
         word: TokenWord,
         origin: OriginId,
-        input_level: u64,
-        position: u64,
-        active_source: Option<tex_state::packed_input::SourceContext>,
         direct_source: bool,
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
@@ -651,9 +622,6 @@ impl<G> HotCommand<G> {
         let mut command = Self::delivery_storage(
             word,
             origin,
-            input_level,
-            position,
-            active_source,
             direct_source,
             direct_source_line,
             suppress_expandable,
@@ -667,9 +635,6 @@ impl<G> HotCommand<G> {
     pub(crate) fn delivery_storage(
         word: TokenWord,
         origin: OriginId,
-        input_level: u64,
-        position: u64,
-        active_source: Option<tex_state::packed_input::SourceContext>,
         direct_source: bool,
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
@@ -677,16 +642,13 @@ impl<G> HotCommand<G> {
         #[cfg(any(test, feature = "profiling"))]
         update_command_ownership_counters(|counters| {
             counters.resolved_writes = counters.resolved_writes.saturating_add(1);
-            counters.delivery_stamp_writes = counters.delivery_stamp_writes.saturating_add(1);
         });
         Self {
             token: HotToken {
                 word,
                 origin,
                 site: DeliverySite {
-                    delivery: DeliveryStamp::new(input_level, position),
                     control_sequence: None,
-                    active_source_role: active_source.map(|source| source.role()),
                     direct_source_line: direct_source_line.unwrap_or(0),
                     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
                     delivery_flags: CommandDeliveryFlags::delivery(
@@ -711,9 +673,7 @@ impl<G> HotCommand<G> {
                 }),
                 origin: OriginId::UNKNOWN,
                 site: DeliverySite {
-                    delivery: DeliveryStamp::new(0, 0),
                     control_sequence: None,
-                    active_source_role: None,
                     direct_source_line: 0,
                     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
                     delivery_flags: CommandDeliveryFlags::default(),
@@ -730,9 +690,6 @@ impl<G> HotCommand<G> {
         &mut self,
         word: TokenWord,
         origin: OriginId,
-        input_level: u64,
-        position: u64,
-        active_source: Option<tex_state::packed_input::SourceContext>,
         direct_source: bool,
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
@@ -741,15 +698,12 @@ impl<G> HotCommand<G> {
         #[cfg(test)]
         update_command_ownership_counters(|counters| {
             counters.resolved_writes = counters.resolved_writes.saturating_add(1);
-            counters.delivery_stamp_writes = counters.delivery_stamp_writes.saturating_add(1);
         });
         self.token = HotToken {
             word,
             origin,
             site: DeliverySite {
-                delivery: DeliveryStamp::new(input_level, position),
                 control_sequence: None,
-                active_source_role: active_source.map(|source| source.role()),
                 direct_source_line: direct_source_line.unwrap_or(0),
                 alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
                 delivery_flags: CommandDeliveryFlags::delivery(
@@ -869,10 +823,6 @@ impl<G> HotCommand<G> {
         self.token.site.control_sequence
     }
 
-    pub(crate) const fn delivery_stamp(&self) -> DeliveryStamp {
-        self.token.site.delivery
-    }
-
     pub(crate) const fn alignment_adjustment(
         &self,
     ) -> crate::processor::AlignmentDeliveryAdjustment {
@@ -973,8 +923,6 @@ impl<G> HotCommand<G> {
             },
             meaning,
             control_sequence: self.token.site.control_sequence,
-            delivery: self.token.site.delivery,
-            active_source_role: self.token.site.active_source_role,
             direct_source_line: self.token.site.direct_source_line,
             alignment_adjustment: self.token.site.alignment_adjustment,
             delivery_flags: self.token.site.delivery_flags,
@@ -992,9 +940,7 @@ impl<G> HotCommand<G> {
                 word: command.spelling.token_word(),
                 origin: command.spelling.origin(),
                 site: DeliverySite {
-                    delivery: command.delivery,
                     control_sequence: command.control_sequence,
-                    active_source_role: command.active_source_role,
                     direct_source_line: command.direct_source_line,
                     alignment_adjustment: command.alignment_adjustment,
                     delivery_flags: command.delivery_flags,
@@ -1016,9 +962,7 @@ impl<G> HotCommand<G> {
                 word: command.spelling.token_word(),
                 origin: command.spelling.origin(),
                 site: DeliverySite {
-                    delivery: command.delivery,
                     control_sequence: command.control_sequence,
-                    active_source_role: command.active_source_role,
                     direct_source_line: command.direct_source_line,
                     alignment_adjustment: command.alignment_adjustment,
                     delivery_flags: command.delivery_flags,
@@ -1038,28 +982,16 @@ impl<G> CurrentCommand<G> {
     /// current meaning of its control sequence. Active characters use their
     /// separate control-sequence namespace; escaped control sequences retain
     /// their original spelling even after their meaning changes.
-    #[allow(dead_code)] // invoked by the ordered canonical raw-delivery implementation
     pub(crate) fn resolve(
         spelling: TracedTokenWord,
-        delivery: DeliveryStamp,
-        source_provenance: Option<SourceProvenance>,
         direct_source: bool,
         direct_source_line: Option<u32>,
         state: &CommandContext<'_, G>,
     ) -> Self {
         let mut command = HotCommand::empty();
-        let active_source = source_provenance.map(|provenance| {
-            tex_state::packed_input::SourceContext::new(
-                provenance.range().source(),
-                crate::SourceRole::GeneratedInput,
-            )
-        });
         let _ = command.write_resolved_delivery(
             spelling.token_word(),
             spelling.origin(),
-            delivery.input_level,
-            delivery.position,
-            active_source,
             direct_source,
             direct_source_line,
             false,
@@ -1085,8 +1017,6 @@ impl<G> CurrentCommand<G> {
             meaning: ResolvedMeaning::Static(Meaning::Undefined),
             identity: CommandIdentity::Ordinary,
             control_sequence: None,
-            delivery: DeliveryStamp::new(0, 0),
-            active_source_role: None,
             direct_source_line: 0,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
             delivery_flags: CommandDeliveryFlags::default(),
@@ -1206,18 +1136,6 @@ impl<G> CurrentCommand<G> {
         self.spelling.origin()
     }
 
-    /// Returns the execution-local proof of this exact input delivery.
-    #[must_use]
-    pub const fn delivery_stamp(&self) -> DeliveryStamp {
-        self.delivery
-    }
-
-    /// Host/VFS role of the external source active at this delivery.
-    #[must_use]
-    pub const fn active_source_role(&self) -> Option<crate::SourceRole> {
-        self.active_source_role
-    }
-
     /// Returns the physical range only when this delivery came directly from
     /// a source level. Replayed tokens retain their range for diagnostics but
     /// must not masquerade as a second physical-source transition.
@@ -1253,47 +1171,10 @@ impl<G> CurrentCommand<G> {
             meaning: self.meaning,
             identity: self.identity,
             control_sequence: self.control_sequence,
-            delivery: self.delivery,
-            active_source_role: self.active_source_role,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
             delivery_flags: self.delivery_flags,
         }
-    }
-}
-
-/// Proof of one exact input transition that delivered a current command.
-///
-/// Position identifies the pre-advance cursor slot. It is deliberately not a
-/// provenance identity; the processor-local delivery authority determines
-/// whether this coordinate is currently admitted for backup.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct DeliveryStamp {
-    input_level: u64,
-    position: u64,
-}
-
-impl DeliveryStamp {
-    /// Constructs the stamp for the input-level position consumed by this
-    /// delivery. Only the canonical raw-delivery loop may mint stamps.
-    #[allow(dead_code)] // minted by the ordered canonical raw-delivery implementation
-    pub(crate) const fn new(input_level: u64, position: u64) -> Self {
-        Self {
-            input_level,
-            position,
-        }
-    }
-
-    /// Returns the stable identity of the level that delivered the token.
-    #[must_use]
-    pub const fn input_level(&self) -> u64 {
-        self.input_level
-    }
-
-    /// Returns the exact pre-retirement cursor position within that level.
-    #[must_use]
-    pub const fn position(&self) -> u64 {
-        self.position
     }
 }
 

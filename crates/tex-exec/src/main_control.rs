@@ -6103,7 +6103,6 @@ impl<G> MainControl<G> {
             self.apply_error_stop_transition(stores, diagnostic_effects)
                 .map_err(TypedOperationError::Application)?;
             frame.clear_preflight();
-            frame.clear_operation_origin();
         }
         result
     }
@@ -6139,7 +6138,6 @@ impl<G> MainControl<G> {
         }
         let mode = self.modes.current_mode();
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
-        let source_role = frame.operation_source_role();
         if matches!(delivery, OperationDelivery::AppliedDirect) {
             return match frame.error.take() {
                 Some(error) => Err(TypedOperationError::Application(error)),
@@ -6155,7 +6153,6 @@ impl<G> MainControl<G> {
                 cold,
                 OperationOutputStart {
                     outer_paragraph_was_active,
-                    source_role,
                     artifact_count: stores.world().committed_artifacts().len(),
                     effect_count: stores.world().effect_records().len(),
                     prepared_page_count: self.prepared_dvi_pages.len(),
@@ -6415,7 +6412,6 @@ impl<G> MainControl<G> {
                 cold,
                 OperationOutputStart {
                     outer_paragraph_was_active,
-                    source_role,
                     artifact_count: stores.world().committed_artifacts().len(),
                     effect_count: stores.world().effect_records().len(),
                     prepared_page_count: self.prepared_dvi_pages.len(),
@@ -6431,7 +6427,6 @@ impl<G> MainControl<G> {
                     &mut operation,
                     OperationOutputStart {
                         outer_paragraph_was_active,
-                        source_role,
                         artifact_count: stores.world().committed_artifacts().len(),
                         effect_count: stores.world().effect_records().len(),
                         prepared_page_count: self.prepared_dvi_pages.len(),
@@ -6944,11 +6939,7 @@ impl<G> MainControl<G> {
         );
         self.page_output_observations.clear();
         if result.is_ok() {
-            self.finish_paragraph_boundary(
-                output_start.outer_paragraph_was_active,
-                output_start.source_role,
-                stores,
-            );
+            self.finish_paragraph_boundary(output_start.outer_paragraph_was_active, stores);
         }
         result
     }
@@ -7659,11 +7650,7 @@ impl<G> MainControl<G> {
         }
         self.page_output_observations.clear();
         if result.is_ok() {
-            self.finish_paragraph_boundary(
-                output_start.outer_paragraph_was_active,
-                output_start.source_role,
-                stores,
-            );
+            self.finish_paragraph_boundary(output_start.outer_paragraph_was_active, stores);
         }
         *resource_provider = operation_resource_provider;
         result

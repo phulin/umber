@@ -111,10 +111,6 @@ pub(super) struct CommandEpisode<G> {
     pub(super) command: Option<tex_command::CurrentCommand<G>>,
     pub(super) phase: Option<PreflightCommandPhase>,
     pub(super) cursor: Option<tex_command::CommandDeliveryCursor>,
-    /// Host/VFS source role active when this detached operation was formed.
-    /// This is written only when the command slot is about to be retired, then
-    /// travels with that operation through resource suspension.
-    pub(super) source_role: Option<tex_command::SourceRole>,
 }
 
 impl<G> Default for CommandEpisode<G> {
@@ -124,7 +120,6 @@ impl<G> Default for CommandEpisode<G> {
             command: None,
             phase: None,
             cursor: None,
-            source_role: None,
         }
     }
 }
@@ -217,29 +212,12 @@ impl<G> CommandEpisode<G> {
         self.cursor = None;
     }
 
-    pub(super) fn retain_source_role(&mut self) {
-        self.source_role = self
-            .current_option()
-            .and_then(tex_command::CurrentCommand::active_source_role);
-    }
-
-    pub(super) fn operation_source_role(&self) -> Option<tex_command::SourceRole> {
-        self.current_option()
-            .and_then(tex_command::CurrentCommand::active_source_role)
-            .or(self.source_role)
-    }
-
-    pub(super) fn clear_operation_origin(&mut self) {
-        self.source_role = None;
-    }
-
     pub(super) fn assert_empty(&self) {
         assert!(
             self.error.is_none()
                 && self.command.is_none()
                 && self.phase.is_none()
-                && self.cursor.is_none()
-                && self.source_role.is_none(),
+                && self.cursor.is_none(),
             "one command attempt owns one empty operation frame"
         );
     }

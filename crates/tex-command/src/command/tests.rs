@@ -5,7 +5,7 @@ use tex_state::meaning::{
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use super::{CommandClass, CommandWord, CurrentCommand, DeliveryStamp, HotCommand};
+use super::{CommandClass, CommandWord, CurrentCommand, HotCommand};
 
 #[test]
 fn command_delivery_layout_stays_compact() {
@@ -35,9 +35,6 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
         hot.write_resolved_delivery(
             TokenWord::pack(Token::Cs(symbol.symbol())),
             OriginId::UNKNOWN,
-            1,
-            2,
-            None,
             false,
             None,
             false,
@@ -114,8 +111,6 @@ fn compact_character_projections_distinguish_tokens_from_chardef_values() {
 fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCommand<G> {
     CurrentCommand::resolve(
         TracedTokenWord::pack(token, OriginId::UNKNOWN),
-        DeliveryStamp::new(17, 23),
-        None,
         false,
         None,
         &universe.command_context().expect("command context"),
@@ -147,7 +142,6 @@ fn delivered_command_keeps_the_resolved_meaning_and_exact_spelling() {
             Token::Cs(symbol.symbol())
         );
         assert_eq!(command.meaning(), Meaning::CharGiven('A'));
-        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(17, 23));
     });
 }
 
@@ -188,9 +182,6 @@ fn packed_input_resolution_materializes_only_at_execution() {
         let resolution = command.write_resolved_delivery(
             spelling.token_word(),
             spelling.origin(),
-            17,
-            23,
-            None,
             false,
             None,
             false,
@@ -201,7 +192,6 @@ fn packed_input_resolution_materializes_only_at_execution() {
         assert_eq!(core::ptr::from_ref(&command), slot);
 
         let command = command.materialize();
-        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(17, 23));
         assert_eq!(
             command.meaning_ref(),
             &ResolvedMeaning::Static(Meaning::CharToken {
@@ -249,9 +239,6 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
         let resolution = command.write_resolved_delivery(
             TokenWord::pack(Token::Cs(symbol.symbol())),
             OriginId::UNKNOWN,
-            31,
-            37,
-            None,
             false,
             None,
             false,
@@ -357,9 +344,6 @@ fn packed_input_resolution_copies_only_the_definition_key() {
         let _ = command.write_resolved_delivery(
             TokenWord::pack(Token::Cs(symbol.symbol())),
             OriginId::UNKNOWN,
-            3,
-            5,
-            None,
             false,
             None,
             false,
@@ -373,9 +357,6 @@ fn packed_input_resolution_copies_only_the_definition_key() {
                 cat: Catcode::Letter,
             }),
             OriginId::UNKNOWN,
-            11,
-            13,
-            None,
             false,
             None,
             false,
@@ -384,7 +365,6 @@ fn packed_input_resolution_copies_only_the_definition_key() {
         // The next destination-directed write replaces the sole prior owner;
         // no intermediate resolved carrier acquires another one.
         assert_eq!(definition.semantic_owner_count(), baseline);
-        assert_eq!(command.delivery_stamp(), DeliveryStamp::new(11, 13));
     });
 }
 

@@ -245,7 +245,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn push_mark_text(&mut self, tokens: &tex_state::node::NodeTokenKey) {
-        self.invalidate_delivery_freshness();
         let words = self
             .state
             .node_token_words(*tokens)

@@ -56,7 +56,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let replay = scanned
             .replay_input()
             .ok_or_else(CommandError::input_invariant)?;
-        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             replay,
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
@@ -159,7 +158,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let first = first_destination
                 .take()
                 .ok_or_else(|| CommandError::input_invariant())?;
-            self.back_input_saved_hot(first)?;
+            self.back_input_hot(first)?;
             meaning
         } else {
             let is_space = |command: &crate::command::HotCommand<G>| {

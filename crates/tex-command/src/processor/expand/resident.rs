@@ -411,16 +411,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             ControlFlow::Break(()) => return ControlFlow::Break(()),
             ControlFlow::Continue(current) => current,
         };
-        let exhausted_identity = row.header.identity();
-        let identity = exhausted_identity.0;
-        let active_source = row.header.frame.source_context();
-        let suppress_expandable = row.header.frame.flags().contains(
-            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
-        );
-        let Some((word, origin, position)) = current else {
+        let Some((word, origin, _position)) = current else {
             return ControlFlow::Continue(ResidentWordRead::Exhausted {
                 resident_index,
-                identity: exhausted_identity,
+                identity: row.header.identity(),
             });
         };
 
@@ -457,16 +451,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return ControlFlow::Continue(ResidentWordRead::Parameter {
                     slot,
                     arguments,
-                    active_source,
+                    active_source: row.header.frame.source_context(),
                 });
             }
         }
+        let suppress_expandable = row.header.frame.flags().contains(
+            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+        );
         ControlFlow::Continue(ResidentWordRead::Word(ResidentWord {
             word,
             origin,
-            identity,
-            position: u64::from(position),
-            active_source,
             suppress_expandable,
             site: ReadSite::Resident,
             #[cfg(test)]

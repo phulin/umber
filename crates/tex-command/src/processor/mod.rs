@@ -206,21 +206,6 @@ impl CharacterRunAdmission {
 
 pub(crate) use status::{ScannerState, ScannerStatus};
 
-/// The processor-local authority for one delivered command's input
-/// coordinate.
-///
-/// A resident token can prove freshness from the input row's current cursor,
-/// so that proof remains valid across sequential deliveries without another
-/// publication write. Direct source positions and synthetic `endv` have no
-/// resident predecessor; they carry their one explicit stamp until an
-/// input-moving boundary consumes it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DeliveryAuthority {
-    Unavailable,
-    Resident,
-    Explicit(crate::DeliveryStamp),
-}
-
 /// Borrow-only capability facade for one bounded executor operation.
 ///
 /// The processor owns no semantic or host state and therefore cannot outlive
@@ -247,10 +232,6 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// Candidate for this raw fetch only. Every fetch clears it, and only a
     /// settled §342 command can publish it to the journaled command root.
     pending_diagnostic_location: Option<crate::DiagnosticLocation>,
-    /// Sole freshness authority for the processor episode. A fresh processor
-    /// starts unavailable; ordinary resident delivery enters `Resident` once
-    /// and leaves it there across sequential cursor advances.
-    delivery_authority: DeliveryAuthority,
     /// The static meaning of the non-numeric command that completed the most
     /// recent integer scan. The command itself remains backed up in input;
     /// dimension scanning uses this semantic fact to decide whether that
@@ -342,63 +323,9 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Restores observation ordering in a fresh borrow episode.
     pub fn resume_delivery_cursor(&mut self, cursor: CommandDeliveryCursor) {
-        self.invalidate_delivery_freshness();
         if self.observer.is_some() {
             self.next_delivery_sequence = cursor.0;
         }
-    }
-
-    /// Continues scanning a settled command in a fresh borrow episode.
-    ///
-    /// `CurrentCommand` fields are private and its delivery stamp was minted
-    /// by this command machine, so the executor can move the ephemeral value
-    /// across its mutation-free preflight seam without backing up or
-    /// redelivering the token. The next scanner delivery remains strictly
-    /// later than the supplied stamp.
-    pub fn resume_current_command(&mut self, command: &crate::CurrentCommand<G>) {
-        let stamp = command.delivery_stamp();
-        self.delivery_authority = DeliveryAuthority::Explicit(stamp);
-    }
-
-    #[inline(always)]
-    pub(super) fn delivery_is_fresh(&self, command: &crate::CurrentCommand<G>) -> bool {
-        let stamp = command.delivery_stamp();
-        match self.delivery_authority {
-            DeliveryAuthority::Explicit(explicit) => explicit == stamp,
-            DeliveryAuthority::Resident => self.resident_delivery_is_fresh(command),
-            DeliveryAuthority::Unavailable => false,
-        }
-    }
-
-    #[inline(always)]
-    pub(super) fn delivery_stamp_is_fresh(&self, stamp: crate::DeliveryStamp) -> bool {
-        match self.delivery_authority {
-            DeliveryAuthority::Explicit(explicit) => explicit == stamp,
-            DeliveryAuthority::Resident => self.resident_delivery_stamp_is_fresh(stamp),
-            DeliveryAuthority::Unavailable => false,
-        }
-    }
-
-    #[inline(always)]
-    fn resident_delivery_is_fresh(&self, command: &crate::CurrentCommand<G>) -> bool {
-        self.resident_delivery_stamp_is_fresh(command.delivery_stamp())
-    }
-
-    #[inline(always)]
-    fn resident_delivery_stamp_is_fresh(&self, stamp: crate::DeliveryStamp) -> bool {
-        let Some(level) = self.command.input.levels.last() else {
-            return false;
-        };
-        if input_level_identity(level).0 != stamp.input_level() {
-            return false;
-        }
-        let position = match level {
-            InputLevel::Source(_) => return false,
-            InputLevel::Resident(_) => level.stored_position(),
-        };
-        position
-            .and_then(|position| u64::try_from(position).ok())
-            .is_some_and(|position| stamp.position().checked_add(1) == Some(position))
     }
 
     /// §391's `par_token` for the `\long` argument check.
@@ -414,23 +341,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.paragraph_word
     }
 
-    #[inline(always)]
-    pub(super) fn invalidate_delivery_freshness(&mut self) {
-        if !matches!(self.delivery_authority, DeliveryAuthority::Unavailable) {
-            self.delivery_authority = DeliveryAuthority::Unavailable;
-        }
-    }
-
-    #[inline(always)]
-    pub(super) fn readmit_delivery_stamp(&mut self, stamp: crate::DeliveryStamp) {
-        self.delivery_authority = DeliveryAuthority::Explicit(stamp);
-    }
-
-    #[inline(always)]
-    fn enter_resident_delivery(&mut self) {
-        self.delivery_authority = DeliveryAuthority::Resident;
-    }
-
     /// Advances the observation-only delivery sequence. Ordinary unobserved
     /// delivery does not maintain this metadata at all.
     #[inline(always)]
@@ -442,11 +352,36 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[inline(always)]
     pub(super) const fn current_delivery_sequence(&self) -> u64 {
-        // Outer-validity recovery can consume backup freshness before raw
-        // observation publishes the offending command. No later delivery has
-        // occurred, so observation order is still exactly the cursor's
-        // preceding position and does not depend on freshness ownership.
         self.next_delivery_sequence.wrapping_sub(1)
+    }
+
+    /// The identity of the input level on top of the stack, or zero when
+    /// input is empty.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn top_input_level(&self) -> u64 {
+        self.observed_delivery_coordinate().0
+    }
+
+    /// The observed coordinate of the command just delivered: the identity
+    /// of the level that supplied it, which reading never pops, and that
+    /// level's cursor after the delivery.
+    pub(super) fn observed_delivery_coordinate(&self) -> (u64, u64) {
+        let Some(level) = self.command.input.levels.last() else {
+            return (0, 0);
+        };
+        let position = match level {
+            InputLevel::Source(source) => source
+                .slot
+                .cursor
+                .line
+                .as_ref()
+                .map_or(source.slot.cursor.next_physical_offset, |line| {
+                    line.cursor.byte_cursor
+                }),
+            InputLevel::Resident(row) => u64::from(row.header.frame.position()),
+        };
+        (input_level_identity(level).0, position)
     }
 
     /// Captures TeX82 §82's `show_context` while this processor still owns
@@ -781,7 +716,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             pending_file_warning_context: None,
             paragraph_word: None,
             pending_diagnostic_location: None,
-            delivery_authority: DeliveryAuthority::Unavailable,
             last_integer_terminator: None,
             next_delivery_sequence: 0,
             read_line_ended: false,

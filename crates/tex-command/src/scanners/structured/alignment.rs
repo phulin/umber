@@ -542,7 +542,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             // sentinel, replay the owned delimiter/brace tail before the
             // backed-up forbidden command can open a second runaway episode.
             self.conserve_input_stack_for_descendant()?;
-            self.invalidate_delivery_freshness();
             self.command.push_token_level(
                 PackedTokenSpanHandle::transient([
                     cr,

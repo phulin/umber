@@ -166,9 +166,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.fuel,
             ArgumentRunAdmission::characters(),
         )?;
-        if run.consumed != 0 {
-            self.invalidate_delivery_freshness();
-        }
         // A run that stopped before a refused word leaves it to the scalar
         // scan; one that drained its frame may resume on the next.
         if run.at_transition {
@@ -194,7 +191,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command
             .alignment
             .undo_delivery(command.alignment_adjustment());
-        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::Word(command.spelling()),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),

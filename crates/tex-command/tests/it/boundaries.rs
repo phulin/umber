@@ -276,7 +276,7 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
         "fn retire_input_top(",
         "fn check_outer_validity_entry(",
         "fn begin_alignment_v_template(",
-        "fn back_input_unchecked(",
+        "fn back_input_with_treatment(",
     ] {
         assert!(
             !next.contains(handler),
@@ -285,7 +285,7 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     }
     assert!(end_input.contains("fn retire_input_top("));
     assert!(alignment.contains("fn begin_alignment_v_template("));
-    assert!(backup.contains("fn back_input_unchecked("));
+    assert!(backup.contains("fn back_input_with_treatment("));
     assert!(outer.contains("fn check_outer_validity_entry("));
     assert!(recovery.contains("fn recover_off_save("));
     let reader =

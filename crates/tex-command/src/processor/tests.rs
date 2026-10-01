@@ -494,10 +494,6 @@ fn unobserved_resident_delivery_leaves_sequence_metadata_untouched() {
         );
 
         assert_eq!(processor.next_delivery_sequence, 0);
-        assert_eq!(
-            processor.delivery_authority,
-            super::DeliveryAuthority::Unavailable
-        );
         for token in tokens {
             assert_eq!(
                 crate::test_harness::expect_token_command(&mut processor)
@@ -506,67 +502,12 @@ fn unobserved_resident_delivery_leaves_sequence_metadata_untouched() {
                 token
             );
             assert_eq!(processor.next_delivery_sequence, 0);
-            assert_eq!(
-                processor.delivery_authority,
-                super::DeliveryAuthority::Resident
-            );
         }
     });
 }
 
 #[test]
-fn direct_source_delivery_uses_one_explicit_freshness_authority() {
-    crate::test_harness::with_universe(|universe| {
-        let mut command = CommandState::default();
-        let source = command
-            .register_source(crate::SourceRegistration::new(
-                crate::RegisteredSourceKind::Generated,
-                &b"ab"[..],
-            ))
-            .expect("source registration");
-        command
-            .open_registered_source(source)
-            .expect("source opening");
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
-
-        let first = crate::test_harness::expect_token_command(&mut processor);
-        assert!(matches!(
-            processor.delivery_authority,
-            super::DeliveryAuthority::Explicit(_)
-        ));
-        let stale = first.copy_for_backup();
-        let second = crate::test_harness::expect_token_command(&mut processor);
-        assert_ne!(first.delivery_stamp(), second.delivery_stamp());
-        assert!(matches!(
-            processor.delivery_authority,
-            super::DeliveryAuthority::Explicit(_)
-        ));
-        assert_eq!(
-            processor.back_input(stale),
-            Err(crate::CommandError::StaleDelivery)
-        );
-        processor
-            .back_input(second)
-            .expect("latest source command remains fresh");
-        assert_eq!(
-            processor.delivery_authority,
-            super::DeliveryAuthority::Unavailable
-        );
-    });
-}
-
-#[test]
-fn destination_raw_delivery_mints_fresh_stamps_and_reverses_backup_once() {
+fn destination_raw_delivery_reverses_backup_brace_accounting() {
     crate::test_harness::with_universe(|universe| {
         let brace = Token::Char {
             ch: '{',
@@ -593,19 +534,12 @@ fn destination_raw_delivery_mints_fresh_stamps_and_reverses_backup_once() {
             DeliveryStatus::Command
         );
         let first = first.expect("first command");
-        let first_stamp = first.delivery_stamp();
-        let stale_copy = first.copy_for_backup();
         assert_eq!(
             processor.command.alignment.align_state,
             initial_align_state + 1
         );
 
         processor.back_input(first).expect("first backup");
-        assert_eq!(processor.command.alignment.align_state, initial_align_state);
-        assert_eq!(
-            processor.back_input(stale_copy),
-            Err(crate::CommandError::StaleDelivery)
-        );
         assert_eq!(processor.command.alignment.align_state, initial_align_state);
 
         let mut replay = None;
@@ -617,7 +551,6 @@ fn destination_raw_delivery_mints_fresh_stamps_and_reverses_backup_once() {
         );
         let replay = replay.expect("replayed command");
         assert_eq!(replay.spelling().semantic_token(), brace);
-        assert_ne!(replay.delivery_stamp(), first_stamp);
         assert_eq!(
             processor.command.alignment.align_state,
             initial_align_state + 1
@@ -626,7 +559,7 @@ fn destination_raw_delivery_mints_fresh_stamps_and_reverses_backup_once() {
 }
 
 #[test]
-fn saved_futurelet_and_post_next_deliveries_keep_exact_backup_freshness() {
+fn saved_futurelet_tokens_back_up_in_tex_order() {
     crate::test_harness::with_universe(|universe| {
         let first_token = Token::Char {
             ch: 'a',
@@ -651,20 +584,13 @@ fn saved_futurelet_and_post_next_deliveries_keep_exact_backup_freshness() {
         );
 
         let first = crate::test_harness::expect_token_command(&mut processor);
-        let saved_first = first.copy_for_backup();
         let second = crate::test_harness::expect_token_command(&mut processor);
-        assert_eq!(
-            processor.back_input(first),
-            Err(crate::CommandError::StaleDelivery),
-            "a later raw delivery invalidates ordinary backup"
-        );
-
         processor
             .back_input(second)
-            .expect("fresh second delivery backs up");
+            .expect("second delivery backs up");
         processor
-            .back_input_saved(saved_first)
-            .expect("TeX82 §326 saved first token backs up without freshness");
+            .back_input(first)
+            .expect("TeX82 §326 saved first token backs up");
         assert_eq!(
             crate::test_harness::expect_token_command(&mut processor)
                 .spelling()
@@ -681,70 +607,7 @@ fn saved_futurelet_and_post_next_deliveries_keep_exact_backup_freshness() {
 }
 
 #[test]
-fn cursor_resume_rejects_delivery_until_retained_command_is_readmitted() {
-    crate::test_harness::with_universe(|universe| {
-        let token = Token::Char {
-            ch: 'r',
-            cat: Catcode::Letter,
-        };
-        let mut command = CommandState::default();
-        crate::test_harness::push(&mut command, [token]);
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-
-        let (delivered, cursor) = {
-            let mut processor = crate::test_harness::processor(
-                &mut command,
-                &mut context,
-                &mut capabilities,
-                &mut fuel,
-                &mut diagnostic_effects,
-            );
-            let delivered = crate::test_harness::expect_token_command(&mut processor);
-            let cursor = processor.delivery_cursor();
-            (delivered, cursor)
-        };
-        let stale_copy = delivered.copy_for_backup();
-
-        {
-            let mut processor = crate::test_harness::processor(
-                &mut command,
-                &mut context,
-                &mut capabilities,
-                &mut fuel,
-                &mut diagnostic_effects,
-            );
-            processor.resume_delivery_cursor(cursor);
-            assert_eq!(
-                processor.back_input(stale_copy),
-                Err(crate::CommandError::StaleDelivery),
-                "cursor-only resume admits no current command"
-            );
-        }
-
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
-        processor.resume_delivery_cursor(cursor);
-        processor.resume_current_command(&delivered);
-        processor
-            .back_input(delivered)
-            .expect("retained current command is explicitly readmitted");
-        assert_eq!(
-            processor.delivery_authority,
-            super::DeliveryAuthority::Unavailable
-        );
-    });
-}
-
-#[test]
-fn resident_stopper_stamp_retires_exact_level_and_invalidates_freshness() {
+fn resident_stopper_retires_its_exhausted_level() {
     crate::test_harness::with_universe(|universe| {
         crate::install_tex82_unexpandable_primitives(universe);
         let endwrite = universe.primitive_token("endwrite").expect("write stopper");
@@ -762,132 +625,17 @@ fn resident_stopper_stamp_retires_exact_level_and_invalidates_freshness() {
             &mut diagnostic_effects,
         );
 
-        let stopper = crate::test_harness::expect_token_command(&mut processor);
-        let stale = stopper.copy_for_backup();
+        let _stopper = crate::test_harness::expect_token_command(&mut processor);
+        let levels = processor.command.input.levels.len();
         processor
-            .retire_delivery_level(stopper.delivery_stamp())
-            .expect("resident stamp retires its exact exhausted level");
-        assert_eq!(
-            processor.delivery_authority,
-            super::DeliveryAuthority::Unavailable
-        );
-        assert_eq!(
-            processor.back_input(stale),
-            Err(crate::CommandError::StaleDelivery)
-        );
+            .retire_delivery_level()
+            .expect("the stopper's exhausted level retires");
+        assert_eq!(processor.command.input.levels.len(), levels - 1);
     });
 }
 
-#[cfg(feature = "profiling")]
 #[test]
-fn one_and_4096_deliveries_derive_ordinary_freshness_without_a_coordinate_mirror() {
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    struct Evidence {
-        ordinary_coordinate_mirror_fields: usize,
-        explicit_exception_coordinate_fields: usize,
-        command_coordinate_writes: u64,
-        resolved_command_writes: u64,
-        work: crate::CommandWorkCounters,
-        allocation_calls: u64,
-        requested_bytes: u64,
-    }
-
-    fn census(deliveries: usize) -> Evidence {
-        crate::test_harness::with_universe(|universe| {
-            let token = Token::Char {
-                ch: 'x',
-                cat: Catcode::Letter,
-            };
-            let mut command = CommandState::default();
-            crate::test_harness::push(&mut command, std::iter::repeat_n(token, deliveries));
-            let mut capabilities = CommandHostCapabilities::default();
-            let mut fuel = crate::CommandFuelLedger::default();
-            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-            let mut context = universe.command_context().expect("command context");
-            let commands_before = crate::command::command_ownership_counters();
-            let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
-            let allocations_before =
-                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            {
-                let mut processor = crate::test_harness::processor(
-                    &mut command,
-                    &mut context,
-                    &mut capabilities,
-                    &mut fuel,
-                    &mut diagnostic_effects,
-                );
-                let mut destination = None;
-                {
-                    let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-                    for _ in 0..deliveries {
-                        assert_eq!(
-                            processor
-                                .get_next_into(&mut destination)
-                                .expect("resident raw delivery"),
-                            DeliveryStatus::Command
-                        );
-                        assert_eq!(
-                            destination
-                                .take()
-                                .expect("resident command")
-                                .spelling()
-                                .semantic_token(),
-                            token
-                        );
-                    }
-                }
-            }
-            let allocations_after =
-                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            let commands_after = crate::command::command_ownership_counters();
-            let ordinary_coordinate_mirror_fields = include_str!("mod.rs")
-                .matches("immediate_delivery_stamp: Option<crate::DeliveryStamp>")
-                .count();
-            let explicit_exception_coordinate_fields = include_str!("mod.rs")
-                .matches("Explicit(crate::DeliveryStamp)")
-                .count();
-            Evidence {
-                ordinary_coordinate_mirror_fields,
-                explicit_exception_coordinate_fields,
-                command_coordinate_writes: commands_after.delivery_stamp_writes
-                    - commands_before.delivery_stamp_writes,
-                resolved_command_writes: commands_after.resolved_writes
-                    - commands_before.resolved_writes,
-                work: fuel.work(),
-                allocation_calls: allocations_after.calls - allocations_before.calls,
-                requested_bytes: allocations_after.requested_bytes
-                    - allocations_before.requested_bytes,
-            }
-        })
-    }
-
-    for deliveries in [1_usize, 4_096] {
-        let count = deliveries as u64;
-        assert_eq!(
-            census(deliveries),
-            Evidence {
-                ordinary_coordinate_mirror_fields: 0,
-                explicit_exception_coordinate_fields: 1,
-                command_coordinate_writes: count,
-                resolved_command_writes: count,
-                work: crate::CommandWorkCounters {
-                    fuel_charges: count,
-                    token_frame_steps: count,
-                    expanded_deliveries: 0,
-                    meaning_lookups: 0,
-                    scanner_tokens: 0,
-                    write_expansions: 0,
-                    raw_delivery_kinds: [0, count, 0, 0],
-                },
-                allocation_calls: 0,
-                requested_bytes: 0,
-            }
-        );
-    }
-}
-
-#[test]
-fn scalar_and_surface_alignment_handoffs_consume_coordinate_freshness() {
+fn scalar_and_surface_alignment_handoffs_start_the_v_template() {
     crate::test_harness::with_universe(|universe| {
         let tab = Token::Char {
             ch: '&',
@@ -941,15 +689,7 @@ fn scalar_and_surface_alignment_handoffs_consume_coordinate_freshness() {
             ));
             processor
                 .begin_scalar_alignment_v_template(&delimiter)
-                .expect("fresh scalar delimiter handoff");
-            assert_eq!(
-                processor.delivery_authority,
-                super::DeliveryAuthority::Unavailable
-            );
-            assert_eq!(
-                processor.begin_scalar_alignment_v_template(&delimiter),
-                Err(crate::CommandError::StaleDelivery)
-            );
+                .expect("scalar delimiter handoff");
         }
 
         let mut surface_command = CommandState::default();
@@ -984,25 +724,9 @@ fn scalar_and_surface_alignment_handoffs_consume_coordinate_freshness() {
         let event = crate::AlignmentDeliveryEvent::EndTemplate(
             destination.expect("surface delimiter initializes caller slot"),
         );
-        let stale_event = match &event {
-            crate::AlignmentDeliveryEvent::EndTemplate(delimiter) => {
-                crate::AlignmentDeliveryEvent::EndTemplate(delimiter.copy_for_backup())
-            }
-            crate::AlignmentDeliveryEvent::ClosingBrace(_) => {
-                panic!("surface control expects end-template")
-            }
-        };
         processor
             .begin_alignment_v_template(surface_alignment, event)
-            .expect("fresh surface delimiter handoff");
-        assert_eq!(
-            processor.delivery_authority,
-            super::DeliveryAuthority::Unavailable
-        );
-        assert_eq!(
-            processor.begin_alignment_v_template(surface_alignment, stale_event),
-            Err(crate::CommandError::StaleDelivery)
-        );
+            .expect("surface delimiter handoff");
     });
 }
 
@@ -1031,10 +755,6 @@ fn failed_raw_delivery_clears_its_partially_written_final_slot() {
             Err(crate::CommandError::InputInvariant(_))
         ));
         assert!(destination.is_none());
-        assert_eq!(
-            processor.delivery_authority,
-            super::DeliveryAuthority::Unavailable
-        );
     });
 }
 
@@ -1294,10 +1014,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                     );
                     let delivered = destination.take().expect("mixed resident command");
                     assert_eq!(delivered.spelling().semantic_token(), token);
-                    assert_eq!(
-                        delivered.active_source_role(),
-                        Some(crate::SourceRole::UserDocumentInclude)
-                    );
                 }
             }
             let allocations_after =
@@ -1316,11 +1032,7 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                         .expect("normalized source terminator delivery"),
                     DeliveryStatus::Command
                 );
-                let terminator = destination.take().expect("normalized source terminator");
-                assert_eq!(
-                    terminator.active_source_role(),
-                    Some(crate::SourceRole::UserDocumentInclude)
-                );
+                destination.take().expect("normalized source terminator");
                 assert_eq!(
                     processor
                         .get_next_into(&mut destination)
@@ -1436,7 +1148,7 @@ fn raw_observation_follows_alignment_and_borrows_direct_source_provenance() {
                 .source_provenance(delivered)
                 .expect("source provenance");
             (
-                delivered.delivery_stamp(),
+                processor.observed_delivery_coordinate(),
                 provenance.range(),
                 provenance.location(),
             )
@@ -1467,8 +1179,8 @@ fn raw_observation_follows_alignment_and_borrows_direct_source_provenance() {
             })
             .expect("raw observation");
         assert!(alignment_index < raw_index);
-        assert_eq!(raw.provenance.input_level, stamp.input_level());
-        assert_eq!(raw.provenance.position, stamp.position());
+        assert_eq!(raw.provenance.input_level, stamp.0);
+        assert_eq!(raw.provenance.position, stamp.1);
         assert_eq!(raw.provenance.delivery_sequence, 0);
         assert_eq!(raw.provenance.source_range, Some(source_range));
         assert_eq!(raw.provenance.source_location, Some(source_location));

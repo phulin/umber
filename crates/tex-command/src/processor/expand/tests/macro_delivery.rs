@@ -260,10 +260,6 @@ fn one_hundred_macros_materialize_only_the_final_command() {
             1,
             "ordinary macros never construct even the hot command record"
         );
-        assert_eq!(
-            after.delivery_stamp_writes - before.delivery_stamp_writes,
-            1
-        );
     });
 }
 

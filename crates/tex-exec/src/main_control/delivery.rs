@@ -260,7 +260,6 @@ impl<G> MainControl<G> {
                 let tracked_region_is_active = context.tracked_region_is_active();
                 let job_is_all_over = crate::page_output::job_is_all_over(context);
                 let display_eq_no = self.modes.current_list().display_eq_no().is_some();
-                let mut retained_main_loop_command = false;
                 if raw_main_loop_delivery
                     && self.main_loop_active
                     && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
@@ -317,7 +316,6 @@ impl<G> MainControl<G> {
                                 // by this processor. Reuse the already-live
                                 // context only when the normal operation
                                 // continuation contract still holds.
-                                frame.clear_operation_origin();
                                 frame.assert_empty();
                                 *operations += 1;
                                 self.roll_admitted_direct_operation();
@@ -330,7 +328,6 @@ impl<G> MainControl<G> {
                         Ok(tex_command::DeliveryStatus::CharacterRunBoundary) => {
                             // The resolved raw tail remains in `frame.command`; the
                             // ordinary processor below performs §1038's x_token.
-                            retained_main_loop_command = true;
                         }
                         Ok(tex_command::DeliveryStatus::CharacterRun) => {}
                         Ok(_) => unreachable!(
@@ -375,14 +372,6 @@ impl<G> MainControl<G> {
                         )
                     };
                     processor.set_output_routine_active(self.boxes.output_routine_active);
-                    if retained_main_loop_command {
-                        // TeX82 §1038 keeps this raw `cur_cmd` live while
-                        // leaving the character loop. The source-run and
-                        // ordinary processor borrows are separate here, so
-                        // readmit that same delivery before x_token or
-                        // §1095's `head_for_vmode` can back it up.
-                        processor.resume_current_command(frame.current());
-                    }
                     prepare_command_trace(&mut processor, mode, self.shown_mode);
                     // TeX82 has one raw-fetch/classification loop. Enter it once with
                     // §1038's first-command policy when the character loop is active;
@@ -472,12 +461,10 @@ impl<G> MainControl<G> {
                                 unreachable!("delivered lane exits return their status")
                             }
                             super::lane::LaneExit::Scanned(operation) => {
-                                frame.retain_source_role();
                                 frame.clear_preflight();
                                 hot_operation = Some(operation);
                             }
                             super::lane::LaneExit::ScannedCold => {
-                                frame.retain_source_role();
                                 frame.clear_preflight();
                                 // Scalar lane operations are admitted scalar
                                 // assignments or §1236's invalid target, and
@@ -496,7 +483,6 @@ impl<G> MainControl<G> {
                                 frame.error = Some(error);
                             }
                             super::lane::LaneExit::Applied(applied) => {
-                                frame.retain_source_role();
                                 frame.clear_preflight();
                                 lane_applied = Some(applied);
                             }
@@ -584,12 +570,10 @@ impl<G> MainControl<G> {
                             );
                             match scanned {
                                 Ok(ScannedOperation::Hot(operation)) => {
-                                    frame.retain_source_role();
                                     frame.clear_preflight();
                                     hot_operation = Some(operation);
                                 }
                                 Ok(ScannedOperation::Cold) => {
-                                    frame.retain_source_role();
                                     frame.clear_preflight();
                                     let operation = frame.unavailable(cold);
                                     if operation.executes_directly()
@@ -645,7 +629,6 @@ impl<G> MainControl<G> {
                 {
                     let output_start = OperationOutputStart {
                         outer_paragraph_was_active,
-                        source_role: frame.operation_source_role(),
                         artifact_count: context.artifact_commit_count(),
                         effect_count: context.effect_record_count(),
                         prepared_page_count: self.prepared_dvi_pages.len(),
@@ -662,7 +645,6 @@ impl<G> MainControl<G> {
                 if let Some(applied) = lane_applied.take() {
                     let output_start = OperationOutputStart {
                         outer_paragraph_was_active,
-                        source_role: frame.operation_source_role(),
                         artifact_count: applied.artifact_count,
                         effect_count: applied.effect_count,
                         prepared_page_count: self.prepared_dvi_pages.len(),
@@ -692,7 +674,6 @@ impl<G> MainControl<G> {
                 if diagnostics.is_empty() && direct_cold_operation {
                     let output_start = OperationOutputStart {
                         outer_paragraph_was_active,
-                        source_role: frame.operation_source_role(),
                         artifact_count: context.artifact_commit_count(),
                         effect_count: context.effect_record_count(),
                         prepared_page_count: self.prepared_dvi_pages.len(),
@@ -744,7 +725,6 @@ impl<G> MainControl<G> {
                     .expect("admitted direct operation captures save-stack usage");
                 self.max_save_stack = self.max_save_stack.max(checked);
                 self.page_output_observations.clear();
-                frame.clear_operation_origin();
                 frame.assert_empty();
                 *operations += 1;
                 self.roll_admitted_direct_operation();
@@ -769,7 +749,6 @@ impl<G> MainControl<G> {
                 frame.error = Some(error);
             }
             frame.clear_preflight();
-            frame.clear_operation_origin();
             host_preparation.fill_applied_direct();
             host_preparation.discard_delivery_status();
             return PreflightReadiness::Ready;
@@ -781,7 +760,6 @@ impl<G> MainControl<G> {
         if let Some(mut operation) = hot_operation {
             let output_start = OperationOutputStart {
                 outer_paragraph_was_active,
-                source_role: frame.operation_source_role(),
                 artifact_count: stores.world().committed_artifacts().len(),
                 effect_count: stores.world().effect_records().len(),
                 prepared_page_count: self.prepared_dvi_pages.len(),
@@ -796,7 +774,6 @@ impl<G> MainControl<G> {
             ) {
                 frame.error = Some(error);
             }
-            frame.clear_operation_origin();
             host_preparation.fill_applied_direct();
             host_preparation.discard_delivery_status();
             return PreflightReadiness::Ready;
@@ -882,7 +859,6 @@ impl<G> MainControl<G> {
                     suppress_right: true,
                 },
             );
-            frame.retain_source_role();
             frame.discard_resident_command();
             host_preparation.fill_delivery(OperationDelivery::ResidentCold);
             return PreflightReadiness::Ready;
@@ -1509,7 +1485,6 @@ pub(super) fn scan_preflight_command<G>(
     let phase = command
         .phase
         .expect("operation frame owns its delivery phase");
-    processor.resume_current_command(command.current());
     let prefix = match phase {
         PreflightCommandPhase::Prefixed { global } => Some((global, MeaningFlags::EMPTY)),
         PreflightCommandPhase::Settled | PreflightCommandPhase::Raw => None,

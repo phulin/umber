@@ -328,8 +328,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 command: command_name,
                 command_operand,
                 semantic_operand,
-                provenance: CommandProvenance::from_stamp(
-                    command.delivery_stamp(),
+                provenance: CommandProvenance::new(
+                    self.observed_delivery_coordinate(),
                     self.current_delivery_sequence(),
                     command.origin(),
                     self.direct_source_provenance_hot(command),

@@ -259,7 +259,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // if_stack[in_open]:=cond_ptr`, recorded for `\tracingnesting`'s
                 // `file_warning` at this level's eventual `end_file_reading`.
                 let open_depths = self.capture_source_open_depths();
-                self.invalidate_delivery_freshness();
                 let (_, framing_name) = self
                     .command
                     .open_registered_file_with_depths(source, open_depths)

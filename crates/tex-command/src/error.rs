@@ -119,8 +119,8 @@ pub enum CommandError {
     },
     /// A stale or malformed input-level transition was observed.
     InputInvariant(InputInvariantOrigin),
-    /// A backup did not name the most recent raw delivery in this processor.
-    StaleDelivery,
+    /// A captured diagnostic context no longer names the live input.
+    StaleDiagnosticContext,
     /// A macro's compulsory parameter text did not match its invocation.
     MacroPrefixMismatch,
     /// A non-`\long` macro argument ended at a paragraph token.
@@ -235,7 +235,9 @@ impl std::fmt::Display for CommandError {
                     "command input-state invariant failed (at {origin})"
                 )
             }
-            Self::StaleDelivery => formatter.write_str("command delivery is no longer current"),
+            Self::StaleDiagnosticContext => {
+                formatter.write_str("diagnostic context is no longer current")
+            }
             Self::MacroPrefixMismatch => {
                 formatter.write_str("macro invocation does not match its definition")
             }

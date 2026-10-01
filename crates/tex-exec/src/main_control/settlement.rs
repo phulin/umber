@@ -12,7 +12,6 @@ pub(super) type ObservationSlot = Option<ObservationBuffer>;
 #[derive(Clone, Copy)]
 pub(super) struct OperationOutputStart {
     pub(super) outer_paragraph_was_active: bool,
-    pub(super) source_role: Option<tex_command::SourceRole>,
     pub(super) artifact_count: usize,
     pub(super) effect_count: usize,
     pub(super) prepared_page_count: usize,
@@ -641,11 +640,7 @@ impl<G> MainControl<G> {
             }
             self.page_output_observations.clear();
         }
-        self.finish_paragraph_boundary(
-            output_start.outer_paragraph_was_active,
-            output_start.source_role,
-            stores,
-        );
+        self.finish_paragraph_boundary(output_start.outer_paragraph_was_active, stores);
         Ok(applied)
     }
 
@@ -653,7 +648,6 @@ impl<G> MainControl<G> {
     pub(super) fn finish_paragraph_boundary(
         &mut self,
         outer_paragraph_was_active: bool,
-        source_role: Option<tex_command::SourceRole>,
         stores: &mut Universe<G>,
     ) {
         if !outer_paragraph_was_active {
@@ -662,8 +656,7 @@ impl<G> MainControl<G> {
         if self.paragraph_checkpoint_demand.is_none() {
             return;
         }
-        let root_is_active = source_role == Some(tex_command::SourceRole::RootDocument)
-            && self.command.current_file_source_id() == self.root_main_source;
+        let root_is_active = self.command.current_file_source_id() == self.root_main_source;
         let context = stores
             .command_context()
             .expect("paragraph checkpoint admission");

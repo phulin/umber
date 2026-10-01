@@ -76,7 +76,7 @@ pub(in crate::main_control) fn render_diagnostic_context<G>(
 ) -> Result<String, ExecError> {
     state
         .render_diagnostic_context(coordinate, stores)
-        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
+        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDiagnosticContext))
 }
 
 pub(in crate::main_control) fn render_diagnostic_coordinate<G>(
@@ -87,7 +87,7 @@ pub(in crate::main_control) fn render_diagnostic_coordinate<G>(
     command
         .state
         .render_diagnostic_context(coordinate, stores)
-        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
+        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDiagnosticContext))
 }
 
 /// Applies TeX82 §1055's unscoped box-register dimension mutation through
@@ -2018,7 +2018,7 @@ pub(in crate::main_control) fn command_error(error: CommandError) -> ExecError {
         CommandError::Fatal(fatal) => ExecError::Fatal(fatal),
         CommandError::FuelExhausted { .. }
         | CommandError::InputInvariant(_)
-        | CommandError::StaleDelivery
+        | CommandError::StaleDiagnosticContext
         | CommandError::MacroPrefixMismatch
         | CommandError::ParagraphInMacroArgument
         | CommandError::OuterInMacroArgument

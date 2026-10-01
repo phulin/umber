@@ -13,7 +13,7 @@ use consume::ExpansionCandidate;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::command::{CommandClass, DeliveryStamp, HotCommand};
+use crate::command::{CommandClass, HotCommand};
 use crate::execution_scratch::ArgumentSetId;
 use crate::input::{InputLevelId, ResidentBoundary};
 use crate::{CommandError, CurrentCommand};
@@ -82,9 +82,6 @@ enum ResidentWordRead<G> {
 struct ResidentWord {
     word: TokenWord,
     origin: OriginId,
-    identity: u64,
-    position: u64,
-    active_source: Option<tex_state::packed_input::SourceContext>,
     suppress_expandable: bool,
     site: ReadSite,
     #[cfg(test)]
@@ -184,9 +181,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let ResidentWord {
             word,
             origin,
-            identity,
-            position,
-            active_source,
             suppress_expandable,
             site,
             #[cfg(test)]
@@ -239,9 +233,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             destination,
             word,
             origin,
-            identity,
-            position,
-            active_source,
             matches!(site, ReadSite::Source(_)),
             direct_source_line,
             suppress_expandable,
@@ -261,15 +252,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             resolution.meaning_lookup(),
             raw_kind,
         );
-        match site {
-            ReadSite::Resident => self.enter_resident_delivery(),
-            _ => self.readmit_delivery_stamp(
-                destination
-                    .as_ref()
-                    .expect("initialized delivery")
-                    .delivery_stamp(),
-            ),
-        }
         resolution.literal_catcode()
     }
 
@@ -349,7 +331,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let transition = match selected {
             ResidentWordRead::NoResident => InputFrameTransition::Boundary(ResidentBoundary::Empty),
             ResidentWordRead::Source { resident_index } => {
-                self.invalidate_delivery_freshness();
                 return self.advance_source_token(resident_index, create_control_sequences);
             }
             ResidentWordRead::Parameter {
@@ -688,15 +669,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         literal_catcode: Option<Catcode>,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        if let Err(failure) = self.fuel.charge() {
-            self.invalidate_delivery_freshness();
-            return Err(failure);
-        }
+        self.fuel.charge()?;
         let mut command = command.take().ok_or_else(CommandError::input_invariant)?;
-        if let Err(failure) = self.settle_hot_delivery(&mut command, literal_catcode) {
-            self.invalidate_delivery_freshness();
-            return Err(failure);
-        }
+        self.settle_hot_delivery(&mut command, literal_catcode)?;
         *destination = Some(command.materialize());
         Ok(DeliveryStatus::CharacterRunBoundary)
     }
@@ -729,7 +704,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         consume: &mut impl MainCharacterConsumer<G>,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
-        self.invalidate_delivery_freshness();
         let mut command = None;
 
         let mut consumed_characters = false;
@@ -796,7 +770,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             let selected = match selected {
                 std::ops::ControlFlow::Continue(selected) => selected,
                 std::ops::ControlFlow::Break(()) => {
-                    self.invalidate_delivery_freshness();
                     #[cfg(feature = "profiling")]
                     if let Some(kind) = character_run_kind.take() {
                         self.fuel.record_raw_run(false, kind, character_run_count);
@@ -806,7 +779,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             };
             if matches!(selected, ResidentWordRead::NoResident) {
                 if consumed_characters {
-                    self.invalidate_delivery_freshness();
                     #[cfg(feature = "profiling")]
                     if let Some(kind) = character_run_kind.take() {
                         self.fuel.record_raw_run(false, kind, character_run_count);
@@ -850,7 +822,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // The source cursor and its provenance moved in place;
                     // no resident command can retain the previous
                     // freshness proof across this direct admission.
-                    self.invalidate_delivery_freshness();
                     return Ok(DeliveryStatus::CharacterRun);
                 }
                 let cold = self.transition_resident_word(
@@ -867,7 +838,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             if !matches!(selected, ResidentWordRead::Word(_)) {
                 if consumed_characters && matches!(selected, ResidentWordRead::Exhausted { .. }) {
-                    self.invalidate_delivery_freshness();
                     #[cfg(feature = "profiling")]
                     if let Some(kind) = character_run_kind.take() {
                         self.fuel.record_raw_run(false, kind, character_run_count);
@@ -887,10 +857,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let ResidentWordRead::Word(selected) = selected else {
                 unreachable!("input transitions were handled above")
             };
-            if let Err(failure) = self.fuel.charge() {
-                self.invalidate_delivery_freshness();
-                return Err(failure);
-            }
+            self.fuel.charge()?;
             #[cfg(feature = "profiling")]
             if let Some(kind) = character_run_kind.take() {
                 self.fuel.record_raw_run(false, kind, character_run_count);
@@ -899,10 +866,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let mut command = command
                 .take()
                 .expect("boundary word initialized its command");
-            if let Err(failure) = self.settle_hot_delivery(&mut command, literal_catcode) {
-                self.invalidate_delivery_freshness();
-                return Err(failure);
-            }
+            self.settle_hot_delivery(&mut command, literal_catcode)?;
             *destination = Some(command.materialize());
             return Ok(DeliveryStatus::CharacterRunBoundary);
         }
@@ -1568,9 +1532,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             },
             origin,
         );
-        let stamp = DeliveryStamp::new(0, 0);
         self.advance_delivery_sequence();
-        let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, None, self.state);
+        let command = CurrentCommand::<G>::resolve(spelling, false, None, self.state);
         let mut destination = None;
         let status = self.active_x_token_into(command, &mut destination)?;
         let settled = match status {
@@ -1582,7 +1545,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         // §325 needs only `cur_tok`; the settled token is `x_token`'s result
         // rather than a delivery this call is undoing, exactly as in §326.
-        self.back_input_saved(settled)
+        self.back_input(settled)
     }
 
     /// TeX82 §404's expanded nonblank/non-relax fetch for scanners that can
@@ -1822,7 +1785,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         destination.take();
         self.command.transient.active_expansion_depth = depth;
-        self.invalidate_delivery_freshness();
         Err(failure)
     }
 }
@@ -1908,8 +1870,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 command: command_name,
                 command_operand,
                 semantic_operand,
-                provenance: CommandProvenance::from_stamp(
-                    command.delivery_stamp(),
+                provenance: CommandProvenance::new(
+                    self.observed_delivery_coordinate(),
                     self.current_delivery_sequence(),
                     command.origin(),
                     self.direct_source_provenance(command),
@@ -1944,8 +1906,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 command: command_name,
                 command_operand,
                 semantic_operand,
-                provenance: CommandProvenance::from_stamp(
-                    command.delivery_stamp(),
+                provenance: CommandProvenance::new(
+                    self.observed_delivery_coordinate(),
                     self.current_delivery_sequence(),
                     command.origin(),
                     self.direct_source_provenance_hot(command),
@@ -2374,7 +2336,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         arguments: Option<ArgumentSetId<G>>,
     ) -> InputLevelId {
         let invocation = call_site;
-        self.invalidate_delivery_freshness();
         self.command
             .push_macro_activation(name, body, arguments, invocation)
     }

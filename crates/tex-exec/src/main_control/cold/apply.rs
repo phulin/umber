@@ -479,7 +479,9 @@ pub(in crate::main_control) fn apply<G>(
                 |stores| {
                     state
                         .render_diagnostic_context(*context, stores)
-                        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
+                        .map_err(|_| {
+                            ExecError::Command(tex_command::CommandError::StaleDiagnosticContext)
+                        })
                 },
                 modes,
                 stores,
@@ -2784,7 +2786,9 @@ pub(in crate::main_control) fn apply<G>(
                 |stores| {
                     state
                         .render_diagnostic_context(*error_context, stores)
-                        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
+                        .map_err(|_| {
+                            ExecError::Command(tex_command::CommandError::StaleDiagnosticContext)
+                        })
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -2809,7 +2813,9 @@ pub(in crate::main_control) fn apply<G>(
                 |stores| {
                     state
                         .render_diagnostic_context(*error_context, stores)
-                        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
+                        .map_err(|_| {
+                            ExecError::Command(tex_command::CommandError::StaleDiagnosticContext)
+                        })
                 },
             )?;
             let context = boxes.take_box_context(false);
