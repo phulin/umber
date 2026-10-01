@@ -37,6 +37,7 @@ enum InputFrameTransition {
     },
     Parameter {
         slot: u8,
+        region: Option<crate::input::ArgumentRegionId>,
         span: Option<crate::input::ArgumentSpan>,
         active_source: Option<tex_state::packed_input::SourceContext>,
     },

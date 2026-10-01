@@ -1,8 +1,8 @@
 //! Dense source and token-list input-level ownership.
 //!
 //! Immutable macro bodies and stored lists are retained directly by their
-//! rows. Inserted words, backups, and matched arguments occupy the input
-//! stack's transient words; their owning rows retire those LIFO suffixes.
+//! rows. Insertions and backups occupy the input stack's transient words;
+//! arguments occupy reusable invocation regions owned by their macro body.
 //! The common frame owns the sole delivery position for either storage.
 
 use tex_state::interner::Symbol;
@@ -110,7 +110,7 @@ pub(crate) enum InputLevel<G> {
     Resident(ResidentTokenRow<G>),
 }
 
-/// One macro argument's span of input-stack words: TeX82's `param_stack`
+/// One macro argument's span within its invocation region: TeX82's `param_stack`
 /// entry (§388), which points at the argument's token list.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct ArgumentSpan {
@@ -120,18 +120,18 @@ pub(crate) struct ArgumentSpan {
 
 /// One macro activation: TeX82 §390's `macro` token list.
 ///
-/// Matched argument copies occupy its transient stack region. The immutable
+/// Matched argument spans borrow its final pooled region. The immutable
 /// definition owner supplies both replacement delivery and context display.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MacroBodyCursor<G> {
     pub(crate) name: Symbol,
     pub(crate) invocation: OriginId,
-    /// First stack word of the activation region.
-    pub(crate) region_start: u32,
+    /// Sole owner of the invocation's final argument words, if parameterized.
+    pub(crate) argument_region: Option<super::ArgumentRegionId>,
     /// TeX82's `param_start`: the argument-span stack length before this
     /// activation pushed its spans.
     pub(crate) parameter_base: u32,
-    /// Number of matched argument spans copied into this activation.
+    /// Number of argument spans published by this activation.
     pub(crate) argument_count: u8,
     pub(crate) body: tex_state::ResidentMacroBody<G>,
 }
@@ -282,7 +282,10 @@ pub(crate) enum ResidentTokenStorage<G> {
     MacroBody(MacroBodyCursor<G>),
     /// Borrows one argument span of the enclosing macro activation, which
     /// cannot retire while this row lies above it.
-    MacroArgument { slot: u8 },
+    MacroArgument {
+        slot: u8,
+        region: super::ArgumentRegionId,
+    },
 }
 
 impl TokenRowHeader {
@@ -370,7 +373,7 @@ impl<G> ResidentTokenRow<G> {
         match self.header.frame.kind() {
             InputFrameKind::Parameter => ReplayTrace::MacroParameter {
                 slot: match self.storage {
-                    ResidentTokenStorage::MacroArgument { slot } => slot,
+                    ResidentTokenStorage::MacroArgument { slot, .. } => slot,
                     _ => 0,
                 },
             },
@@ -431,18 +434,9 @@ impl<G> InputLevel<G> {
                     ResidentTokenStorage::StoredList(list) => {
                         ResidentTokenStorage::StoredList(list.clone())
                     }
-                    ResidentTokenStorage::MacroBody(cursor) => {
-                        ResidentTokenStorage::MacroBody(MacroBodyCursor {
-                            name: cursor.name,
-                            invocation: cursor.invocation,
-                            region_start: cursor.region_start,
-                            parameter_base: cursor.parameter_base,
-                            argument_count: cursor.argument_count,
-                            body: cursor.body.clone(),
-                        })
-                    }
-                    ResidentTokenStorage::MacroArgument { slot } => {
-                        ResidentTokenStorage::MacroArgument { slot: *slot }
+                    ResidentTokenStorage::MacroBody(_)
+                    | ResidentTokenStorage::MacroArgument { .. } => {
+                        unreachable!("named checkpoints exclude macro input")
                     }
                 },
             }),

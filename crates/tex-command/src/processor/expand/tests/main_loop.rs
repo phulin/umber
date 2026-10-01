@@ -477,14 +477,18 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
         ];
         let traced = argument_tokens.map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN));
         let mut command = CommandState::default();
-        let matching = command.scratch.begin_macro_match().expect("macro match");
-        let mut writer = command
-            .scratch
-            .begin_argument_writer(&matching)
-            .expect("macro argument writer");
+        let mut matching = command
+            .input
+            .levels
+            .arguments
+            .begin_match()
+            .expect("macro match");
+        let mut writer = command.input.levels.arguments.begin_argument(&matching);
         for word in traced {
             command
-                .scratch
+                .input
+                .levels
+                .arguments
                 .append_argument_token(
                     &mut writer,
                     crate::token_collector::ClassifiedToken::from_word(word, None),
@@ -493,8 +497,10 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
                 .expect("macro argument word");
         }
         command
-            .scratch
-            .publish_argument(writer)
+            .input
+            .levels
+            .arguments
+            .publish_argument(&mut matching, writer)
             .expect("macro argument range");
         let macro_name = universe.intern("runargument").expect("macro name").symbol();
         let body_definition = universe

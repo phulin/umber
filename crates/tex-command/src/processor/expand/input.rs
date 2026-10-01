@@ -272,11 +272,18 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             InputFrameTransition::Parameter {
                 slot,
+                region,
                 span,
                 active_source,
             } => {
                 self.command
-                    .push_resident_parameter_cursor(slot, span, active_source, &mut self.observer)
+                    .push_resident_parameter_cursor(
+                        slot,
+                        region,
+                        span,
+                        active_source,
+                        &mut self.observer,
+                    )
                     .map_err(|()| CommandError::input_invariant())?;
                 return Ok(None);
             }

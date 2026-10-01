@@ -2070,7 +2070,7 @@ the synthetic `endlinechar` does.
 
 Every non-source level uses one physical resident row. Its compact header owns
 the shared identity, source context, position, limit, semantic kind,
-delivery/retirement flags, and rollback marker; the storage tag owns only its
+delivery/retirement flags; the storage tag owns only its
 lifetime-specific coordinate:
 
 ```rust
@@ -2089,15 +2089,14 @@ enum ResidentTokenStorage {
 
 struct MacroBodyCursor {
     body: ResidentMacroBody,
-    arguments: Option<ArgumentSetId>,
+    argument_region: Option<ArgumentRegionId>,
     name: Symbol,
     invocation: OriginId,
 }
 
 struct MacroArgumentCursor {
-    range: MacroArgumentRange,
+    region: ArgumentRegionId,
     slot: u8,
-    origin_run: u32,
 }
 
 enum TokenBehavior {
@@ -2121,17 +2120,17 @@ enum RetirementBehavior {
 A `StoredList` owns its immutable token-list handle; `MacroBodyCursor` owns
 its immutable definition span, name, invocation origin, transient argument
 region, and argument base/count. Its frame starts at the native definition
-parameter boundary. Macro arguments index their activation's traced-word
-suffix. Insertions, backups and attempt-list admissions append to the same
-transient stack. Retirement drops immutable row owners and truncates exactly
-the owned transient suffix. No copied macro body or stored list is installed.
+parameter boundary. Macro arguments index their activation's pooled traced-word region.
+Insertions, backups and attempt-list admissions use the separate transient
+input stack. Retirement drops immutable owners, returns final argument regions
+and truncates their parameter or ordinary input suffixes. No copied macro body or stored list is installed.
 
 The input stack is the logical macro stack. An ordinary unobserved empty macro
 records the stack maximum but publishes no immediately exhausted row. A live
 row retains its immutable body even after the defining group retires, so cold
 context reads parameter and replacement spans from that owner. Argument
-matching currently writes scratch and transfers completed argument words into
-the input stack; the separate one-pass argument stage removes that copy.
+matching writes each word into its final invocation-owned region and publishes
+only its span coordinates.
 
 `consume_resident_input` selects the frame/storage once per run and advances
 its common position. It invokes a statically selected consumer with packed
@@ -2219,53 +2218,41 @@ local observation state.
 
 ### 12.3 Macro parameters
 
-Only a parameterized macro creates an `ArgumentSet`. Each set stores at most
-nine direct sealed spans plus the exact §394 paragraph
-and removable-outer-group facts established during their first scan, beside
-one traced-word suffix in the generation's fixed-chunk lane. The paragraph fact records only
-the ordinary `cur_tok=par_token` branch: an equal token first held as delimiter
-prefix and later committed after a mismatch retains its first spelling/group
-classification but does not acquire the ordinary paragraph-check fact. The
-scalar matcher keeps each completed raw delivery's canonical packed spelling
-resident and projects its literal category directly; it never reconstructs a
-second semantic token or consults resolved meaning for this grammar. Admission
-validates the pending frame and fixed argument slot once and gives
-`MacroArgumentWriter` the exact fixed-block append position, provenance-run
-boundary, delimiter rollback coordinates, brace depth, and first-scan facts.
-The writer then performs the sole accepted-token transition: it writes the exact
-packed word, advances its resident coordinates, and updates paragraph, brace-
-depth, and removable-outer-group aggregates under the same scratch borrow. No
-accepted word revalidates the frame/slot or crosses a processor forwarding
-helper. Delimiter-prefix storage retains that classification beside the word,
-so overlap recovery compares packed immutable spelling and neither decodes
-provenance/group facts again nor rebuilds
-an aggregate. The writer's brace depth is also the delimiter matcher's depth;
-there is no scanner-local duplicate. The matcher consumes the resident facts
-for the non-`\long` decision and outer-pair removal without rereading stored words.
-Completion validates the fixed slot once and publishes its already-written span
-and facts without copying or rescanning. Sealing publishes the set without
-moving its physical words. Semantic storage
-uses packed 4-byte `TokenWord` values in generation-owned fixed blocks. Exact
-primary and invocation provenance is held in compact coordinate-change runs,
-so repeated coordinates add no side entry.
-Empty arguments retain empty half-open ranges. A compact
-`OutParameter(u8)` remains distinct from a literal parameter character emitted
-by the canonical `##` escape, so replay can substitute only the former without
-rewriting immutable macro definition token lists. Physical chunks hold 4,096
-words, and an absolute index maps directly to chunk and offset. Parameter
-admission resolves `(argument set, slot)` once into a first-class
-`MacroArgumentCursor`; replay never enters the generic packed-span dispatch,
-searches the input stack, or walks chunk links. Macro-body and argument rows
-both use specialized physical span cursors alongside the common
-`PackedInputFrame`; only the frame position is semantic rollback state.
-If an older body retires beneath a pending tail child, the child keeps its
-coordinates while its writer is live. After publication, if the last active
-ancestor retires before the pending child is sealed, that still-unadmitted
-suffix rebases into the dead prefix together with its provenance runs. No
-sealed argument or admitted input cursor moves.
-Quiescent top-level calls clear lengths but retain every
-warmed allocation. Node, diagnostic, and continuation boundaries materialize
-structural provenance only on demand.
+Only a parameterized macro allocates a reusable invocation region in
+`InputStack.arguments`. One vector holds every argument of that invocation;
+local `MatchedArguments` holds at most nine spans and `ArgumentCursor` holds
+brace depth, first-token grouping facts and delimiter holdback. Immutable
+matcher plans are borrowed from the retained definition body. Accepted traced
+words enter their final storage once. Mismatched delimiter prefixes become
+visible in place, completed delimiters truncate the unpublished suffix, and
+outer-brace removal narrows the span. Publication installs only coordinates
+into TeX82 §400's `param_stack` and transfers the region to the body.
+
+The paragraph fact records only §394's ordinary `cur_tok=par_token` branch.
+An equal token held as delimiter prefix and later revealed after mismatch does
+not acquire that ordinary paragraph-check fact. Packed spelling determines
+literal categories; resolved brace aliases do not become structural braces.
+The cursor's scanner facts supply paragraph and outer-pair decisions without
+rereading the argument. Empty arguments retain empty half-open ranges.
+
+Each parameter row borrows its macro body's region and reads traced words
+through the existing packed frame. Raw matching never expands another macro:
+alignment interception pushes a template, and outer/EOF recovery pushes
+ordinary input. Parents can retire mid-match, but their distinct region cannot
+truncate the unfinished child's vector or a recovery backup. Forwarded runs
+borrow source/destination vectors separately, so destination reallocation
+preserves source words and provenance. Tail chains alternate two reusable
+region slots without payload compaction or retained dead prefixes.
+
+One optional arena capture owner supports quiescence, pending-word accounting,
+and the macro call's single Result epilogue. Publication transfers that owner;
+empty or failed matching releases it. Body retirement returns its region only
+after its parameter rows retire. Named checkpoints exclude live macros and
+unfinished captures; checkpoint copying rejects macro rows and excludes the
+vacant pool. Aggregate restore clears abandoned regions while retaining live
+engine capacity. Pool metadata and vacant capacities are allocator state,
+excluded from semantic equality/hash but charged once as physical retention.
+Node, diagnostic and output boundaries materialize provenance on demand.
 
 An `OutParameter` is intercepted by the resident macro-body cursor before a
 `CurrentCommand` is materialized and pushes the selected direct argument span.
@@ -2820,7 +2807,7 @@ brace-depth accounting and decides whether the ordinary paragraph check
 applies;
 when the parameter text contains only compulsory literals and no numbered
 parameter, the same `Matching` semantics run without admitting argument
-scratch or an `ArgumentSet`; it never reclassifies a committed prefix. A
+storage or an argument region; it never reclassifies a committed prefix. A
 successful call freezes every range once, creates one invocation origin, and
 installs exactly one activation/body pair over the canonical replacement list;
 replay resolves its compact `OutParameter` tokens through that activation.

@@ -3,7 +3,7 @@
 use crate::CommandState;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 
-use crate::execution_scratch::PendingArgumentSet;
+use super::MatchedArguments;
 
 use super::{
     CompactSourceStepQueries, InputLevel, InputLevelId, PackedTokenSpanHandle, ReplayTrace,
@@ -317,7 +317,7 @@ impl<G> CommandState<G> {
     /// peak with these owners before the command stack can retire them.
     #[must_use]
     pub fn transient_dynamic_words(&self) -> usize {
-        let arguments = self.scratch.argument_word_len();
+        let arguments = self.input.levels.arguments.captured_word_len();
         self.input.levels.iter().fold(arguments, |words, level| {
             let InputLevel::Resident(ResidentTokenRow { header, storage }) = level else {
                 return words;
@@ -326,7 +326,7 @@ impl<G> CommandState<G> {
                 ResidentTokenStorage::List(
                     super::PackedTokenOwnership::Transient | super::PackedTokenOwnership::BackedUp,
                 ) => header.frame.limit(),
-                // The activation's argument copies; its parameter text and
+                // The activation's live argument spans; its parameter text and
                 // replacement stand for TeX's shared definition list.
                 ResidentTokenStorage::MacroBody(body) => self
                     .input
@@ -356,32 +356,29 @@ impl<G> CommandState<G> {
     /// TeX82 §390's `begin_token_list(ref_count,macro)` after §400 has pushed
     /// the matched arguments onto `param_stack`.
     ///
-    /// Matched arguments occupy the transient word stack, while the packed
-    /// body row owns the immutable definition span directly. Retirement drops
-    /// that owner and truncates the activation's transient argument suffix.
+    /// The body row owns the final argument region and immutable definition span.
+    /// Retirement returns the region and truncates its parameter suffix.
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,
         body: tex_state::ResidentMacroBody<G>,
-        matching: Option<PendingArgumentSet<G>>,
+        matching: Option<MatchedArguments>,
         invocation: OriginId,
     ) -> Result<InputLevelId, crate::execution_scratch::ScratchError> {
         let source = self.input.levels.current_source_context();
         let identity = self.allocate_input_level_identity();
         let levels = &mut self.roots.input.levels;
-        let region_start = levels.words.len();
         let parameter_base = levels.parameters.len();
-        let body_len = body.len();
-        let replacement_start = body.parameter_len() as u32;
-        if let Some(matching) = matching {
-            self.scratch.transfer_macro_match(
-                matching,
-                &mut levels.words,
-                &mut levels.parameters,
-            )?;
+        let argument_region = if let Some(matching) = matching {
+            let region = levels.arguments.publish(matching, &mut levels.parameters)?;
             self.stack_usage
                 .record_parameter_push(levels.parameters.len());
-        }
+            Some(region)
+        } else {
+            None
+        };
+        let body_len = body.len();
+        let replacement_start = body.parameter_len() as u32;
         let mut frame = super::packed_token_frame(
             identity,
             replacement_start,
@@ -397,7 +394,7 @@ impl<G> CommandState<G> {
             storage: ResidentTokenStorage::MacroBody(super::MacroBodyCursor {
                 name,
                 invocation,
-                region_start: region_start as u32,
+                argument_region,
                 parameter_base: parameter_base as u32,
                 argument_count: u8::try_from(argument_count)
                     .expect("TeX macro parameter count fits u8"),

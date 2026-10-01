@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
+mod arguments;
 mod history;
 mod levels;
 mod lines;
@@ -13,6 +14,7 @@ mod tokenizer;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use arguments::{ArgumentArena, ArgumentCursor, ArgumentRegionId, MatchedArguments};
 pub use history::BorrowedSourceCharacterRun;
 pub(crate) use history::{
     InputStack, InputStackContextCoordinate, ResidentRun, ResidentSourceAdvance,

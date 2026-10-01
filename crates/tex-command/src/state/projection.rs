@@ -19,6 +19,7 @@ impl<G> CommandState<G> {
             return;
         };
         let supported_continuation = self.scratch.is_quiescent()
+            && !self.input.levels.arguments.is_matching()
             && self.scanner.is_quiescent()
             && self.alignment == AlignmentDeliveryState::<G>::default()
             && self.transient == super::TransientState::default()

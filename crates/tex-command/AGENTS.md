@@ -48,15 +48,18 @@ collector (see `src/conditionals.rs`).
   truncates its own suffix to a mark. A resource miss halts the command and
   the host replays from a full checkpoint.
 - `src/execution_scratch.rs`, `src/execution_scratch/tests.rs`: reusable
-  execution scratch. The one pending macro match writes its arguments into a
-  single word vector through a stack-local `MacroArgumentWriter` that owns the
-  brace depth, first-scan facts, outer-group trim, and delimiter-candidate
-  holdback. Matching never nests, so activation copies the finished arguments
-  onto the input token stack (`transfer_macro_match`) and clears the vector.
-  Plain argument runs append whole input-stack slices. Bounded expression
-  frames also live here. `scan_toks` owners and definition writers are
-  call-local synchronous state; a resource miss unwinds them and the host
-  replays a full checkpoint.
+  bounded expression frames and admission/sinks for ordinary resident runs.
+  Definition and csname collectors consume those runs directly; execution
+  scratch owns no macro argument payload or publication capability.
+- `src/input/arguments.rs`, `src/input/arguments/tests.rs`: final macro
+  `ArgumentArena`, with one reusable vector per simultaneous invocation.
+  A call-local `MatchedArguments` holds at most nine ranges; `ArgumentCursor`
+  holds brace/group facts and the unpublished delimiter suffix. Publication
+  transfers the region to the macro body without copying words; parameter
+  rows borrow it. Parent retirement and recovery input have independent
+  lifetimes. Every Result exit releases an unfinished capture, and body
+  retirement returns the region. Named captures exclude the allocator pool;
+  restore clears abandoned owners and retains reusable engine capacity.
 - `src/scanner_kernel.rs`: stack-local synchronous scanner cursor shared by
   macro arguments and `scan_toks`. It keeps brace and first-token facts beside
   the caller-owned output sink and settles already-admitted plain input runs
@@ -247,8 +250,9 @@ collector (see `src/conditionals.rs`).
   limit, kind, and delivery/retirement flags. `StoredList` owns its immutable
   `TokenListId`; `MacroBody` owns its `ResidentMacroBody`, invocation facts, and
   transient argument coordinates. Both read retained spans without activation
-  copies. Insertions, backups, attempt lists, and matched arguments use the
-  input stack's traced-word suffix. A source row owns one boxed `SourceSlot`
+  copies. Insertions, backups, and attempt lists use the
+  input stack's traced-word suffix; matched arguments use body-owned pooled
+  final regions. A source row owns one boxed `SourceSlot`
   with backing, line cursor, `everyeof`, ancestry, and retirement state.
   `open_depths` is `\tracingnesting`'s record, borrowed before retirement.
 - `src/input/history.rs` and `src/input/history/tests.rs`: the authoritative generation-tied `InputStack`.
@@ -257,8 +261,9 @@ collector (see `src/conditionals.rs`).
   inverse. Source-owner changes release displaced owners directly.
   Capture retains immutable row owners and copies transient words and frame
   coordinates as one aggregate. Named admission rejects live macro activations.
-  Retirement drops the row owner and truncates its transient suffix exactly
-  once; restore releases displaced rows. Diagnostics borrow the retained
+  Retirement drops the row owner, returns its argument region, and truncates
+  its parameter or ordinary input suffix exactly once; restore releases
+  displaced rows and clears their argument regions. Diagnostics borrow the retained
   parameter/replacement span even after its defining group retires.
   `processor/expand/resident.rs` selects a row and its storage once per run,
   advances the owning frame, and calls a statically selected consumer with word
@@ -267,7 +272,7 @@ collector (see `src/conditionals.rs`).
   reader enters command state.
 
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement.
-  Ordinary exhausted token, macro-body, and macro-argument rows truncate the
+  Ordinary exhausted token, macro-body, and macro-argument rows retire the
   already-selected resident coordinate directly, release their one storage
   owner, and settle observation/alignment/replay completion from copy-small
   row facts without a retired-level projection or a second pop path. The same

@@ -187,7 +187,10 @@ impl<G> CommandState<G> {
         if !self.transient.rollback_roots.is_empty() {
             return Err(CommandSummaryError::LiveRollbackRoot);
         }
-        if !self.attempt.is_clear() || !self.scratch.is_quiescent() {
+        if !self.attempt.is_clear()
+            || !self.scratch.is_quiescent()
+            || self.input.levels.arguments.is_matching()
+        {
             return Err(CommandSummaryError::AttemptSuspended);
         }
         Ok(())

@@ -87,11 +87,47 @@ a definition row cannot invalidate its matcher.
 
 Calls borrow the pattern and each delimiter's word/failure slices directly.
 They construct no invocation plan and allocate no failure table. Failure links
-only select the longest reusable literal prefix: the existing argument writer
+only select the longest reusable literal prefix: the call-local argument cursor
 still owns held source origins, brace depth, paragraph checks, outer recovery,
 and group trimming under TeX82 §§392--399. Empty and single-word delimiters
-need no failure allocation. Arguments still transfer from matching scratch to
-the input stack until the separate `.10` replacement.
+need no failure allocation. Arguments are constructed in their final pooled region and published by
+coordinate, without a scratch-to-input transfer.
+
+### Final macro argument regions
+
+`InputStack` owns one reusable `ArgumentArena` pool. Each simultaneous
+invocation uses one vector for all of its arguments; individual arguments are
+half-open ranges, never payload allocations. A local match holds at most nine
+ranges and one local scanner cursor for the current argument. Parameter rows
+borrow the region owned by their macro body. Definition delimiter plans remain
+borrowed immutable metadata.
+
+Capture writes directly into this final vector. A delimiter candidate occupies
+an unpublished suffix: mismatch reveals words in place, a completed delimiter
+truncates them, and outer-brace removal narrows a range. Publication appends
+only the ranges to `param_stack` and transfers the region to the body, without
+copying or materializing its words. Distinct live source and destination
+regions allow forwarded runs to borrow two vectors safely while appending once.
+
+Raw matching never expands another macro. Alignment interception pushes a
+template for the same raw reader; outer and EOF recovery push backup/frozen
+input without invoking expansion. Parents can nevertheless retire during a
+match. Separate region lifetimes let retirement return the parent's vector
+without truncating the child's unfinished capture or backed-up words. Tail
+chains alternate two reusable slots rather than retaining dead prefixes.
+
+One optional capture region records the unfinished owner for cleanup,
+quiescence, and TeX memory accounting. One result epilogue restores the shared
+scanner status and releases any capture not transferred to a body, including
+errors from stack conservation after successful scanning. Abort, empty-body
+completion, body retirement, and restore each release their exact owner.
+There are no match serials, pending capabilities, leases, or argument undo logs.
+
+Named checkpoints admit no macro frames or captures. Their input copy excludes
+vacant vector pools; aggregate restore clears abandoned regions while retaining
+the live engine's reusable capacity. Physical pool capacity is charged once to
+that engine. Semantic equality and hashing ignore vacant slots and capacities.
+The existing aggregate replay path remains the sole restart authority.
 
 The combined immutable-span and packed-delivery replacement resolves each
 interpreted token once into the final native meaning. Ordinary unobserved

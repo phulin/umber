@@ -131,6 +131,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             ResidentTokenStorage::StoredList(list) => {
                 consume_run!(list.words(), |word| (word, OriginId::UNKNOWN))
             }
+            ResidentTokenStorage::MacroArgument { region, .. } => consume_run!(
+                levels.arguments.region(*region),
+                |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin())
+            ),
             _ => consume_run!(&levels.words, |word: tex_state::token::TracedTokenWord| (
                 word.token_word(),
                 word.origin()
@@ -147,6 +151,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             if let Some(span) = span {
                 return Ok(ControlFlow::Continue(InputFrameTransition::Parameter {
                     slot,
+                    region: match &row.storage {
+                        ResidentTokenStorage::MacroBody(body) => body.argument_region,
+                        _ => None,
+                    },
                     span,
                     active_source: frame.source_context(),
                 }));

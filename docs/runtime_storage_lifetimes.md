@@ -87,10 +87,10 @@ widths remain operational state outside the format and dense banks.
 
 A scanner writes into the eventual owner where possible. Definitions append
 once into the live build lane and seal a single immutable payload containing
-words, matcher and origin. Format/import staging is cold. Macro arguments must
-be constructed once in invocation-owned pooled `ArgumentArena` vectors
-(`umber2-i0n5.10`), owned by the body and borrowed by parameter frames; current
-matching scratch-to-input copies remain a migration gap. Empty arguments are
+words, matcher and origin. Format/import staging is cold. Macro arguments are
+constructed once in invocation-owned pooled `ArgumentArena` vectors
+(`input/arguments.rs`), owned by the body and borrowed by parameter frames.
+Matching writes its final payload directly and publishes only range metadata. Empty arguments are
 proved at named capture; returned capacities are an allocator cache charged
 once and excluded from semantic snapshots.
 

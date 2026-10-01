@@ -260,10 +260,6 @@ pub(crate) struct ConditionId(pub(crate) u64);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TokenBuilderId(pub(crate) u64);
 
-/// Identity of a live macro-argument builder in transient command state.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ArgumentBuilderId(pub(crate) u64);
-
 /// Identity of an active alignment scan.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AlignmentId(pub(crate) u64);
@@ -293,7 +289,6 @@ pub(crate) struct DefinitionContext {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MatchingContext {
     pub(crate) macro_name: Symbol,
-    pub(crate) builder: ArgumentBuilderId,
     pub(crate) warning: ScannerWarning,
 }
 

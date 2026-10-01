@@ -617,7 +617,10 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('i')
         );
-        assert_eq!(processor.command.scratch.argument_word_len(), 0);
+        assert_eq!(
+            processor.command.input.levels.arguments.captured_word_len(),
+            0
+        );
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -632,7 +635,10 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('t')
         );
-        assert_eq!(processor.command.scratch.argument_word_len(), 0);
+        assert_eq!(
+            processor.command.input.levels.arguments.captured_word_len(),
+            0
+        );
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -647,7 +653,10 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('n')
         );
-        assert_eq!(processor.command.scratch.argument_word_len(), 0);
+        assert_eq!(
+            processor.command.input.levels.arguments.captured_word_len(),
+            0
+        );
 
         assert_eq!(
             processor
@@ -663,7 +672,10 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('i')
         );
-        assert_eq!(processor.command.scratch.argument_word_len(), 0);
+        assert_eq!(
+            processor.command.input.levels.arguments.captured_word_len(),
+            0
+        );
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -1362,7 +1374,10 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
             processor.macro_call(&mut short_call),
             Err(crate::CommandError::ParagraphInMacroArgument)
         );
-        assert_eq!(processor.command.scratch.argument_word_len(), 0);
+        assert_eq!(
+            processor.command.input.levels.arguments.captured_word_len(),
+            0
+        );
         assert_eq!(
             crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
@@ -1690,4 +1705,124 @@ fn overlapping_delimiter_preserves_source_origins_through_forwarded_arguments() 
             assert_eq!(provenance.range().start(), 7 + index as u64);
         }
     });
+}
+
+#[test]
+fn parameterized_tail_chain_reuses_two_final_regions_and_preserves_forwarded_words() {
+    crate::test_harness::with_universe(|universe| {
+        let mut next = install_macro(universe, "finalarg", &[Token::Param(1)]);
+        for index in 0..128 {
+            let definition = universe
+                .allocate_definition(
+                    &[TokenWord::pack(Token::Param(1))],
+                    &[
+                        next,
+                        Token::Char {
+                            ch: '{',
+                            cat: Catcode::BeginGroup,
+                        },
+                        Token::Param(1),
+                        Token::Char {
+                            ch: '}',
+                            cat: Catcode::EndGroup,
+                        },
+                    ]
+                    .map(TokenWord::pack),
+                )
+                .expect("tail definition");
+            let symbol = universe
+                .intern(&format!("tailarg{index}"))
+                .expect("tail symbol");
+            universe
+                .assign_meaning(
+                    symbol,
+                    MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                    AssignmentScope::Global,
+                )
+                .expect("tail meaning");
+            next = Token::Cs(symbol.symbol());
+        }
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [next, letter('x'), letter('z')]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        assert_eq!(
+            crate::test_harness::expect_expanded_command(&mut processor)
+                .spelling()
+                .semantic_token(),
+            letter('x')
+        );
+        assert_eq!(
+            processor.command.input.levels.arguments.pool_counts().0,
+            2,
+            "tail recursion retains only the parent and capture storage"
+        );
+        assert_eq!(
+            crate::test_harness::expect_expanded_command(&mut processor)
+                .spelling()
+                .semantic_token(),
+            letter('z')
+        );
+        assert_eq!(
+            processor.command.input.levels.arguments.pool_counts().1,
+            0,
+            "final body retirement returns every region"
+        );
+        assert!(processor.command.input.levels.parameters.is_empty());
+    });
+}
+
+#[test]
+fn every_match_fuel_exit_releases_capture_and_restores_scanner_status() {
+    for limit in 1..20 {
+        crate::test_harness::with_universe(|universe| {
+            let macro_token =
+                install_macro(universe, "cutargument", &[Token::Param(1), other('.')]);
+            let mut command = CommandState::default();
+            crate::test_harness::push(
+                &mut command,
+                [
+                    macro_token,
+                    letter('a'),
+                    letter('b'),
+                    letter('c'),
+                    other('.'),
+                    letter('z'),
+                ],
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(limit).expect("finite fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut destination = None;
+            let _result = processor.get_x_token_into(&mut destination);
+            assert!(
+                !processor.command.input.levels.arguments.is_matching(),
+                "fuel cut {limit} leaves no unfinished owner"
+            );
+            assert!(
+                matches!(
+                    processor.command.scanner.status(),
+                    crate::processor::status::ScannerStatus::Normal
+                ),
+                "fuel cut {limit} restores the prior scanner status"
+            );
+        });
+    }
 }
