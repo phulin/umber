@@ -47,6 +47,11 @@ remains open.
 definition-owned matcher and collector integration, and direct operation path
 using the current full-book profile and explicit acceptance boundaries.
 
+`minimal_hot_loop.md` proposes the pdfTeX-shaped core: one token memory, packed
+meanings, 16-byte frames, the TeX save stack, in-place errors with a budget
+poll, and checkpoint capture by value plus first-touch interval logs, with
+per-operation instruction budgets and deletion-first migration stages.
+
 `paired_measurement.md` documents the owner-maintained prebuilt-executable
 paired runner in `scripts/paired-measure.py`, its JSON/JSONL receipt contract,
 inner-metric scope, and release-versus-structural evidence lanes.
