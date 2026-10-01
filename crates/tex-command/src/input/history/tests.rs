@@ -2,41 +2,9 @@
 use tex_state::measurement::HotCoreAllocationOwner;
 
 #[test]
-fn packed_row_rollback_marker_encodes_each_capture_decision() {
-    use super::{RowRollbackMarker, RowRollbackState};
-
-    assert_eq!(std::mem::size_of::<RowRollbackMarker>(), 8);
-    let epoch = 17;
-    let mut marker = RowRollbackMarker::default();
-    assert!(!marker.in_epoch(epoch));
-    assert!(marker.needs_replacement(epoch));
-    assert!(marker.needs_source_owner_inverse(epoch));
-    assert!(!marker.cold_captured(epoch));
-
-    marker.set(epoch, RowRollbackState::Admitted);
-    assert!(marker.in_epoch(epoch));
-    assert!(!marker.needs_replacement(epoch));
-    assert!(!marker.needs_source_owner_inverse(epoch));
-
-    marker.set(epoch, RowRollbackState::Inline);
-    assert!(marker.needs_replacement(epoch));
-    assert!(marker.needs_source_owner_inverse(epoch));
-    assert!(!marker.cold_captured(epoch));
-
-    marker.set(epoch, RowRollbackState::Cold);
-    assert!(marker.needs_replacement(epoch));
-    assert!(!marker.needs_source_owner_inverse(epoch));
-    assert!(marker.cold_captured(epoch));
-
-    assert!(marker.needs_replacement(epoch + 1));
-    assert!(marker.needs_source_owner_inverse(epoch + 1));
-    assert!(!marker.cold_captured(epoch + 1));
-}
-
-#[test]
 #[cfg(feature = "profiling")]
 fn resident_source_delivery_skips_owner_validation_at_one_and_4096_operations() {
-    fn run(operations: usize) -> ((u64, u64, u64, u64), u64, u64, u64) {
+    fn run(operations: usize) -> ((u64, u64, u64, u64), u64, u64) {
         crate::test_harness::with_universe(|universe| {
             let mut state = crate::CommandState::default();
             let source = state
@@ -60,7 +28,6 @@ fn resident_source_delivery_skips_owner_validation_at_one_and_4096_operations() 
             let mut command_slot = None;
 
             state.profile_reset_input_source_context_counters();
-            let copies_before = state.profile_timeline_counters().full_frame_history_clones;
             let owner = HotCoreAllocationOwner::DeliveryAndScan;
             let allocations_before =
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
@@ -83,18 +50,16 @@ fn resident_source_delivery_skips_owner_validation_at_one_and_4096_operations() 
             }
             let allocations_after =
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            let copies_after = state.profile_timeline_counters().full_frame_history_clones;
             (
                 state.profile_input_source_context_counters(),
                 allocations_after.calls - allocations_before.calls,
                 allocations_after.requested_bytes - allocations_before.requested_bytes,
-                copies_after - copies_before,
             )
         })
     }
 
     let one = run(1);
     let four_k = run(4_096);
-    assert_eq!(one, ((0, 0, 0, 1), 0, 0, 0));
-    assert_eq!(four_k, ((0, 0, 0, 4_096), 0, 0, 0));
+    assert_eq!(one, ((0, 0, 0, 1), 0, 0));
+    assert_eq!(four_k, ((0, 0, 0, 4_096), 0, 0));
 }

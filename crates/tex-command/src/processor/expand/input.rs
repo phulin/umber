@@ -48,13 +48,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         else {
             return Err(CommandError::input_invariant());
         };
-        let slot = command_state
-            .roots
-            .input
-            .levels
-            .source_slots
-            .resident_value_mut(source.slot.0.slot);
-        let mut top = ResidentSourceTop { source, slot };
+        let mut top = ResidentSourceTop { source };
         let force_eof = top.force_eof(force_eof_requested);
         let identity = top.source.identity();
         // The source cursor advances the physical-line pointer when it loads
@@ -64,11 +58,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         // coordinate and a backed-up stale copy could pass after a later
         // direct delivery.
         let position = top
+            .source
             .slot
             .cursor
             .line
             .as_ref()
-            .map_or(top.slot.cursor.next_physical_offset, |line| {
+            .map_or(top.source.slot.cursor.next_physical_offset, |line| {
                 line.cursor.byte_cursor
             });
         let active_source = top.source.frame.source_context();
@@ -79,6 +74,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             ResidentSourceAdvance::Delivered(word, origin, location) => {
                 let direct_source_line = top
+                    .source
                     .slot
                     .cursor
                     .line
@@ -140,13 +136,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         else {
             return Err(CommandError::input_invariant());
         };
-        let slot = command_state
-            .roots
-            .input
-            .levels
-            .source_slots
-            .resident_value_mut(source.slot.0.slot);
-        let mut top = ResidentSourceTop { source, slot };
+        let mut top = ResidentSourceTop { source };
         if !command_state.delivery_mode.allows_character_run() {
             return Ok(None);
         }

@@ -191,7 +191,6 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn replay_expandafter_first(&mut self, command: HotCommand<G>) -> Result<(), CommandError> {
         self.conserve_input_stack_for_descendant()?;
-        self.command.record_alignment_phase();
         self.command
             .alignment
             .undo_delivery(command.alignment_adjustment());

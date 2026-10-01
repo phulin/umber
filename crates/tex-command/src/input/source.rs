@@ -814,25 +814,6 @@ pub(crate) struct SourceCursor {
     pub(crate) end_after_line: bool,
 }
 
-/// Reversible cold execution state for one authoritative source slot.
-///
-/// The immutable physical backing stays in the slot. Current-line and
-/// replacement-backing owners move into this value exactly once; rollback and
-/// candidate redo swap them back without cloning an `Arc`, `Vec`, or `Box`.
-#[derive(Debug)]
-pub(crate) struct SourceCursorExecutionState {
-    backing_registered: bool,
-    backing_capability: Option<tex_state::source_map::RegisteredSource>,
-    line_backing: Option<RegisteredSource>,
-    line_backing_registered: bool,
-    line_backing_capability: Option<tex_state::source_map::RegisteredSource>,
-    pending_acquired_line: bool,
-    next_physical_offset: u64,
-    next_line_number: u64,
-    line: Option<SourceLineState>,
-    end_after_line: bool,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SourceOffsetMap {
     old_start: u64,
@@ -856,9 +837,9 @@ impl SourceOffsetMap {
             self.new_end
                 .saturating_add(old.saturating_sub(self.old_end))
         } else {
-            // Only divergent journal rows can point inside the replaced span;
-            // they are discarded with the divergent boundary interval. Keep
-            // their coordinates valid until that bounded release completes.
+            // Only a capture past the edit can point inside the replaced span;
+            // it is discarded with the divergent suffix. Keep its coordinates
+            // valid until that release completes.
             self.new_end
         }
     }
@@ -889,73 +870,33 @@ impl SourceCursor {
         }
     }
 
-    pub(crate) fn take_execution_state(&mut self) -> SourceCursorExecutionState {
-        SourceCursorExecutionState {
+    /// Copies the cursor for a checkpoint capture. Backings are shared
+    /// immutable bytes; only the loaded line's spelling arena is duplicated.
+    pub(crate) fn checkpoint_copy(&self) -> Self {
+        Self {
+            backing: self.backing.clone(),
             backing_registered: self.backing_registered,
             backing_capability: self.backing_capability,
-            line_backing: self.line_backing.take(),
+            line_backing: self.line_backing.clone(),
             line_backing_registered: self.line_backing_registered,
             line_backing_capability: self.line_backing_capability,
             pending_acquired_line: self.pending_acquired_line,
             next_physical_offset: self.next_physical_offset,
             next_line_number: self.next_line_number,
-            line: self.line.take(),
+            line: self.line.as_ref().map(SourceLineState::checkpoint_copy),
             end_after_line: self.end_after_line,
         }
     }
 
-    /// Releases the displaced current-line owners when no rollback interval
-    /// can reach them.
+    /// Releases the current-line owners a cold source transition displaces.
     ///
     /// The scalar cursor state remains resident and is advanced by the
-    /// immediately following source transition. Unlike
-    /// [`Self::take_execution_state`], this path does not materialize a cold
-    /// transport value merely to drop it.
+    /// immediately following source transition.
     pub(crate) fn release_execution_owners(&mut self) {
         self.line_backing = None;
         self.line = None;
         self.line_backing_registered = false;
         self.line_backing_capability = None;
-    }
-
-    pub(crate) fn swap_execution_state(&mut self, state: &mut SourceCursorExecutionState) {
-        std::mem::swap(&mut self.backing_registered, &mut state.backing_registered);
-        std::mem::swap(&mut self.backing_capability, &mut state.backing_capability);
-        std::mem::swap(&mut self.line_backing, &mut state.line_backing);
-        std::mem::swap(
-            &mut self.line_backing_registered,
-            &mut state.line_backing_registered,
-        );
-        std::mem::swap(
-            &mut self.line_backing_capability,
-            &mut state.line_backing_capability,
-        );
-        std::mem::swap(
-            &mut self.pending_acquired_line,
-            &mut state.pending_acquired_line,
-        );
-        std::mem::swap(
-            &mut self.next_physical_offset,
-            &mut state.next_physical_offset,
-        );
-        std::mem::swap(&mut self.next_line_number, &mut state.next_line_number);
-        std::mem::swap(&mut self.line, &mut state.line);
-        std::mem::swap(&mut self.end_after_line, &mut state.end_after_line);
-    }
-
-    pub(crate) fn rehome_offsets(&mut self, map: SourceOffsetMap) {
-        self.next_physical_offset = map.map(self.next_physical_offset);
-        if self.line_backing.is_none()
-            && let Some(line) = self.line.as_mut()
-        {
-            line.rehome_offsets(map);
-        }
-    }
-}
-
-impl SourceCursorExecutionState {
-    pub(crate) fn clear_backing_capability(&mut self) {
-        self.backing_capability = None;
     }
 
     pub(crate) fn rehome_offsets(&mut self, map: SourceOffsetMap) {

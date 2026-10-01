@@ -6,32 +6,8 @@ use std::sync::Arc;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
 use tex_state::token::{OriginId, Token, TokenWord, TracedTokenWord};
 
-use super::{
-    lines::SourceLexCursor,
-    source::{RegisteredSource, SourceCursor, SourceCursorExecutionState, SourceNameClass},
-};
+use super::source::{SourceCursor, SourceNameClass};
 use crate::attempt::AttemptTokenListId;
-
-/// Operational rollback state owned by one authoritative input row.
-///
-/// The marker is deliberately invisible to semantic equality and hashing:
-/// checkpoint capture state describes how the row is restored, not the TeX
-/// input future represented by the row. Its packed value is interpreted by
-/// the generation-owned input history.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct RowRollbackMarker(pub(super) u64);
-
-impl PartialEq for RowRollbackMarker {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
-
-impl Eq for RowRollbackMarker {}
-
-impl Hash for RowRollbackMarker {
-    fn hash<H: Hasher>(&self, _state: &mut H) {}
-}
 
 /// Stable identity for one live input level.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -150,26 +126,21 @@ impl<G> MacroBodyCursor<G> {
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceLevel<G> {
     pub(crate) frame: PackedInputFrame,
-    /// Stable owner slot for all variable source state. The input row carries
-    /// one pointer to this authoritative owner; checkpoint execution state
-    /// contains only its checked key and reversible cursor/owner values.
-    pub(crate) slot: SourceSlotKey,
-    pub(crate) generation: PhantomData<fn() -> G>,
-    pub(crate) rollback: RowRollbackMarker,
+    /// Sole owner of all variable source state. Boxing keeps the row small;
+    /// the resident lexer reaches the owner through one pointer.
+    pub(crate) slot: Box<SourceSlot<G>>,
 }
 
 impl<G> SourceLevel<G> {
     pub(crate) fn identity(&self) -> InputLevelId {
         InputLevelId(self.frame.identity())
     }
-}
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct SourceSlotKey(pub(crate) crate::timeline::PayloadHandle);
-
-impl SourceSlotKey {
-    pub(crate) const fn new(handle: crate::timeline::PayloadHandle) -> Self {
-        Self(handle)
+    fn checkpoint_copy(&self) -> Self {
+        Self {
+            frame: self.frame,
+            slot: Box::new(self.slot.checkpoint_copy()),
+        }
     }
 }
 
@@ -191,6 +162,20 @@ pub(crate) struct SourceSlot<G> {
 }
 
 impl<G> SourceSlot<G> {
+    fn checkpoint_copy(&self) -> Self {
+        Self {
+            cursor: self.cursor.checkpoint_copy(),
+            occupied_buffer_slots: self.occupied_buffer_slots,
+            every_eof: self.every_eof.clone(),
+            open_depths: self
+                .open_depths
+                .as_ref()
+                .map(SourceOpenDepths::checkpoint_copy),
+            name_class: self.name_class,
+            retirement: self.retirement,
+        }
+    }
+
     pub(crate) fn new(
         cursor: SourceCursor,
         every_eof: Option<tex_state::TokenListId<G>>,
@@ -214,6 +199,15 @@ impl<G> SourceSlot<G> {
 pub(crate) struct SourceOpenDepths {
     pub(crate) group_lineages: Box<[u64]>,
     pub(crate) conditional_identities: Box<[u64]>,
+}
+
+impl SourceOpenDepths {
+    fn checkpoint_copy(&self) -> Self {
+        Self {
+            group_lineages: self.group_lineages.clone(),
+            conditional_identities: self.conditional_identities.clone(),
+        }
+    }
 }
 
 /// What exhausting a source level does, per tex.web §360.
@@ -242,7 +236,6 @@ pub(crate) enum SourceRetirement {
 pub(crate) struct TokenRowHeader<G> {
     pub(crate) frame: PackedInputFrame,
     generation: PhantomData<fn() -> G>,
-    pub(crate) rollback: RowRollbackMarker,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
@@ -322,7 +315,6 @@ impl<G> TokenRowHeader<G> {
         Self {
             frame,
             generation: PhantomData,
-            rollback: RowRollbackMarker::default(),
         }
     }
 
@@ -464,25 +456,42 @@ impl<G> InputLevel<G> {
         }
     }
 
-    pub(super) const fn rollback_marker(&self) -> RowRollbackMarker {
+    /// Copies one row of a quiescent stack for a checkpoint capture.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a macro, argument, or attempt row. Checkpoint quiescence
+    /// excludes all three, since their storage does not outlive the operation
+    /// that admitted them.
+    pub(super) fn checkpoint_copy(&self) -> Self {
         match self {
-            Self::Source(level) => level.rollback,
-            Self::Resident(row) => row.header.rollback,
+            Self::Source(level) => Self::Source(level.checkpoint_copy()),
+            Self::Resident(row) => Self::Resident(ResidentTokenRow {
+                header: TokenRowHeader {
+                    frame: row.header.frame,
+                    generation: PhantomData,
+                },
+                storage: match &row.storage {
+                    ResidentTokenStorage::Replay { replay, cursor } => {
+                        ResidentTokenStorage::Replay {
+                            replay: *replay,
+                            cursor: *cursor,
+                        }
+                    }
+                    ResidentTokenStorage::BackedUpWord(word) => {
+                        ResidentTokenStorage::BackedUpWord(*word)
+                    }
+                    ResidentTokenStorage::Durable(list) => {
+                        ResidentTokenStorage::Durable(list.clone())
+                    }
+                    ResidentTokenStorage::Attempt(_)
+                    | ResidentTokenStorage::MacroBody(_)
+                    | ResidentTokenStorage::MacroArgument(_) => {
+                        unreachable!("checkpoint quiescence excludes operation-owned input rows")
+                    }
+                },
+            }),
         }
-    }
-
-    pub(super) fn rollback_marker_mut(&mut self) -> &mut RowRollbackMarker {
-        match self {
-            Self::Source(level) => &mut level.rollback,
-            Self::Resident(row) => &mut row.header.rollback,
-        }
-    }
-
-    /// Swaps semantic occupants while the physical resident row retains its
-    /// rollback header, matching the replacement journal's row-slot lifetime.
-    pub(super) fn swap_payload_preserving_rollback(&mut self, displaced: &mut Self) {
-        core::mem::swap(self, displaced);
-        core::mem::swap(self.rollback_marker_mut(), displaced.rollback_marker_mut());
     }
 
     pub(crate) fn stored_common(&self) -> Option<&TokenRowHeader<G>> {
@@ -687,252 +696,6 @@ impl<'a, G> PackedTokenSources<'a, G> {
     }
 }
 
-/// Checkpoint-local execution state for one stable input payload.
-///
-/// Token-source identity, immutable token spans, replay classification, and
-/// source nesting ancestry stay in the admitted [`InputLevel`]. The hot token
-/// path journals only the fixed frame and retirement phase. Source line state
-/// is larger because terminal replacement and `\read` admission can change
-/// its backing, but it is captured only on the first source mutation in one
-/// legal checkpoint interval.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum InputLevelInlineState {
-    TokenPosition {
-        position: u32,
-    },
-    ReplayCursor {
-        position: u32,
-        cursor: ResidentReplayCursor,
-    },
-    Tokens {
-        frame: PackedInputFrame,
-    },
-    MacroArgument {
-        position: u32,
-        origin_run: u32,
-    },
-    MacroBody {
-        position: u32,
-    },
-    MacroBodyFrame {
-        frame: PackedInputFrame,
-    },
-}
-
-impl InputLevelInlineState {
-    pub(crate) const fn token_position(position: u32) -> Self {
-        Self::TokenPosition { position }
-    }
-
-    pub(crate) const fn replay_cursor(position: u32, cursor: ResidentReplayCursor) -> Self {
-        Self::ReplayCursor { position, cursor }
-    }
-
-    pub(crate) const fn new(frame: PackedInputFrame, _retirement: RetirementBehavior) -> Self {
-        Self::Tokens { frame }
-    }
-
-    pub(crate) const fn macro_argument(position: u32, origin_run: u32) -> Self {
-        Self::MacroArgument {
-            position,
-            origin_run,
-        }
-    }
-
-    pub(crate) const fn macro_body(position: u32) -> Self {
-        Self::MacroBody { position }
-    }
-
-    pub(crate) const fn macro_body_frame(frame: PackedInputFrame) -> Self {
-        Self::MacroBodyFrame { frame }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct SourceLexExecutionState {
-    slot: SourceSlotKey,
-    position: u32,
-    cursor: SourceLexCursor,
-    line_loaded: bool,
-    backing_registered: bool,
-    line_backing_registered: bool,
-}
-
-impl SourceLexExecutionState {
-    pub(crate) fn capture<G>(source: &SourceLevel<G>, slot: &SourceSlot<G>) -> Self {
-        Self {
-            slot: source.slot,
-            position: source.frame.position(),
-            cursor: slot
-                .cursor
-                .line
-                .as_ref()
-                .map_or(SourceLexCursor::EMPTY, |line| line.cursor),
-            line_loaded: slot.cursor.line.is_some(),
-            backing_registered: slot.cursor.backing_registered,
-            line_backing_registered: slot.cursor.line_backing_registered,
-        }
-    }
-
-    pub(crate) fn rehome_offsets(
-        &mut self,
-        slot: SourceSlotKey,
-        map: super::source::SourceOffsetMap,
-    ) {
-        if self.slot == slot {
-            self.cursor.byte_cursor = map.map(self.cursor.byte_cursor);
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum SourceLevelExecutionState<G> {
-    Cursor {
-        slot: SourceSlotKey,
-        position: u32,
-        cursor: SourceCursorExecutionState,
-    },
-    EveryEof {
-        slot: SourceSlotKey,
-        position: u32,
-        cursor: SourceCursorExecutionState,
-        every_eof: Option<tex_state::TokenListId<G>>,
-    },
-    Backing {
-        slot: SourceSlotKey,
-        position: u32,
-        cursor: SourceCursorExecutionState,
-        backing: RegisteredSource,
-        name_class: SourceNameClass,
-    },
-    /// Editor restart substitutes only the immutable physical backing. The
-    /// normalized current line and every other source cursor field remain the
-    /// checkpoint's semantic state.
-    PhysicalBacking {
-        slot: SourceSlotKey,
-        backing: RegisteredSource,
-        backing_registered: bool,
-        backing_capability: Option<tex_state::source_map::RegisteredSource>,
-    },
-}
-
-impl<G> SourceLevelExecutionState<G> {
-    pub(crate) fn rehome_physical_backing(
-        &mut self,
-        slot: SourceSlotKey,
-        accepted: &[u8],
-        replacement: &RegisteredSource,
-    ) {
-        match self {
-            Self::Cursor {
-                slot: state_slot,
-                cursor,
-                ..
-            }
-            | Self::EveryEof {
-                slot: state_slot,
-                cursor,
-                ..
-            } if *state_slot == slot => {
-                cursor.clear_backing_capability();
-            }
-            Self::Backing {
-                slot: state_slot,
-                cursor,
-                backing,
-                ..
-            } if *state_slot == slot && backing.is_editor_backing(accepted) => {
-                backing.clone_from(replacement);
-                cursor.clear_backing_capability();
-            }
-            Self::PhysicalBacking {
-                slot: state_slot,
-                backing,
-                backing_capability,
-                ..
-            } if *state_slot == slot && backing.is_editor_backing(accepted) => {
-                backing.clone_from(replacement);
-                *backing_capability = None;
-            }
-            Self::Cursor { .. }
-            | Self::EveryEof { .. }
-            | Self::Backing { .. }
-            | Self::PhysicalBacking { .. } => {}
-        }
-    }
-
-    pub(crate) fn rehome_offsets(
-        &mut self,
-        root_slot: SourceSlotKey,
-        map: super::source::SourceOffsetMap,
-    ) {
-        match self {
-            Self::Cursor { slot, cursor, .. }
-            | Self::EveryEof { slot, cursor, .. }
-            | Self::Backing { slot, cursor, .. }
-                if *slot == root_slot =>
-            {
-                cursor.rehome_offsets(map);
-            }
-            Self::PhysicalBacking { .. } => {}
-            Self::Cursor { .. } | Self::EveryEof { .. } | Self::Backing { .. } => {}
-        }
-    }
-
-    pub(crate) fn cursor(source: &SourceLevel<G>, slot: &mut SourceSlot<G>) -> Self {
-        Self::Cursor {
-            slot: source.slot,
-            position: source.frame.position(),
-            cursor: slot.cursor.take_execution_state(),
-        }
-    }
-
-    pub(crate) fn every_eof(source: &SourceLevel<G>, slot: &mut SourceSlot<G>) -> Self {
-        Self::EveryEof {
-            slot: source.slot,
-            position: source.frame.position(),
-            cursor: slot.cursor.take_execution_state(),
-            every_eof: slot.every_eof.take(),
-        }
-    }
-
-    pub(crate) fn backing(
-        source: &SourceLevel<G>,
-        slot: &mut SourceSlot<G>,
-        replacement: RegisteredSource,
-    ) -> Self {
-        let cursor = slot.cursor.take_execution_state();
-        let backing = std::mem::replace(&mut slot.cursor.backing, replacement);
-        slot.cursor.backing_registered = false;
-        slot.cursor.backing_capability = None;
-        slot.cursor.line_backing_registered = false;
-        slot.cursor.line_backing_capability = None;
-        Self::Backing {
-            slot: source.slot,
-            position: source.frame.position(),
-            cursor,
-            backing,
-            name_class: slot.name_class,
-        }
-    }
-
-    pub(crate) fn physical_backing(
-        source: &SourceLevel<G>,
-        slot: &mut SourceSlot<G>,
-        replacement: RegisteredSource,
-    ) -> Self {
-        let backing = std::mem::replace(&mut slot.cursor.backing, replacement);
-        let backing_registered = std::mem::replace(&mut slot.cursor.backing_registered, false);
-        let backing_capability = slot.cursor.backing_capability.take();
-        Self::PhysicalBacking {
-            slot: source.slot,
-            backing,
-            backing_registered,
-            backing_capability,
-        }
-    }
-}
-
 impl<G> InputLevel<G> {
     /// External source context inherited when this semantic input row became
     /// visible. Source owners remain exclusively in `InputStack`; this is the
@@ -951,131 +714,6 @@ impl<G> InputLevel<G> {
         match self {
             Self::Source(level) => level.frame.set_source_context(source),
             Self::Resident(tokens) => tokens.header.frame.set_source_context(source),
-        }
-    }
-
-    pub(crate) fn swap_input_inline_state(&mut self, state: &mut InputLevelInlineState) {
-        match self {
-            Self::Resident(tokens) => match state {
-                InputLevelInlineState::ReplayCursor { position, cursor } => {
-                    let ResidentTokenStorage::Replay {
-                        cursor: resident, ..
-                    } = &mut tokens.storage
-                    else {
-                        unreachable!("resident inverse kind changed")
-                    };
-                    tokens.header.frame.swap_position(position);
-                    core::mem::swap(resident, cursor);
-                }
-                InputLevelInlineState::TokenPosition { position } => {
-                    tokens.header.frame.swap_position(position);
-                }
-                InputLevelInlineState::Tokens { frame } => {
-                    std::mem::swap(&mut tokens.header.frame, frame);
-                }
-                InputLevelInlineState::MacroArgument {
-                    position,
-                    origin_run,
-                } => {
-                    let ResidentTokenStorage::MacroArgument(argument) = &mut tokens.storage else {
-                        unreachable!("resident inverse kind changed")
-                    };
-                    tokens.header.frame.swap_position(position);
-                    std::mem::swap(&mut argument.origin_run, origin_run);
-                }
-                InputLevelInlineState::MacroBody { position } => {
-                    let ResidentTokenStorage::MacroBody(body) = &mut tokens.storage else {
-                        unreachable!("resident inverse kind changed")
-                    };
-                    tokens.header.frame.swap_position(position);
-                    body.body.restore_position(*position);
-                }
-                InputLevelInlineState::MacroBodyFrame { frame } => {
-                    let ResidentTokenStorage::MacroBody(body) = &mut tokens.storage else {
-                        unreachable!("resident inverse kind changed")
-                    };
-                    std::mem::swap(&mut tokens.header.frame, frame);
-                    body.body.restore_position(tokens.header.frame.position());
-                }
-            },
-            Self::Source(_) => unreachable!("a source frame uses the source lexer lane"),
-        }
-    }
-}
-
-impl<G> SourceLevel<G> {
-    pub(crate) fn swap_lex_state(
-        &mut self,
-        slot: &mut SourceSlot<G>,
-        state: &mut SourceLexExecutionState,
-    ) {
-        assert_eq!(self.slot, state.slot, "source inverse names the live slot");
-        self.frame.swap_position(&mut state.position);
-        std::mem::swap(
-            &mut slot.cursor.backing_registered,
-            &mut state.backing_registered,
-        );
-        std::mem::swap(
-            &mut slot.cursor.line_backing_registered,
-            &mut state.line_backing_registered,
-        );
-        match slot.cursor.line.as_mut() {
-            Some(line) if state.line_loaded => std::mem::swap(&mut line.cursor, &mut state.cursor),
-            None if !state.line_loaded => {}
-            _ => unreachable!("compact source mutation cannot replace line ownership"),
-        }
-    }
-
-    pub(crate) fn swap_execution_state(
-        &mut self,
-        owner: &mut SourceSlot<G>,
-        state: &mut SourceLevelExecutionState<G>,
-    ) {
-        match state {
-            SourceLevelExecutionState::Cursor {
-                slot,
-                position,
-                cursor,
-            } => {
-                assert_eq!(self.slot, *slot, "source inverse names the live slot");
-                self.frame.swap_position(position);
-                owner.cursor.swap_execution_state(cursor);
-            }
-            SourceLevelExecutionState::EveryEof {
-                slot,
-                position,
-                cursor,
-                every_eof,
-            } => {
-                assert_eq!(self.slot, *slot, "source inverse names the live slot");
-                self.frame.swap_position(position);
-                owner.cursor.swap_execution_state(cursor);
-                std::mem::swap(&mut owner.every_eof, every_eof);
-            }
-            SourceLevelExecutionState::Backing {
-                slot,
-                position,
-                cursor,
-                backing,
-                name_class,
-            } => {
-                assert_eq!(self.slot, *slot, "source inverse names the live slot");
-                self.frame.swap_position(position);
-                owner.cursor.swap_execution_state(cursor);
-                std::mem::swap(&mut owner.cursor.backing, backing);
-                std::mem::swap(&mut owner.name_class, name_class);
-            }
-            SourceLevelExecutionState::PhysicalBacking {
-                slot,
-                backing,
-                backing_registered,
-                backing_capability,
-            } => {
-                assert_eq!(self.slot, *slot, "source inverse names the live slot");
-                std::mem::swap(&mut owner.cursor.backing, backing);
-                std::mem::swap(&mut owner.cursor.backing_registered, backing_registered);
-                std::mem::swap(&mut owner.cursor.backing_capability, backing_capability);
-            }
         }
     }
 }

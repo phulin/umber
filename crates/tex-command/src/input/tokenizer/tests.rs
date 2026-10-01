@@ -356,7 +356,8 @@ fn rejected_control_word_superscript_probe_does_not_publish_or_retain_an_edit() 
         (b"a".to_vec(), SourceControlSequenceKind::Word, 0, 2)
     );
     let line = match command.input.levels.top_source() {
-        Some((_, source)) => source
+        Some(source) => source
+            .slot
             .cursor
             .line
             .as_ref()

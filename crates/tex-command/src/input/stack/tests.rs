@@ -103,7 +103,7 @@ fn retirement_rejects_a_stale_level_identity_before_mutation() {
 }
 
 #[test]
-fn canonical_push_keeps_runtime_maximum_across_root_rollback() {
+fn canonical_push_keeps_runtime_maximum_across_checkpoint_restore() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let source = state
@@ -113,7 +113,7 @@ fn canonical_push_keeps_runtime_maximum_across_root_rollback() {
             ))
             .expect("source registers");
         state.open_registered_source(source).expect("source opens");
-        let checkpoint = state.snapshot(universe).expect("command checkpoint");
+        let checkpoint = state.publish_summary(universe).expect("command checkpoint");
         state.push_token_level(
             PackedTokenSpanHandle::transient([]),
             TokenBehavior::Ordinary,
@@ -129,8 +129,8 @@ fn canonical_push_keeps_runtime_maximum_across_root_rollback() {
         assert_eq!(state.stack_usage().input_stack, 2);
 
         state
-            .rollback(&checkpoint, universe)
-            .expect("command rollback");
+            .restore_summary(&checkpoint, universe)
+            .expect("command restore");
         assert_eq!(state.input_level_count(), 1);
         assert_eq!(state.stack_usage().input_stack, 2);
     });
@@ -286,11 +286,12 @@ fn firmed_line_replacement_owner_survives_candidate_rollback() {
             .expect("source transition")
             .expect("physical line");
         assert_eq!(state.input.levels.occupied_source_buffer_slots(), 4);
-        let (_, slot) = state
+        let slot = &*state
             .input
             .levels
             .top_source()
-            .expect("source remains live");
+            .expect("source remains live")
+            .slot;
         assert_eq!(&*slot.cursor.current_backing().bytes, b"xy");
 
         let mut candidate = CommandState::fork_summary(state, &checkpoint, universe, universe)
@@ -298,11 +299,12 @@ fn firmed_line_replacement_owner_survives_candidate_rollback() {
         assert_eq!(candidate.input.levels.occupied_source_buffer_slots(), 0);
         candidate.reject_checkpoint_candidate();
         assert_eq!(candidate.input.levels.occupied_source_buffer_slots(), 4);
-        let (_, slot) = candidate
+        let slot = &*candidate
             .input
             .levels
             .top_source()
-            .expect("replacement owner is restored");
+            .expect("replacement owner is restored")
+            .slot;
         assert_eq!(&*slot.cursor.current_backing().bytes, b"xy");
     });
 }

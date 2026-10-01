@@ -240,19 +240,12 @@ fn replay_coordinates_keep_input_frames_compact() {
         16
     );
     assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
-    assert_eq!(std::mem::size_of::<TokenRowHeader<()>>(), 40);
-    assert_eq!(std::mem::size_of::<super::RowRollbackMarker>(), 8);
+    assert_eq!(std::mem::size_of::<TokenRowHeader<()>>(), 32);
     assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 64);
     assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 24);
-    assert_eq!(std::mem::size_of::<super::ResidentTokenRow<()>>(), 112);
-    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 120);
-    assert_eq!(std::mem::size_of::<super::SourceSlotKey>(), 8);
-    assert_eq!(std::mem::size_of::<super::SourceLevel<()>>(), 48);
-    assert!(
-        std::mem::size_of::<super::SourceLexExecutionState>() <= 64,
-        "source lex state is {} bytes",
-        std::mem::size_of::<super::SourceLexExecutionState>()
-    );
+    assert_eq!(std::mem::size_of::<super::ResidentTokenRow<()>>(), 104);
+    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 112);
+    assert_eq!(std::mem::size_of::<super::SourceLevel<()>>(), 40);
 }
 
 #[test]

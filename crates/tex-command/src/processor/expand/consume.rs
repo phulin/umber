@@ -209,7 +209,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         nested_conditions: &mut u32,
     ) -> Option<ControlFlow<(), ResidentWordRead<G>>> {
-        let index = self.command.roots.input.levels.top.checked_sub(1)?;
+        let index = self.command.roots.input.levels.rows.len().checked_sub(1)?;
         let Some(InputLevel::Resident(row)) = self.command.roots.input.levels.rows.get(index)
         else {
             return None;
@@ -267,11 +267,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         });
         if brace_delta != 0 {
-            let alignment = &mut self.command.roots.alignment;
-            self.command
-                .timeline
-                .record_delivery_align_state(alignment.align_state);
-            alignment.align_state += brace_delta;
+            self.command.roots.alignment.align_state += brace_delta;
         }
         if consumed != 0 {
             self.enter_resident_delivery();

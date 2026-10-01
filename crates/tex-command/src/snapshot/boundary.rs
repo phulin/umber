@@ -1,11 +1,75 @@
-//! Named-checkpoint publication and command-owner settlement.
+//! Named-checkpoint publication, restore, and candidate settlement.
 
 use super::*;
+use crate::processor::ScannerState;
+
+impl<G> CommandStateRoots<G> {
+    fn capture_checkpoint(&self) -> CommandCapture<G> {
+        CommandCapture {
+            input: self.input.checkpoint_copy(),
+            conditions: self.conditions.frames.clone(),
+            group_payloads: self.group_payloads.clone(),
+            aftergroup_payloads: self.aftergroup_payloads.clone(),
+            afterassignment: self.afterassignment,
+            alignment: self.alignment.checkpoint_copy(),
+            name_in_progress: self.name_in_progress,
+            last_diagnostic_location: self.last_diagnostic_location,
+        }
+    }
+
+    /// Installs a copy of `capture`. Every root a capture omits because it is
+    /// empty at a quiescent boundary is reset; job configuration and session
+    /// accounting are left live.
+    fn install_capture(&mut self, capture: &CommandCapture<G>) {
+        self.input.install_checkpoint(&capture.input);
+        self.scanner = ScannerState::default();
+        self.conditions.frames.clone_from(&capture.conditions);
+        self.alignment = capture.alignment.checkpoint_copy();
+        self.transient.builders.clear();
+        self.transient.rollback_roots.clear();
+        self.transient.active_expansion_depth = 0;
+        self.replay_completions.clear();
+        self.semantic_diagnostics.clear();
+        self.last_diagnostic_location = capture.last_diagnostic_location;
+        self.group_payloads.clone_from(&capture.group_payloads);
+        self.aftergroup_payloads
+            .clone_from(&capture.aftergroup_payloads);
+        self.afterassignment = capture.afterassignment;
+        self.name_in_progress = capture.name_in_progress;
+        self.pending_input_open = None;
+    }
+
+    /// Empty roots for a candidate forked from `self`. Job configuration and
+    /// session registrations are copied; a capture installs everything else.
+    fn candidate_session(&self) -> Self {
+        let mut input = crate::input::InputState {
+            terminal_context_line: self.input.terminal_context_line.clone(),
+            pending_sources: self.input.pending_sources.clone(),
+            ..crate::input::InputState::default()
+        };
+        input.levels.continue_context_epoch(&self.input.levels);
+        Self {
+            reachable_state_identity_enabled: self.reachable_state_identity_enabled,
+            engine_semantics: self.engine_semantics,
+            profile: self.profile,
+            input,
+            conditions: crate::conditionals::ConditionStack {
+                frames: Vec::new(),
+                next_identity: self.conditions.next_identity,
+            },
+            transient: crate::state::TransientState {
+                next_builder_identity: self.transient.next_builder_identity,
+                ..crate::state::TransientState::default()
+            },
+            ..Self::default()
+        }
+    }
+}
 
 impl<G> CommandState<G> {
     #[doc(hidden)]
     pub fn checkpoint_candidate_active(&self) -> bool {
-        self.timeline.checkpoint_candidate_active()
+        self.checkpoints.candidate_active()
     }
 
     /// Runs only the command-family fork for its standalone allocation gate.
@@ -19,12 +83,12 @@ impl<G> CommandState<G> {
         Self::fork_summary(self, summary, universe, universe)
     }
 
-    /// Moves the returned command-root loan into one candidate and restores the
-    /// accepted summary's exact logical prefix. Runtime scratch and attempt
-    /// lanes begin quiescent.
+    /// Moves the live command roots aside as the accepted head of one
+    /// candidate and installs the accepted summary's capture. Runtime scratch
+    /// and attempt lanes begin quiescent.
     #[doc(hidden)]
     pub fn fork_summary(
-        mut command: Self,
+        command: Self,
         summary: &CommandSummary<G>,
         source: &Universe<G>,
         destination: &Universe<G>,
@@ -35,33 +99,18 @@ impl<G> CommandState<G> {
         let destination_generation = destination
             .generation_owner()
             .map_err(|_| CommandRestoreError::ForeignGeneration)?;
-        if !summary
-            .generation()
-            .addresses(&source_generation, command.timeline.owner)
-            || !source_generation.same_generation(&destination_generation)
-        {
+        if !source_generation.same_generation(&destination_generation) {
             return Err(CommandRestoreError::ForeignGeneration);
         }
-        let restore = command.resolve_restore(summary.generation(), summary.cursor())?;
-        if !restore.attempt.is_empty() {
-            return Err(CommandRestoreError::InvalidCursor);
-        }
-        command
-            .profile()
-            .validate_fingerprint(
-                CommandProfileBoundary::Summary,
-                CommandProfileFingerprint::from_u64(summary.profile_fingerprint()),
-            )
-            .map_err(CommandRestoreError::Profile)?;
-        command.begin_prepared_candidate(restore);
-        Ok(command)
+        let restore = command.prepare_summary_restore(summary, source)?;
+        Ok(command.begin_checkpoint_candidate(restore))
     }
 
     /// Reports whether the live command machine can publish one named
     /// boundary without retaining a scanner, delivery, or attempt owner.
     ///
     /// The executor recomputes unreachable attempt suffixes before calling
-    /// this projection. It does not allocate a timeline row or mutate state.
+    /// this projection. It does not capture or mutate state.
     #[must_use]
     pub fn named_boundary_is_quiescent(&self) -> bool {
         self.validate_summary_quiescence().is_ok()
@@ -80,59 +129,18 @@ impl<G> CommandState<G> {
 
     /// Drops the command-only remainder of one successfully captured terminal
     /// format boundary. Engine semantics live in the format's Universe state;
-    /// no input, continuation, timeline, or attempt owner crosses with it.
+    /// no input, continuation, capture, or attempt owner crosses with it.
     pub fn close_format_dump_boundary(&mut self) {
         assert!(
             self.format_dump_is_quiescent(),
             "terminal format closure requires quiescent command state"
         );
-        self.roots = crate::state::CommandStateRoots::default();
-        self.timeline = CommandTimeline::default();
+        self.roots = CommandStateRoots::default();
+        self.checkpoints = CommandCheckpoints::default();
         self.attempt = crate::CommandAttempt::default();
         self.scratch = crate::execution_scratch::ExecutionScratch::default();
         self.active_attempt_operation = None;
         self.synchronize_delivery_mode_roots();
-    }
-
-    fn checkpoint_rollback_coordinates(
-        &mut self,
-    ) -> Result<CommandRollbackCoordinates, CommandSummaryError> {
-        let input = self
-            .input
-            .levels
-            .mark()
-            .ok_or(CommandSummaryError::TimelineCapacity)?;
-        let conditions = self
-            .conditions
-            .frames
-            .mark()
-            .ok_or(CommandSummaryError::TimelineCapacity)?;
-        let groups = self
-            .group_payloads
-            .mark()
-            .ok_or(CommandSummaryError::TimelineCapacity)?;
-        let aftergroups = self
-            .aftergroup_payloads
-            .mark()
-            .ok_or(CommandSummaryError::TimelineCapacity)?;
-        let alignment = self
-            .alignment
-            .align_stack
-            .mark()
-            .ok_or(CommandSummaryError::TimelineCapacity)?;
-        let suspended = self
-            .alignment
-            .suspended
-            .mark()
-            .ok_or(CommandSummaryError::TimelineCapacity)?;
-        Ok(CommandRollbackCoordinates {
-            input,
-            conditions,
-            groups,
-            aftergroups,
-            alignment,
-            suspended_alignment: suspended,
-        })
     }
 
     fn validate_summary_quiescence(&self) -> Result<(), CommandSummaryError> {
@@ -189,146 +197,78 @@ impl<G> CommandState<G> {
         Ok(())
     }
 
-    fn retain_cursor(
-        &mut self,
-        attempt: AttemptMark,
-    ) -> Result<(CommandSnapshotCursor, CommandTimelineMark), CommandSummaryError> {
-        let rollback = self.checkpoint_rollback_coordinates()?;
-        self.timeline.retain(attempt, rollback)
-    }
-
-    fn resolve_restore(
-        &self,
-        owner: &CommandGenerationOwner<G>,
-        cursor: CommandSnapshotCursor,
-    ) -> Result<PreparedCommandRestore<G>, CommandRestoreError> {
-        if !owner.addresses_cursor(cursor) || owner.timeline_owner != self.timeline.owner {
-            return Err(CommandRestoreError::InvalidCursor);
-        }
-        let rollback = self
-            .timeline
-            .resolve(cursor, owner.timeline)
-            .ok_or(CommandRestoreError::InvalidCursor)?;
-        let attempt = owner.attempt;
-        let matches = self.input.levels.validates(rollback.input)
-            && self.conditions.frames.validates(rollback.conditions)
-            && self.group_payloads.validates(rollback.groups)
-            && self.aftergroup_payloads.validates(rollback.aftergroups)
-            && self.alignment.align_stack.validates(rollback.alignment)
-            && self
-                .alignment
-                .suspended
-                .validates(rollback.suspended_alignment);
-        if !matches {
-            return Err(CommandRestoreError::InvalidCursor);
-        }
-        self.attempt
-            .arena()
-            .validate_mark(attempt)
-            .map_err(|_| CommandRestoreError::InvalidCursor)?;
-        Ok(PreparedCommandRestore {
-            timeline_owner: self.timeline.owner,
-            timeline: owner.timeline,
-            rollback,
-            attempt,
-            brand: PhantomData,
-        })
-    }
-
-    fn restore_logical_stacks(&mut self, rollback: CommandRollbackCoordinates) -> bool {
-        self.input.levels.restore(rollback.input)
-            && self.conditions.frames.restore(rollback.conditions)
-            && self.group_payloads.restore(rollback.groups)
-            && self.aftergroup_payloads.restore(rollback.aftergroups)
-            && self.alignment.align_stack.restore(rollback.alignment)
-            && self
-                .alignment
-                .suspended
-                .restore(rollback.suspended_alignment)
-    }
-
-    fn begin_prepared_candidate(&mut self, restore: PreparedCommandRestore<G>) {
-        debug_assert_eq!(restore.timeline_owner, self.timeline.owner);
-        self.timeline
-            .begin_checkpoint_candidate(restore.timeline, &mut self.roots);
-        self.input
-            .levels
-            .begin_checkpoint_candidate(restore.rollback.input);
-        self.conditions
-            .frames
-            .begin_checkpoint_candidate(restore.rollback.conditions);
-        self.group_payloads
-            .begin_checkpoint_candidate(restore.rollback.groups);
-        self.aftergroup_payloads
-            .begin_checkpoint_candidate(restore.rollback.aftergroups);
-        self.alignment
-            .align_stack
-            .begin_checkpoint_candidate(restore.rollback.alignment);
-        self.alignment
-            .suspended
-            .begin_checkpoint_candidate(restore.rollback.suspended_alignment);
-        self.attempt
-            .arena_mut()
-            .truncate(restore.attempt)
-            .expect("prevalidated command candidate attempt mark");
-        self.synchronize_delivery_mode_roots();
-    }
-
-    /// Consumes the sole physical command owner and opens its prevalidated
-    /// accepted/detached-prior/current transaction at `restore`.
+    /// Consumes the sole live command owner and opens one candidate at the
+    /// prevalidated `restore`: the live roots become the accepted head and
+    /// every newer capture is detached until settlement.
     #[doc(hidden)]
     pub fn begin_checkpoint_candidate(mut self, restore: PreparedCommandRestore<G>) -> Self {
-        self.begin_prepared_candidate(restore);
+        assert_eq!(
+            restore.owner, self.checkpoints.owner,
+            "command candidate was prepared against this owner"
+        );
+        assert!(
+            !self.checkpoints.candidate_active(),
+            "one command candidate may be open at a time"
+        );
+        let index = self
+            .checkpoints
+            .position(restore.serial)
+            .expect("command candidate base was prevalidated");
+        self.abandon_attempt_after_checkpoint_restore();
+        let detached = self.checkpoints.captures.split_off(index + 1);
+        let candidate = self.roots.candidate_session();
+        let accepted = core::mem::replace(&mut self.roots, candidate);
+        self.roots
+            .install_capture(&self.checkpoints.captures[index].1);
+        self.checkpoints.fork = Some(CheckpointFork {
+            base: restore.serial,
+            detached,
+            accepted: Box::new(accepted),
+        });
+        self.synchronize_delivery_mode_roots();
         self
     }
 
-    /// Returns a discarded candidate's owners to the accepted prefix. A
-    /// candidate is discarded whole, so an operation it halted mid-flight is
-    /// dropped with it.
+    /// Discards the candidate and reinstalls the accepted head and its
+    /// detached captures by move. A candidate is discarded whole, so an
+    /// operation it halted mid-flight is dropped with it.
     #[doc(hidden)]
     pub fn reject_checkpoint_candidate(&mut self) {
+        let fork = self
+            .checkpoints
+            .fork
+            .take()
+            .expect("command rejection requires a candidate fork");
         self.abandon_attempt_after_checkpoint_restore();
-        self.alignment.suspended.reject_checkpoint_candidate();
-        self.alignment.align_stack.reject_checkpoint_candidate();
-        self.aftergroup_payloads.reject_checkpoint_candidate();
-        self.group_payloads.reject_checkpoint_candidate();
-        self.conditions.frames.reject_checkpoint_candidate();
-        self.input.levels.reject_checkpoint_candidate();
-        self.timeline.reject_checkpoint_candidate(&mut self.roots);
+        let base = self
+            .checkpoints
+            .position(fork.base)
+            .expect("a candidate's base stays retained until settlement");
+        self.checkpoints.captures.truncate(base + 1);
+        self.checkpoints.captures.extend(fork.detached);
+        let mut accepted = *fork.accepted;
+        accepted
+            .input
+            .levels
+            .continue_context_epoch(&self.roots.input.levels);
+        self.roots = accepted;
         self.synchronize_delivery_mode_roots();
     }
 
+    /// Keeps the candidate and drops the accepted head with its detached
+    /// captures.
     #[doc(hidden)]
     pub fn accept_checkpoint_candidate(&mut self) {
-        self.timeline.accept_checkpoint_candidate();
-        self.input.levels.accept_checkpoint_candidate();
-        self.conditions.frames.accept_checkpoint_candidate();
-        self.group_payloads.accept_checkpoint_candidate();
-        self.aftergroup_payloads.accept_checkpoint_candidate();
-        self.alignment.align_stack.accept_checkpoint_candidate();
-        self.alignment.suspended.accept_checkpoint_candidate();
+        let fork = self
+            .checkpoints
+            .fork
+            .take()
+            .expect("command acceptance requires a candidate fork");
+        drop(fork);
     }
 
-    /// Captures one exact in-session command position as bounded marks. The
-    /// live root remains exclusively mutable and no accumulated payload moves.
-    pub fn snapshot(
-        &mut self,
-        universe: &Universe<G>,
-    ) -> Result<CommandStateSnapshot<G>, CommandSummaryError> {
-        let generation = universe
-            .generation_owner()
-            .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
-        let attempt = self.attempt.arena().mark();
-        let (cursor, timeline) = self.retain_cursor(attempt)?;
-        Ok(CommandStateSnapshot::new(
-            CommandGenerationOwner::new(generation, self.timeline.owner, attempt, timeline),
-            cursor,
-        ))
-    }
-
-    /// Publishes a bounded named-boundary summary. Ordinary mutation remains
-    /// direct before and after capture; accumulated command roots are not
-    /// cloned.
+    /// Publishes a named-boundary summary by copying the quiescent command
+    /// remainder.
     pub fn publish_summary(
         &mut self,
         universe: &Universe<G>,
@@ -337,32 +277,26 @@ impl<G> CommandState<G> {
         let generation = universe
             .generation_owner()
             .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
-        let attempt = self.attempt.arena().mark();
-        let (cursor, timeline) = self.retain_cursor(attempt)?;
         let root_source_anchor = self.input.levels.iter().find_map(|level| {
             let crate::input::InputLevel::Source(source) = level else {
                 return None;
             };
-            Some(
-                self.input
-                    .levels
-                    .source_level_slot(source)
-                    .cursor
-                    .next_physical_offset,
-            )
+            Some(source.slot.cursor.next_physical_offset)
         });
-        let retained_owner_bytes = self
-            .roots
-            .retained_bytes()
-            .saturating_add(self.timeline.retained_bytes());
-        Ok(CommandSummary::new(
-            CommandGenerationOwner::new(generation, self.timeline.owner, attempt, timeline),
-            cursor,
-            self.checkpoint_profile_fingerprint().get(),
+        let capture = self.roots.capture_checkpoint();
+        let retained_owner_bytes = capture.retained_bytes();
+        let profile_fingerprint = self.checkpoint_profile_fingerprint().get();
+        let reachable_state_identity_root = self.reachable_state_identity_root();
+        let serial = self.checkpoints.push(capture)?;
+        Ok(CommandSummary {
+            generation,
+            owner: self.checkpoints.owner,
+            serial,
+            profile_fingerprint,
             root_source_anchor,
-            self.reachable_state_identity_root(),
+            reachable_state_identity_root,
             retained_owner_bytes,
-        ))
+        })
     }
 
     /// Enables bounded command-root publication before incremental execution.
@@ -389,8 +323,9 @@ impl<G> CommandState<G> {
             .then(|| bounded_command_identity(&self.roots))
     }
 
-    /// Validates every command owner, profile, and cursor without mutating
-    /// the destination.
+    /// Validates the profile, owner, and capture without mutating the
+    /// destination. Within an open candidate only the candidate's base and
+    /// its own later captures are restorable.
     pub fn prepare_summary_restore(
         &self,
         summary: &CommandSummary<G>,
@@ -405,123 +340,34 @@ impl<G> CommandState<G> {
         let generation = universe
             .generation_owner()
             .map_err(|_| CommandRestoreError::ForeignGeneration)?;
-        if !summary
-            .generation()
-            .addresses(&generation, self.timeline.owner)
-        {
+        if !summary.addresses(&generation, self.checkpoints.owner) {
             return Err(CommandRestoreError::ForeignGeneration);
         }
-        self.resolve_restore(summary.generation(), summary.cursor())
-    }
-
-    /// Validates a retained summary against the current candidate fork.
-    ///
-    /// Replay is the only caller allowed to use this preparation. It accepts
-    /// a mark on the current fork lineage and keeps the detached accepted
-    /// sibling available for later candidate rejection or acceptance.
-    pub fn prepare_summary_restore_after_replay(
-        &self,
-        summary: &CommandSummary<G>,
-        universe: &Universe<G>,
-    ) -> Result<PreparedCommandReplayRestore<G>, CommandRestoreError> {
-        let restore = self.prepare_summary_restore(summary, universe)?;
-        let timeline = self.timeline.can_restore_current_roots(restore.timeline);
-        let input = self
-            .input
-            .levels
-            .can_restore_current(restore.rollback.input);
-        let conditions = self
-            .conditions
-            .frames
-            .can_restore_current(restore.rollback.conditions);
-        let groups = self
-            .group_payloads
-            .can_restore_current(restore.rollback.groups);
-        let aftergroups = self
-            .aftergroup_payloads
-            .can_restore_current(restore.rollback.aftergroups);
-        let alignment = self
-            .alignment
-            .align_stack
-            .can_restore_current(restore.rollback.alignment);
-        let suspended = self
-            .alignment
-            .suspended
-            .can_restore_current(restore.rollback.suspended_alignment);
-        if !(timeline && input && conditions && groups && aftergroups && alignment && suspended) {
+        if !self.checkpoints.restorable(summary.serial) {
             return Err(CommandRestoreError::InvalidCursor);
         }
-        Ok(PreparedCommandReplayRestore { restore })
+        Ok(PreparedCommandRestore {
+            owner: self.checkpoints.owner,
+            serial: summary.serial,
+            brand: core::marker::PhantomData,
+        })
     }
 
-    /// Applies one current-candidate replay restore after aggregate preflight.
-    pub fn apply_prepared_replay_restore(
-        &mut self,
-        prepared: PreparedCommandReplayRestore<G>,
-    ) -> Result<(), CommandRestoreError> {
-        let restore = prepared.restore;
-        if restore.timeline_owner != self.timeline.owner {
-            return Err(CommandRestoreError::ForeignGeneration);
-        }
-        let restored = self
-            .timeline
-            .restore_current_roots(restore.timeline, &mut self.roots);
-        if !restored {
-            return Err(CommandRestoreError::InvalidCursor);
-        }
-        assert!(self.input.levels.restore_current(restore.rollback.input));
-        assert!(
-            self.conditions
-                .frames
-                .restore_current(restore.rollback.conditions)
-        );
-        assert!(self.group_payloads.restore_current(restore.rollback.groups));
-        assert!(
-            self.aftergroup_payloads
-                .restore_current(restore.rollback.aftergroups)
-        );
-        assert!(
-            self.alignment
-                .align_stack
-                .restore_current(restore.rollback.alignment)
-        );
-        assert!(
-            self.alignment
-                .suspended
-                .restore_current(restore.rollback.suspended_alignment)
-        );
-        self.attempt
-            .arena_mut()
-            .truncate(restore.attempt)
-            .expect("prepared replay command restore validated its attempt mark");
-        self.synchronize_delivery_mode_roots();
-        Ok(())
-    }
-
-    /// Revalidates the destination and attempt suffix, then installs one
-    /// prepared command root before discarding that suffix.
+    /// Installs one prepared capture, dropping every newer capture on the
+    /// current lineage and abandoning the live operation.
     pub fn apply_prepared_restore(
         &mut self,
         restore: PreparedCommandRestore<G>,
     ) -> Result<(), CommandRestoreError> {
-        if restore.timeline_owner != self.timeline.owner {
+        if restore.owner != self.checkpoints.owner {
             return Err(CommandRestoreError::ForeignGeneration);
         }
-        self.attempt
-            .arena()
-            .validate_mark(restore.attempt)
-            .map_err(|_| CommandRestoreError::InvalidCursor)?;
-        let restored = self
-            .timeline
-            .restore_roots(restore.timeline, &mut self.roots);
-        if !restored {
+        if !self.checkpoints.restorable(restore.serial) {
             return Err(CommandRestoreError::InvalidCursor);
         }
-        assert!(self.restore_logical_stacks(restore.rollback));
-        self.attempt
-            .arena_mut()
-            .truncate(restore.attempt)
-            .expect("prepared command restore validated its attempt mark");
+        self.abandon_attempt_after_checkpoint_restore();
+        let capture = self.checkpoints.truncate_after(restore.serial);
+        self.roots.install_capture(capture);
         self.synchronize_delivery_mode_roots();
         Ok(())
     }
@@ -536,97 +382,55 @@ impl<G> CommandState<G> {
         self.apply_prepared_restore(restore)
     }
 
-    /// Validates one aggregate checkpoint-history release against this sole
-    /// physical command owner and reports its exact storage effect.
-    ///
-    /// `oldest_retained` is also validated when present so a stale or foreign
-    /// aggregate low-water cannot be published. JobStart is frozen
-    /// independently, so the chosen ordinary low-water becomes the journals'
-    /// logical base and every whole prefix chunk is returned to its pool.
+    /// Drops the capture named by one released checkpoint-history summary.
+    /// Releases arriving during a candidate are deferred by the executor.
     #[doc(hidden)]
     pub fn release_checkpoint_summary(
         &mut self,
         released: &CommandSummary<G>,
-        oldest_retained: Option<&CommandSummary<G>>,
-    ) -> Result<CommandCheckpointReleaseReceipt, CommandRestoreError> {
-        if released.generation().timeline_owner != self.timeline.owner
-            || oldest_retained
-                .is_some_and(|oldest| oldest.generation().timeline_owner != self.timeline.owner)
-        {
+    ) -> Result<(), CommandRestoreError> {
+        if released.owner != self.checkpoints.owner {
             return Err(CommandRestoreError::ForeignGeneration);
         }
-        let released_restore = self.resolve_restore(released.generation(), released.cursor())?;
-        let floor = oldest_retained.unwrap_or(released);
-        let floor_restore = if let Some(oldest) = oldest_retained {
-            self.resolve_restore(oldest.generation(), oldest.cursor())?
-        } else {
-            released_restore
-        };
-        if !self.timeline.release_frame(released.generation().timeline) {
+        if self.checkpoints.candidate_active() || !self.checkpoints.release(released.serial) {
             return Err(CommandRestoreError::InvalidCursor);
         }
-        let command_journal_chunks_released = self
-            .timeline
-            .release_prefix(floor.generation().timeline)
-            .ok_or(CommandRestoreError::InvalidCursor)?;
-        let rollback = floor_restore.rollback;
-        let mut logical_stack_chunks_released = 0usize;
-        macro_rules! release_stack_prefix {
-            ($stack:expr, $mark:expr) => {
-                logical_stack_chunks_released = logical_stack_chunks_released.saturating_add(
-                    $stack
-                        .release_prefix($mark)
-                        .ok_or(CommandRestoreError::InvalidCursor)?,
-                );
-            };
-        }
-        logical_stack_chunks_released = logical_stack_chunks_released.saturating_add(
-            self.input
-                .levels
-                .release_prefix(rollback.input)
-                .ok_or(CommandRestoreError::InvalidCursor)?,
-        );
-        release_stack_prefix!(self.conditions.frames, rollback.conditions);
-        release_stack_prefix!(self.group_payloads, rollback.groups);
-        release_stack_prefix!(self.aftergroup_payloads, rollback.aftergroups);
-        release_stack_prefix!(self.alignment.align_stack, rollback.alignment);
-        release_stack_prefix!(self.alignment.suspended, rollback.suspended_alignment);
-        Ok(CommandCheckpointReleaseReceipt {
-            timeline_frames_live: self.timeline.live_frame_count(),
-            timeline_frame_capacity: self.timeline.frame_capacity(),
-            timeline_frames_released: self.timeline.frames_released,
-            command_journal_chunks_released,
-            logical_stack_chunks_released,
-        })
+        Ok(())
     }
 
-    /// Validates an exact operation snapshot without changing live command
-    /// roots or attempt storage.
-    pub fn prepare_snapshot_restore(
-        &self,
-        snapshot: &CommandStateSnapshot<G>,
-        universe: &Universe<G>,
-    ) -> Result<PreparedCommandRestore<G>, CommandRestoreError> {
-        let generation = universe
-            .generation_owner()
-            .map_err(|_| CommandRestoreError::ForeignGeneration)?;
-        if !snapshot.addresses(&generation, self.timeline.owner) {
-            return Err(CommandRestoreError::ForeignGeneration);
-        }
-        let restore = self.resolve_restore(snapshot.generation(), snapshot.cursor())?;
-        self.profile()
-            .validate_fingerprint(CommandProfileBoundary::Snapshot, self.profile.fingerprint())
-            .map_err(CommandRestoreError::Profile)?;
-        Ok(restore)
-    }
-
-    /// Restores one exact operation snapshot after complete validation.
-    pub fn rollback(
+    /// Rehomes the accepted editor backing after convergence, in the live
+    /// stack and in every retained capture. This runs only after the current
+    /// candidate has been rejected and creates no other generation. When no
+    /// live row or capture still reads the accepted revision there is nothing
+    /// to move.
+    #[doc(hidden)]
+    pub fn rehome_generated_editor_source(
         &mut self,
-        snapshot: &CommandStateSnapshot<G>,
-        universe: &Universe<G>,
-    ) -> Result<(), CommandRestoreError> {
-        let restore = self.prepare_snapshot_restore(snapshot, universe)?;
-        self.apply_prepared_restore(restore)
+        accepted: &[u8],
+        bytes: std::sync::Arc<[u8]>,
+        old_start: usize,
+        old_end: usize,
+        new_end: usize,
+    ) -> Result<(), crate::SourceRegistrationError> {
+        let Some(backing) = self.input.levels.editor_backing(accepted).or_else(|| {
+            self.checkpoints
+                .captures
+                .iter()
+                .find_map(|(_, capture)| capture.input.levels.editor_backing(accepted))
+        }) else {
+            return Ok(());
+        };
+        let replacement = backing.rehome_generated(bytes.into())?;
+        let offsets = crate::input::SourceOffsetMap::new(old_start, old_end, new_end);
+        self.input
+            .levels
+            .rehome_generated_source(accepted, &replacement, offsets);
+        for (_, capture) in &mut self.checkpoints.captures {
+            capture
+                .input
+                .levels
+                .rehome_generated_source(accepted, &replacement, offsets);
+        }
+        Ok(())
     }
 }

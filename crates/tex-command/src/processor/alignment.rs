@@ -253,9 +253,9 @@ pub(crate) struct AlignmentDeliveryState<G> {
     /// `pop_alignment` restores.  Every alignment pushes an entry, nested or
     /// not, so `fin_align` always returns `align_state` to the running brace
     /// count that was live when `\\halign`/`\\valign` was read.
-    pub(crate) align_stack: crate::timeline::LogicalStack<i32>,
+    pub(crate) align_stack: Vec<i32>,
     pub(crate) active_alignment: Option<AlignmentIdentity>,
-    pub(crate) suspended: crate::timeline::LogicalStack<SuspendedAlignment<G>>,
+    pub(crate) suspended: Vec<SuspendedAlignment<G>>,
     pub(crate) active_cell: Option<ActiveCellDelivery<G>>,
     pub(crate) completed_preamble: Option<AlignmentPreamble>,
     /// The delimiter just returned from `do_endv`, retained until `fin_col`
@@ -286,14 +286,31 @@ impl<G> Default for AlignmentDeliveryState<G> {
     fn default() -> Self {
         Self {
             align_state: TOP_LEVEL_ALIGN_STATE,
-            align_stack: crate::timeline::LogicalStack::default(),
+            align_stack: Vec::new(),
             active_alignment: None,
-            suspended: crate::timeline::LogicalStack::default(),
+            suspended: Vec::new(),
             active_cell: None,
             completed_preamble: None,
             pending_fin_col_delimiter: None,
             extra_tab_recovery: None,
             pending_outer_recovery_cr: None,
+        }
+    }
+}
+
+impl<G> AlignmentDeliveryState<G> {
+    /// Copies the delivery state retained at a quiescent named boundary,
+    /// where no alignment template, cell, or suspension can be live.
+    pub(crate) fn checkpoint_copy(&self) -> Self {
+        debug_assert!(self.active_alignment.is_none() && self.active_cell.is_none());
+        debug_assert!(self.suspended.is_empty() && self.align_stack.is_empty());
+        Self {
+            align_state: self.align_state,
+            completed_preamble: self.completed_preamble.clone(),
+            pending_fin_col_delimiter: self.pending_fin_col_delimiter,
+            extra_tab_recovery: self.extra_tab_recovery,
+            pending_outer_recovery_cr: self.pending_outer_recovery_cr,
+            ..Self::default()
         }
     }
 }
@@ -311,14 +328,6 @@ impl<G> Clone for SuspendedAlignment<G> {
             active_cell: self.active_cell.clone(),
         }
     }
-}
-
-impl<G> crate::timeline::LogicalStackElement for SuspendedAlignment<G> {
-    type State = ();
-
-    fn capture_state(&self) -> Self::State {}
-
-    fn swap_state(&mut self, (): &mut Self::State) {}
 }
 
 impl<G> PartialEq for SuspendedAlignment<G> {
@@ -424,11 +433,11 @@ impl<G> crate::CommandState<G> {
         literal_catcode: Option<Catcode>,
     ) {
         let mut hot = crate::command::HotCommand::from_current_ref(command);
-        if !self.roots.alignment.account_literal_brace(
-            &mut self.timeline,
-            &mut hot,
-            literal_catcode,
-        ) {
+        if !self
+            .roots
+            .alignment
+            .account_literal_brace(&mut hot, literal_catcode)
+        {
             self.roots.alignment.classify_delimiter(&mut hot);
         }
         *command = hot.materialize();
@@ -437,18 +446,16 @@ impl<G> crate::CommandState<G> {
 
 impl<G> AlignmentDeliveryState<G> {
     /// Literal braces are the only ordinary deliveries which mutate
-    /// `align_state`, so they alone first-touch its rollback scalar. Delimiter
-    /// interception is intentionally separate and cold. `align_state` is
-    /// TeX's global brace counter even without an active alignment, so this
-    /// accounting stays on the ordinary path.
+    /// `align_state`. Delimiter interception is intentionally separate and
+    /// cold. `align_state` is TeX's global brace counter even without an
+    /// active alignment, so this accounting stays on the ordinary path.
     #[inline(always)]
     pub(crate) fn account_literal_brace(
         &mut self,
-        timeline: &mut crate::snapshot::CommandTimeline<G>,
         command: &mut crate::command::HotCommand<G>,
         literal_catcode: Option<Catcode>,
     ) -> bool {
-        let adjustment = self.account_literal_catcode(timeline, literal_catcode);
+        let adjustment = self.account_literal_catcode(literal_catcode);
         if adjustment == AlignmentDeliveryAdjustment::None {
             return false;
         }
@@ -459,17 +466,14 @@ impl<G> AlignmentDeliveryState<G> {
     #[inline(always)]
     pub(crate) fn account_literal_catcode(
         &mut self,
-        timeline: &mut crate::snapshot::CommandTimeline<G>,
         literal_catcode: Option<Catcode>,
     ) -> AlignmentDeliveryAdjustment {
         match literal_catcode {
             Some(Catcode::BeginGroup) => {
-                timeline.record_delivery_align_state(self.align_state);
                 self.align_state += 1;
                 AlignmentDeliveryAdjustment::BeginGroup
             }
             Some(Catcode::EndGroup) => {
-                timeline.record_delivery_align_state(self.align_state);
                 self.align_state -= 1;
                 AlignmentDeliveryAdjustment::EndGroup
             }
@@ -803,7 +807,7 @@ impl<G> AlignmentDeliveryState<G> {
     ) -> Result<(), AlignmentLifecycleError> {
         let suspended = self
             .suspended
-            .pop_project(Clone::clone)
+            .pop()
             .ok_or(AlignmentLifecycleError::NoSuspendedAlignment)?;
         if suspended.alignment != alignment {
             self.suspended.push(suspended);
@@ -827,7 +831,7 @@ impl<G> AlignmentDeliveryState<G> {
         self.active_alignment = None;
         self.active_cell = None;
         self.completed_preamble = None;
-        self.align_state = self.align_stack.pop_copy().unwrap_or(TOP_LEVEL_ALIGN_STATE);
+        self.align_state = self.align_stack.pop().unwrap_or(TOP_LEVEL_ALIGN_STATE);
         Ok(())
     }
 }

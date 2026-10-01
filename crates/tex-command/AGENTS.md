@@ -99,30 +99,14 @@ collector (see `src/conditionals.rs`).
   `src/state/projection.rs` owns allocation-free retained-byte
   and dependency views; `src/state/executor_publication.rs` owns ordered
   executor-facing fact transfer. Each is an inherent implementation on the
-  same authoritative `CommandState`; none adds a facade or state owner. A named checkpoint records
-  bounded timeline coordinates without cloning the aggregate root; warmed
-  command delivery performs no root admission. A resource miss unwinds the
-  current operation and the host restores a full checkpoint before ordinary
-  delivery starts again; no command-owned retry package or cursor
+  same authoritative `CommandState`; none adds a facade or state owner. A named
+  checkpoint copies the quiescent transient roots by value; warmed command
+  delivery performs no root admission and writes no journal. A resource miss
+  halts the current operation and the host restores a full checkpoint before
+  ordinary delivery starts again; no command-owned retry package or cursor
   crosses that boundary. The live `CommandState` also owns TeX82's three
   scalar stack maxima directly; they are operational session evidence outside
-  snapshot roots and survive rollback without shared synchronization.
-- `src/timeline.rs`: generation-owned reversible storage for the remaining
-  copy-small command stacks. Immutable frame payloads are admitted once in
-  dense rows; fixed-chunk journals retain exposed-row inline execution state
-  or generation-checked handles to displaced payloads. A row admitted or
-  already replaced after the newest
-  observable mark is overwritten directly on pop/push reuse only while its
-  current occupant has no compact or stored inverse; partially captured reuse
-  first journals a replacement. Only required marked or partially captured
-  versions retain displaced payloads. Physical input, parameter, condition, group, aftergroup,
-  and alignment rows survive a logical pop while a checkpoint can reach them.
-  Fixed marks retain logical tops and packed journal positions; reject redoes
-  the detached accepted suffix and accept releases its obsolete slab slots
-  without a frame clone or third lineage.
-- `src/scalar_journal.rs` and `src/scalar_journal/tests.rs`: reusable fixed-chunk
-  bidirectional command-root journal, scalar marks, two-lineage suffix
-  settlement, chunk reuse, and exact reverse-rollback/forward-redo tests.
+  snapshot roots and survive restore without shared synchronization.
 - `src/command.rs`: compact internal `HotToken { word, origin, site }`, fixed
   16-byte `CommandWord<G>`, and public opaque, ephemeral `CurrentCommand`.
   Command-sensitive boundaries materialize this pair from the reader's facts
@@ -351,19 +335,9 @@ collector (see `src/conditionals.rs`).
   before pop and carries only copy-small boundary facts afterward. See
   `src/tracing_nesting.rs`.
 - `src/input/history.rs` and `src/input/history/tests.rs`: the authoritative generation-tied `InputStack`.
-  Stable source, stored-token, and macro-argument rows share one ordered
-  `InputUndo` journal for exposed-row captures, cold source-owner swaps,
-  replacement/reuse, retirement, rollback/redo, candidate settlement, and
-  prefix release. One row-aligned packed marker records the rollback epoch and
-  its admitted, inline-captured, or cold-captured class; there are no parallel
-  touched/cold epoch vectors. Checkpoint creation captures the current top;
-  newly admitted descendants need no inverse, and a descendant pop captures
-  the older row it exposes before returning to delivery. Repeated source-owner changes coalesce to the
-  first inverse per checkpoint-visible row and interval. Later cursor, everyeof, and backing
-  transitions release displaced owners directly without materializing a cold
-  execution-state carrier; rows admitted in the interval do the same. Alternate
-  owners live only in checked reusable slabs; there is no generic logical-stack
-  adapter or second input representation.
+  The live stack is the only mutable copy; a checkpoint copies it by value at
+  quiescence, so rows carry no rollback marker and no transition records an
+  inverse. Source-owner changes release displaced owners directly.
   Typed cold source operations and one `CommandState`-owned resident front
   are the only mutable access. That front reads the semantic top index once
   and matches the authoritative `InputLevel` row directly; it does not first
@@ -381,11 +355,7 @@ collector (see `src/conditionals.rs`).
   shared-header advance, parameter interception, and accounting; none of
   those tails rematches the row. No runtime storage-handle match, stored-top
   wrapper, advance result, or redispatch survives selection.
-  The three stored variants embed the same resident header. The checkpoint or
-  exposure transition journals the header's logical position; replay includes
-  its separate physical run/segment cursor. A
-  later cold retirement, limit, or flag mutation records
-  the remaining token state separately in the same ordered history. Every arm
+  The three stored variants embed the same resident header. Every arm
   ends its storage borrow with only the word, origin, position, and source
   scalars required by one branch-independent final-command write and common
   post-borrow settlement, while preserving its distinct cursor owner. Source,
@@ -412,8 +382,8 @@ collector (see `src/conditionals.rs`).
   Focused gates prove exact coalescing and zero-allocation hot mutation. A resident source row
   structurally proves its source slot remains occupied, so ordinary source
   delivery borrows that slot by physical index without repeating the ABA
-  generation check. Cold history, rollback, and detached coordinates continue
-  to validate the complete slot key.
+  generation check. Cold and detached coordinates continue to validate the
+  complete slot key.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement.
   Ordinary exhausted token, macro-body, and macro-argument rows truncate the
   already-selected resident coordinate directly, release their one storage
@@ -675,32 +645,20 @@ collector (see `src/conditionals.rs`).
   conversion selectors. Never classify an observed command through a
   profile-free dialect approximation.
 - `src/snapshot.rs`, `src/snapshot/boundary.rs`, and `src/snapshot/tests.rs`:
-  generation-generic command
-  snapshots and named summaries backed by generation-checked reusable frame
-  pages plus packed scalar journals. One coarse generation owner retains the
-  attempt mark and exact timeline-row identity; the copied snapshot cursor is
-  only that row's serial, while the private row owns each real logical-stack
-  rollback mark once. It contains no duplicated stack/queue lengths or
-  aftergroup payload census.
-  The private boundary module owns capture, validation, publication,
-  fork/reject/accept, restore, and rollback over the substrate in `snapshot.rs`.
-  Capture appends a move-only frame; aggregate release returns that frame row
-  and every obsolete journal/logical-stack prefix chunk to their pools because
-  JobStart is frozen outside the live owner. Retained-owner clone copies only
-  scalar coordinates. Main control
-  parks its exclusive physical command owner in the retained generation before
-  candidate fork. Stable frame rows link accepted order directly; selecting a
-  mark changes a fixed number of links to detach the later accepted rows and
-  opens the only current suffix without a `VecDeque`, position search, or key
-  copy. Reject rewinds current cells, transfers the whole candidate chain to
-  the reusable-chain owner, redoes detached prior cells, and reattaches their
-  row chain; accept retains candidate rows and transfers the detached prior
-  chain. Settlement never visits a discarded row or manufactures a free-list
-  key. Later publication takes one reusable row, drops its obsolete payload,
-  and assigns the fresh incarnation that rejects its ABA-stale mark.
-  Validation never mutates the runtime,
-  aggregate command roots are not `Clone`, and capture requires quiescent
-  execution scratch.
+  by-value command checkpoints. `snapshot.rs` owns `CommandCapture`, the
+  serial-ordered `CommandCheckpoints` list, its single candidate fork, and the
+  public `CommandSummary` naming one `(owner, serial)` capture. Each capture
+  copies the quiescent input levels, replay rows, conditions, group and
+  aftergroup payloads, the alignment preamble, and the small scanner remnants;
+  its retained bytes are charged under its own aggregate owner key.
+  `boundary.rs` owns quiescence validation, publication, restore (which drops
+  every newer capture), release, editor-source rehome, and the
+  fork/reject/accept transaction. A fork moves the live roots aside as the
+  accepted head and detaches the newer captures; reject moves both back,
+  accept drops them. Restore abandons the halted operation and clears the
+  attempt arena, because every capture is taken while it is empty. Validation
+  never mutates the runtime, aggregate command roots are not `Clone`, and
+  capture requires quiescent execution scratch.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
   Character/input integration coverage binds the exact shared-domain tokenizer
   to the pinned TeX82 fixture and compile-fail gates profile immutability.

@@ -81,7 +81,7 @@ impl<G> CommandState<G> {
     }
 
     /// Drops an attempt owner after an aggregate checkpoint has already
-    /// restored and truncated its command roots.
+    /// restored its command roots.
     ///
     /// No operation is ever rolled back in place: a failed or suspended
     /// command halts, and checkpoint replay is the one coarse transaction
@@ -90,9 +90,9 @@ impl<G> CommandState<G> {
     /// rather than replayed against the restored arena.
     #[doc(hidden)]
     pub fn abandon_attempt_after_checkpoint_restore(&mut self) {
-        // Aggregate restore has already truncated every semantic root and
-        // attempt mark. Replace the two command-side scratch owners so no
-        // stale child scope or scanner builder can make the restored named
+        // Captures are taken only at quiescent boundaries, where the attempt
+        // arena is empty. Clear it and replace the scratch owner so no stale
+        // row, child scope, or scanner builder can make the restored named
         // boundary appear active.
         self.scratch = crate::execution_scratch::ExecutionScratch::default();
         self.active_attempt_operation = None;

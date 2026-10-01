@@ -771,6 +771,32 @@ impl<G> AttemptArena<G> {
         Ok(())
     }
 
+    /// Returns every attempt row to the empty root mark while retaining table
+    /// capacity. Checkpoint captures are taken only while the attempt is
+    /// empty, so restoring one restores this exact shape.
+    pub(crate) fn clear(&mut self) {
+        let empty = AttemptMark {
+            key: self.key.0,
+            traced_words: 0,
+            traced_origins: 0,
+            token_scratch: 0,
+            origin_scratch: 0,
+            token_builders: 0,
+            token_lists: 0,
+            glue_values: 0,
+            definitions: 0,
+            token_buffers: 0,
+            #[cfg(test)]
+            name_bytes: 0,
+            #[cfg(test)]
+            names: 0,
+            provenance: 0,
+        };
+        self.truncate(empty)
+            .expect("the empty attempt mark is always a valid prefix");
+        self.top_scope = AttemptScopeSerial::ROOT;
+    }
+
     /// Rejects a suffix by truncating tables and returning whole scanner chunks.
     ///
     /// Work is constant per table plus the number of retired scanner chunks;
@@ -1837,10 +1863,13 @@ impl<G> CommandAttempt<G> {
         self.arena.close_owned_scope(operation)
     }
 
+    /// Drops the live operation and every row it allocated. Used only after
+    /// an aggregate checkpoint restore, whose captures always hold an empty
+    /// attempt.
     pub(crate) fn abandon_operation(&mut self) {
         self.active_operation = None;
         self.active_operation_origin = None;
-        self.arena.top_scope = AttemptScopeSerial::ROOT;
+        self.arena.clear();
     }
 
     pub(crate) fn begin_child_scope(&mut self) -> Result<OwnedAttemptScope, AttemptError> {

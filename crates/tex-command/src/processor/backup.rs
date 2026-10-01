@@ -55,7 +55,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.conserve_input_stack_for_descendant()?;
         let previous_align_state = self.command.alignment.align_state;
         let adjustment = command.alignment_adjustment();
-        self.command.record_alignment_phase();
         self.command.alignment.undo_delivery(adjustment);
 
         let level = self.command.push_token_level(
@@ -288,7 +287,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             )?;
             let prepended = tokens.len();
             for spelling in tokens.iter().rev() {
-                self.command.record_alignment_phase();
                 self.command.alignment.undo_delivery(
                     AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
                 );
@@ -440,7 +438,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
     pub(crate) fn undo_alignment_delivery(&mut self, command: &CurrentCommand<G>) {
-        self.command.record_alignment_phase();
         self.command
             .alignment
             .undo_delivery(command.alignment_adjustment());
@@ -449,7 +446,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// brace was delivered as parameter text, so scalar macro matching must
     /// not leave a group entry for replacement replay to balance later.
     pub(crate) fn undo_delimiter_begin_group_delivery(&mut self) {
-        self.command.record_alignment_phase();
         self.command.alignment.undo_delimiter_begin_group_delivery();
     }
 }

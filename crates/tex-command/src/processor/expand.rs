@@ -309,11 +309,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             self.command.set_last_diagnostic_location(Some(location));
         }
-        self.command.roots.alignment.account_literal_brace(
-            &mut self.command.timeline,
-            command,
-            literal_catcode,
-        );
+        self.command
+            .roots
+            .alignment
+            .account_literal_brace(command, literal_catcode);
         if OBSERVED {
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
         }
@@ -748,7 +747,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .input
                 .levels
                 .rows
-                .get(self.command.roots.input.levels.top.wrapping_sub(1))
+                .get(self.command.roots.input.levels.rows.len().wrapping_sub(1))
             {
                 Some(crate::input::InputLevel::Resident(row))
                     if matches!(

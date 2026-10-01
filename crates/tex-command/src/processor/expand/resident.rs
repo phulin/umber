@@ -101,8 +101,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(true);
         }
         let levels = &self.command.roots.input.levels;
-        let Some(InputLevel::Resident(row)) =
-            levels.top.checked_sub(1).map(|top| &levels.rows[top])
+        let Some(InputLevel::Resident(row)) = levels
+            .rows
+            .len()
+            .checked_sub(1)
+            .map(|top| &levels.rows[top])
         else {
             return Ok(false);
         };
@@ -141,7 +144,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         command_state: &mut CommandState<G>,
         mut admit: impl FnMut(TokenWord, OriginId) -> ResidentAdmission,
     ) -> ControlFlow<(), ResidentWordRead<G>> {
-        let Some(resident_index) = command_state.roots.input.levels.top.checked_sub(1) else {
+        let Some(resident_index) = command_state.roots.input.levels.rows.len().checked_sub(1)
+        else {
             return ControlFlow::Continue(ResidentWordRead::NoResident);
         };
         #[cfg(test)]

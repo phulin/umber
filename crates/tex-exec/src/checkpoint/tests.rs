@@ -303,7 +303,6 @@ fn retention_descriptor_covers_every_aggregate_owner_family() {
                 .owner()
         };
         for family in [
-            CheckpointOwnerFamily::Command,
             CheckpointOwnerFamily::Page,
             CheckpointOwnerFamily::World,
             CheckpointOwnerFamily::Hyphenation,
@@ -317,11 +316,13 @@ fn retention_descriptor_covers_every_aggregate_owner_family() {
                 "shared {family:?} owner must keep one accounting identity"
             );
         }
-        assert_ne!(
-            owner(retention, CheckpointOwnerFamily::Mode),
-            owner(later.retention(), CheckpointOwnerFamily::Mode),
-            "each scalar mode checkpoint is its own bounded owner"
-        );
+        for family in [CheckpointOwnerFamily::Command, CheckpointOwnerFamily::Mode] {
+            assert_ne!(
+                owner(retention, family),
+                owner(later.retention(), family),
+                "each {family:?} checkpoint owns its captured state by value"
+            );
+        }
         assert_eq!(
             owner(retention, CheckpointOwnerFamily::Core),
             owner(later.retention(), CheckpointOwnerFamily::Core),

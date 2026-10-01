@@ -15,27 +15,25 @@ mod tests;
 
 pub use history::BorrowedSourceCharacterRun;
 pub(crate) use history::{
-    InputStack, InputStackContextCoordinate, InputStackMark, ResidentRun, ResidentSourceAdvance,
+    InputStack, InputStackContextCoordinate, ResidentRun, ResidentSourceAdvance,
     ResidentSourceCharacterRun, ResidentSourceTop, observed_retirement_reason,
 };
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
-    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputLevelInlineState,
-    MacroArgumentCursor, MacroBodyCursor, PackedInputFrame, PackedTokenOwnership,
-    PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource, ReplayInputBuilderId,
-    ReplayLane, ReplayPayloadId, ReplayTrace, ResidentReplayCursor,
-    ResidentTokenRow, ResidentTokenStorage, RetirementBehavior, SourceLevel,
-    SourceLevelExecutionState, SourceLexExecutionState, SourceOpenDepths, SourceRetirement,
-    SourceSlot, SourceSlotKey, StoredReplayReason, TokenBehavior, TokenRowHeader,
-    packed_token_frame,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroArgumentCursor, MacroBodyCursor,
+    PackedInputFrame, PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle,
+    PackedTokenSpanSource, ReplayInputBuilderId, ReplayLane, ReplayPayloadId, ReplayTrace,
+    ResidentReplayCursor, ResidentTokenRow, ResidentTokenStorage, RetirementBehavior, SourceLevel,
+    SourceOpenDepths, SourceRetirement, SourceSlot, StoredReplayReason, TokenBehavior,
+    TokenRowHeader, packed_token_frame,
 };
 #[cfg(feature = "profiling")]
 pub use levels::{
     LongMacroArgumentCursorBenchmark, LongMacroArgumentCursorReceipt, MixedPackedCursorBenchmark,
     MixedPackedCursorReceipt,
 };
-pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor};
+pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor, SourceOffsetMap};
 #[cfg(test)]
 pub(crate) use stack::source_registration_counters;
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
@@ -96,6 +94,24 @@ pub(crate) struct InputState<G> {
     pub(crate) force_eof: bool,
 }
 
+/// The input state one checkpoint copies by value.
+pub(crate) struct InputCapture<G> {
+    pub(crate) levels: InputStack<G>,
+    replay: ReplayLane<G>,
+    retained_file_line_number: i32,
+    next_level_identity: u64,
+    next_source_identity: u64,
+    force_eof: bool,
+}
+
+impl<G> InputCapture<G> {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(self.levels.retained_bytes())
+            .saturating_add(self.replay.retained_bytes())
+    }
+}
+
 /// Copy-small projection of context-relevant state outside the input rows.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputScalarContextCoordinate {
@@ -149,6 +165,29 @@ impl<G> Default for InputState<G> {
 }
 
 impl<G> InputState<G> {
+    /// Copies the checkpoint-relevant input state. Registered pending
+    /// sources and the terminal context line are host- and job-lifetime
+    /// facts, not checkpoint state, so they stay with the live owner.
+    pub(crate) fn checkpoint_copy(&self) -> InputCapture<G> {
+        InputCapture {
+            levels: self.levels.checkpoint_copy(),
+            replay: self.replay.clone(),
+            retained_file_line_number: self.retained_file_line_number,
+            next_level_identity: self.next_level_identity,
+            next_source_identity: self.next_source_identity,
+            force_eof: self.force_eof,
+        }
+    }
+
+    pub(crate) fn install_checkpoint(&mut self, capture: &InputCapture<G>) {
+        self.levels.install_checkpoint(&capture.levels);
+        self.replay = capture.replay.clone();
+        self.retained_file_line_number = capture.retained_file_line_number;
+        self.next_level_identity = capture.next_level_identity;
+        self.next_source_identity = capture.next_source_identity;
+        self.force_eof = capture.force_eof;
+    }
+
     pub(crate) fn diagnostic_scalar_coordinate(&self) -> InputScalarContextCoordinate {
         InputScalarContextCoordinate {
             retained_file_line_number: self.retained_file_line_number,
@@ -156,22 +195,6 @@ impl<G> InputState<G> {
             pending_source_count: self.pending_sources.len(),
             force_eof: self.force_eof,
         }
-    }
-
-    pub(crate) fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            .saturating_add(self.levels.retained_bytes())
-            .saturating_add(self.replay.retained_bytes())
-            .saturating_add(
-                self.terminal_context_line
-                    .as_ref()
-                    .map_or(0, String::capacity),
-            )
-            .saturating_add(
-                self.pending_sources
-                    .len()
-                    .saturating_mul(std::mem::size_of::<(u32, RegisteredSource)>()),
-            )
     }
 }
 
@@ -350,8 +373,8 @@ pub(crate) fn tracked_input_projection<G>(
         match level {
             InputLevel::Source(source) => {
                 stack.byte(0);
-                let slot = input.levels.source_level_slot(source);
-                observe_immutable_source(state, source, slot);
+                let slot = &*source.slot;
+                observe_immutable_source(state, source);
                 project_source(&mut stack, slot);
                 if let Some(current) = &slot.cursor.line {
                     project_line(&mut line, &slot.cursor, current);
@@ -383,9 +406,9 @@ pub(crate) fn tracked_input_projection<G>(
 
 pub(crate) fn observe_immutable_source<G>(
     state: &mut tex_state::CommandContext<'_, G>,
-    _source: &SourceLevel<G>,
-    slot: &SourceSlot<G>,
+    source: &SourceLevel<G>,
 ) {
+    let slot = &source.slot;
     let backing = slot.cursor.current_backing();
     let record = tex_state::world::ContentHash::from_bytes(&backing.bytes);
     state.observe_command_projection(
@@ -631,7 +654,7 @@ impl<G> InputState<G> {
             let current = index + 1 == self.levels.len();
             match level {
                 InputLevel::Source(source) => {
-                    let slot = self.levels.source_level_slot(source);
+                    let slot = &*source.slot;
                     let bottom = index == 0
                         || matches!(slot.name_class, crate::input::SourceNameClass::File);
                     if Self::source_context_level(slot, index == 0, None, None, None, widths)
@@ -718,13 +741,7 @@ impl<G> InputState<G> {
             )
         });
         let level_count = output_index.unwrap_or_else(|| self.levels.len());
-        self.render_context_for_levels(
-            &self.levels.as_slice()[..level_count],
-            None,
-            stores,
-            attempt,
-            scratch,
-        )
+        self.render_context_for_levels(&self.levels[..level_count], None, stores, attempt, scratch)
     }
 
     fn render_context_for_levels(
@@ -752,7 +769,7 @@ impl<G> InputState<G> {
                 let retiring =
                     retiring_source.filter(|retiring| retiring.identity() == source.identity());
                 let selected = retiring.unwrap_or(source);
-                let slot = self.levels.source_level_slot(selected);
+                let slot = &*selected.slot;
                 Self::source_context_level(
                     slot,
                     index == 0,
@@ -796,11 +813,7 @@ impl<G> InputState<G> {
                     let selected = retiring_source
                         .filter(|retiring| retiring.identity() == source.identity())
                         .unwrap_or(source);
-                    self.levels
-                        .source_level_slot(selected)
-                        .cursor
-                        .line
-                        .is_some()
+                    selected.slot.cursor.line.is_some()
                 }
                 level @ InputLevel::Resident(_) => {
                     Self::context_level_is_visible(level, None, current)
@@ -810,7 +823,7 @@ impl<G> InputState<G> {
                 let source = retiring_source
                     .filter(|retiring| retiring.identity() == source.identity())
                     .unwrap_or(source);
-                let slot = self.levels.source_level_slot(source);
+                let slot = &*source.slot;
                 reached_bottom_source =
                     index == 0 || matches!(slot.name_class, crate::input::SourceNameClass::File);
             }

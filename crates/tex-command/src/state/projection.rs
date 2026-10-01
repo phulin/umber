@@ -2,47 +2,8 @@
 
 use tex_state::CommandContext;
 
-use super::{CommandSemanticDiagnostic, CommandState, CommandStateRoots, LiveTokenBuilder};
-use crate::input::{InputLevelId, StoredReplayReason};
+use super::CommandState;
 use crate::processor::AlignmentDeliveryState;
-
-impl<G> CommandStateRoots<G> {
-    pub(crate) fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            .saturating_add(self.input.retained_bytes())
-            .saturating_add(self.conditions.frames.retained_bytes())
-            .saturating_add(self.alignment.align_stack.retained_bytes())
-            .saturating_add(self.alignment.suspended.retained_bytes())
-            .saturating_add(
-                self.replay_completions
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<super::ReplayCompletionFence>()),
-            )
-            .saturating_add(
-                self.semantic_diagnostics
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<CommandSemanticDiagnostic>()),
-            )
-            .saturating_add(self.group_payloads.retained_bytes())
-            .saturating_add(self.aftergroup_payloads.retained_bytes())
-            .saturating_add(self.named_token_list_pushes.capacity().saturating_mul(
-                std::mem::size_of::<(InputLevelId, StoredReplayReason, tex_state::TokenListId<G>)>(
-                ),
-            ))
-            .saturating_add(
-                self.transient
-                    .builders
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<LiveTokenBuilder>()),
-            )
-            .saturating_add(
-                self.transient
-                    .rollback_roots
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<u64>()),
-            )
-    }
-}
 
 impl<G> CommandState<G> {
     /// Publishes the command-owned dependency roots read by one processor

@@ -197,18 +197,6 @@ pub(crate) struct ConditionFrame {
     pub(crate) inverted: bool,
 }
 
-impl crate::timeline::LogicalStackElement for ConditionFrame {
-    type State = IfLimit;
-
-    fn capture_state(&self) -> Self::State {
-        self.limit
-    }
-
-    fn swap_state(&mut self, state: &mut Self::State) {
-        std::mem::swap(&mut self.limit, state);
-    }
-}
-
 /// One unfinished conditional retired by TeX82 §1335's final cleanup.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct IncompleteCondition {
@@ -271,7 +259,7 @@ impl IncompleteCondition {
 /// Independent persistent condition stack.
 #[derive(Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct ConditionStack {
-    pub(crate) frames: crate::timeline::LogicalStack<ConditionFrame>,
+    pub(crate) frames: Vec<ConditionFrame>,
     pub(crate) next_identity: u64,
 }
 
@@ -327,7 +315,7 @@ impl ConditionStack {
     }
 
     pub(crate) fn pop(&mut self) -> Option<ConditionFrame> {
-        self.frames.pop_copy()
+        self.frames.pop()
     }
 
     pub(crate) fn drain_incomplete(&mut self) -> Vec<IncompleteCondition> {

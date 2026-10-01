@@ -55,14 +55,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return false;
             };
             source.identity().0 == command.delivery_stamp().input_level()
-                && matches!(
-                    self.command
-                        .input
-                        .levels
-                        .source_level_slot(source)
-                        .name_class,
-                    SourceNameClass::ReadStream(_)
-                )
+                && matches!(source.slot.name_class, SourceNameClass::ReadStream(_))
         });
         if !delivered_by_read {
             self.back_input(command.copy_for_backup())?;

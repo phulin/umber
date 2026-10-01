@@ -1006,142 +1006,6 @@ fn scalar_and_surface_alignment_handoffs_consume_coordinate_freshness() {
     });
 }
 
-#[cfg(feature = "profiling")]
-#[test]
-fn alignment_journal_attempts_follow_literal_braces_and_skip_delimiters() {
-    crate::test_harness::with_universe(|universe| {
-        let ordinary = Token::Char {
-            ch: 'x',
-            cat: Catcode::Letter,
-        };
-        let begin = Token::Char {
-            ch: '{',
-            cat: Catcode::BeginGroup,
-        };
-        let end = Token::Char {
-            ch: '}',
-            cat: Catcode::EndGroup,
-        };
-        let tab = Token::Char {
-            ch: '&',
-            cat: Catcode::AlignmentTab,
-        };
-        let mut command = CommandState::default();
-        crate::test_harness::push(&mut command, [ordinary, begin, ordinary, end, tab]);
-        let initial_align_state = command.alignment.align_state;
-        let snapshot = command.snapshot(universe).expect("delivery checkpoint");
-        let before = command.profile_timeline_counters();
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        {
-            let mut context = universe.command_context().expect("command context");
-            let mut processor = crate::test_harness::processor(
-                &mut command,
-                &mut context,
-                &mut capabilities,
-                &mut fuel,
-                &mut diagnostic_effects,
-            );
-            for expected in [ordinary, begin, ordinary, end, tab] {
-                let delivered = crate::test_harness::expect_raw_command(&mut processor);
-                assert_eq!(delivered.spelling().semantic_token(), expected);
-            }
-        }
-        let after = command.profile_timeline_counters();
-        assert_eq!(
-            after.alignment_delivery_journal_attempts - before.alignment_delivery_journal_attempts,
-            2
-        );
-        assert_eq!(after.records - before.records, 1);
-        assert_eq!(command.alignment.align_state, initial_align_state);
-
-        command
-            .rollback(&snapshot, universe)
-            .expect("brace journal restores");
-        assert_eq!(command.alignment.align_state, initial_align_state);
-
-        let empty_template = universe
-            .command_context()
-            .expect("command context")
-            .allocate_token_list(&[])
-            .expect("empty v-template");
-        let alignment = AlignmentIdentity::new(9);
-        command.begin_alignment(alignment);
-        command
-            .begin_prepared_alignment_cell(
-                alignment,
-                crate::PreparedAlignmentCellTemplates {
-                    u_template: None,
-                    v_template: empty_template,
-                },
-            )
-            .expect("active cell");
-        command
-            .install_alignment_omit_cell_template(alignment)
-            .expect("omit cell template");
-        let before_delimiter = command.profile_timeline_counters();
-        {
-            let context = universe.command_context().expect("command context");
-            let mut delivered = crate::CurrentCommand::resolve(
-                TracedTokenWord::pack(tab, OriginId::UNKNOWN),
-                crate::command::DeliveryStamp::new(1, 0),
-                None,
-                false,
-                None,
-                &context,
-            );
-            command.classify_alignment_delivery(&mut delivered, Some(Catcode::AlignmentTab));
-            assert!(matches!(
-                delivered.alignment_adjustment(),
-                super::AlignmentDeliveryAdjustment::Delimiter(_)
-            ));
-            assert_eq!(
-                command.alignment.align_state,
-                super::alignment::CELL_ALIGN_STATE
-            );
-        }
-        let after_delimiter = command.profile_timeline_counters();
-        assert_eq!(
-            after_delimiter.alignment_delivery_journal_attempts,
-            before_delimiter.alignment_delivery_journal_attempts
-        );
-        assert_eq!(after_delimiter.records, before_delimiter.records);
-
-        let delimiter_snapshot = command.snapshot(universe).expect("active-cell checkpoint");
-        crate::test_harness::push(&mut command, [tab]);
-        let before_interception = command.profile_timeline_counters();
-        {
-            let mut context = universe.command_context().expect("command context");
-            let mut processor = crate::test_harness::processor(
-                &mut command,
-                &mut context,
-                &mut capabilities,
-                &mut fuel,
-                &mut diagnostic_effects,
-            );
-            let delivered = crate::test_harness::expect_raw_command(&mut processor);
-            assert_ne!(delivered.spelling().semantic_token(), tab);
-            assert_eq!(
-                processor.command.alignment.align_state,
-                super::alignment::TEMPLATE_ALIGN_STATE
-            );
-        }
-        let after_interception = command.profile_timeline_counters();
-        assert_eq!(
-            after_interception.alignment_delivery_journal_attempts,
-            before_interception.alignment_delivery_journal_attempts
-        );
-        command
-            .rollback(&delimiter_snapshot, universe)
-            .expect("alignment-owned delimiter lifecycle rolls back");
-        assert_eq!(
-            command.alignment.align_state,
-            super::alignment::CELL_ALIGN_STATE
-        );
-    });
-}
-
 #[test]
 fn failed_raw_delivery_clears_its_partially_written_final_slot() {
     crate::test_harness::with_universe(|universe| {
@@ -1836,11 +1700,12 @@ fn failed_source_map_registration_does_not_mark_cursor_registered() {
         }
         let after_acquisition = crate::input::source_registration_counters();
         assert_eq!(after_acquisition.calls - before.calls, 2);
-        let (_, source) = command
+        let source = &*command
             .input
             .levels
             .top_source()
-            .expect("source remains live after its first token");
+            .expect("source remains live after its first token")
+            .slot;
         assert!(!source.cursor.backing_registered);
 
         {
@@ -2232,7 +2097,8 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
         assert_eq!(first.direct_source_line_number(), Some(1));
         assert_eq!(processor.command.input.current_file_line_number(), 1);
         let first_line_number = match processor.command.input.levels.top_source() {
-            Some((_, source)) => source
+            Some(source) => source
+                .slot
                 .cursor
                 .line
                 .as_ref()
@@ -2254,7 +2120,8 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
         assert_eq!(second.direct_source_line_number(), Some(1));
         assert_eq!(processor.command.input.current_file_line_number(), 1);
         let second_line_number = match processor.command.input.levels.top_source() {
-            Some((_, source)) => source
+            Some(source) => source
+                .slot
                 .cursor
                 .line
                 .as_ref()

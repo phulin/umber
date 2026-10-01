@@ -125,7 +125,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .command
                 .roots
                 .alignment
-                .account_literal_catcode(&mut self.command.timeline, literal);
+                .account_literal_catcode(literal);
             let token = ClassifiedToken::from_word(
                 TracedTokenWord::from_parts(word.word, word.origin),
                 None,

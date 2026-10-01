@@ -1383,7 +1383,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // brace would have done. The token itself is not pushed:
                     // the caller continues after it while the rejected command
                     // remains first on the backed-up input level.
-                    self.command.record_alignment_phase();
                     self.command.alignment.align_state += 1;
                     return Ok(ScannedLeftBrace::Inserted);
                 }
@@ -1436,7 +1435,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         arguments: Vec::new(),
                     }),
                 );
-                self.command.record_alignment_phase();
                 self.command.alignment.align_state += 1;
                 let context = self.command.output_open_context(self.state);
                 let mut report = self.state.print_err("Missing { inserted");
@@ -2251,7 +2249,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §482: `s:=align_state; align_state:=1000000` disables tab marks and
         // `\cr` for the whole collection, and is restored whatever happens.
         let saved_align_state = self.command.alignment.align_state;
-        self.command.record_alignment_phase();
         self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
         let result = (|| {
             let mut collector = self.begin_scan_toks_collector(
@@ -2289,7 +2286,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .expect("validated read scope retires without intervening mutation");
             Ok(definition)
         })();
-        self.command.record_alignment_phase();
         self.command.alignment.align_state = saved_align_state;
         self.finish_scanner_episode(episode);
         match result {
@@ -2408,13 +2404,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     site,
                 });
             self.set_runaway_partial(FILE_ENDED_WITHIN_READ_DIAGNOSTIC, &partial);
-            self.command.record_alignment_phase();
             self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
         }
         if raw_catcodes {
             self.collect_read_line_verbatim(level, collector)?;
             if file_ended {
-                self.command.record_alignment_phase();
                 self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
             }
             return Ok(());
@@ -2487,7 +2481,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         _ => return Err(CommandError::input_invariant()),
                     }
                 }
-                self.command.record_alignment_phase();
                 self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
                 return Ok(());
             }

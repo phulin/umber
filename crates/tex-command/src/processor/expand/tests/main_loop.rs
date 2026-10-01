@@ -548,7 +548,7 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
 }
 
 #[test]
-fn main_loop_character_run_rollback_keeps_fuel_monotonic() {
+fn main_loop_character_run_restore_keeps_fuel_monotonic() {
     crate::test_harness::with_universe(|universe| {
         let tokens = [
             Token::Char {
@@ -562,7 +562,9 @@ fn main_loop_character_run_rollback_keeps_fuel_monotonic() {
         ];
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, tokens);
-        let snapshot = command.snapshot(universe).expect("character-run snapshot");
+        let summary = command
+            .publish_summary(universe)
+            .expect("character-run summary");
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::new(4).expect("rollback character-run fuel");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -591,8 +593,8 @@ fn main_loop_character_run_rollback_keeps_fuel_monotonic() {
             if expected_burned == 2 {
                 drop(context);
                 command
-                    .rollback(&snapshot, universe)
-                    .expect("rollback restores the character row");
+                    .restore_summary(&summary, universe)
+                    .expect("restore reinstalls the character row");
             }
         }
     });

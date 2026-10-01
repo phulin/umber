@@ -1606,7 +1606,7 @@ mod tests {
                 ));
             }
 
-            let snapshot = command.snapshot(universe).expect("snapshot captures");
+            let summary = command.publish_summary(universe).expect("summary captures");
             let first = suffix(
                 &mut command,
                 universe,
@@ -1615,8 +1615,8 @@ mod tests {
                 &mut diagnostic_effects,
             );
             command
-                .rollback(&snapshot, universe)
-                .expect("matching snapshot restores");
+                .restore_summary(&summary, universe)
+                .expect("matching summary restores");
             let second = suffix(
                 &mut command,
                 universe,
@@ -1625,7 +1625,7 @@ mod tests {
                 &mut diagnostic_effects,
             );
 
-            assert_eq!(first, second, "rollback preserves nested source identity");
+            assert_eq!(first, second, "restore preserves nested source identity");
             assert!(
                 first.iter().any(|(_, level)| *level > 0),
                 "the nested source receives a distinct input-level identity"

@@ -156,9 +156,9 @@ impl<G> CommandState<G> {
             register_pending_source_backings(state, &mut slot.cursor)
         });
         if state.tracked_region_is_active()
-            && let Some((source, slot)) = self.input.levels.top_source()
+            && let Some(source) = self.input.levels.top_source()
         {
-            super::observe_immutable_source(state, source, slot);
+            super::observe_immutable_source(state, source);
         }
         let physical = {
             let mut queries = LiveSourceQueries {
@@ -176,9 +176,9 @@ impl<G> CommandState<G> {
             register_pending_source_backings(state, &mut slot.cursor)
         });
         if state.tracked_region_is_active()
-            && let Some((source, slot)) = self.input.levels.top_source()
+            && let Some(source) = self.input.levels.top_source()
         {
-            super::observe_immutable_source(state, source, slot);
+            super::observe_immutable_source(state, source);
         }
         Ok(physical)
     }
@@ -195,12 +195,10 @@ impl<G> CommandState<G> {
             .saturating_add(self.terminal_buffer_slots)
             .saturating_add(occupied_below_active);
         let profile = self.profile();
-        let old_next_source_identity = self.input.next_source_identity;
         let (physical, retained_line) = {
             let usage = &mut self.stack_usage;
             let input = &mut self.roots.input;
-            let Some(result) = input.levels.mutate_top_source_cursor(|source, slot| {
-                let identity = source.identity();
+            let Some(result) = input.levels.mutate_top_source_cursor(|_, slot| {
                 let name_class = slot.name_class;
                 if pending_acquired_line {
                     slot.cursor.pending_acquired_line = true;
@@ -231,7 +229,6 @@ impl<G> CommandState<G> {
                                 .unwrap_or(0),
                             SourceNameClass::Terminal | SourceNameClass::ReadStream(_) => 0,
                         };
-                        debug_assert_eq!(source.identity(), identity);
                         (physical, retained_line)
                     })
             }) else {
@@ -242,10 +239,6 @@ impl<G> CommandState<G> {
             };
             result
         };
-        if self.input.next_source_identity != old_next_source_identity {
-            self.timeline
-                .record_next_source_identity(old_next_source_identity);
-        }
         self.set_retained_file_line_number(retained_line);
         Ok(Some(physical))
     }
@@ -264,8 +257,8 @@ impl<G> CommandState<G> {
     ) -> Result<(), ()> {
         self.input
             .levels
-            .mutate_top_source_lex(|source, slot| {
-                if source.identity() != identity {
+            .mutate_top_source_lex(|frame, slot| {
+                if frame.identity() != identity.0 {
                     return Err(());
                 }
                 register_pending_source_backings(state, &mut slot.cursor);
@@ -275,11 +268,6 @@ impl<G> CommandState<G> {
     }
 
     pub(crate) fn set_retained_file_line_number(&mut self, line: i32) {
-        if self.input.retained_file_line_number == line {
-            return;
-        }
-        self.timeline
-            .record_retained_file_line_number(self.input.retained_file_line_number);
         self.input.retained_file_line_number = line;
     }
 
@@ -625,7 +613,7 @@ impl<G> CommandState<G> {
         }
 
         if let InputLevel::Source(source) = level {
-            let slot = self.input.levels.source_level_slot(source);
+            let slot = &*source.slot;
             let name_class = slot.name_class;
             let source_id = slot.cursor.current_backing().id;
             let retirement = slot.retirement;
@@ -652,7 +640,6 @@ impl<G> CommandState<G> {
             // §362 clears the process-global `force_eof` for the same
             // `name>17` case, which is why both live under this gate.
             if name_class == SourceNameClass::File {
-                self.timeline.record_force_eof(self.input.force_eof);
                 self.input.force_eof = false;
             }
             return Ok(InputRetirement {
@@ -771,7 +758,7 @@ impl<G> CommandState<G> {
         }
         if let InputLevel::Source(source) = level {
             let identity = source.identity();
-            let slot = self.input.levels.source_level_slot(source);
+            let slot = &*source.slot;
             let name_class = slot.name_class;
             let source = slot.cursor.current_backing().id;
             let retirement = slot.retirement;
@@ -837,8 +824,6 @@ impl<G> CommandState<G> {
 
     pub(crate) fn allocate_input_level_identity(&mut self) -> InputLevelId {
         let identity = InputLevelId(self.input.next_level_identity);
-        self.timeline
-            .record_next_input_level_identity(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
         identity
     }
@@ -852,7 +837,7 @@ impl<G> CommandState<G> {
             .find_map(|level| match level {
                 InputLevel::Resident(_) => None,
                 InputLevel::Source(source) => {
-                    let slot = self.input.levels.source_level_slot(source);
+                    let slot = &*source.slot;
                     Some(match slot.name_class {
                         SourceNameClass::File | SourceNameClass::Scantokens(_) => {
                             slot.cursor

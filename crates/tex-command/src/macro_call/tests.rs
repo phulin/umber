@@ -1824,7 +1824,6 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
         whole_token_copies: u64,
         whole_command_copies: u64,
         definition_retains: u64,
-        whole_input_frame_copies: u64,
         aggregate_word_reads: u64,
     }
 
@@ -1931,7 +1930,6 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
             let aggregate_reads = processor.command.scratch.match_word_reads();
             let command_copies = crate::command::command_ownership_counters().clones;
             let definition_retains = tex_state::definition_retain_count();
-            let timeline = processor.command.profile_timeline_counters();
             let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
             let allocations = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
             {
@@ -1941,7 +1939,6 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
             let after_allocations =
                 tex_state::measurement::hot_core_thread_allocation_measurement(owner);
             let after_commands = crate::command::command_ownership_counters();
-            let after_timeline = processor.command.profile_timeline_counters();
             let collector_counters = processor.command.profile_token_collector_path_counters();
             let writer_after = processor.command.scratch.match_writer_operations();
             Evidence {
@@ -1957,8 +1954,6 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
                     - token_copies,
                 whole_command_copies: after_commands.clones - command_copies,
                 definition_retains: tex_state::definition_retain_count() - definition_retains,
-                whole_input_frame_copies: after_timeline.full_frame_history_clones
-                    - timeline.full_frame_history_clones,
                 aggregate_word_reads: processor.command.scratch.match_word_reads()
                     - aggregate_reads,
             }
@@ -1980,7 +1975,6 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
             whole_token_copies: 0,
             whole_command_copies: 0,
             definition_retains: 0,
-            whole_input_frame_copies: 0,
             aggregate_word_reads: 0,
         }
     );
@@ -1997,7 +1991,6 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
         assert_eq!(measured.whole_token_copies, 0);
         assert_eq!(measured.whole_command_copies, 0);
         assert_eq!(measured.definition_retains, 0);
-        assert_eq!(measured.whole_input_frame_copies, 0);
         assert_eq!(measured.aggregate_word_reads, 0);
     }
 }

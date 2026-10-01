@@ -77,13 +77,11 @@ pub use primitives::{
 };
 mod processor;
 mod profile;
-mod scalar_journal;
 mod scan_toks;
 mod scanner_kernel;
 mod scanners;
 mod snapshot;
 mod state;
-mod timeline;
 mod token_collector;
 mod tracing_nesting;
 
@@ -170,9 +168,7 @@ pub use scanners::{
     ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
 pub use snapshot::{
-    CommandCheckpointReleaseReceipt, CommandGenerationOwner, CommandRestoreError,
-    CommandStateSnapshot, CommandSummary, CommandSummaryError, CommandTimelineCounters,
-    PreparedCommandReplayRestore, PreparedCommandRestore,
+    CommandRestoreError, CommandSummary, CommandSummaryError, PreparedCommandRestore,
 };
 pub use state::{
     CommandGroupError, CommandGroupExit, CommandReplayEpisode, CommandSemanticDiagnostic,

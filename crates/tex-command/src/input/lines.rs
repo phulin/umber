@@ -349,21 +349,10 @@ pub(crate) struct SourceLexCursor {
     pub(crate) endline_delivered: bool,
 }
 
-impl SourceLexCursor {
-    pub(crate) const EMPTY: Self = Self {
-        byte_cursor: 0,
-        scalar_cursor: 0,
-        reduced_head: 0,
-        lexer_state: super::tokenizer::LexerState::NewLine,
-        endline_delivered: false,
-    };
-}
-
 /// Variable owner state for one normalized line.
 ///
 /// Geometry and the spelling arena remain owned once. Speculative token probes
-/// copy only [`SourceLexCursor`]; checkpoint history likewise retains cursor
-/// values rather than cloning this owner.
+/// copy only [`SourceLexCursor`]; only a checkpoint capture copies the owner.
 #[derive(Debug)]
 pub(crate) struct SourceLineState {
     pub(crate) physical: PhysicalLine,
@@ -389,7 +378,7 @@ struct ReducedSourceSpellingNode {
     previous: u32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct ReducedSourceSpellings {
     nodes: Vec<ReducedSourceSpellingNode>,
 }
@@ -500,6 +489,18 @@ impl std::hash::Hash for SourceLineState {
 }
 
 impl SourceLineState {
+    /// Copies the line for a checkpoint capture, including the spelling
+    /// arena its cursor's reduction head indexes.
+    pub(crate) fn checkpoint_copy(&self) -> Self {
+        Self {
+            physical: self.physical,
+            retained_end: self.retained_end,
+            endline: self.endline,
+            cursor: self.cursor,
+            reduced_spellings: self.reduced_spellings.clone(),
+        }
+    }
+
     pub(crate) fn diagnostic_location(
         &self,
         source: SourceId,

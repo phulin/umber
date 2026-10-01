@@ -355,7 +355,8 @@ fn skipped_resident_run_crosses_an_exhausted_frame_without_scalar_delivery() {
         drop(processor);
         assert_eq!(fuel.burned(), 6, "every skipped word is charged once");
         assert_eq!(
-            command.roots.input.levels.top, 1,
+            command.roots.input.levels.len(),
+            1,
             "the exhausted frame is popped"
         );
         assert_eq!(command.stored_token_advance_counters.command_writes, 1);

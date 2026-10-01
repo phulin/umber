@@ -1800,7 +1800,7 @@ fn non_job_start_mode_candidate_reject_accept_and_sibling_reuse_are_explicit() {
 }
 
 #[test]
-fn far_command_checkpoint_settles_exact_deltas_and_preserves_production_siblings() {
+fn far_command_checkpoint_settles_and_preserves_production_siblings() {
     let source = concat!(
         "A\\par\n",
         "\\def\\emit#1{[#1]}\n",
@@ -1816,17 +1816,12 @@ fn far_command_checkpoint_settles_exact_deltas_and_preserves_production_siblings
         .find("\\def")
         .expect("suffix follows first paragraph");
     let candidate_edit = edit(&incremental, edit_position..edit_position, "\\count255=1 ");
-    let before_reject = incremental
-        .command_timeline_counters()
-        .expect("accepted command counters")
-        .expect("accepted generation");
-
     let mut rejected = incremental
         .start_advance_candidate(RevisionId::new(2), candidate_edit.clone())
         .expect("far non-JobStart rejection candidate");
     drive_synchronous_candidate(&mut rejected, &mut DirectResourceHost)
         .expect("drive command-rich rejection candidate");
-    let mut rejected = incremental
+    let rejected = incremental
         .prepare_revision_candidate(rejected)
         .expect("prepare command-rich rejection");
     assert_eq!(
@@ -1837,88 +1832,19 @@ fn far_command_checkpoint_settles_exact_deltas_and_preserves_production_siblings
             .boundary,
         EngineBoundary::OuterParagraphEnd
     );
-    let before_settle = rejected
-        .command_timeline_counters()
-        .expect("candidate command counters");
-    let selected_delta = before_settle
-        .selected_rewind_records
-        .saturating_sub(before_reject.selected_rewind_records);
-    assert!(
-        selected_delta != 0,
-        "the far accepted command delta rewinds"
-    );
     rejected.reject();
 
-    let after_reject = incremental
-        .command_timeline_counters()
-        .expect("returned command counters")
-        .expect("returned accepted generation");
-    assert_eq!(
-        after_reject.accepted_redo_records - before_reject.accepted_redo_records,
-        selected_delta,
-        "rejection redoes exactly the selected accepted command delta"
-    );
-    assert!(
-        after_reject.candidate_reject_records > before_reject.candidate_reject_records,
-        "rejection undoes a private candidate command suffix"
-    );
-    assert!(
-        after_reject.candidate_chunks_released > before_reject.candidate_chunks_released,
-        "rejection returns candidate command chunks"
-    );
-    assert_eq!(
-        after_reject.frame_reuse_visits, before_settle.frame_reuse_visits,
-        "rejection does not visit discarded command-frame rows"
-    );
-    assert_eq!(
-        after_reject.frame_reuse_incarnations, before_settle.frame_reuse_incarnations,
-        "rejection does not regenerate command-frame keys"
-    );
-
-    let before_accept = after_reject;
     let mut accepted = incremental
         .start_advance_candidate(RevisionId::new(2), candidate_edit)
         .expect("rejected command sibling remains seedable");
     drive_synchronous_candidate(&mut accepted, &mut DirectResourceHost)
         .expect("drive accepted command-rich candidate");
-    let mut accepted = incremental
+    let accepted = incremental
         .prepare_revision_candidate(accepted)
         .expect("prepare command-rich acceptance");
-    let before_accept_settle = accepted
-        .command_timeline_counters()
-        .expect("prepared acceptance command counters");
     let output = incremental
         .accept_revision(accepted)
         .expect("accept command-rich candidate");
-    let after_accept = incremental
-        .command_timeline_counters()
-        .expect("accepted command counters")
-        .expect("accepted generation");
-    assert!(
-        after_accept.accepted_chunks_released > before_accept.accepted_chunks_released,
-        "acceptance releases obsolete accepted chunks"
-    );
-    assert_eq!(
-        after_accept.candidate_reject_records, before_accept.candidate_reject_records,
-        "acceptance does not undo candidate history"
-    );
-    assert_eq!(
-        after_accept.accepted_redo_records, before_accept.accepted_redo_records,
-        "acceptance does not replay accepted history"
-    );
-    assert!(
-        after_accept.frame_chain_transfers > before_accept_settle.frame_chain_transfers,
-        "acceptance transfers the obsolete accepted command-frame chain"
-    );
-    assert_eq!(
-        after_accept.frame_reuse_visits, before_accept_settle.frame_reuse_visits,
-        "acceptance does not visit discarded command-frame rows"
-    );
-    assert_eq!(
-        after_accept.frame_reuse_incarnations, before_accept_settle.frame_reuse_incarnations,
-        "acceptance does not regenerate command-frame keys"
-    );
-
     let edited = format!(
         "{}\\count255=1 {}",
         &source[..edit_position],

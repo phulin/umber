@@ -1,8 +1,7 @@
 use std::fmt;
 
 use tex_command::{
-    CommandRestoreError, CommandState, CommandSummary, CommandSummaryError,
-    PreparedCommandReplayRestore, PreparedCommandRestore,
+    CommandRestoreError, CommandState, CommandSummary, CommandSummaryError, PreparedCommandRestore,
 };
 use tex_state::{PreparedRuntimeCheckpointReplay, RuntimeCheckpoint, Universe, UniverseError};
 
@@ -86,6 +85,8 @@ pub struct CheckpointOwnerKey(CheckpointOwnerKeyInner);
 enum CheckpointOwnerKeyInner {
     State(tex_state::CheckpointOwnerId),
     Executor(usize),
+    /// One command capture: its owner and publication serial.
+    Command(u64, u64),
 }
 
 impl CheckpointOwnerKey {
@@ -95,6 +96,10 @@ impl CheckpointOwnerKey {
 
     const fn executor(owner: usize) -> Self {
         Self(CheckpointOwnerKeyInner::Executor(owner))
+    }
+
+    const fn command((owner, serial): (u64, u64)) -> Self {
+        Self(CheckpointOwnerKeyInner::Command(owner, serial))
     }
 }
 
@@ -157,7 +162,7 @@ impl CheckpointRetention {
         Self {
             shared_owners: [
                 CheckpointOwnerCharge::new(
-                    CheckpointOwnerKey::state(command.checkpoint_owner_id()),
+                    CheckpointOwnerKey::command(command.retention_owner()),
                     CheckpointOwnerFamily::Command,
                     command.retained_owner_bytes(),
                 ),
@@ -424,32 +429,26 @@ pub struct EngineCheckpoint<G> {
 }
 
 struct PreparedCheckpointReplay<G> {
-    command: PreparedCommandReplayRoots<G>,
+    command: PreparedCommandRestore<G>,
     mode: crate::mode::PreparedModeReplayRestore,
     runtime: PreparedRuntimeCheckpointReplay<G>,
     output: crate::canonical_step::PreparedOutputReplayRestore,
     maximum_saved_depth: usize,
 }
 
-enum PreparedCommandReplayRoots<G> {
-    Candidate(PreparedCommandReplayRestore<G>),
-    Independent(PreparedCommandRestore<G>),
-}
-
-/// Small owner coordinates for the earliest surviving live restart root.
+/// Runtime coordinates for the earliest surviving live restart root.
 ///
 /// JobStart is deliberately not represented here because its exact state lives
-/// in the detached frozen anchor rather than the live command/runtime journals.
+/// in the detached frozen anchor rather than the live runtime journals.
+/// Command captures are owned by value, so releasing one needs no floor.
 pub(crate) struct CheckpointReleaseFloor<G> {
     runtime: RuntimeCheckpoint<G>,
-    command: CommandSummary<G>,
 }
 
 impl<G> CheckpointReleaseFloor<G> {
     pub(crate) fn capture(checkpoint: &EngineCheckpoint<G>) -> Self {
         Self {
             runtime: checkpoint.runtime.clone(),
-            command: checkpoint.command.clone(),
         }
     }
 }
@@ -464,7 +463,6 @@ impl<G> CheckpointReleaseFloor<G> {
 pub struct EngineCheckpointRelease<G> {
     released: EngineCheckpoint<G>,
     oldest_runtime: Option<RuntimeCheckpoint<G>>,
-    oldest_command: Option<CommandSummary<G>>,
 }
 
 impl<G> EngineCheckpointRelease<G> {
@@ -472,17 +470,9 @@ impl<G> EngineCheckpointRelease<G> {
         released: EngineCheckpoint<G>,
         oldest_retained: Option<CheckpointReleaseFloor<G>>,
     ) -> Self {
-        match oldest_retained {
-            Some(oldest) => Self {
-                released,
-                oldest_runtime: Some(oldest.runtime),
-                oldest_command: Some(oldest.command),
-            },
-            None => Self {
-                released,
-                oldest_runtime: None,
-                oldest_command: None,
-            },
+        Self {
+            released,
+            oldest_runtime: oldest_retained.map(|oldest| oldest.runtime),
         }
     }
 
@@ -500,11 +490,10 @@ impl<G> EngineCheckpointRelease<G> {
         universe
             .validate_runtime_checkpoint_release(&self.released.runtime, oldest_runtime)
             .expect("retained runtime release was owner-prevalidated");
-        // Frozen JobStart is not a live journal root. Both aggregate families
-        // can therefore advance to the earliest surviving ordinary boundary.
-        let oldest_command = self.oldest_command.as_ref();
+        // Frozen JobStart is not a live journal root, so the runtime journals
+        // can advance to the earliest surviving ordinary boundary.
         command
-            .release_checkpoint_summary(&self.released.command, oldest_command)
+            .release_checkpoint_summary(&self.released.command)
             .expect("retained command release was owner-prevalidated");
         universe
             .release_runtime_checkpoint(&self.released.runtime, oldest_runtime)
@@ -916,19 +905,12 @@ impl<G> EngineCheckpoint<G> {
         universe: &Universe<G>,
         output: &crate::OutputLedger,
     ) -> Result<PreparedCheckpointReplay<G>, CheckpointRestoreError> {
-        let command = if command.checkpoint_candidate_active() {
-            PreparedCommandReplayRoots::Candidate(
-                command
-                    .prepare_summary_restore_after_replay(&self.command, universe)
-                    .map_err(CheckpointRestoreError::Command)?,
-            )
-        } else {
-            PreparedCommandReplayRoots::Independent(
-                command
-                    .prepare_summary_restore(&self.command, universe)
-                    .map_err(CheckpointRestoreError::Command)?,
-            )
-        };
+        // Within an open candidate the command owner admits only the
+        // candidate's base and later captures, so the accepted sibling stays
+        // detached for settlement.
+        let command = command
+            .prepare_summary_restore(&self.command, universe)
+            .map_err(CheckpointRestoreError::Command)?;
         let mode = nest.prepare_checkpoint_restore_after_replay(&self.modes);
         let runtime = universe
             .prepare_runtime_checkpoint_after_replay(&self.runtime)
@@ -965,14 +947,9 @@ impl<G> EngineCheckpoint<G> {
         } = prepared;
         universe
             .apply_prepared_runtime_checkpoint_after_replay(&self.runtime, prepared_runtime, || {
-                match prepared_command {
-                    PreparedCommandReplayRoots::Candidate(prepared) => command
-                        .apply_prepared_replay_restore(prepared)
-                        .expect("aggregate replay preflight retained its command destination"),
-                    PreparedCommandReplayRoots::Independent(prepared) => command
-                        .apply_prepared_restore(prepared)
-                        .expect("aggregate replay preflight retained its command destination"),
-                }
+                command
+                    .apply_prepared_restore(prepared_command)
+                    .expect("aggregate replay preflight retained its command destination");
                 nest.apply_prepared_checkpoint_restore_after_replay(&self.modes, prepared_mode)
                     .expect("aggregate replay preflight retained its mode destination");
                 // TeX's maxima are job-lifetime diagnostics, not semantic

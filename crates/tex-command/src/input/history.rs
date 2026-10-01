@@ -1,77 +1,21 @@
-//! Generation-owned authoritative input rows and ordered inverse history.
+//! Generation-owned authoritative input rows.
+//!
+//! The live stack is the only copy a running job mutates. Checkpoints copy
+//! the whole stack by value at quiescence, so no row carries rollback state
+//! and no transition records an inverse.
 
 #[cfg(test)]
 mod tests;
+
+use crate::observation::{
+    AlignmentRecord, CommandObservation, CommandObserver, InputReason, InputRecord, InputTransition,
+};
 
 use core::hash::{Hash, Hasher};
 use core::ops::{Deref, Index};
 use core::slice::SliceIndex;
 
-use crate::observation::{
-    AlignmentRecord, CommandObservation, CommandObserver, InputReason, InputRecord, InputTransition,
-};
-use crate::scalar_journal::{PackedJournal, PackedJournalMark};
-use crate::timeline::{PayloadHandle, PayloadSlab};
-
-use super::levels::RowRollbackMarker;
-use super::{
-    CompactSourceTokenizationStep, InputLevel, InputLevelInlineState, SourceLevel,
-    SourceLevelExecutionState, SourceLexExecutionState, SourceSlot, SourceSlotKey,
-};
-
-const INPUT_UNDO_RECORDS_PER_CHUNK: usize = 16;
-
-const ROW_ROLLBACK_STATE_BITS: u32 = 2;
-const MAX_ROW_ROLLBACK_EPOCH: u64 = u64::MAX >> ROW_ROLLBACK_STATE_BITS;
-
-#[repr(u64)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RowRollbackState {
-    /// The row was admitted or replaced during this epoch and has no inverse.
-    Admitted = 0,
-    /// Its ordinary inline cursor or source lexer state has an inverse.
-    Inline = 1,
-    /// Its complete cold token or source-owner state has an inverse.
-    Cold = 2,
-}
-
-impl RowRollbackMarker {
-    #[inline(always)]
-    pub(crate) const fn in_epoch(self, epoch: u64) -> bool {
-        self.0 >> ROW_ROLLBACK_STATE_BITS == epoch
-    }
-
-    #[inline(always)]
-    const fn state(self) -> RowRollbackState {
-        match self.0 & ((1 << ROW_ROLLBACK_STATE_BITS) - 1) {
-            0 => RowRollbackState::Admitted,
-            1 => RowRollbackState::Inline,
-            2 => RowRollbackState::Cold,
-            _ => unreachable!(),
-        }
-    }
-
-    #[inline(always)]
-    fn set(&mut self, epoch: u64, state: RowRollbackState) {
-        debug_assert!((1..=MAX_ROW_ROLLBACK_EPOCH).contains(&epoch));
-        self.0 = (epoch << ROW_ROLLBACK_STATE_BITS) | state as u64;
-    }
-
-    #[inline(always)]
-    const fn needs_replacement(self, epoch: u64) -> bool {
-        !self.in_epoch(epoch) || !matches!(self.state(), RowRollbackState::Admitted)
-    }
-
-    #[inline(always)]
-    const fn needs_source_owner_inverse(self, epoch: u64) -> bool {
-        !self.in_epoch(epoch) || matches!(self.state(), RowRollbackState::Inline)
-    }
-
-    #[inline(always)]
-    const fn cold_captured(self, epoch: u64) -> bool {
-        self.in_epoch(epoch) && matches!(self.state(), RowRollbackState::Cold)
-    }
-}
+use super::{CompactSourceTokenizationStep, InputLevel, SourceLevel, SourceSlot};
 
 /// Profiling-only proof that active-source delivery is independent of input
 /// depth. Shipping builds contain neither the counters nor their updates.
@@ -111,35 +55,20 @@ enum SourceOwnerTransition {
 }
 
 impl SourceOwnerTransition {
-    fn apply<G>(
-        self,
-        source: &SourceLevel<G>,
-        slot: &mut SourceSlot<G>,
-        retain_inverse: bool,
-    ) -> Option<SourceLevelExecutionState<G>> {
-        match (self, retain_inverse) {
-            (Self::Cursor, true) => Some(SourceLevelExecutionState::cursor(source, slot)),
-            (Self::EveryEof, true) => Some(SourceLevelExecutionState::every_eof(source, slot)),
-            (Self::Backing(replacement), true) => Some(SourceLevelExecutionState::backing(
-                source,
-                slot,
-                replacement,
-            )),
-            (Self::Cursor, false) => {
-                slot.cursor.release_execution_owners();
-                None
-            }
-            (Self::EveryEof, false) => {
+    /// Releases the owners a cold source transition displaces. The scalar
+    /// cursor state stays resident for the transition that follows.
+    fn apply<G>(self, slot: &mut SourceSlot<G>) {
+        match self {
+            Self::Cursor => slot.cursor.release_execution_owners(),
+            Self::EveryEof => {
                 slot.cursor.release_execution_owners();
                 slot.every_eof = None;
-                None
             }
-            (Self::Backing(replacement), false) => {
+            Self::Backing(replacement) => {
                 slot.cursor.backing = replacement;
                 slot.cursor.backing_registered = false;
                 slot.cursor.backing_capability = None;
                 slot.cursor.release_execution_owners();
-                None
             }
         }
     }
@@ -147,7 +76,6 @@ impl SourceOwnerTransition {
 
 pub(crate) struct ResidentSourceTop<'a, G> {
     pub(crate) source: &'a mut SourceLevel<G>,
-    pub(crate) slot: &'a mut SourceSlot<G>,
 }
 
 pub(crate) enum ResidentSourceAdvance {
@@ -236,10 +164,10 @@ impl<G> ResidentSourceTop<'_, G> {
         &self,
         location: super::SourceLocation,
     ) -> Option<super::DiagnosticLocation> {
-        let line = self.slot.cursor.line.as_ref()?;
-        let source = match self.slot.name_class {
+        let line = self.source.slot.cursor.line.as_ref()?;
+        let source = match self.source.slot.name_class {
             super::SourceNameClass::File | super::SourceNameClass::Scantokens(_) => {
-                self.slot.cursor.backing.id
+                self.source.slot.cursor.backing.id
             }
             super::SourceNameClass::Terminal | super::SourceNameClass::ReadStream(_) => {
                 return None;
@@ -249,7 +177,7 @@ impl<G> ResidentSourceTop<'_, G> {
     }
 
     pub(crate) fn current_diagnostic_location(&self) -> Option<super::DiagnosticLocation> {
-        let line = self.slot.cursor.line.as_ref()?;
+        let line = self.source.slot.cursor.line.as_ref()?;
         self.diagnostic_location(super::SourceLocation::new(
             line.physical.source,
             line.cursor.byte_cursor.saturating_sub(1),
@@ -258,7 +186,7 @@ impl<G> ResidentSourceTop<'_, G> {
 
     #[inline(always)]
     pub(crate) fn force_eof(&self, requested: bool) -> bool {
-        requested && self.slot.name_class == super::SourceNameClass::File
+        requested && self.source.slot.name_class == super::SourceNameClass::File
     }
 
     /// Borrows the retained suffix of the currently loaded source line.
@@ -271,21 +199,21 @@ impl<G> ResidentSourceTop<'_, G> {
     pub(crate) fn borrow_character_run<'a>(
         &'a mut self,
     ) -> Result<Option<BorrowedSourceCharacterRun<'a>>, ()> {
-        let Some(line) = self.slot.cursor.line.as_ref() else {
+        let Some(line) = self.source.slot.cursor.line.as_ref() else {
             return Ok(None);
         };
         let start = line.cursor.byte_cursor;
         if start >= line.retained_end {
             return Ok(None);
         }
-        let backing = self.slot.cursor.current_backing();
+        let backing = self.source.slot.cursor.current_backing();
         let start_index = usize::try_from(start).map_err(|_| ())?;
         let limit_index = usize::try_from(line.retained_end).map_err(|_| ())?;
         let bytes = backing.bytes.get(start_index..limit_index).ok_or(())?;
-        let capability = if self.slot.cursor.line_backing.is_some() {
-            self.slot.cursor.line_backing_capability
+        let capability = if self.source.slot.cursor.line_backing.is_some() {
+            self.source.slot.cursor.line_backing_capability
         } else {
-            self.slot.cursor.backing_capability
+            self.source.slot.cursor.backing_capability
         };
         if capability.is_none() {
             return Ok(None);
@@ -307,7 +235,7 @@ impl<G> ResidentSourceTop<'_, G> {
         if count == 0 {
             return Ok(());
         }
-        let line = self.slot.cursor.line.as_mut().ok_or(())?;
+        let line = self.source.slot.cursor.line.as_mut().ok_or(())?;
         line.cursor.byte_cursor = line
             .cursor
             .byte_cursor
@@ -340,15 +268,15 @@ impl<G> ResidentSourceTop<'_, G> {
         ) -> Result<bool, E>,
     ) -> Result<ResidentSourceCharacterRun<E>, ()> {
         record_source_lex_slot_borrow();
-        let Some(line) = self.slot.cursor.line.as_ref() else {
+        let Some(line) = self.source.slot.cursor.line.as_ref() else {
             return Ok(ResidentSourceCharacterRun::Unavailable);
         };
         let start = line.cursor.byte_cursor;
         if start >= line.retained_end {
             return Ok(ResidentSourceCharacterRun::Unavailable);
         }
-        let mode = self.slot.cursor.current_backing().mode;
-        let bytes = self.slot.cursor.current_backing().bytes.as_ref();
+        let mode = self.source.slot.cursor.current_backing().mode;
+        let bytes = self.source.slot.cursor.current_backing().bytes.as_ref();
         let source = line.physical.source;
         let limit = line.retained_end;
         let start_index = usize::try_from(start).map_err(|_| ())?;
@@ -393,7 +321,7 @@ impl<G> ResidentSourceTop<'_, G> {
             });
         }
 
-        let line = self.slot.cursor.line.as_mut().ok_or(())?;
+        let line = self.source.slot.cursor.line.as_mut().ok_or(())?;
         line.cursor.byte_cursor = line
             .cursor
             .byte_cursor
@@ -422,7 +350,7 @@ impl<G> ResidentSourceTop<'_, G> {
     ) -> Result<ResidentSourceAdvance, ()> {
         record_source_lex_slot_borrow();
         if state.tracked_region_is_active() {
-            super::observe_immutable_source(state, self.source, self.slot);
+            super::observe_immutable_source(state, self.source);
         }
         let identity = self.source.identity();
         let step = {
@@ -432,10 +360,12 @@ impl<G> ResidentSourceTop<'_, G> {
             };
             match profile.character_mode() {
                 crate::CharacterMode::EightBitExact => self
+                    .source
                     .slot
                     .cursor
                     .next_compact_exact_byte_step(force_eof, &mut queries),
                 crate::CharacterMode::UnicodeExtended => self
+                    .source
                     .slot
                     .cursor
                     .next_compact_unicode_step(force_eof, &mut queries),
@@ -536,66 +466,16 @@ fn record_source_owner_slot_lookup() {
     });
 }
 
-/// One inverse in the authoritative ordering of all input mutations.
-///
-/// Source owners and displaced rows live in generation-checked reusable slabs;
-/// the journal retains only their compact handles. Token and macro-argument
-/// frame state is copy-small and remains inline.
-pub(crate) enum InputUndo<G> {
-    Inline {
-        index: u32,
-        state: InputLevelInlineState,
-    },
-    SourceLex {
-        index: u32,
-        payload: PayloadHandle,
-    },
-    SourceOwner {
-        index: u32,
-        payload: PayloadHandle,
-        generation: core::marker::PhantomData<fn() -> G>,
-    },
-    /// An editor-root backing substitution. Keeping this distinct from a
-    /// complete owner capture lets an exposure boundary retain the row's
-    /// resulting execution state in the ordinary ordered journal.
-    PhysicalBacking {
-        index: u32,
-        payload: PayloadHandle,
-        generation: core::marker::PhantomData<fn() -> G>,
-    },
-    /// One active external-source scalar changed by editor-root rebinding.
-    /// This remains separate from exposed-row cursor capture so a later
-    /// exposure still records the row's initial delivery position.
-    SourceContext {
-        index: u32,
-        source: Option<tex_state::packed_input::SourceContext>,
-    },
-    Replacement {
-        index: u32,
-        payload: PayloadHandle,
-    },
-}
-
-/// One rollback coordinate in a generation's dedicated input history.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct InputStackMark {
-    pub(crate) top: u32,
-    pub(crate) undo: PackedJournalMark,
-    pub(crate) occupied_source_buffer_slots: usize,
-    pub(crate) active_macro_bodies: usize,
-    pub(crate) active_macro_parameters: usize,
-}
-
 /// Allocation-free identity of the one mutable input row that can affect a
 /// newly captured TeX82 error context.
 ///
 /// Rows below the semantic top are immutable while buried. Their source
 /// context is copied into every descendant frame, so a generated-source
 /// rebind is also visible in the top frame. `row_admissions` prevents a
-/// push/pop ABA from making an older coordinate name the exposed row again.
+/// push/pop ABA from making an older coordinate name the exposed row again;
+/// it is monotonic across checkpoint installs.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputStackContextCoordinate {
-    history_interval: u64,
     row_admissions: u64,
     source_owner_swaps: u64,
     top: DiagnosticInputTop,
@@ -606,7 +486,6 @@ enum DiagnosticInputTop {
     Empty,
     Source {
         frame: super::PackedInputFrame,
-        slot: SourceSlotKey,
         name_class: super::SourceNameClass,
         cursor: DiagnosticSourceCursor,
     },
@@ -680,35 +559,17 @@ impl DiagnosticSourceCursor {
     }
 }
 
-#[derive(Debug)]
-struct InputStackFork {
-    accepted_top: usize,
-    accepted_occupied_source_buffer_slots: usize,
-    accepted_active_macro_bodies: usize,
-    accepted_active_macro_parameters: usize,
-}
-
 /// One generation-tied input stack whose live rows are authoritative.
 ///
-/// Stable rows cover sources, stored spans, and direct macro-argument ranges.
-/// All mutable execution state, cold source-owner swaps, row replacement, and
-/// lifecycle changes share the single ordered [`InputUndo`] journal.
+/// Rows cover sources, stored spans, and direct macro-argument ranges. Each
+/// source row owns its variable source state directly. Pushing appends and
+/// popping truncates; a checkpoint copies the stack instead of journaling it.
 pub(crate) struct InputStack<G> {
     pub(crate) rows: Vec<InputLevel<G>>,
-    pub(crate) top: usize,
-    pub(crate) undo: PackedJournal<InputUndo<G>, INPUT_UNDO_RECORDS_PER_CHUNK>,
-    displaced_rows: PayloadSlab<InputLevel<G>>,
-    pub(crate) source_lex_states: PayloadSlab<SourceLexExecutionState>,
-    source_owner_states: PayloadSlab<SourceLevelExecutionState<G>>,
-    pub(crate) source_slots: PayloadSlab<SourceSlot<G>>,
     occupied_source_buffer_slots: usize,
     active_macro_bodies: usize,
     active_macro_parameters: usize,
-    fork: Option<InputStackFork>,
-    pub(crate) recording: bool,
-    pub(crate) interval: u64,
     row_admissions: u64,
-    pub(crate) source_lex_captures: u64,
     source_owner_swaps: u64,
     #[cfg(test)]
     pub(crate) cursor_mutations: InputCursorMutationCounters,
@@ -718,20 +579,10 @@ impl<G> Default for InputStack<G> {
     fn default() -> Self {
         Self {
             rows: Vec::new(),
-            top: 0,
-            undo: PackedJournal::default(),
-            displaced_rows: PayloadSlab::default(),
-            source_lex_states: PayloadSlab::default(),
-            source_owner_states: PayloadSlab::default(),
-            source_slots: PayloadSlab::default(),
             occupied_source_buffer_slots: 0,
             active_macro_bodies: 0,
             active_macro_parameters: 0,
-            fork: None,
-            recording: false,
-            interval: 1,
             row_admissions: 0,
-            source_lex_captures: 0,
             source_owner_swaps: 0,
             #[cfg(test)]
             cursor_mutations: InputCursorMutationCounters::default(),
@@ -743,27 +594,14 @@ impl<G: core::fmt::Debug> core::fmt::Debug for InputStack<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("InputStack")
-            .field("rows", &&self.rows[..self.top])
-            .field("top", &self.top)
+            .field("rows", &self.rows)
             .finish_non_exhaustive()
     }
 }
 
 impl<G: PartialEq> PartialEq for InputStack<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.as_slice().len() == other.as_slice().len()
-            && self
-                .as_slice()
-                .iter()
-                .zip(other.as_slice())
-                .all(|(left, right)| match (left, right) {
-                    (InputLevel::Source(left), InputLevel::Source(right)) => {
-                        left == right
-                            && self.source_level_slot(left) == other.source_level_slot(right)
-                    }
-                    (InputLevel::Resident(left), InputLevel::Resident(right)) => left == right,
-                    _ => false,
-                })
+        self.rows == other.rows
     }
 }
 
@@ -771,13 +609,7 @@ impl<G: Eq> Eq for InputStack<G> {}
 
 impl<G: Hash> Hash for InputStack<G> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.as_slice().len().hash(state);
-        for level in self.as_slice() {
-            level.hash(state);
-            if let InputLevel::Source(source) = level {
-                self.source_level_slot(source).hash(state);
-            }
-        }
+        self.rows.hash(state);
     }
 }
 
@@ -785,7 +617,7 @@ impl<G> Deref for InputStack<G> {
     type Target = [InputLevel<G>];
 
     fn deref(&self) -> &Self::Target {
-        self.as_slice()
+        &self.rows
     }
 }
 
@@ -796,7 +628,7 @@ where
     type Output = I::Output;
 
     fn index(&self, index: I) -> &Self::Output {
-        &self.as_slice()[index]
+        &self.rows[index]
     }
 }
 
@@ -805,7 +637,7 @@ impl<'a, G> IntoIterator for &'a InputStack<G> {
     type IntoIter = core::slice::Iter<'a, InputLevel<G>>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.iter()
+        self.rows.iter()
     }
 }
 
@@ -848,18 +680,60 @@ impl<G> InputStack<G> {
             .expect("input parameter count matches live macro rows");
     }
 
+    /// Copies a quiescent stack for a checkpoint capture.
+    ///
+    /// Quiescence excludes macro bodies, macro arguments, and attempt-owned
+    /// token lists, so every remaining row names storage that outlives the
+    /// capture: a source owner, the replay lane, or a durable list.
+    pub(crate) fn checkpoint_copy(&self) -> Self {
+        debug_assert_eq!(self.active_macro_bodies, 0);
+        Self {
+            rows: self.rows.iter().map(InputLevel::checkpoint_copy).collect(),
+            occupied_source_buffer_slots: self.occupied_source_buffer_slots,
+            active_macro_bodies: 0,
+            active_macro_parameters: 0,
+            row_admissions: 0,
+            source_owner_swaps: 0,
+            #[cfg(test)]
+            cursor_mutations: InputCursorMutationCounters::default(),
+        }
+    }
+
+    /// Replaces the live rows with a copy of a captured stack. Admission and
+    /// owner-swap counters stay monotonic so no diagnostic coordinate taken
+    /// before the install can name a row after it.
+    pub(crate) fn install_checkpoint(&mut self, capture: &Self) {
+        self.rows.clear();
+        self.rows
+            .extend(capture.rows.iter().map(InputLevel::checkpoint_copy));
+        self.occupied_source_buffer_slots = capture.occupied_source_buffer_slots;
+        self.active_macro_bodies = 0;
+        self.active_macro_parameters = 0;
+        self.row_admissions = self.row_admissions.saturating_add(1);
+        self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
+    }
+
+    /// Advances the diagnostic-coordinate counters past `past`, so no
+    /// coordinate captured from a sibling stack validates against this one.
+    pub(crate) fn continue_context_epoch(&mut self, past: &Self) {
+        self.row_admissions = self
+            .row_admissions
+            .max(past.row_admissions)
+            .saturating_add(1);
+        self.source_owner_swaps = self
+            .source_owner_swaps
+            .max(past.source_owner_swaps)
+            .saturating_add(1);
+    }
+
     pub(crate) fn diagnostic_context_coordinate(&self) -> InputStackContextCoordinate {
-        let top = match self.rows.get(self.top.saturating_sub(1)) {
+        let top = match self.rows.last() {
             None => DiagnosticInputTop::Empty,
-            Some(InputLevel::Source(source)) => {
-                let slot = self.source_slot(source.slot);
-                DiagnosticInputTop::Source {
-                    frame: source.frame,
-                    slot: source.slot,
-                    name_class: slot.name_class,
-                    cursor: DiagnosticSourceCursor::capture(&slot.cursor),
-                }
-            }
+            Some(InputLevel::Source(source)) => DiagnosticInputTop::Source {
+                frame: source.frame,
+                name_class: source.slot.name_class,
+                cursor: DiagnosticSourceCursor::capture(&source.slot.cursor),
+            },
             Some(InputLevel::Resident(row)) => match &row.storage {
                 super::ResidentTokenStorage::MacroBody(_) => DiagnosticInputTop::MacroBody {
                     identity: row.header.identity(),
@@ -879,7 +753,6 @@ impl<G> InputStack<G> {
             },
         };
         InputStackContextCoordinate {
-            history_interval: self.interval,
             row_admissions: self.row_admissions,
             source_owner_swaps: self.source_owner_swaps,
             top,
@@ -893,104 +766,77 @@ impl<G> InputStack<G> {
         self.diagnostic_context_coordinate() == coordinate
     }
 
+    /// Finds the first editor-generated physical backing among the live
+    /// source rows.
+    pub(crate) fn editor_backing(&self, accepted: &[u8]) -> Option<&super::RegisteredSource> {
+        self.rows.iter().find_map(|level| {
+            let InputLevel::Source(source) = level else {
+                return None;
+            };
+            source
+                .slot
+                .cursor
+                .backing
+                .is_editor_backing(accepted)
+                .then_some(&source.slot.cursor.backing)
+        })
+    }
+
+    /// Moves every source row reading the accepted editor revision onto
+    /// `replacement`, remapping its offsets around the edited span.
     pub(crate) fn rehome_generated_source(
         &mut self,
         accepted: &[u8],
-        bytes: std::sync::Arc<[u8]>,
-        old_start: usize,
-        old_end: usize,
-        new_end: usize,
-    ) -> Result<bool, crate::SourceRegistrationError> {
-        let offsets = super::source::SourceOffsetMap::new(old_start, old_end, new_end);
+        replacement: &super::RegisteredSource,
+        offsets: super::source::SourceOffsetMap,
+    ) -> bool {
         let mut rebound = false;
-        let mut failure = None;
-        let mut replacement = None;
-        let mut root_slot = None;
-        self.source_slots.for_each_value_mut(|handle, slot| {
-            if failure.is_some() || !slot.cursor.backing.is_editor_backing(accepted) {
-                return;
+        for level in &mut self.rows {
+            let InputLevel::Source(source) = level else {
+                continue;
+            };
+            let slot = &mut *source.slot;
+            if !slot.cursor.backing.is_editor_backing(accepted) {
+                continue;
             }
-            if replacement.is_none() {
-                match slot
-                    .cursor
-                    .backing
-                    .rehome_generated(std::sync::Arc::clone(&bytes).into())
-                {
-                    Ok(prepared) => replacement = Some(prepared),
-                    Err(error) => {
-                        failure = Some(error);
-                        return;
-                    }
-                }
-            }
-            slot.cursor
-                .backing
-                .clone_from(replacement.as_ref().expect("replacement was prepared"));
+            slot.cursor.backing.clone_from(replacement);
             slot.cursor.backing_registered = false;
             slot.cursor.backing_capability = None;
             slot.cursor.rehome_offsets(offsets);
             slot.occupied_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
-            root_slot = Some(SourceSlotKey(handle));
             rebound = true;
-        });
+        }
         if rebound {
             self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
-            let root_slot = root_slot.expect("a rebound source owns its slot");
-            self.source_lex_states
-                .for_each_value_mut(|_, state| state.rehome_offsets(root_slot, offsets));
-            let replacement = replacement
-                .as_ref()
-                .expect("a rebound source prepared its replacement");
-            self.source_owner_states.for_each_value_mut(|_, state| {
-                state.rehome_physical_backing(root_slot, accepted, replacement);
-                state.rehome_offsets(root_slot, offsets);
-            });
             self.refresh_occupied_source_buffer_slots();
         }
-        match failure {
-            Some(error) => Err(error),
-            None => Ok(rebound),
-        }
+        rebound
     }
 
     pub(crate) fn push_source(&mut self, frame: super::PackedInputFrame, slot: SourceSlot<G>) {
-        self.source_slots.warm_first_page();
-        let slot = SourceSlotKey::new(self.source_slots.insert(slot));
         self.push_row(InputLevel::Source(SourceLevel {
             frame,
-            slot,
-            generation: core::marker::PhantomData,
-            rollback: RowRollbackMarker::default(),
+            slot: Box::new(slot),
         }));
     }
 
-    pub(crate) fn source_slot(&self, key: SourceSlotKey) -> &SourceSlot<G> {
-        record_source_owner_slot_lookup();
-        self.source_slots
-            .value(key.0)
-            .expect("source row names its live ABA-checked slot")
-    }
-
-    pub(crate) fn source_level_slot(&self, source: &SourceLevel<G>) -> &SourceSlot<G> {
-        self.source_slot(source.slot)
-    }
-
-    pub(crate) fn top_source(&self) -> Option<(&SourceLevel<G>, &SourceSlot<G>)> {
-        let InputLevel::Source(source) = self.rows.get(self.top.checked_sub(1)?)? else {
+    pub(crate) fn top_source(&self) -> Option<&SourceLevel<G>> {
+        let InputLevel::Source(source) = self.rows.last()? else {
             return None;
         };
-        Some((source, self.source_slot(source.slot)))
+        record_source_owner_slot_lookup();
+        Some(source)
     }
 
     pub(crate) fn physical_source(
         &self,
         id: tex_state::SourceId,
     ) -> Option<&super::RegisteredSource> {
-        self.as_slice().iter().find_map(|level| {
+        self.rows.iter().find_map(|level| {
             let InputLevel::Source(source) = level else {
                 return None;
             };
-            let backing = &self.source_level_slot(source).cursor.backing;
+            let backing = &source.slot.cursor.backing;
             (backing.id == id).then_some(backing)
         })
     }
@@ -1000,51 +846,33 @@ impl<G> InputStack<G> {
         id: tex_state::SourceId,
         replacement: super::RegisteredSource,
     ) -> bool {
-        let Some(index) = self.as_slice().iter().position(|level| {
+        let Some(index) = self.rows.iter().position(|level| {
             let InputLevel::Source(source) = level else {
                 return false;
             };
-            self.source_level_slot(source).cursor.backing.id == id
+            source.slot.cursor.backing.id == id
         }) else {
             return false;
         };
-        let key = match &self.rows[index] {
-            InputLevel::Source(source) => source.slot,
-            _ => unreachable!("physical source lookup returned a token row"),
+        let InputLevel::Source(source) = &mut self.rows[index] else {
+            unreachable!("physical source lookup returned a token row")
         };
-        let (rows, slots) = (&mut self.rows, &mut self.source_slots);
-        let InputLevel::Source(source) = &mut rows[index] else {
-            unreachable!()
-        };
-        let slot = slots.value_mut(key.0).expect("source slot remains live");
+        let slot = &mut *source.slot;
         let prior_buffer_slots = slot.occupied_buffer_slots;
         let replacement_id = replacement.id;
-        let state = SourceLevelExecutionState::physical_backing(source, slot, replacement);
+        slot.cursor.backing = replacement;
+        slot.cursor.backing_registered = false;
+        slot.cursor.backing_capability = None;
         let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
         slot.occupied_buffer_slots = current_buffer_slots;
-        if self.recording {
-            self.source_owner_states.warm_first_page();
-            let payload = self.source_owner_states.insert(state);
-            self.undo.append(InputUndo::PhysicalBacking {
-                index: u32::try_from(index).expect("input row index fits u32"),
-                payload,
-                generation: core::marker::PhantomData,
-            });
-        }
-        for index in 0..self.top {
-            let Some(source_context) = self.rows[index].source_context() else {
+        for level in &mut self.rows {
+            let Some(source_context) = level.source_context() else {
                 continue;
             };
             if source_context.source() != id {
                 continue;
             }
-            if self.recording {
-                self.undo.append(InputUndo::SourceContext {
-                    index: u32::try_from(index).expect("input row index fits u32"),
-                    source: Some(source_context),
-                });
-            }
-            self.rows[index].set_source_context(Some(tex_state::packed_input::SourceContext::new(
+            level.set_source_context(Some(tex_state::packed_input::SourceContext::new(
                 replacement_id,
                 source_context.role(),
             )));
@@ -1062,9 +890,7 @@ impl<G> InputStack<G> {
     #[inline(always)]
     pub(crate) fn current_source_context(&self) -> Option<tex_state::packed_input::SourceContext> {
         record_source_context_read();
-        self.rows
-            .get(self.top.checked_sub(1)?)
-            .and_then(InputLevel::source_context)
+        self.rows.last().and_then(InputLevel::source_context)
     }
 
     /// Mutates only copy-small lexer execution state.
@@ -1074,20 +900,13 @@ impl<G> InputStack<G> {
     /// [`Self::mutate_top_source`] so buffer occupancy is updated once.
     pub(crate) fn mutate_top_source_lex<R>(
         &mut self,
-        mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
+        mutate: impl FnOnce(&mut super::PackedInputFrame, &mut SourceSlot<G>) -> R,
     ) -> Option<R> {
-        let index = self.top.checked_sub(1)?;
-        let (rows, slots) = (&mut self.rows, &mut self.source_slots);
-        let InputLevel::Source(source) = &mut rows[index] else {
+        let InputLevel::Source(source) = self.rows.last_mut()? else {
             return None;
         };
-        let key = source.slot;
-        let slot = slots
-            .value_mut(key.0)
-            .expect("source row names its live ABA-checked slot");
         record_source_lex_slot_borrow();
-        let result = mutate(source, slot);
-        Some(result)
+        Some(mutate(&mut source.frame, &mut source.slot))
     }
 }
 
@@ -1117,7 +936,7 @@ impl<G> crate::CommandState<G> {
         fuel: &mut crate::fuel::CommandFuel,
         mut admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<ResidentRun, crate::CommandError> {
-        let Some(resident_index) = self.roots.input.levels.top.checked_sub(1) else {
+        let Some(resident_index) = self.roots.input.levels.rows.len().checked_sub(1) else {
             return Ok(ResidentRun::default());
         };
         let (roots, scratch) = (&mut self.roots, &mut self.scratch);
@@ -1202,8 +1021,7 @@ impl<G> crate::CommandState<G> {
             });
         }
         // The span append above succeeded in full, so the authoritative cursor
-        // and fuel settle as one atomic scalar run. Rollback was captured when
-        // this row became exposed.
+        // and fuel settle as one atomic scalar run.
         row.header
             .frame
             .advance_resident_run(consumed)
@@ -1224,8 +1042,6 @@ impl<G> crate::CommandState<G> {
         // TeX82 §347 counts the run's interior braces in `align_state`; no
         // alignment is active when the admission accepts braces.
         if admission.brace_delta() != 0 {
-            self.timeline
-                .record_delivery_align_state(self.roots.alignment.align_state);
             self.roots.alignment.align_state += admission.brace_delta();
         }
         fuel.charge_run(consumed)?;
@@ -1285,8 +1101,6 @@ impl<G> crate::CommandState<G> {
             .map_err(|_| ())?
             .ok_or(())?;
         let identity = super::InputLevelId(self.roots.input.next_level_identity);
-        self.timeline
-            .record_next_input_level_identity(self.roots.input.next_level_identity);
         self.roots.input.next_level_identity = self.roots.input.next_level_identity.wrapping_add(1);
         let origin_run = self
             .scratch
@@ -1456,7 +1270,6 @@ impl<G> crate::CommandState<G> {
         );
         if popped {
             let previous_align_state = self.roots.alignment.align_state;
-            self.record_alignment_phase();
             if self.roots.alignment.finish_u_template(identity)
                 && let Some(sink) = observer.as_deref_mut()
             {
@@ -1507,34 +1320,10 @@ pub(crate) fn observed_retirement_reason(
 }
 
 impl<G> InputStack<G> {
-    #[cfg(any(test, feature = "profiling"))]
-    pub(crate) fn set_top_token_retirement(
-        &mut self,
-        retirement: super::RetirementBehavior,
-    ) -> bool {
-        let index = match self.top.checked_sub(1) {
-            Some(index) => index,
-            None => return false,
-        };
-        if self.rows[index].stored_common().is_none() {
-            return false;
-        }
-        self.record_token_state(index);
-        let cursor = self.rows[index].stored_common_mut().expect("stored row");
-        cursor.set_retirement(retirement);
-        true
-    }
-
     pub(crate) fn retain_top_v_template(&mut self) -> bool {
-        let index = match self.top.checked_sub(1) {
-            Some(index) => index,
-            None => return false,
-        };
-        if self.rows[index].stored_common().is_none() {
+        let Some(cursor) = self.rows.last_mut().and_then(InputLevel::stored_common_mut) else {
             return false;
-        }
-        self.record_token_state(index);
-        let cursor = self.rows[index].stored_common_mut().expect("stored row");
+        };
         cursor.set_retirement(super::RetirementBehavior::AwaitingVTemplateRetirement);
         cursor
             .frame
@@ -1547,54 +1336,15 @@ impl<G> InputStack<G> {
         additional: u32,
         replay_cursor: super::ResidentReplayCursor,
     ) -> Option<bool> {
-        let index = self.top.checked_sub(1)?;
-        let InputLevel::Resident(super::ResidentTokenRow {
-            storage: super::ResidentTokenStorage::Replay { .. },
-            ..
-        }) = &self.rows[index]
-        else {
-            return None;
-        };
-        if self.recording && !self.rows[index].rollback_marker().in_epoch(self.interval) {
-            let InputLevel::Resident(super::ResidentTokenRow {
-                header,
-                storage: super::ResidentTokenStorage::Replay { cursor, .. },
-            }) = &self.rows[index]
-            else {
-                unreachable!()
-            };
-            self.record_inline(
-                index,
-                InputLevelInlineState::replay_cursor(header.frame.position(), *cursor),
-            );
-        }
-        self.record_token_state(index);
         let InputLevel::Resident(super::ResidentTokenRow {
             header,
             storage: super::ResidentTokenStorage::Replay { cursor, .. },
-        }) = &mut self.rows[index]
+        }) = self.rows.last_mut()?
         else {
-            unreachable!()
+            return None;
         };
         *cursor = replay_cursor;
-        let extended = header.frame.extend_limit(additional).is_some();
-        Some(extended)
-    }
-
-    #[cfg(any(test, feature = "profiling"))]
-    pub(crate) fn toggle_top_token_retirement(&mut self) -> bool {
-        let Some(current) = self
-            .rows
-            .get(self.top.saturating_sub(1))
-            .and_then(|row| row.stored_common().map(|cursor| cursor.retirement()))
-        else {
-            return false;
-        };
-        let retirement = match current {
-            super::RetirementBehavior::Pop => super::RetirementBehavior::StopAtEnd,
-            _ => super::RetirementBehavior::Pop,
-        };
-        self.set_top_token_retirement(retirement)
+        Some(header.frame.extend_limit(additional).is_some())
     }
 
     pub(crate) fn push(&mut self, value: InputLevel<G>) {
@@ -1605,62 +1355,31 @@ impl<G> InputStack<G> {
         self.push_row(value);
     }
 
-    fn push_row(&mut self, mut value: InputLevel<G>) {
+    fn push_row(&mut self, value: InputLevel<G>) {
         self.row_admissions = self.row_admissions.saturating_add(1);
-        value
-            .rollback_marker_mut()
-            .set(self.interval, RowRollbackState::Admitted);
-        if self.top == self.rows.len() {
-            self.rows.push(value);
-        } else if self.recording
-            && self.rows[self.top]
-                .rollback_marker()
-                .needs_replacement(self.interval)
-        {
-            self.displaced_rows.warm_first_page();
-            let old = std::mem::replace(&mut self.rows[self.top], value);
-            let payload = self.displaced_rows.insert(old);
-            self.undo.append(InputUndo::Replacement {
-                index: u32::try_from(self.top).expect("input row index fits u32"),
-                payload,
-            });
-        } else {
-            let old = std::mem::replace(&mut self.rows[self.top], value);
-            if let InputLevel::Source(source) = old {
-                self.source_slots.release(source.slot.0);
-            }
-        }
-        if let InputLevel::Source(source) = &self.rows[self.top] {
+        if let InputLevel::Source(source) = &value {
             self.occupied_source_buffer_slots = self
                 .occupied_source_buffer_slots
-                .saturating_add(self.source_slot(source.slot).occupied_buffer_slots);
+                .saturating_add(source.slot.occupied_buffer_slots);
         }
-        self.top += 1;
+        self.rows.push(value);
     }
 
     pub(crate) fn pop_project<R>(
         &mut self,
         project: impl FnOnce(&InputLevel<G>, Option<&SourceSlot<G>>) -> R,
     ) -> Option<R> {
-        let index = self.top.checked_sub(1)?;
-        let source = match &self.rows[index] {
-            InputLevel::Source(source) => Some(self.source_slot(source.slot)),
-            _ => None,
+        let retired = self.rows.pop()?;
+        let source = match &retired {
+            InputLevel::Source(source) => Some(&*source.slot),
+            InputLevel::Resident(_) => None,
         };
-        let result = project(&self.rows[index], source);
+        let result = project(&retired, source);
         if let Some(source) = source {
             self.occupied_source_buffer_slots = self
                 .occupied_source_buffer_slots
                 .saturating_sub(source.occupied_buffer_slots);
         }
-        self.top = index;
-        if !self.recording {
-            let retired = self.rows.pop().expect("input top exists");
-            if let InputLevel::Source(source) = retired {
-                self.source_slots.release(source.slot.0);
-            }
-        }
-        self.capture_exposed_top();
         Some(result)
     }
 
@@ -1670,30 +1389,26 @@ impl<G> InputStack<G> {
     /// exhaustion, so this performs neither another top lookup nor the
     /// identity validation required by cold detached coordinates.
     pub(super) fn pop_resident(&mut self, index: usize) {
-        debug_assert_eq!(index.checked_add(1), Some(self.top));
+        debug_assert_eq!(index.checked_add(1), Some(self.rows.len()));
         debug_assert!(!matches!(self.rows[index], InputLevel::Source(_)));
-        self.top = index;
-        if !self.recording {
-            self.rows.pop();
-        }
-        self.capture_exposed_top();
+        self.rows.pop();
     }
 
     pub(super) fn resident_at(&self, index: usize) -> &InputLevel<G> {
-        debug_assert_eq!(index.checked_add(1), Some(self.top));
+        debug_assert_eq!(index.checked_add(1), Some(self.rows.len()));
         &self.rows[index]
     }
 
     pub(crate) fn mutate_top_source_cursor<R>(
         &mut self,
-        mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
+        mutate: impl FnOnce(&mut super::PackedInputFrame, &mut SourceSlot<G>) -> R,
     ) -> Option<R> {
         self.mutate_top_source(SourceOwnerTransition::Cursor, mutate)
     }
 
     pub(crate) fn mutate_top_source_every_eof<R>(
         &mut self,
-        mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
+        mutate: impl FnOnce(&mut super::PackedInputFrame, &mut SourceSlot<G>) -> R,
     ) -> Option<R> {
         self.mutate_top_source(SourceOwnerTransition::EveryEof, mutate)
     }
@@ -1701,258 +1416,29 @@ impl<G> InputStack<G> {
     pub(crate) fn mutate_top_source_backing<R>(
         &mut self,
         replacement: super::RegisteredSource,
-        mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
+        mutate: impl FnOnce(&mut super::PackedInputFrame, &mut SourceSlot<G>) -> R,
     ) -> Option<R> {
         self.mutate_top_source(SourceOwnerTransition::Backing(replacement), mutate)
     }
 
-    /// Moves the first source-owner inverse in an interval into the same
-    /// ordered history as row advances and replacements.
-    ///
-    /// Later owner transitions of that row release their displaced owner in
-    /// place: rollback needs only the interval's initial owner, and candidate
-    /// redo obtains the final owner by swapping that one inverse a second
-    /// time. A row admitted during the interval likewise releases directly.
+    /// Applies one cold source-owner transition to the top row and refreshes
+    /// its contribution to TeX's shared buffer.
     fn mutate_top_source<R>(
         &mut self,
         transition: SourceOwnerTransition,
-        mutate: impl FnOnce(&mut SourceLevel<G>, &mut SourceSlot<G>) -> R,
+        mutate: impl FnOnce(&mut super::PackedInputFrame, &mut SourceSlot<G>) -> R,
     ) -> Option<R> {
-        let index = self.top.checked_sub(1)?;
-        if !matches!(self.rows[index], InputLevel::Source(_)) {
+        let InputLevel::Source(source) = self.rows.last_mut()? else {
             return None;
-        }
-        let key = match &self.rows[index] {
-            InputLevel::Source(source) => source.slot,
-            _ => unreachable!("source mutation names a source row"),
         };
-        let prior_buffer_slots = self
-            .source_slots
-            .value(key.0)
-            .expect("source slot remains live")
-            .occupied_buffer_slots;
-        let retain_inverse = self.recording
-            && self.rows[index]
-                .rollback_marker()
-                .needs_source_owner_inverse(self.interval);
-        if retain_inverse {
-            self.source_owner_states.warm_first_page();
-        }
-        let (payload, result, current_buffer_slots) = {
-            let (rows, slots, owner_states) = (
-                &mut self.rows,
-                &mut self.source_slots,
-                &mut self.source_owner_states,
-            );
-            let InputLevel::Source(source) = &mut rows[index] else {
-                unreachable!()
-            };
-            let slot = slots.value_mut(key.0).expect("source slot remains live");
-            let payload = transition
-                .apply(source, slot, retain_inverse)
-                .map(|state| owner_states.insert(state));
-            let result = mutate(source, slot);
-            let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
-            slot.occupied_buffer_slots = current_buffer_slots;
-            (payload, result, current_buffer_slots)
-        };
-        if let Some(payload) = payload {
-            self.undo.append(InputUndo::SourceOwner {
-                index: u32::try_from(index).expect("input row index fits u32"),
-                payload,
-                generation: core::marker::PhantomData,
-            });
-            self.rows[index]
-                .rollback_marker_mut()
-                .set(self.interval, RowRollbackState::Cold);
-            self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
-        }
+        let slot = &mut *source.slot;
+        let prior_buffer_slots = slot.occupied_buffer_slots;
+        transition.apply(slot);
+        let result = mutate(&mut source.frame, slot);
+        let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
+        slot.occupied_buffer_slots = current_buffer_slots;
         self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
         Some(result)
-    }
-
-    pub(crate) fn mark(&mut self) -> Option<InputStackMark> {
-        self.recording = true;
-        self.undo.warm_first_page();
-        self.displaced_rows.warm_first_page();
-        self.source_lex_states.warm_first_page();
-        self.source_owner_states.warm_first_page();
-        let mark = InputStackMark {
-            top: u32::try_from(self.top).ok()?,
-            undo: self.undo.mark(),
-            occupied_source_buffer_slots: self.occupied_source_buffer_slots,
-            active_macro_bodies: self.active_macro_bodies,
-            active_macro_parameters: self.active_macro_parameters,
-        };
-        self.begin_interval();
-        Some(mark)
-    }
-
-    pub(crate) fn validates(&self, mark: InputStackMark) -> bool {
-        mark.top as usize <= self.rows.len() && self.undo.validates(mark.undo)
-    }
-
-    pub(crate) fn restore(&mut self, mark: InputStackMark) -> bool {
-        if self.fork.is_some() || !self.validates(mark) {
-            return false;
-        }
-        let (rows, displaced, source_lex, source_owners, source_slots) = (
-            &mut self.rows,
-            &mut self.displaced_rows,
-            &mut self.source_lex_states,
-            &mut self.source_owner_states,
-            &mut self.source_slots,
-        );
-        let restored = self.undo.restore_with(
-            mark.undo,
-            &mut (rows, displaced, source_lex, source_owners, source_slots),
-            |inverse, state| inverse.swap(state),
-            |inverse, (_, displaced, source_lex, source_owners, source_slots)| {
-                inverse.release(displaced, source_lex, source_owners, source_slots);
-            },
-        );
-        if restored {
-            self.top = mark.top as usize;
-            self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
-            self.active_macro_bodies = mark.active_macro_bodies;
-            self.active_macro_parameters = mark.active_macro_parameters;
-            self.begin_interval();
-        }
-        restored
-    }
-
-    pub(crate) fn restore_current(&mut self, mark: InputStackMark) -> bool {
-        if !self.can_restore_current(mark) {
-            return false;
-        }
-        let (rows, displaced, source_lex, source_owners, source_slots) = (
-            &mut self.rows,
-            &mut self.displaced_rows,
-            &mut self.source_lex_states,
-            &mut self.source_owner_states,
-            &mut self.source_slots,
-        );
-        let restored = self.undo.restore_current_with(
-            mark.undo,
-            &mut (rows, displaced, source_lex, source_owners, source_slots),
-            |inverse, state| inverse.swap(state),
-            |inverse, (_, displaced, source_lex, source_owners, source_slots)| {
-                inverse.release(displaced, source_lex, source_owners, source_slots);
-            },
-        );
-        if restored {
-            self.top = mark.top as usize;
-            self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
-            self.active_macro_bodies = mark.active_macro_bodies;
-            self.active_macro_parameters = mark.active_macro_parameters;
-            self.begin_interval();
-        }
-        restored
-    }
-
-    pub(crate) fn can_restore_current(&self, mark: InputStackMark) -> bool {
-        self.fork.is_some()
-            && mark.top as usize <= self.rows.len()
-            && self.undo.can_restore_current(mark.undo)
-    }
-
-    pub(crate) fn release_prefix(&mut self, mark: InputStackMark) -> Option<usize> {
-        if self.fork.is_some() || !self.validates(mark) {
-            return None;
-        }
-        let (displaced, source_lex, source_owners, source_slots) = (
-            &mut self.displaced_rows,
-            &mut self.source_lex_states,
-            &mut self.source_owner_states,
-            &mut self.source_slots,
-        );
-        self.undo.release_prefix(mark.undo, |inverse| {
-            inverse.release(displaced, source_lex, source_owners, source_slots);
-        })
-    }
-
-    pub(crate) fn begin_checkpoint_candidate(&mut self, mark: InputStackMark) {
-        assert!(
-            self.fork.is_none(),
-            "input stack already owns a candidate fork"
-        );
-        assert!(
-            self.validates(mark),
-            "input candidate mark was prevalidated"
-        );
-        let accepted_top = self.top;
-        let accepted_occupied_source_buffer_slots = self.occupied_source_buffer_slots;
-        let accepted_active_macro_bodies = self.active_macro_bodies;
-        let accepted_active_macro_parameters = self.active_macro_parameters;
-        let (rows, displaced, source_lex, source_owners, source_slots) = (
-            &mut self.rows,
-            &mut self.displaced_rows,
-            &mut self.source_lex_states,
-            &mut self.source_owner_states,
-            &mut self.source_slots,
-        );
-        self.undo.begin_checkpoint_candidate(mark.undo, |inverse| {
-            inverse.swap(&mut (rows, displaced, source_lex, source_owners, source_slots));
-        });
-        self.top = mark.top as usize;
-        self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
-        self.active_macro_bodies = mark.active_macro_bodies;
-        self.active_macro_parameters = mark.active_macro_parameters;
-        self.fork = Some(InputStackFork {
-            accepted_top,
-            accepted_occupied_source_buffer_slots,
-            accepted_active_macro_bodies,
-            accepted_active_macro_parameters,
-        });
-        self.begin_interval();
-    }
-
-    pub(crate) fn reject_checkpoint_candidate(&mut self) {
-        let fork = self
-            .fork
-            .take()
-            .expect("input rejection requires a candidate fork");
-        let (rows, displaced, source_lex, source_owners, source_slots) = (
-            &mut self.rows,
-            &mut self.displaced_rows,
-            &mut self.source_lex_states,
-            &mut self.source_owner_states,
-            &mut self.source_slots,
-        );
-        self.undo.reject_checkpoint_candidate_with(
-            &mut (rows, displaced, source_lex, source_owners, source_slots),
-            |inverse, state| inverse.swap(state),
-            |inverse, (_, displaced, source_lex, source_owners, source_slots)| {
-                inverse.release(displaced, source_lex, source_owners, source_slots);
-            },
-        );
-        self.top = fork.accepted_top;
-        self.occupied_source_buffer_slots = fork.accepted_occupied_source_buffer_slots;
-        self.active_macro_bodies = fork.accepted_active_macro_bodies;
-        self.active_macro_parameters = fork.accepted_active_macro_parameters;
-        self.begin_interval();
-    }
-
-    pub(crate) fn accept_checkpoint_candidate(&mut self) {
-        self.fork
-            .take()
-            .expect("input acceptance requires a candidate fork");
-        self.undo.accept_checkpoint_candidate_with(
-            &mut (
-                &mut self.displaced_rows,
-                &mut self.source_lex_states,
-                &mut self.source_owner_states,
-                &mut self.source_slots,
-            ),
-            |inverse, (displaced, source_lex, source_owners, source_slots)| {
-                inverse.release(displaced, source_lex, source_owners, source_slots);
-            },
-        );
-        self.begin_interval();
-    }
-
-    pub(crate) fn as_slice(&self) -> &[InputLevel<G>] {
-        &self.rows[..self.top]
     }
 
     /// Exact occupied TeX source-buffer slots across all live source levels.
@@ -1966,41 +1452,16 @@ impl<G> InputStack<G> {
     pub(crate) fn occupied_source_buffer_slots_below_top(&self) -> usize {
         let top = self
             .top_source()
-            .map_or(0, |(_, slot)| slot.occupied_buffer_slots);
+            .map_or(0, |source| source.slot.occupied_buffer_slots);
         self.occupied_source_buffer_slots.saturating_sub(top)
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            .saturating_add(
-                self.rows
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<InputLevel<G>>()),
-            )
-            .saturating_add(self.undo.retained_bytes())
-            .saturating_add(self.displaced_rows.retained_bytes())
-            .saturating_add(self.source_lex_states.retained_bytes())
-            .saturating_add(self.source_owner_states.retained_bytes())
-            .saturating_add(self.source_slots.retained_bytes())
-    }
-
-    pub(crate) fn counters(&self) -> crate::timeline::LogicalStackCounters {
-        let undo = self.undo.counters();
-        crate::timeline::LogicalStackCounters {
-            payload_admissions: self.row_admissions,
-            full_payload_history_clones: 0,
-            undo_records: undo.records,
-            undo_record_bytes: undo.record_bytes,
-            displaced_payloads: self.displaced_rows.live,
-            displaced_reuses: self.displaced_rows.reuses,
-            stored_state_captures: self.source_lex_captures,
-            owner_swaps: self.source_owner_swaps,
-            selected_rewind_records: undo.selected_rewind_records,
-            candidate_reject_records: undo.candidate_reject_records,
-            accepted_redo_records: undo.accepted_redo_records,
-            candidate_chunks_released: undo.candidate_chunks_released,
-            accepted_chunks_released: undo.accepted_chunks_released,
-        }
+        std::mem::size_of::<Self>().saturating_add(
+            self.rows
+                .capacity()
+                .saturating_mul(std::mem::size_of::<InputLevel<G>>()),
+        )
     }
 
     #[cfg(test)]
@@ -2013,135 +1474,6 @@ impl<G> InputStack<G> {
         self.cursor_mutations = InputCursorMutationCounters::default();
     }
 
-    fn record_inline(&mut self, index: usize, state: InputLevelInlineState) {
-        if !self.recording || self.rows[index].rollback_marker().in_epoch(self.interval) {
-            return;
-        }
-        self.rows[index]
-            .rollback_marker_mut()
-            .set(self.interval, RowRollbackState::Inline);
-        self.undo.append(InputUndo::Inline {
-            index: u32::try_from(index).expect("input row index fits u32"),
-            state,
-        });
-    }
-
-    /// Captures the one row that may mutate in the current interval.
-    ///
-    /// A row admitted after the interval began is already tagged `Admitted`
-    /// and needs no inverse. Every older row is captured exactly when a
-    /// checkpoint begins or a pop exposes it, before control can return to a
-    /// token consumer. Cursor advancement can therefore update only the
-    /// authoritative row and perform no rollback test or journal access.
-    #[inline]
-    fn capture_exposed_top(&mut self) {
-        if !self.recording {
-            return;
-        }
-        let Some(index) = self.top.checked_sub(1) else {
-            return;
-        };
-        if self.rows[index].rollback_marker().in_epoch(self.interval) {
-            return;
-        }
-        self.capture_uncaptured_row(index);
-    }
-
-    /// Records the first in-epoch rollback state of the exposed row.
-    #[inline(never)]
-    fn capture_uncaptured_row(&mut self, index: usize) {
-        match &self.rows[index] {
-            InputLevel::Source(source) => {
-                let state = SourceLexExecutionState::capture(source, self.source_slot(source.slot));
-                let payload = self.source_lex_states.insert(state);
-                self.rows[index]
-                    .rollback_marker_mut()
-                    .set(self.interval, RowRollbackState::Inline);
-                self.undo.append(InputUndo::SourceLex {
-                    index: u32::try_from(index).expect("input row index fits u32"),
-                    payload,
-                });
-                self.source_lex_captures = self.source_lex_captures.saturating_add(1);
-            }
-            InputLevel::Resident(row) => {
-                let position = row.header.frame.position();
-                let state = match &row.storage {
-                    super::ResidentTokenStorage::Replay { cursor, .. } => {
-                        InputLevelInlineState::replay_cursor(position, *cursor)
-                    }
-                    super::ResidentTokenStorage::MacroArgument(argument) => {
-                        InputLevelInlineState::macro_argument(position, argument.origin_run)
-                    }
-                    super::ResidentTokenStorage::MacroBody(_) => {
-                        InputLevelInlineState::macro_body(position)
-                    }
-                    super::ResidentTokenStorage::BackedUpWord(_)
-                    | super::ResidentTokenStorage::Durable(_)
-                    | super::ResidentTokenStorage::Attempt(_) => {
-                        InputLevelInlineState::token_position(position)
-                    }
-                };
-                self.rows[index]
-                    .rollback_marker_mut()
-                    .set(self.interval, RowRollbackState::Inline);
-                self.undo.append(InputUndo::Inline {
-                    index: u32::try_from(index).expect("input row index fits u32"),
-                    state,
-                });
-            }
-        }
-        #[cfg(test)]
-        {
-            self.cursor_mutations.exposure_captures =
-                self.cursor_mutations.exposure_captures.saturating_add(1);
-        }
-    }
-
-    /// Captures the complete cold token execution state once per interval.
-    /// A preceding resident advance may already have retained only the scalar
-    /// position, so cold retirement/limit/flag mutation has its own capture
-    /// bit and ordered inverse.
-    fn record_token_state(&mut self, index: usize) {
-        if !self.recording
-            || self.rows[index]
-                .rollback_marker()
-                .cold_captured(self.interval)
-        {
-            return;
-        }
-        let state = match &self.rows[index] {
-            super::InputLevel::Resident(super::ResidentTokenRow {
-                header,
-                storage: super::ResidentTokenStorage::MacroBody(_),
-            }) => InputLevelInlineState::macro_body_frame(header.frame),
-            super::InputLevel::Resident(row) => {
-                InputLevelInlineState::new(row.header.frame, row.header.retirement())
-            }
-            super::InputLevel::Source(_) => unreachable!("cold token capture names a token row"),
-        };
-        self.rows[index]
-            .rollback_marker_mut()
-            .set(self.interval, RowRollbackState::Cold);
-        self.undo.append(InputUndo::Inline {
-            index: u32::try_from(index).expect("input row index fits u32"),
-            state,
-        });
-    }
-
-    fn begin_interval(&mut self) {
-        self.interval = if self.interval == MAX_ROW_ROLLBACK_EPOCH {
-            1
-        } else {
-            self.interval + 1
-        };
-        if self.interval == 1 {
-            for row in &mut self.rows {
-                *row.rollback_marker_mut() = RowRollbackMarker::default();
-            }
-        }
-        self.capture_exposed_top();
-    }
-
     fn replace_source_buffer_slots(&mut self, prior: usize, current: usize) {
         self.occupied_source_buffer_slots = self
             .occupied_source_buffer_slots
@@ -2150,94 +1482,11 @@ impl<G> InputStack<G> {
     }
 
     fn refresh_occupied_source_buffer_slots(&mut self) {
-        self.occupied_source_buffer_slots = self.as_slice().iter().fold(0, |total, level| {
+        self.occupied_source_buffer_slots = self.rows.iter().fold(0, |total, level| {
             let InputLevel::Source(source) = level else {
                 return total;
             };
-            total.saturating_add(self.source_level_slot(source).occupied_buffer_slots)
+            total.saturating_add(source.slot.occupied_buffer_slots)
         });
-    }
-}
-
-type InputUndoState<'a, G> = (
-    &'a mut Vec<InputLevel<G>>,
-    &'a mut PayloadSlab<InputLevel<G>>,
-    &'a mut PayloadSlab<SourceLexExecutionState>,
-    &'a mut PayloadSlab<SourceLevelExecutionState<G>>,
-    &'a mut PayloadSlab<SourceSlot<G>>,
-);
-
-impl<G> InputUndo<G> {
-    fn swap(&mut self, state: &mut InputUndoState<'_, G>) {
-        let (rows, displaced, source_lex, source_owners, source_slots) = state;
-        match self {
-            Self::Inline { index, state } => {
-                rows[*index as usize].swap_input_inline_state(state);
-            }
-            Self::SourceLex { index, payload } => {
-                let state = source_lex
-                    .value_mut(*payload)
-                    .expect("input source-lexer inverse remains live");
-                let InputLevel::Source(source) = &mut rows[*index as usize] else {
-                    unreachable!("source lexer inverse names a source row")
-                };
-                let slot = source_slots
-                    .value_mut(source.slot.0)
-                    .expect("source lexer inverse names a live source slot");
-                source.swap_lex_state(slot, state);
-            }
-            Self::SourceOwner { index, payload, .. }
-            | Self::PhysicalBacking { index, payload, .. } => {
-                let state = source_owners
-                    .value_mut(*payload)
-                    .expect("input source-owner inverse remains live");
-                let InputLevel::Source(source) = &mut rows[*index as usize] else {
-                    unreachable!("source owner inverse names a source row")
-                };
-                let slot = source_slots
-                    .value_mut(source.slot.0)
-                    .expect("source owner inverse names a live source slot");
-                source.swap_execution_state(slot, state);
-                slot.occupied_buffer_slots =
-                    super::source::occupied_source_buffer_slots(&slot.cursor);
-            }
-            Self::SourceContext { index, source } => {
-                let level = &mut rows[*index as usize];
-                let mut current = level.source_context();
-                level.set_source_context(*source);
-                core::mem::swap(source, &mut current);
-            }
-            Self::Replacement { index, payload } => {
-                let displaced_row = displaced
-                    .value_mut(*payload)
-                    .expect("input replacement inverse remains live");
-                rows[*index as usize].swap_payload_preserving_rollback(displaced_row);
-            }
-        }
-    }
-
-    fn release(
-        self,
-        displaced: &mut PayloadSlab<InputLevel<G>>,
-        source_lex: &mut PayloadSlab<SourceLexExecutionState>,
-        source_owners: &mut PayloadSlab<SourceLevelExecutionState<G>>,
-        source_slots: &mut PayloadSlab<SourceSlot<G>>,
-    ) {
-        match self {
-            Self::Replacement { payload, .. } => {
-                if let Some(InputLevel::Source(source)) = displaced.value(payload) {
-                    let key = source.slot;
-                    displaced.release(payload);
-                    source_slots.release(key.0);
-                } else {
-                    displaced.release(payload);
-                }
-            }
-            Self::SourceLex { payload, .. } => source_lex.release(payload),
-            Self::SourceOwner { payload, .. } | Self::PhysicalBacking { payload, .. } => {
-                source_owners.release(payload)
-            }
-            Self::Inline { .. } | Self::SourceContext { .. } => {}
-        }
     }
 }

@@ -590,17 +590,6 @@ impl RevisionTransaction<'_> {
             .with_admitted(ReadPageRegionCounters)
             .map_err(SessionError::RetainedEngine)
     }
-
-    /// Demand-free command ownership counters on the exact current owner.
-    #[doc(hidden)]
-    pub fn command_timeline_counters(
-        &mut self,
-    ) -> Result<tex_command::CommandTimelineCounters, SessionError> {
-        self.generation
-            .with_admitted(ReadCommandTimelineCounters)
-            .map_err(SessionError::RetainedEngine)?
-            .map_err(SessionError::RetainedEngine)
-    }
 }
 
 struct CandidatePlan {
@@ -1241,16 +1230,6 @@ impl tex_exec::RetainedEngineOperation for ReadPageRegionCounters {
         mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
     ) -> Self::Output {
         admitted.universe().page_region_counters()
-    }
-}
-
-struct ReadCommandTimelineCounters;
-
-impl tex_exec::RetainedEngineOperation for ReadCommandTimelineCounters {
-    type Output = Result<tex_command::CommandTimelineCounters, tex_exec::RetainedEngineAccessError>;
-
-    fn run<G: 'static>(self, admitted: tex_exec::AdmittedEngineGeneration<'_, G>) -> Self::Output {
-        admitted.command_timeline_counters()
     }
 }
 
@@ -2250,10 +2229,10 @@ fn execute_plan_inner<G>(
                 }
                 if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
                     let dependencies = universe.world().input_dependencies().collect();
-                    // Format dumping replaces the command timeline with the
-                    // post-dump empty owner. Release the candidate-local
-                    // JobStart root while its captured command summary still
-                    // addresses the live timeline.
+                    // Format dumping replaces the command checkpoint owner
+                    // with the post-dump empty owner. Release the
+                    // candidate-local JobStart root while its captured command
+                    // summary still addresses the live owner.
                     sink.release_job_start_replay_anchor(control, universe);
                     let format_dump = control
                         .take_format_dump(universe)
@@ -3079,23 +3058,6 @@ impl<'store> Session<'store> {
                 generation
                     .generation
                     .with_admitted(ReadPageCandidateSettlementCounters)
-                    .map_err(SessionError::RetainedEngine)
-            })
-            .transpose()
-    }
-
-    /// Demand-free command checkpoint work on the accepted production owner.
-    #[doc(hidden)]
-    pub fn command_timeline_counters(
-        &mut self,
-    ) -> Result<Option<tex_command::CommandTimelineCounters>, SessionError> {
-        self.prior_generation
-            .as_mut()
-            .map(|generation| {
-                generation
-                    .generation
-                    .with_admitted(ReadCommandTimelineCounters)
-                    .map_err(SessionError::RetainedEngine)?
                     .map_err(SessionError::RetainedEngine)
             })
             .transpose()

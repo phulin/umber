@@ -124,34 +124,28 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
         );
     }
     assert!(!levels.contains("source.slot.cursor.clone()"));
-    assert!(levels.contains("struct SourceLexExecutionState"));
-    assert!(levels.contains("position: u32"));
     assert!(!levels.contains("LogicalStackElement for InputLevel"));
-    assert!(history.contains("enum InputUndo"));
     assert!(history.contains("pub(crate) struct InputStack"));
-    assert!(history.contains("source_slots: PayloadSlab<SourceSlot<G>>"));
-    assert!(levels.contains("struct RowRollbackMarker"));
-    assert_eq!(
-        levels
-            .matches("pub(crate) rollback: RowRollbackMarker")
-            .count(),
-        2
-    );
-    assert!(!history.contains("rollback_markers"));
-    for retired_lane in [
-        "touched: Vec<u64>",
-        "partially_captured",
-        "cold_state_captured",
+    // Named checkpoints copy the quiescent stack by value through explicit
+    // `checkpoint_copy` methods. Between boundaries input mutation writes no
+    // undo record, row marker, or owner journal.
+    assert!(history.contains("fn checkpoint_copy"));
+    assert!(levels.contains("slot: Box<SourceSlot<G>>"));
+    for retired in [
+        "enum InputUndo",
+        "RowRollbackMarker",
+        "PayloadSlab",
+        "rollback_markers",
+        "SourceLexExecutionState",
+        "LogicalStack<InputLevel",
     ] {
         assert!(
-            !history.contains(retired_lane),
-            "input rollback must not restore the parallel {retired_lane} lane"
+            !history.contains(retired) && !levels.contains(retired),
+            "input mutation must not maintain the retired {retired} journal"
         );
     }
     assert!(history.contains("mutate_top_source_lex"));
     assert!(!history.contains("fn last_mut"));
-    assert!(!levels.contains("slot: Box<SourceSlot"));
-    assert!(!history.contains("LogicalStack<InputLevel"));
 }
 
 #[test]

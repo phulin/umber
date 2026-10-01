@@ -85,9 +85,9 @@ pub struct CommandStateRoots<G> {
     /// TeX82 §§280--282 `insert_token` payloads paired with the exact state
     /// save level that owns them. Frames and words are generation-branded by
     /// this aggregate root; no payload registry or per-value owner exists.
-    pub(crate) group_payloads: crate::timeline::LogicalStack<CommandGroupPayload<G>>,
+    pub(crate) group_payloads: Vec<CommandGroupPayload<G>>,
     /// Generation-owned append lane addressed by compact group-local spans.
-    pub(crate) aftergroup_payloads: crate::timeline::LogicalStack<CommandPayload<G>>,
+    pub(crate) aftergroup_payloads: Vec<CommandPayload<G>>,
     /// TeX82 §1269's single pending token. The traced spelling remains in the
     /// same command root as input and group payloads, so rollback cannot leave
     /// an uncheckpointed side value behind.
@@ -128,7 +128,7 @@ pub struct CommandStateRoots<G> {
 #[derive(Debug)]
 pub struct CommandState<G> {
     pub(crate) roots: CommandStateRoots<G>,
-    pub(crate) timeline: crate::snapshot::CommandTimeline<G>,
+    pub(crate) checkpoints: crate::snapshot::CommandCheckpoints<G>,
     /// Runtime-only TeX82 stack maxima. Snapshot roots deliberately omit
     /// these scalars so high-water marks survive rollback without becoming
     /// command semantics or checkpoint identity.
@@ -250,7 +250,7 @@ pub(crate) struct TokenCollectorPathCounters {
 
 /// Compact coordinate for TeX82's live §310 input display.
 ///
-/// It is valid only while the command timeline owner, exposed input-row
+/// It is valid only while the command checkpoint owner, exposed input-row
 /// coordinate, and context-visible scalars still match. It owns no strings,
 /// rows, or backing and therefore cannot prolong any input lifetime.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -294,8 +294,8 @@ impl<G> Default for CommandStateRoots<G> {
             replay_completions: Vec::new(),
             semantic_diagnostics: Vec::new(),
             last_diagnostic_location: None,
-            group_payloads: crate::timeline::LogicalStack::default(),
-            aftergroup_payloads: crate::timeline::LogicalStack::default(),
+            group_payloads: Vec::new(),
+            aftergroup_payloads: Vec::new(),
             afterassignment: None,
             name_in_progress: false,
             pending_input_open: None,
@@ -308,7 +308,7 @@ impl<G> Default for CommandState<G> {
     fn default() -> Self {
         Self {
             roots: CommandStateRoots::default(),
-            timeline: crate::snapshot::CommandTimeline::default(),
+            checkpoints: crate::snapshot::CommandCheckpoints::default(),
             stack_usage: CommandStackUsage::default(),
             terminal_buffer_slots: 0,
             diagnostic_terminal_context_owner: 0,
@@ -449,14 +449,6 @@ impl<G> Clone for CommandPayload<G> {
 
 impl<G> Copy for CommandPayload<G> {}
 
-impl<G> crate::timeline::LogicalStackElement for CommandPayload<G> {
-    type State = ();
-
-    fn capture_state(&self) -> Self::State {}
-
-    fn swap_state(&mut self, (): &mut Self::State) {}
-}
-
 impl<G> CommandPayload<G> {
     const fn new(spelling: TracedTokenWord) -> Self {
         Self {
@@ -487,19 +479,6 @@ impl<G> Clone for CommandGroupPayload<G> {
 }
 
 impl<G> Copy for CommandGroupPayload<G> {}
-
-impl<G> crate::timeline::LogicalStackElement for CommandGroupPayload<G> {
-    type State = (usize, Option<u32>);
-
-    fn capture_state(&self) -> Self::State {
-        (self.token_top, self.latest_aftergroup_position)
-    }
-
-    fn swap_state(&mut self, state: &mut Self::State) {
-        std::mem::swap(&mut self.token_top, &mut state.0);
-        std::mem::swap(&mut self.latest_aftergroup_position, &mut state.1);
-    }
-}
 
 impl<G> CommandGroupPayload<G> {
     const fn new(frame: GroupFrame, token_start: usize) -> Self {
@@ -696,13 +675,13 @@ impl<G> CommandState<G> {
             .map_err(CommandGroupError::State)?;
         let group = self
             .group_payloads
-            .pop_copy()
+            .pop()
             .expect("validated command group frame remains present");
         let aftergroup = self.aftergroup_payloads[group.token_start..group.token_top]
             .iter()
             .map(|payload| payload.spelling)
             .collect();
-        assert!(self.aftergroup_payloads.truncate_top(group.token_start));
+        self.aftergroup_payloads.truncate(group.token_start);
         Ok(CommandGroupExit {
             restorations,
             aftergroup,
@@ -717,7 +696,6 @@ impl<G> CommandState<G> {
         spelling: TracedTokenWord,
     ) -> Result<(), CommandGroupError> {
         self.validate_group_payloads(state)?;
-        self.timeline.record_afterassignment(self.afterassignment);
         self.afterassignment = Some(CommandPayload::new(spelling));
         Ok(())
     }
@@ -728,13 +706,10 @@ impl<G> CommandState<G> {
         &mut self,
         state: &CommandContext<'_, G>,
     ) -> Result<Option<TracedTokenWord>, CommandGroupError> {
-        // Nearly every assignment finds no pending token; taking nothing
-        // leaves the root unchanged and needs no rollback record.
         if self.afterassignment.is_none() {
             return Ok(None);
         }
         self.validate_group_payloads(state)?;
-        self.timeline.record_afterassignment(self.afterassignment);
         Ok(self.afterassignment.take().map(|payload| payload.spelling))
     }
 
@@ -829,15 +804,11 @@ impl<G> CommandState<G> {
     }
 
     pub(crate) fn take_pending_input_open(&mut self) -> Option<crate::ScannedFileName> {
-        let pending = self.pending_input_open.take();
-        self.timeline.record_pending_input_open(pending.clone());
-        pending
+        self.pending_input_open.take()
     }
 
     pub(crate) fn retain_pending_input_open(&mut self, file_name: crate::ScannedFileName) {
         debug_assert!(self.pending_input_open.is_none());
-        self.timeline
-            .record_pending_input_open(self.pending_input_open.clone());
         self.pending_input_open = Some(file_name);
     }
 
@@ -845,49 +816,12 @@ impl<G> CommandState<G> {
         if self.name_in_progress {
             return Err(crate::CommandError::input_invariant());
         }
-        self.timeline.record_name_in_progress(self.name_in_progress);
         self.name_in_progress = true;
         Ok(())
     }
 
     pub(crate) fn end_file_name(&mut self) {
-        self.timeline.record_name_in_progress(self.name_in_progress);
         self.name_in_progress = false;
-    }
-
-    pub(crate) fn record_alignment_phase(&mut self) {
-        self.timeline.record_align_state(self.alignment.align_state);
-    }
-
-    /// Opens the smallest rollback-coupled scalar mutation for the standalone
-    /// checkpoint allocation gate.
-    #[doc(hidden)]
-    #[cfg(feature = "profiling")]
-    pub fn profile_first_timeline_mutation(&mut self) {
-        self.begin_file_name()
-            .expect("profiling fixture begins outside filename scanning");
-    }
-
-    /// Rewrites one rollback-coupled scalar repeatedly inside one checkpoint
-    /// interval, exercising dense first-touch coalescing without semantic I/O.
-    #[doc(hidden)]
-    #[cfg(feature = "profiling")]
-    pub fn profile_repeated_timeline_mutations(&mut self, mutations: usize) {
-        for _ in 0..mutations {
-            self.timeline.record_name_in_progress(self.name_in_progress);
-            self.name_in_progress = !self.name_in_progress;
-        }
-    }
-
-    /// Rewrites one token-frame execution phase repeatedly while its immutable
-    /// input payload stays admitted once in the logical-stack row.
-    #[doc(hidden)]
-    #[cfg(feature = "profiling")]
-    pub fn profile_repeated_input_frame_mutations(&mut self, mutations: usize) {
-        for _ in 0..mutations {
-            let mutated = self.input.levels.toggle_top_token_retirement();
-            assert!(mutated, "profiling fixture keeps a token frame on top");
-        }
     }
 
     /// Installs the first physical line for the standalone source-history
@@ -903,182 +837,6 @@ impl<G> CommandState<G> {
                     .expect("profiling source has a first line");
             })
             .expect("profiling fixture keeps a source frame on top");
-    }
-
-    /// Rewrites only the copy-small source lexer cursor. One checkpoint
-    /// interval must retain one checked stored-state handle and no owner copy.
-    #[doc(hidden)]
-    #[cfg(feature = "profiling")]
-    pub fn profile_repeated_source_lex_mutations(&mut self, mutations: usize) {
-        for _ in 0..mutations {
-            self.input
-                .levels
-                .mutate_top_source_lex(|_, slot| {
-                    let line = slot
-                        .cursor
-                        .line
-                        .as_mut()
-                        .expect("profiling fixture keeps one loaded line");
-                    line.cursor.lexer_state = match line.cursor.lexer_state {
-                        crate::LexerState::MidLine => crate::LexerState::SkipBlanks,
-                        crate::LexerState::SkipBlanks | crate::LexerState::NewLine => {
-                            crate::LexerState::MidLine
-                        }
-                    };
-                })
-                .expect("profiling fixture keeps a source frame on top");
-        }
-    }
-
-    /// Moves one loaded-line owner into ordered rollback history and installs
-    /// the next physical line without cloning its backing or spelling arena.
-    #[doc(hidden)]
-    #[cfg(feature = "profiling")]
-    pub fn profile_advance_source_line(&mut self, endlinechar: i32) {
-        let loaded = self
-            .input
-            .levels
-            .mutate_top_source_cursor(|_, slot| slot.cursor.load_next_line(endlinechar).is_some())
-            .expect("profiling fixture keeps a source frame on top");
-        assert!(loaded, "profiling source has a second line");
-    }
-
-    /// Captures one compact source inverse, reuses its physical row for a
-    /// token frame, and mutates that replacement. The ordered journal must
-    /// preserve the source incarnation without cloning either full row.
-    #[doc(hidden)]
-    #[cfg(feature = "profiling")]
-    pub fn profile_source_lex_then_token_row_reuse(
-        &mut self,
-        stores: &tex_state::CommandContext<'_, G>,
-        tokens: tex_state::TokenListId<G>,
-    ) {
-        self.profile_repeated_source_lex_mutations(1);
-        self.profile_replace_source_row_with_token(stores, tokens);
-    }
-
-    /// Moves one cold source owner into history before reusing its physical
-    /// row for a token frame. This is the owner-bearing counterpart of
-    /// [`Self::profile_source_lex_then_token_row_reuse`].
-    #[doc(hidden)]
-    #[cfg(feature = "profiling")]
-    pub fn profile_source_owner_then_token_row_reuse(
-        &mut self,
-        stores: &tex_state::CommandContext<'_, G>,
-        tokens: tex_state::TokenListId<G>,
-        endlinechar: i32,
-    ) {
-        self.profile_advance_source_line(endlinechar);
-        self.profile_replace_source_row_with_token(stores, tokens);
-    }
-
-    #[cfg(feature = "profiling")]
-    fn profile_replace_source_row_with_token(
-        &mut self,
-        stores: &tex_state::CommandContext<'_, G>,
-        tokens: tex_state::TokenListId<G>,
-    ) {
-        self.pop_input_level_at_end_of_job()
-            .expect("profiling ordered reuse retires its source frame");
-        let words = stores.token_list(tokens);
-        self.push_token_level(
-            crate::input::PackedTokenSpanHandle::durable(words),
-            crate::input::TokenBehavior::Ordinary,
-            crate::input::RetirementBehavior::Pop,
-            crate::input::ReplayTrace::Stored(crate::input::StoredReplayReason::EveryPar),
-        );
-        let mutated = self
-            .input
-            .levels
-            .set_top_token_retirement(crate::input::RetirementBehavior::StopAtEnd);
-        assert!(mutated, "profiling ordered reuse installs a token frame");
-    }
-
-    /// Reuses one physical input-stack row repeatedly after its current
-    /// interval has reached the requested high water. No retained checkpoint
-    /// observes an intermediate frame, so the loop must allocate and append
-    /// no rollback history after the caller's one-transition warmup.
-    #[doc(hidden)]
-    #[cfg(feature = "profiling")]
-    pub fn profile_repeated_input_level_reuse(
-        &mut self,
-        stores: &tex_state::CommandContext<'_, G>,
-        tokens: tex_state::TokenListId<G>,
-        transitions: usize,
-    ) {
-        for _ in 0..transitions {
-            let words = stores.token_list(tokens.clone());
-            self.push_token_level(
-                crate::input::PackedTokenSpanHandle::durable(words),
-                crate::input::TokenBehavior::Ordinary,
-                crate::input::RetirementBehavior::Pop,
-                crate::input::ReplayTrace::Stored(crate::input::StoredReplayReason::EveryPar),
-            );
-            self.pop_input_level_at_end_of_job()
-                .expect("profiling reuse retires its just-pushed token frame");
-        }
-    }
-
-    /// Returns structural packed-journal evidence for standalone gates.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn profile_timeline_counters(&self) -> crate::CommandTimelineCounters {
-        let mut counters = self.timeline.packed_journal_counters();
-        for stack in [
-            self.input.levels.counters(),
-            self.conditions.frames.counters(),
-            self.group_payloads.counters(),
-            self.aftergroup_payloads.counters(),
-            self.alignment.align_stack.counters(),
-            self.alignment.suspended.counters(),
-        ] {
-            counters.logical_payload_admissions = counters
-                .logical_payload_admissions
-                .saturating_add(stack.payload_admissions);
-            counters.full_frame_history_clones = counters
-                .full_frame_history_clones
-                .saturating_add(stack.full_payload_history_clones);
-            counters.logical_records = counters.logical_records.saturating_add(stack.undo_records);
-            counters.logical_record_bytes = counters
-                .logical_record_bytes
-                .saturating_add(stack.undo_record_bytes);
-            counters.logical_stored_state_captures = counters
-                .logical_stored_state_captures
-                .saturating_add(stack.stored_state_captures);
-            counters.logical_owner_swaps = counters
-                .logical_owner_swaps
-                .saturating_add(stack.owner_swaps);
-            counters.displaced_payloads = counters
-                .displaced_payloads
-                .saturating_add(u64::from(stack.displaced_payloads));
-            counters.displaced_reuses = counters
-                .displaced_reuses
-                .saturating_add(stack.displaced_reuses);
-            counters.selected_rewind_records = counters
-                .selected_rewind_records
-                .saturating_add(stack.selected_rewind_records);
-            counters.candidate_reject_records = counters
-                .candidate_reject_records
-                .saturating_add(stack.candidate_reject_records);
-            counters.accepted_redo_records = counters
-                .accepted_redo_records
-                .saturating_add(stack.accepted_redo_records);
-            counters.candidate_chunks_released = counters
-                .candidate_chunks_released
-                .saturating_add(stack.candidate_chunks_released);
-            counters.accepted_chunks_released = counters
-                .accepted_chunks_released
-                .saturating_add(stack.accepted_chunks_released);
-        }
-        counters
-    }
-
-    /// Reads the scalar used by the standalone rollback/fork isolation gate.
-    #[doc(hidden)]
-    #[cfg(feature = "profiling")]
-    #[must_use]
-    pub fn profile_name_in_progress(&self) -> bool {
-        self.name_in_progress
     }
 
     /// Current TeX82 `line`, or zero for token-list and `\read` input.
@@ -1105,14 +863,7 @@ impl<G> CommandState<G> {
             let crate::input::InputLevel::Source(source) = level else {
                 return None;
             };
-            Some(
-                self.input
-                    .levels
-                    .source_level_slot(source)
-                    .cursor
-                    .current_backing()
-                    .id,
-            )
+            Some(source.slot.cursor.current_backing().id)
         })
     }
 
@@ -1126,11 +877,7 @@ impl<G> CommandState<G> {
         &mut self,
         location: Option<crate::DiagnosticLocation>,
     ) {
-        if self.last_diagnostic_location != location {
-            self.timeline
-                .record_last_diagnostic_location(self.last_diagnostic_location);
-            self.last_diagnostic_location = location;
-        }
+        self.last_diagnostic_location = location;
     }
 
     /// Resets the focused active-source delivery counters.
@@ -1435,7 +1182,7 @@ impl<G> CommandState<G> {
     #[must_use]
     pub fn diagnostic_context_coordinate(&self) -> DiagnosticContextCoordinate {
         DiagnosticContextCoordinate {
-            owner: self.timeline.owner_id(),
+            owner: self.checkpoints.owner_id(),
             input: self.input.levels.diagnostic_context_coordinate(),
             scalar: self.input.diagnostic_scalar_coordinate(),
             terminal_context_owner: self.diagnostic_terminal_context_owner,
@@ -1448,7 +1195,7 @@ impl<G> CommandState<G> {
         coordinate: DiagnosticContextCoordinate,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> Result<String, StaleDiagnosticContext> {
-        if coordinate.owner != self.timeline.owner_id()
+        if coordinate.owner != self.checkpoints.owner_id()
             || !self
                 .input
                 .levels
@@ -1797,7 +1544,6 @@ impl<G> CommandState<G> {
                 self.finish_alignment_cell(alignment)?,
             )),
             AlignmentRequest::RecoverExtraTab(alignment) => {
-                self.record_alignment_phase();
                 self.alignment.recover_extra_tab(alignment)?;
                 Ok(AlignmentRequestResult::ExtraTabRecovered)
             }
@@ -1819,7 +1565,6 @@ impl<G> CommandState<G> {
     /// Begins an executor-owned structural alignment at the canonical preamble
     /// sentinel. Delimiter classification remains exclusively in `get_next`.
     pub fn begin_alignment(&mut self, alignment: AlignmentIdentity) {
-        self.record_alignment_phase();
         self.alignment.begin_alignment(alignment);
         self.delivery_mode.set_alignment_active(true);
     }
@@ -1829,7 +1574,6 @@ impl<G> CommandState<G> {
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
-        self.record_alignment_phase();
         self.alignment.set_preamble_phase(alignment)
     }
 
@@ -1844,7 +1588,6 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
         templates: PreparedAlignmentCellTemplates<G>,
     ) -> Result<(), AlignmentLifecycleError> {
-        self.record_alignment_phase();
         self.alignment.begin_cell(alignment, templates)
     }
 
@@ -1856,7 +1599,6 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         let template = self.alignment.active_cell_template(alignment)?;
-        self.record_alignment_phase();
         if let Some(template) = template {
             let level = self.push_alignment_template(
                 stores,
@@ -1881,7 +1623,6 @@ impl<G> CommandState<G> {
             .alignment
             .active_alignment
             .ok_or(AlignmentLifecycleError::NoActiveAlignment)?;
-        self.record_alignment_phase();
         self.alignment.align_state = 1_000_000;
         Ok(())
     }
@@ -1896,7 +1637,6 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         let previous_align_state = self.alignment.align_state;
-        self.record_alignment_phase();
         let cell = self.alignment.active_cell_mut(alignment)?;
         if cell.u_template_installed {
             return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
@@ -1949,7 +1689,6 @@ impl<G> CommandState<G> {
                 ReplayTrace::VTemplate,
             ),
         };
-        self.record_alignment_phase();
         self.alignment
             .begin_v_template(alignment, level, delimiter, delimiter_line)
     }
@@ -1971,7 +1710,6 @@ impl<G> CommandState<G> {
         self.prove_endv_input_shape(level)?;
         // TeX82 §791 changes `align_state` in `fin_col` before `get_next`
         // reaches the exhausted scanner backup and retained v-template.
-        self.record_alignment_phase();
         self.alignment.finish_cell(alignment, level)
     }
 
@@ -2036,7 +1774,6 @@ impl<G> CommandState<G> {
         alignment: AlignmentIdentity,
     ) -> Result<crate::FinishedAlignmentCell, AlignmentLifecycleError> {
         let level = self.alignment.active_v_template_level(alignment)?;
-        self.record_alignment_phase();
         self.alignment.finish_cell(alignment, level)
     }
 
@@ -2045,7 +1782,6 @@ impl<G> CommandState<G> {
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
-        self.record_alignment_phase();
         let result = self.alignment.suspend_alignment(alignment);
         if result.is_ok() {
             self.delivery_mode.set_alignment_active(false);
@@ -2058,7 +1794,6 @@ impl<G> CommandState<G> {
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
-        self.record_alignment_phase();
         let result = self.alignment.resume_alignment(alignment);
         if result.is_ok() {
             self.delivery_mode.set_alignment_active(true);
@@ -2071,7 +1806,6 @@ impl<G> CommandState<G> {
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
-        self.record_alignment_phase();
         let result = self.alignment.finish_alignment(alignment);
         if result.is_ok() {
             self.delivery_mode.set_alignment_active(false);
@@ -2122,8 +1856,6 @@ impl<G> CommandState<G> {
             .map_err(|_| SourceRegistrationError::SourceIdentityExhausted)?;
         let id = tex_state::SourceId::new(raw);
         let source = RegisteredSource::register(id, self.profile(), registration)?;
-        self.timeline
-            .record_next_source_identity(self.input.next_source_identity);
         self.input.next_source_identity += 1;
         let previous = self.input.pending_sources.insert(raw, source);
         debug_assert!(previous.is_none(), "source identities are unique");
@@ -2132,9 +1864,9 @@ impl<G> CommandState<G> {
 
     /// Rebinds one live generated source after a checkpoint fork.
     ///
-    /// Validation precedes mutation. The input stack then records the old
-    /// owner in its existing ordered journal, so rejection restores the
-    /// accepted bytes and acceptance releases them with the obsolete suffix.
+    /// Validation precedes mutation. The fork detached the accepted input
+    /// stack by value, so rejection reinstalls the accepted bytes and
+    /// acceptance drops them with the rest of the obsolete head.
     #[doc(hidden)]
     pub fn rebind_generated_source(
         &mut self,
@@ -2159,8 +1891,6 @@ impl<G> CommandState<G> {
             .map_err(|_| SourceRegistrationError::SourceIdentityExhausted)?;
         let id = tex_state::SourceId::new(raw);
         let replacement = accepted.rebind_generated(id, bytes.into())?;
-        self.timeline
-            .record_next_source_identity(self.input.next_source_identity);
         self.input.next_source_identity += 1;
         let rebound = self
             .input
@@ -2168,28 +1898,6 @@ impl<G> CommandState<G> {
             .rebind_physical_source(source, replacement);
         debug_assert!(rebound, "the validated root source remains present");
         Ok(id)
-    }
-
-    /// Rehomes the accepted editor backing after convergence. This runs only
-    /// after the current candidate has been rejected and does not create a
-    /// command-journal branch or another generation.
-    #[doc(hidden)]
-    pub fn rehome_generated_editor_source(
-        &mut self,
-        accepted: &[u8],
-        bytes: std::sync::Arc<[u8]>,
-        old_start: usize,
-        old_end: usize,
-        new_end: usize,
-    ) -> Result<(), SourceRegistrationError> {
-        if !self
-            .input
-            .levels
-            .rehome_generated_source(accepted, bytes, old_start, old_end, new_end)?
-        {
-            return Err(SourceRegistrationError::RestartPrefixMismatch { anchor: 0 });
-        }
-        Ok(())
     }
 
     fn take_registered_source(
@@ -2310,7 +2018,7 @@ impl<G> CommandState<G> {
         self.input
             .levels
             .mutate_top_source_cursor(|active, slot| {
-                assert_eq!(active.identity(), identity);
+                assert_eq!(active.identity(), identity.0);
                 slot.cursor.pending_acquired_line = true;
             })
             .expect("the inserted replacement source was just pushed");
@@ -2328,14 +2036,9 @@ impl<G> CommandState<G> {
             let InputLevel::Source(level) = level else {
                 return None;
             };
-            let backing = self
-                .input
-                .levels
-                .source_level_slot(level)
-                .cursor
-                .current_backing();
+            let backing = level.slot.cursor.current_backing();
             (backing.id == source
-                && self.input.levels.source_level_slot(level).name_class == SourceNameClass::File
+                && level.slot.name_class == SourceNameClass::File
                 && backing.framing == crate::SourceFramingPolicy::Canonical)
                 .then(|| backing.framing_name.as_deref().or(backing.name.as_deref()))
                 .flatten()
@@ -2363,7 +2066,7 @@ impl<G> CommandState<G> {
             .mutate_top_source_backing(registered, |active, slot| {
                 assert_eq!(
                     active.identity(),
-                    level,
+                    level.0,
                     "begin_read_line keeps the exact source level active during acquisition"
                 );
                 slot.name_class = name_class;
@@ -2409,13 +2112,7 @@ impl<G> CommandState<G> {
         if level.identity() != source {
             return None;
         }
-        let every_eof = self
-            .input
-            .levels
-            .source_level_slot(level)
-            .every_eof
-            .as_ref()?
-            .clone();
+        let every_eof = level.slot.every_eof.as_ref()?.clone();
         let retained_line = self
             .input
             .levels
@@ -2488,12 +2185,7 @@ impl<G> CommandState<G> {
             .iter()
             .rev()
             .find_map(|entry| match entry {
-                InputLevel::Source(source) => self
-                    .input
-                    .levels
-                    .source_level_slot(source)
-                    .open_depths
-                    .as_ref(),
+                InputLevel::Source(source) => source.slot.open_depths.as_ref(),
                 _ => None,
             })
     }
@@ -2509,12 +2201,9 @@ impl<G> CommandState<G> {
         #[cfg(test)]
         RETIREMENT_TOP_SOURCE_CHECKS.with(|checks| checks.set(checks.get().saturating_add(1)));
         self.input.levels.last().and_then(|entry| match entry {
-            InputLevel::Source(source) if source.identity() == identity => self
-                .input
-                .levels
-                .source_level_slot(source)
-                .open_depths
-                .as_ref(),
+            InputLevel::Source(source) if source.identity() == identity => {
+                source.slot.open_depths.as_ref()
+            }
             InputLevel::Source(_) | InputLevel::Resident(_) => None,
         })
     }
@@ -2534,7 +2223,6 @@ impl<G> CommandState<G> {
             })
             .is_some();
         if has_source {
-            self.timeline.record_force_eof(self.input.force_eof);
             self.input.force_eof = true;
         }
         has_source
@@ -2607,12 +2295,7 @@ impl<G> CommandState<G> {
         let Some(InputLevel::Source(level)) = self.input.levels.last() else {
             return None;
         };
-        let backing = self
-            .input
-            .levels
-            .source_level_slot(level)
-            .cursor
-            .current_backing();
+        let backing = level.slot.cursor.current_backing();
         Some(crate::observation::OpenedSourceSnapshot {
             id: backing.id,
             bytes: backing.bytes.clone(),
@@ -2761,10 +2444,9 @@ impl<G> CommandState<G> {
                 .iter()
                 .rev()
                 .find_map(|level| match level {
-                    InputLevel::Source(source) => Some(
-                        self.input.levels.source_level_slot(source).name_class
-                            == SourceNameClass::File,
-                    ),
+                    InputLevel::Source(source) => {
+                        Some(source.slot.name_class == SourceNameClass::File)
+                    }
                     InputLevel::Resident(_) => None,
                 })
                 == Some(true)
