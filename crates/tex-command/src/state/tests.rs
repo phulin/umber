@@ -223,7 +223,7 @@ fn word(ch: char) -> TracedTokenWord {
 #[test]
 #[cfg(feature = "profiling")]
 fn active_source_lookup_is_one_top_read_at_one_and_4096_replay_levels() {
-    fn run(depth: usize) -> ((u64, u64, u64, u64), u64, u64, u64) {
+    fn run(depth: usize) -> ((u64, u64, u64, u64), u64, u64) {
         crate::test_harness::with_universe(|universe| {
             let mut state = CommandState::default();
             let source = state
@@ -251,7 +251,6 @@ fn active_source_lookup_is_one_top_read_at_one_and_4096_replay_levels() {
 
             assert_eq!(state.current_file_source_id(), Some(source));
             state.profile_reset_input_source_context_counters();
-            let copies_before = state.profile_timeline_counters().full_frame_history_clones;
             let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
             let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
             {
@@ -261,60 +260,18 @@ fn active_source_lookup_is_one_top_read_at_one_and_4096_replay_levels() {
                 }
             }
             let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            let copies_after = state.profile_timeline_counters().full_frame_history_clones;
             (
                 state.profile_input_source_context_counters(),
                 after.calls - before.calls,
                 after.requested_bytes - before.requested_bytes,
-                copies_after - copies_before,
             )
         })
     }
 
     let shallow = run(1);
     let deep = run(4_096);
-    assert_eq!(shallow, ((4_096, 0, 0, 0), 0, 0, 0));
+    assert_eq!(shallow, ((4_096, 0, 0, 0), 0, 0));
     assert_eq!(deep, shallow);
-}
-
-#[test]
-#[cfg(feature = "profiling")]
-fn source_lexer_mutation_borrows_its_checked_slot_once() {
-    crate::test_harness::with_universe(|universe| {
-        let mut state = CommandState::default();
-        let source = state
-            .register_source(crate::SourceRegistration::new(
-                crate::RegisteredSourceKind::Generated,
-                std::sync::Arc::<[u8]>::from(&b"x"[..]),
-            ))
-            .expect("source lexer fixture source");
-        state
-            .open_registered_source(source)
-            .expect("source lexer fixture opens");
-        state.profile_prepare_source_line(13);
-        let summary = state
-            .publish_summary(universe)
-            .expect("source lexer fixture checkpoint");
-        state.profile_repeated_source_lex_mutations(1);
-        state
-            .restore_summary(&summary, universe)
-            .expect("source lexer fixture warm restore");
-
-        state.profile_reset_input_source_context_counters();
-        let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
-        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-        {
-            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-            state.profile_repeated_source_lex_mutations(4_096);
-        }
-        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-        assert_eq!(
-            state.profile_input_source_context_counters(),
-            (0, 0, 0, 4_096)
-        );
-        assert_eq!(after.calls - before.calls, 0);
-        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-    });
 }
 
 fn attempt_definition<G>(
@@ -1020,7 +977,7 @@ fn warmed_parameterless_macro_rows_copy_only_compact_definition_keys() {
                     .last()
                     .and_then(crate::input::InputLevel::macro_body)
                     .expect("live macro body");
-                assert_eq!(body.body.definition_ref().semantic_owner_count(), 0);
+                assert!(body.body.is_empty());
                 assert!(
                     state
                         .input

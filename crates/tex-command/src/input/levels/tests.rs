@@ -241,10 +241,10 @@ fn replay_coordinates_keep_input_frames_compact() {
     );
     assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
     assert_eq!(std::mem::size_of::<TokenRowHeader<()>>(), 32);
-    assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 64);
+    assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 40);
     assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 24);
-    assert_eq!(std::mem::size_of::<super::ResidentTokenRow<()>>(), 104);
-    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 112);
+    assert_eq!(std::mem::size_of::<super::ResidentTokenRow<()>>(), 80);
+    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 88);
     assert_eq!(std::mem::size_of::<super::SourceLevel<()>>(), 40);
 }
 
@@ -436,10 +436,10 @@ fn resident_macro_cursor_layout_stays_compact_and_wrapper_free() {
     let body = std::mem::size_of::<super::MacroBodyCursor<()>>();
     let resident = std::mem::size_of::<tex_state::ResidentMacroBody<()>>();
     let argument = std::mem::size_of::<super::MacroArgumentCursor<()>>();
-    assert_eq!(resident, 48, "resident body keeps only its physical cache");
     assert_eq!(
-        body, 64,
-        "macro body wrapper shrinks with the physical cache"
+        resident, 24,
+        "resident body is one shared span and its start"
     );
+    assert_eq!(body, 40, "macro body wrapper adds only its call identity");
     assert!(argument <= 56, "macro argument cursor is {argument} bytes");
 }

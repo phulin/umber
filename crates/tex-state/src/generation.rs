@@ -3,9 +3,7 @@
 use core::marker::PhantomData;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::definition_arena::{
-    AcceptedDefinitionTail, DefinitionArena, DefinitionArenaCursor, DefinitionCheckpointLease,
-};
+use crate::definition_arena::{AcceptedDefinitionTail, DefinitionArena, DefinitionArenaCursor};
 use crate::durable_arena::{AcceptedTokenListTail, GlueArena, ProvenanceArena, TokenListArena};
 use crate::memory_accounting::MemoryAccounting;
 use crate::provenance::OriginRecord;
@@ -44,8 +42,8 @@ impl<G, Namespace> ArenaToken<G, Namespace> {
 
 /// Coarse owner of the publishers and inline arenas in one revision generation.
 ///
-/// Macro definitions remain in structurally owned regions behind compact
-/// generation-branded keys. Durable token lists leave their publisher through
+/// Macro definitions are immutable rows behind compact generation-branded
+/// keys; executing bodies share their word spans. Durable token lists leave their publisher through
 /// generation-branded shared owners. Glue and provenance remain compact direct
 /// values owned by this bundle.
 pub(crate) struct Generation<G> {
@@ -75,25 +73,22 @@ pub(crate) struct AcceptedGenerationTail<G> {
 ///
 /// Cloning is deliberately available only at this coarse boundary. The
 /// backing publishers remain private. Ordinary admitted reads borrow this
-/// bundle; local macro input rows may retain a coarse definition-region lease,
-/// while token-list carriers retain their exact non-atomic owner.
+/// bundle; macro bodies and token-list carriers retain their exact
+/// non-atomic word spans.
 pub struct GenerationOwner<G> {
     generation: Arc<RwLock<Generation<G>>>,
 }
 
-/// Coarse generation owner plus the local definition regions reachable from
-/// one state checkpoint.
+/// Coarse generation owner retained by one state checkpoint.
 #[doc(hidden)]
 pub struct CheckpointGenerationOwner<G> {
     generation: GenerationOwner<G>,
-    _definitions: DefinitionCheckpointLease<G>,
 }
 
 impl<G> Clone for CheckpointGenerationOwner<G> {
     fn clone(&self) -> Self {
         Self {
             generation: self.generation.clone(),
-            _definitions: self._definitions.clone(),
         }
     }
 }
@@ -168,10 +163,8 @@ impl<G> GenerationOwner<G> {
     }
 
     pub(crate) fn checkpoint_owner(&self) -> CheckpointGenerationOwner<G> {
-        let definitions = self.generation().definitions().checkpoint_lease();
         CheckpointGenerationOwner {
             generation: self.clone(),
-            _definitions: definitions,
         }
     }
 

@@ -29,29 +29,20 @@ fn next_word_from_current_frame(
     Some((word, origin, position))
 }
 
-/// Reads one word from an admitted macro replacement cursor.
-///
-/// The hot path checks the packed frame bound, loads the retained physical
-/// slot, advances the frame's sole logical position, and then advances the
-/// body's physical cache. A physical crossing is settled by its cold
-/// directory transition only after the frame confirms that replacement words
-/// remain.
+/// Reads one word from an admitted macro replacement body: one frame bound
+/// check, one slice load, and one frame advance.
 #[inline(always)]
 fn next_macro_body_word_from_current_frame<G>(
     frame: &mut PackedInputFrame,
-    body: &mut crate::input::MacroBodyCursor<G>,
+    body: &crate::input::MacroBodyCursor<G>,
 ) -> Option<LoadedWord> {
     let position = frame.position();
     if position >= frame.limit() {
         return None;
     }
-    let word = body.body.load_current_word()?;
+    let word = body.body.word_at(position)?;
     let consumed = frame.advance_resident();
     debug_assert_eq!(consumed, position);
-    let boundary = body.body.advance_current_word();
-    if boundary && frame.position() < frame.limit() {
-        body.body.advance_chunk_cold(frame.position());
-    }
     Some((word, OriginId::UNKNOWN, position))
 }
 
@@ -112,10 +103,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         let ResidentTokenStorage::MacroBody(body) = &row.storage else {
             return Ok(false);
         };
-        if row.header.frame.position() >= row.header.frame.limit()
+        let position = row.header.frame.position();
+        if position >= row.header.frame.limit()
             || body
                 .body
-                .load_current_word()
+                .word_at(position)
                 .and_then(|word| word.out_parameter_slot())
                 .is_none()
         {

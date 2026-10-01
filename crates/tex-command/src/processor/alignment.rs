@@ -425,25 +425,6 @@ impl AlignmentDelimiter {
     }
 }
 
-#[cfg(all(test, feature = "profiling"))]
-impl<G> crate::CommandState<G> {
-    pub(crate) fn classify_alignment_delivery(
-        &mut self,
-        command: &mut CurrentCommand<G>,
-        literal_catcode: Option<Catcode>,
-    ) {
-        let mut hot = crate::command::HotCommand::from_current_ref(command);
-        if !self
-            .roots
-            .alignment
-            .account_literal_brace(&mut hot, literal_catcode)
-        {
-            self.roots.alignment.classify_delimiter(&mut hot);
-        }
-        *command = hot.materialize();
-    }
-}
-
 impl<G> AlignmentDeliveryState<G> {
     /// Literal braces are the only ordinary deliveries which mutate
     /// `align_state`. Delimiter interception is intentionally separate and

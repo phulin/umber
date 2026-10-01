@@ -492,18 +492,12 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 processor.command.scratch.frame_len(),
                 usize::from(has_arguments)
             );
-            assert_eq!(
-                body.body.definition_ref().semantic_owner_count(),
-                owners_before
-            );
-            assert_eq!(
-                processor
-                    .state
-                    .definition(body.body.definition_ref())
-                    .replacement_text()
-                    .len(),
-                expected_replacement_len
-            );
+            let tex_state::meaning::ResolvedMeaning::Macro { definition, .. } = call.meaning_ref()
+            else {
+                panic!("macro meaning");
+            };
+            assert_eq!(definition.semantic_owner_count(), owners_before);
+            assert_eq!(body.body.len(), expected_replacement_len);
             assert!(matches!(
                 call.meaning_ref(),
                 tex_state::meaning::ResolvedMeaning::Macro { .. }

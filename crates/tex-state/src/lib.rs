@@ -181,16 +181,6 @@ pub use definition_arena::{
     DefinitionBuildPhase, DefinitionBuildWriter, DefinitionBuilder, DefinitionDestination,
     DefinitionRef, DefinitionView, DefinitionWords, ResidentMacroBody,
 };
-#[cfg(any(test, feature = "profiling", feature = "testing"))]
-pub use definition_arena::{
-    DefinitionBuildWriteCounters, definition_build_write_counters,
-    reset_definition_build_write_counters,
-};
-#[cfg(any(test, feature = "testing"))]
-pub use definition_arena::{
-    ResidentMacroBodyReadCounters, reset_resident_macro_body_read_counters,
-    resident_macro_body_read_counters,
-};
 pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
     DependencyPageField, DependencyRegion, DependencyRegionError, DependencyRegionToken,

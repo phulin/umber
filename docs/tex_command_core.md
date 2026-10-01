@@ -2260,8 +2260,8 @@ runtime frame coordinates never become wire identity.
 
 The implemented ownership model has no macro activation chain. A specialized
 `MacroBody` input row is the complete live-call record: an 8-byte non-owning
-definition coordinate, optional local-region lease, optional `ArgumentSetId`,
-name, invocation origin, and compact replacement cursor. Parameterless macros
+definition coordinate, optional `ArgumentSetId`, name, invocation origin, and
+the 24-byte shared replacement span. Parameterless macros
 publish only this row when their replacement is nonempty or exceptional
 observation, tracing, recovery, or replay-completion semantics require its
 lifecycle. An ordinary unobserved empty replacement publishes no row.
@@ -2269,12 +2269,11 @@ lifecycle. An ordinary unobserved empty replacement publishes no row.
 source, stored-token, macro-body, and argument rows.
 
 An executing macro borrows its `DefinitionView` synchronously, completes any
-argument matching, and admits the immutable replacement cursor. The input row
-is the local-region structural lease; format and revision-global definitions
-pay no per-invocation lifetime operation. Diagnostic context reads the
-parameter and replacement spans through the already-admitted resident owner;
-it does not re-resolve the non-owning coordinate after a defining group may
-have retired. No separate macro object is reified.
+argument matching, and clones the immutable span `Rc` once. That clone keeps a
+local definition's words alive after its group exit drops the row. Diagnostic
+context reads the parameter and replacement spans through the already-admitted
+resident span; it does not re-resolve the non-owning coordinate after a
+defining group may have exited. No separate macro object is reified.
 
 The centralized transient and backed-up constructors avoid caller-side rich
 staging for fixed insertions and stream directly into the replay lane. e-TeX's
@@ -2316,8 +2315,8 @@ observation, alignment settlement, and replay-completion publication. Cold
 source EOF and final cleanup inspect their still-live source owner only long
 enough to retain the required scalar finalization facts, then use the generic
 logical truncation which alone releases the source slot.
-Macro-body retirement releases its optional argument set and local-region
-lease with that exact row. Before a source pop, the processor borrows the still-live
+Macro-body retirement releases its optional argument set and span with that
+exact row. Before a source pop, the processor borrows the still-live
 `SourceOpenDepths` and compares it with the current group and conditional
 stacks. Retirement returns only the two copy-small common-prefix coordinates;
 the boxed ancestry never crosses the pop and is never cloned for checkpoint

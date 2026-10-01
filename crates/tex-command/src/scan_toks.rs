@@ -1193,8 +1193,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             &mut match_marker,
             &mut partial,
         );
-        drop(parameter_text);
-        drop(replacement_text);
 
         let Some(crate::CommandSemanticDiagnostic::Recoverable {
             runaway: Some(runaway),

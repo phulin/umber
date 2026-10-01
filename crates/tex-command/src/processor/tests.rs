@@ -1149,7 +1149,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
         retirements: (u64, u64, u64, u64, u64, u64, u64),
         allocation_calls: u64,
         requested_bytes: u64,
-        whole_frame_copies: u64,
         whole_command_copies: u64,
         resolved_writes: u64,
     }
@@ -1270,7 +1269,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             let mut destination = None;
             command.profile_reset_raw_delivery_path_counters();
             command.profile_reset_macro_kernel_counters();
-            let timeline_before = command.profile_timeline_counters();
             let commands_before = crate::command::command_ownership_counters();
             let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
             let allocations_before =
@@ -1331,7 +1329,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 );
             }
             let commands_after = crate::command::command_ownership_counters();
-            let timeline_after = command.profile_timeline_counters();
             Evidence {
                 path: command.profile_raw_delivery_path_counters(),
                 branches: command.profile_resident_input_branch_counters(),
@@ -1341,8 +1338,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
                 allocation_calls: allocations_after.calls - allocations_before.calls,
                 requested_bytes: allocations_after.requested_bytes
                     - allocations_before.requested_bytes,
-                whole_frame_copies: timeline_after.full_frame_history_clones
-                    - timeline_before.full_frame_history_clones,
                 whole_command_copies: commands_after
                     .clones
                     .saturating_sub(commands_before.clones)
@@ -1367,7 +1362,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
             retirements: (3, 0, 0, 0, 0, 1, 0),
             allocation_calls: 0,
             requested_bytes: 0,
-            whole_frame_copies: 0,
             whole_command_copies: 0,
             resolved_writes: 6,
         }
@@ -1383,7 +1377,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
     assert_eq!(four_k.retirements, (3, 0, 0, 0, 0, 1, 0));
     assert_eq!(four_k.allocation_calls, 0);
     assert_eq!(four_k.requested_bytes, 0);
-    assert_eq!(four_k.whole_frame_copies, 0);
     assert_eq!(four_k.whole_command_copies, 0);
     assert_eq!(four_k.resolved_writes, 20_481);
 
@@ -1391,7 +1384,6 @@ fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
     assert_eq!(expanded_four_k.macro_kernel, four_k.macro_kernel);
     assert_eq!(expanded_four_k.allocation_calls, 0);
     assert_eq!(expanded_four_k.requested_bytes, 0);
-    assert_eq!(expanded_four_k.whole_frame_copies, 0);
     assert_eq!(expanded_four_k.whole_command_copies, 0);
 }
 

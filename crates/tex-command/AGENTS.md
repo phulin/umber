@@ -572,30 +572,26 @@ collector (see `src/conditionals.rs`).
   live in `execution_scratch.rs`, with no generic destination dispatch.
 - `src/macro_call.rs`, `src/input/levels.rs`, and `src/execution_scratch.rs`:
   macro invocation borrows the definition synchronously and admits one
-  specialized macro-body row. That row retains the existing exact local-region
-  lease and carries an optional `ArgumentSetId`; parameterless macros create no
+  specialized macro-body row. That row shares the definition's immutable word
+  span and carries an optional `ArgumentSetId`; parameterless macros create no
   matcher or argument state. Resident selection returns the bare body or
   argument cursor, relies on checkpoint or exposure capture, and
   advances one packed word before testing `Param` and writing the final command
   slot. Argument cursors admit word/origin parts directly, derive the delivery
   position from their one absolute coordinate, and advance one provenance-run
-  index only at run boundaries. The body word read remains the narrow opaque seam where stable
-  coarse definition storage replaces the current key lookup; it must not expose
-  definition coordinates or add independent ownership. Tail-child argument
-  spans never rebase or copy.
+  index only at run boundaries. A body word read is one slice index at the
+  packed frame position, and plain runs lend the span suffix directly.
+  Tail-child argument spans never rebase or copy.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses
   the scanner word/builder lanes. Ordinary `\def`/`\gdef` select their local or
-  revision-global definition region before scanning and write semantic words
-  directly into one transactional arena mark; failure truncates it and sealing
-  appends only the compact header with its final provenance. The collector's
+  global destination before scanning and write semantic words into the arena's
+  one build lane; failure clears it and sealing publishes one exactly sized
+  span with its final provenance. The collector's
   phase tag is the one authority for parameter versus replacement writes; no
   destination-local phase mirror or published-header provenance edit exists.
-  Recovery rendering carries the borrowed
-  `DefinitionView` itself until its final word visit instead of returning a
-  naked slice from a temporary local-region borrow. Raw definition scanning is
-  entirely call-local.
+  Raw definition scanning is entirely call-local.
   `\edef`/`\xdef` retain only the build key while their ordinary local scanner
   runs; a resource miss unwinds the builder and expansion call tree. `read_toks`
   keeps its independent cold/import staging lifetime. Read setup and

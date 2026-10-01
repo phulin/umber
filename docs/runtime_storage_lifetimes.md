@@ -42,20 +42,20 @@ are stored below the external store and recovered only through the universally
 generic admitted operation; formats and cross-process continuations remain
 detached and handle-free.
 
-Macro definitions use compact generation-branded keys into structurally owned
-regions. Eqtb and save-journal lanes copy only the key. Immutable format rows
-belong to the loaded-format region, global definitions belong to the
-revision-global region, and local definitions belong to nested TeX-group
-regions. A local macro input row holds one coarse region lease only when it can
-outlive `endgroup`; format and global rows need no per-use lifetime operation.
+Macro definitions use compact generation-branded keys into three row stores.
+Eqtb and save-journal lanes copy only the key. Immutable format rows belong to
+the loaded-format store, global definitions to the checkpointed global store,
+and local definitions to one LIFO local stack that each group exit truncates.
+Every row is one exactly sized shared immutable word span; an executing macro
+body shares that span, so it outlives `endgroup` without any region lease.
 Stored token lists retain their existing exact non-atomic shared handles. No
-definition uses a per-value owner, registry, liveness search, tracing pass,
-compaction, relocation, rehome, or additional historical generation.
+definition uses a registry, liveness search, tracing pass, compaction,
+relocation, rehome, or additional historical generation.
 
 TeX main-memory usage is maintained by one generation-local scalar aggregate.
 Publishing a definition or stored token list charges its canonical words once.
-Definition charges leave with checkpoint truncation, whole local-region
-retirement, or generation retirement; the last stored-token owner drop releases
+Definition charges leave with checkpoint truncation, group-exit truncation of
+the local stack, or generation retirement; the last stored-token owner drop releases
 that payload's charge.
 Node arenas charge each logical row at publication and release it on suffix,
 region, completed-page, or whole-generation retirement. The aggregate retains
@@ -122,19 +122,19 @@ and an explicit clone records a true alias. No definition has a per-value
 
 The following matrix is normative:
 
-| Value or storage                                              | Immediate owner                                                        | Valid until                                                                                     | Rollback behavior                                                                                              | Escape path                                      |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| Interned control-sequence name and token spelling             | Session interning epoch                                                | Session epoch retirement                                                                        | Never rolled back                                                                                              | Detached spelling or semantic atom               |
-| Current meaning, parameter, register, or code value           | Dense current-value bank                                               | Overwritten or bank retirement                                                                  | TeX group saves, checkpoint deltas, or operation-local undo restore in place                                   | Packed value in a checkpoint or DTO              |
-| Immutable macro definition and its definition token lists     | Format, revision-global, or forked local-group definition region       | Region/checkpoint/generation retirement; active local input rows may delay whole-region release | Rollback truncates the candidate region suffix; group restore precedes local-region retirement                 | Handle-free recipe at a cold boundary            |
-| Stored token list                                             | Every live eqtb, journal, input/replay stack, checkpoint, or PDF owner | Last exact owner drop                                                                           | Moves transfer; true aliases explicitly clone; truncation/pruning drops                                        | Handle-free recipe at a cold boundary            |
-| Macro/scanner frames, arguments, builders, or temporary words | Current generation scratch                                             | Synchronous operation completion or rollback                                                    | Reset the applicable lane lengths to saved cursors                                                             | None; surviving output is built in final storage |
-| Prepared cold operation or operation-local failure            | One caller-owned direct operation slot                                 | Application, rollback, or reuse                                                                 | Completion consumes occupied fields; a resource miss unwinds the operation and the host replays the checkpoint | Typed in-process result only                     |
-| Pending mode material and page-builder nodes                  | The current exclusive `PageRegion`                                     | Page shipout, rollback, or transfer to a durable owner                                          | Move-only region/suffix settlement after root restore                                                          | Direct construction or shipout lowering          |
-| Box-register or checkpoint-surviving node                     | Exclusive durable region or history-owned page region                  | Owning register/form/journal/checkpoint interval retirement                                     | Restore owners before abandoned regions drop                                                                   | Detached output or node recipe                   |
-| Source registration and compact provenance record             | Session or revision generation                                         | Last owning generation, live input, or output recipe retirement                                 | Cursor restoration and suffix discard                                                                          | Handle-free source recipe                        |
-| Structural diagnostic or rendered-source presentation         | Diagnostic or artifact DTO                                             | DTO disposal                                                                                    | Not live runtime state                                                                                         | Already detached and handle-free                 |
-| Shipped page                                                  | `tex-out` value                                                        | Output disposal                                                                                 | Outside engine rollback after publication                                                                      | Serialized artifact bytes or output DTO          |
+| Value or storage                                              | Immediate owner                                                        | Valid until                                                          | Rollback behavior                                                                                              | Escape path                                      |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Interned control-sequence name and token spelling             | Session interning epoch                                                | Session epoch retirement                                             | Never rolled back                                                                                              | Detached spelling or semantic atom               |
+| Current meaning, parameter, register, or code value           | Dense current-value bank                                               | Overwritten or bank retirement                                       | TeX group saves, checkpoint deltas, or operation-local undo restore in place                                   | Packed value in a checkpoint or DTO              |
+| Immutable macro definition and its definition token lists     | Format, global, or local-stack definition row                          | Truncation or generation retirement; executing bodies share the span | Rollback truncates the candidate suffix; group exit truncates the local stack                                  | Handle-free recipe at a cold boundary            |
+| Stored token list                                             | Every live eqtb, journal, input/replay stack, checkpoint, or PDF owner | Last exact owner drop                                                | Moves transfer; true aliases explicitly clone; truncation/pruning drops                                        | Handle-free recipe at a cold boundary            |
+| Macro/scanner frames, arguments, builders, or temporary words | Current generation scratch                                             | Synchronous operation completion or rollback                         | Reset the applicable lane lengths to saved cursors                                                             | None; surviving output is built in final storage |
+| Prepared cold operation or operation-local failure            | One caller-owned direct operation slot                                 | Application, rollback, or reuse                                      | Completion consumes occupied fields; a resource miss unwinds the operation and the host replays the checkpoint | Typed in-process result only                     |
+| Pending mode material and page-builder nodes                  | The current exclusive `PageRegion`                                     | Page shipout, rollback, or transfer to a durable owner               | Move-only region/suffix settlement after root restore                                                          | Direct construction or shipout lowering          |
+| Box-register or checkpoint-surviving node                     | Exclusive durable region or history-owned page region                  | Owning register/form/journal/checkpoint interval retirement          | Restore owners before abandoned regions drop                                                                   | Detached output or node recipe                   |
+| Source registration and compact provenance record             | Session or revision generation                                         | Last owning generation, live input, or output recipe retirement      | Cursor restoration and suffix discard                                                                          | Handle-free source recipe                        |
+| Structural diagnostic or rendered-source presentation         | Diagnostic or artifact DTO                                             | DTO disposal                                                         | Not live runtime state                                                                                         | Already detached and handle-free                 |
+| Shipped page                                                  | `tex-out` value                                                        | Output disposal                                                      | Outside engine rollback after publication                                                                      | Serialized artifact bytes or output DTO          |
 
 ## Interning epoch
 
@@ -305,68 +305,40 @@ widths remain operational state outside the format and dense banks.
 
 ## Immutable definitions
 
-`DefinitionArena` owns three storage classes behind one compact key and borrowed
+`DefinitionArena` owns three row stores behind one compact key and borrowed
 view interface:
 
-- the immutable format region, populated only by atomic format materialization;
-- the revision-global region, whose row/word marks participate in candidate
-  checkpoint detachment, acceptance, and rejection; and
-- nested forked local-group regions. Entering a TeX group pushes exactly one
-  child region. The arena stores only one current-region scalar; each stable
-  region slot stores its exact parent key. A nested child does not split its
-  parent: leaving restores meanings first, follows that parent key, and retires
-  only the exact child. There is no relocatable active-prefix vector.
-  The child is dropped immediately when it has no lease. Otherwise the child
-  is marked retired, and the final active-input or checkpoint lease release
-  directly drops that region's payload. Local regions occupy stable 64-slot
-  chunks behind one coarse generation-owned slot store. Entry pops one exact
-  address from an intrusive free-slot chain or grows by one chunk; it never
-  allocates an individual region shell or relocates an accumulated prefix.
-  Reuse increments the address's
-  incarnation inside the existing region coordinate, so stale keys cannot
-  alias the new occupant. Neither group transition searches local-region
-  history. A child structurally pins its parent until the child itself is
-  reclaimed. Consequently one lease of the current region pins the complete
-  checkpoint ancestry in constant work; the checkpoint owner stores that one
-  scalar lease rather than a region container. Final child reclamation releases
-  that one exact parent pin. A final release drains a reclaimable retired
-  ancestry iteratively, so maximum supported group depth does not become Rust
-  call-stack depth.
+- the immutable format rows, populated only by atomic format materialization;
+- the global rows, whose suffix participates in candidate checkpoint
+  detachment, acceptance, and rejection; and
+- one LIFO local stack. Entering a TeX group records the stack length and
+  allocates nothing; leaving restores meanings first and then truncates the
+  stack to that mark. Checkpoints are taken only at group depth zero, so the
+  local stack is always empty at a checkpoint and never participates in one.
 
-`DefinitionRef<G>` is an opaque eight-byte stable storage key. Only the
-definition store decodes its packed region and row to locate one immutable
-header plus the contiguous `[parameter][replacement]` word span. The header
-stores span boundaries, origin, and the validated at-most-nine-marker
-parameter pattern; neither the reference nor the header stores eager semantic
-identity. `DefinitionView<'a, G>` borrows that metadata and span for one
-synchronous use, so invocation never rescans parameter text. Cold convergence
-accepts equal references immediately; differing macro references compare
-flags, parameter patterns, and packed replacement words directly without
-allocating or copying. A global `let` repeats the exceptional promotion of the
-same local reference by reusing its cached global reference. That mapping
-remains owned by the source local region, so exact region retirement and
-checkpoint settlement discard it without a generation-wide promotion sweep.
+Each row stores one `Rc<[TokenWord]>` holding the contiguous
+`[parameter][replacement]` words, the parameter length, the final origin, and
+the validated at-most-nine-marker parameter pattern. Macro admission clones
+that `Rc` once into the 24-byte `ResidentMacroBody`; the packed input frame owns
+the sole logical position, and each body read is one slice index. A group exit
+therefore drops rows while executing bodies keep their spans alive, with no
+region lease, retirement state, or parent pin.
+
+`DefinitionRef<G>` is an opaque eight-byte key packing a store tag and a row
+number. Only the definition store decodes it. `DefinitionView<'a, G>` borrows
+one row for one synchronous use, so invocation never rescans parameter text.
+Cold convergence accepts equal references immediately; differing macro
+references compare parameter patterns and packed words directly. Neither the
+reference nor the row stores eager semantic identity.
 
 Ordinary `def` and `gdef` know their destination before scanning. The scanner
-opens a transactional word mark in that final local or global region, validates
-parameter structure while appending each word once, and seals by appending only
-the compact header. Failure truncates the exact word mark. There is no
-attempt-local publication body, final-body copy, per-definition allocation, or
-raw-definition retained state. `edef` and `xdef` use the same destination
-transaction with call-local expansion state; a resource miss unwinds the
-transaction and the host replays from a full checkpoint. Detached
-`DefinitionBuilder` staging remains only for cold format/memo/import batches
-whose source is already outside the live scanner.
-
-Each region owner keeps one flat append-only directory of stable 4,096-word
-allocations. Each physical chunk is allocated once behind a shared handle.
-Admission validates the replacement extent and initial chunk once, then the
-input row retains the region lifetime, current chunk handle, and physical
-cursor scalars while journaling only its logical body position. A read indexes
-the retained chunk directly; only a 4,096-word crossing reacquires the next
-handle through the flat directory. Rollback reconstructs those physical
-scalars from the logical position. There is no linked directory page
-traversal, per-word `OnceCell` probe, raw pointer, self-reference, or body copy.
+opens the arena's one build lane, validates parameter structure while
+appending each word once, and seals by publishing one exactly sized span with
+its final origin. Failure clears the lane. `edef` and `xdef` use the same
+build with call-local expansion state; a resource miss unwinds it and the host
+replays from a full checkpoint. Detached `DefinitionBuilder` staging remains
+only for cold format, memo, and import batches whose source is already outside
+the live scanner.
 
 ```rust
 pub struct DefinitionRef<G> {
@@ -375,17 +347,12 @@ pub struct DefinitionRef<G> {
 }
 
 pub struct DefinitionArena<G> {
-    format: DefinitionRegion,
-    global: DefinitionRegion,
-    local_slots: Rc<LocalDefinitionSlots>,
-    active_local: u32,
-    mutations: Vec<DefinitionRegionMutation>,
-}
-
-impl<G> DefinitionArena<G> {
-    pub fn get(&self, id: DefinitionRef<G>) -> DefinitionView<'_, G> {
-        // O(1) checked region/row admission into immutable words.
-    }
+    format: Vec<DefinitionEntry>,
+    global: Vec<DefinitionEntry>,
+    local: Vec<DefinitionEntry>,
+    local_marks: Vec<u32>,
+    promotions: Vec<DefinitionPromotion>,
+    // one live build lane, writer serial, and accounting
 }
 ```
 
@@ -394,38 +361,22 @@ it is not one global marker shared by all generations.
 
 Rust enforces part of this contract. The invariant brand prevents statically
 typed ids from different admitted generations from mixing. Module privacy
-prevents callers from forging keys, constructing views, or changing region
-coordinates. A view cannot cross the store borrow that admits it. Eqtb, save,
-and operation lanes copy the key without changing ownership; local-region
-liveness resides only in the structural group/checkpoint/input owners.
-Checkpoint capture retains the one current-region key and a scalar mutation
-journal mark. On the first definition or lifecycle write to a region in the
-new checkpoint epoch, the generation journal records that exact region's
-pre-write header, word, promotion, and retirement marks. Candidate selection,
-acceptance, rejection, and direct cursor restore traverse only this journal
-suffix. An existing header's first origin change adds one compact inverse field
-edit to its region record; repeated changes coalesce, while a newly appended
-header is already covered by the row suffix. Detachment and replay swap those
-field alternates without copying whole headers or regions. This includes an
-ancestor first written after its checkpoint child was ended; no active-chain or
-historical-region scan is needed. Detached accepted suffixes and origin
-alternates remain source-region-owned until rejection reattaches them or
-acceptance releases them.
+prevents callers from forging keys or constructing views. A view cannot cross
+the store borrow that admits it. Eqtb, save, and operation lanes copy the key
+without changing ownership.
 
-The four-byte region coordinate reserves all of its bits for addressing:
-values 1 and 2 name the fixed format and global regions, while local values
-encode a 16-bit slot address plus a nonzero 16-bit incarnation. It contains no
-macro-carrier or locality flag. A later eight-byte non-owning `DefinitionRef`
-can therefore pair this explicit coordinate with its four-byte row without
-reinterpreting a flag bit. Reuse stops permanently when one slot reaches
-incarnation 65,535; allocation then consumes another address, and exhaustion
-returns `CapacityOverflow`. Incarnations never wrap, so an ABA-stale key cannot
-silently become valid.
+A checkpoint cursor is the format and global row counts. Beginning a candidate
+splits off both suffixes since the accepted cursor; rejection re-appends them
+at their original row numbers, and acceptance releases their accounting.
+Contents comparison checks the detached suffix first, so reused row numbers
+compare correctly. Direct cursor restore truncates both stores, clears the
+local stack and its marks, and aborts any active build.
 
-The macro integration branch must remove its bit-63 identity flag: all 32
-coordinate bits are address/incarnation state, and semantic identity is
-resolved from the admitted definition header rather than encoded in the
-carrier.
+A global `let` whose source is local is the sole runtime escape conversion. It
+shares the source span into one new global row and memoizes the
+`(local row, global row)` pair in a sorted vector that group-exit truncation
+trims with the local rows, so a repeated promotion reuses the global row and
+no promotion sweep exists.
 
 `TokenListArena` follows the same ownership rule. Its fixed-size chunks and
 builder slots are reusable publication scratch. Sealing performs the final
@@ -452,13 +403,10 @@ beside its distinct spelling provenance, so checkpoint-origin classification
 requires one semantic-top read and no later ancestry or source-owner lookup.
 
 Ordinary key reads, `let` aliases, moves, restoration, and warmed arena reuse
-allocate no heap memory and copy no token payload. A global `let` whose source
-is local is the sole runtime escape conversion: it copies that immutable span
-once into revision-global storage and records the source/global key pair for
-reuse. No root scan, compactor, relocation, or per-definition reference count
-participates. Cold format capture compacts only reachable definition keys into
-handle-free rows; materialization publishes those rows into the immutable
-format region and aliases reuse the mapped row.
+allocate no heap memory and copy no token payload. No root scan, compactor, or
+relocation participates. Cold format capture compacts only reachable
+definition keys into handle-free rows; materialization publishes those rows
+into the immutable format store and aliases reuse the mapped row.
 
 ## Hot resolution and checkpoint replay
 
@@ -466,13 +414,10 @@ At episode admission, `tex-command` receives a borrowed view of the generation
 which matches the dense state it will execute. The packed-token resolver takes
 the actual caller-owned `CurrentCommand` target, performs one dense-row access,
 and lets that canonical row decode its compact definition key once into the
-final slot. `CurrentCommand` acquires no definition owner. A committed local
-macro body obtains one coarse region lease in its specialized input row;
-format and revision-global rows store only the key. Parameter and replacement
-reads borrow the arena span directly, with replacement reads indexing the
-admitted current chunk and acquiring the next handle only at a physical
-boundary. Admission acquires one guard
-for the episode, not one lock or heap allocation per lookup.
+final slot. `CurrentCommand` acquires no definition owner. A committed macro
+body shares its definition's span in its specialized input row, and every
+replacement read is one slice index. Admission acquires one guard for the
+episode, not one lock or heap allocation per lookup.
 
 Each active next-command request also owns one reusable `CurrentCommand` slot.
 Reference-only `EmptyCommand` reborrows prove that input writes its final
@@ -493,9 +438,7 @@ unwinds the ordinary Rust call tree and returns only a cold `ResourceNeed`.
 The host restores the latest full checkpoint, admits the response through the
 normal VFS/World path, and starts a fresh operation. Macro-body rows remain
 semantic input state owned by the current generation; their body and argument
-cursors are never copied into host replay metadata. A local-definition row
-retains the one direct region lease admitted at the push boundary, while a
-format or revision-global row has no lifetime operation.
+cursors are never copied into host replay metadata.
 
 ## Execution scratch and destination-directed construction
 

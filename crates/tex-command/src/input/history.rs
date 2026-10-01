@@ -965,37 +965,26 @@ impl<G> crate::CommandState<G> {
             fuel.charge()?;
             unreachable!("zero remaining fuel must fail")
         }
-        let mut body_run = false;
         let mut parameter_next = false;
         let (consumed, argument_source) = match &mut row.storage {
             super::ResidentTokenStorage::MacroBody(body) => {
-                let mut append_error = None;
-                let consumed = body.body.with_contiguous_span(|span| {
-                    let bound = available.min(frame_remaining);
-                    let count = span
-                        .iter()
-                        .take(bound)
-                        .take_while(|word| admission.admits(word.get()))
-                        .count();
-                    parameter_next = count < bound
-                        && span
-                            .get(count)
-                            .is_some_and(|word| word.get().out_parameter_slot().is_some());
-                    if count != 0
-                        && let Err(error) = writer.append_body_span(scratch, &span[..count])
-                    {
-                        append_error = Some(error);
-                    }
-                    count as u32
-                });
-                if append_error.is_some() {
-                    return Err(crate::CommandError::input_invariant());
+                let span = body.body.replacement_from(position);
+                let bound = available.min(frame_remaining);
+                let count = span
+                    .iter()
+                    .take(bound)
+                    .take_while(|word| admission.admits(**word))
+                    .count();
+                parameter_next = count < bound
+                    && span
+                        .get(count)
+                        .is_some_and(|word| word.out_parameter_slot().is_some());
+                if count != 0 {
+                    writer
+                        .append_body_span(scratch, &span[..count])
+                        .map_err(|_| crate::CommandError::input_invariant())?;
                 }
-                let consumed = consumed.unwrap_or(0);
-                if consumed != 0 {
-                    body_run = true;
-                }
-                (consumed, false)
+                (count as u32, false)
             }
             super::ResidentTokenStorage::MacroArgument(argument) => {
                 let consumed = writer
@@ -1026,18 +1015,6 @@ impl<G> crate::CommandState<G> {
             .frame
             .advance_resident_run(consumed)
             .ok_or_else(crate::CommandError::input_invariant)?;
-        if body_run {
-            let super::ResidentTokenStorage::MacroBody(body) = &mut row.storage else {
-                return Err(crate::CommandError::input_invariant());
-            };
-            let boundary = body
-                .body
-                .advance_current_run(consumed)
-                .ok_or_else(crate::CommandError::input_invariant)?;
-            if boundary && row.header.frame.position() < row.header.frame.limit() {
-                body.body.advance_chunk_cold(row.header.frame.position());
-            }
-        }
         let exhausted = row.header.frame.position() >= row.header.frame.limit();
         // TeX82 §347 counts the run's interior braces in `align_state`; no
         // alignment is active when the admission accepts braces.

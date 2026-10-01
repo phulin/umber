@@ -654,7 +654,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             false,
             &mut text,
         );
-        drop(definition);
         self.print_macro_trace(text, true);
     }
 

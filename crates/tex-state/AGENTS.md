@@ -56,42 +56,24 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/diagnostic/tests.rs`: Destination-selection, admitted forced-online
   routing without eqtb assignment, `print_nl` line-break, and scalar-formatting
   tests for the diagnostic channel.
-- `src/definition_arena.rs`: 8-byte compact generation-branded definition keys and
-  borrowed views over one immutable format region, one checkpointed
-  revision-global region, and nested forked local-group regions. Ordinary
-  definitions scan transactionally into their final region and seal a header
-  without a publication copy or per-definition allocation. Group exit restores
-  meanings before directly popping its one local region; a parent region is
-  reactivated through the child's exact parent key without an active-prefix
-  stack, continuation segment, or history traversal. One current-region
-  checkpoint lease is represented by that one scalar region pin and
-  transitively pins the structural parent chain. Active macro
-  input rows may hold coarse local-region leases whose
-  final release directly reclaims that exact retired payload. Structural
-  parent-pin release drains iteratively, so a maximally deep retired ancestry
-  cannot recurse on the Rust stack. Stable 64-slot
-  chunks supply direct reusable group slots without a per-group shell
-  allocation; address incarnations reject stale keys after exact reuse.
-  Candidate settlement resolves and visits only the exact first-write region
-  journal since the checkpoint. A direct definition build retains its final
-  origin while unpublished and seals it in the header's only write; published
-  headers are immutable, so region rollback needs only the ordinary suffix
-  boundary. This includes ancestor writes after a child exit and unequal group
-  depths.
-  Exceptional local-to-global
-  `let` promotion copies one span once and caches the mapped global key in its
-  source region, so no global promotion sweep exists. Validated format rows
-  write their two wire slices directly into the pre-reserved immutable format
-  region; detached builders remain only for memo/import batches. Each semantic region owns an
-  eight-word inline common prefix and one flat append-only directory of stable
-  4,096-word overflow chunks. Tiny group-local definitions therefore retire
-  with their existing region slot without acquiring a mostly empty heap block.
-  Resident body admission validates its initial storage segment once and mints
-  the sole absolute replacement cursor. Ordinary safe-Rust delivery returns
-  the relative semantic position with one direct constant-time slot access,
-  advances that cursor once, and changes its derived segment only at
-  boundaries. Rollback swaps an opaque store coordinate. Exact per-word structural counters are test-only;
-  profiling gates derive their known sequential volumes at the boundary.
+- `src/definition_arena.rs`: 8-byte compact generation-branded definition
+  keys over three row stores: the immutable format rows, the checkpointed
+  global rows, and one LIFO local stack truncated at each group exit. Each row
+  is one exactly sized shared immutable word span, so group exit drops rows
+  while executing bodies keep their own span alive. Checkpoint candidates
+  detach and restore only the format and global suffixes; restore truncates
+  rows and discards open groups. Exceptional local-to-global `let` promotion
+  shares the span once and memoizes the mapped global row until its local row
+  is dropped.
+- `src/definition_arena/body.rs`: Opaque definition references, immutable
+  definition rows, borrowed definition views, and the 24-byte resident macro
+  body whose reads are one slice index at the packed frame position.
+- `src/definition_arena/build_lane.rs`: The one live definition build and its
+  direct scan-episode writer, which seals into one exactly sized span.
+- `src/definition_arena/builder.rs`: Build phases, build errors, and the
+  detached cold-path builder for memo replay and import batches.
+- `src/definition_arena/tests.rs`: Row lifetime, group truncation, promotion,
+  checkpoint candidate, restore, builder, identity, and accounting tests.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
   token-list owners, reusable publication builders, retained immutable rows
   addressed by compact node token coordinates, allocation-free owning

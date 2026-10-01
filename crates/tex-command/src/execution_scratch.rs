@@ -5,7 +5,6 @@
 //! inherited lane mark once no pending child owns the suffix. No macro
 //! invocation owns a heap buffer, linked segment, or attempt-arena scope.
 
-use core::cell::Cell;
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
@@ -429,18 +428,15 @@ impl MacroWordLane {
     /// Writes one already-admitted plain-character run to the caller-owned
     /// destination. Provenance and the physical append coordinate settle at
     /// run granularity; a chunk boundary is the only cold re-admission point.
-    fn append_cell_run_at(
+    fn append_run_at(
         &mut self,
         position: &mut MacroAppendPosition,
-        words: &[Cell<TokenWord>],
+        words: &[TokenWord],
         origin: OriginId,
     ) -> Result<u32, ScratchError> {
         let count = u32::try_from(words.len()).map_err(|_| ScratchError::CapacityOverflow)?;
-        if count == 0 {
-            return Ok(0);
-        }
-        for word in words {
-            self.append_at(position, TracedTokenWord::from_parts(word.get(), origin))?;
+        for &word in words {
+            self.append_at(position, TracedTokenWord::from_parts(word, origin))?;
         }
         Ok(count)
     }
@@ -669,7 +665,7 @@ pub(crate) struct ExecutionScratch<G> {
     /// and observed token payloads are deliberate readers and remain visible
     /// in this assertion-bearing profiling counter.
     #[cfg(any(test, feature = "profiling"))]
-    match_word_reads: Cell<u64>,
+    match_word_reads: core::cell::Cell<u64>,
 }
 
 impl<G> Default for ExecutionScratch<G> {
@@ -697,7 +693,7 @@ impl<G> Default for ExecutionScratch<G> {
             #[cfg(test)]
             match_writer_slot_validations: 0,
             #[cfg(any(test, feature = "profiling"))]
-            match_word_reads: Cell::new(0),
+            match_word_reads: core::cell::Cell::new(0),
         }
     }
 }
@@ -902,19 +898,19 @@ impl<G> ExecutionScratch<G> {
     /// commands, outer control sequences, and input transitions, so each word
     /// settles as ordinary argument material. Provenance is represented once
     /// by the run origin and retained by the existing sparse origin lane.
-    pub(crate) fn append_plain_argument_cell_span(
+    pub(crate) fn append_plain_argument_span(
         &mut self,
         writer: &mut MacroArgumentWriter<G>,
-        words: &[Cell<TokenWord>],
+        words: &[TokenWord],
         origin: OriginId,
     ) -> Result<(), ScratchError> {
         if writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
         self.macro_words
-            .append_cell_run_at(&mut writer.append, words, origin)?;
-        for word in words {
-            writer.cursor.settle_argument_word(word.get(), false);
+            .append_run_at(&mut writer.append, words, origin)?;
+        for &word in words {
+            writer.cursor.settle_argument_word(word, false);
         }
         writer.visible_end = writer.append.absolute;
         Ok(())
@@ -1508,13 +1504,13 @@ impl<G> ExecutionScratch<G> {
 /// context only literal non-brace, non-active characters are admitted.
 /// Destination of one batched run of plain resident words.
 ///
-/// Macro-body spans arrive as one physical slice; argument spans are read from
+/// Macro-body spans arrive as one slice; argument spans are read from
 /// the scratch word lane, which a macro-argument writer also appends to.
 pub(crate) trait PlainRunSink<G> {
     fn append_body_span(
         &mut self,
         scratch: &mut ExecutionScratch<G>,
-        words: &[Cell<TokenWord>],
+        words: &[TokenWord],
     ) -> Result<(), ScratchError>;
 
     fn append_argument_span(
@@ -1532,9 +1528,9 @@ impl<G> PlainRunSink<G> for MacroArgumentWriter<G> {
     fn append_body_span(
         &mut self,
         scratch: &mut ExecutionScratch<G>,
-        words: &[Cell<TokenWord>],
+        words: &[TokenWord],
     ) -> Result<(), ScratchError> {
-        scratch.append_plain_argument_cell_span(self, words, OriginId::UNKNOWN)
+        scratch.append_plain_argument_span(self, words, OriginId::UNKNOWN)
     }
 
     fn append_argument_span(
@@ -1574,11 +1570,11 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
     fn append_body_span(
         &mut self,
         _: &mut ExecutionScratch<G>,
-        words: &[Cell<TokenWord>],
+        words: &[TokenWord],
     ) -> Result<(), ScratchError> {
         words
             .iter()
-            .try_for_each(|word| self.push(word.get()))
+            .try_for_each(|&word| self.push(word))
             .map_err(|_| ScratchError::InvalidCoordinate)
     }
 
@@ -1620,9 +1616,9 @@ impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
     fn append_body_span(
         &mut self,
         _: &mut ExecutionScratch<G>,
-        words: &[Cell<TokenWord>],
+        words: &[TokenWord],
     ) -> Result<(), ScratchError> {
-        words.iter().try_for_each(|word| self.push(word.get()))
+        words.iter().try_for_each(|&word| self.push(word))
     }
 
     fn append_argument_span(
