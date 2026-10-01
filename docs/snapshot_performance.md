@@ -1,6 +1,14 @@
 # Final State and Generation Performance Gate
 
-Status: final two-generation runtime contract, 2026-08-22.
+Status: measurement entry points and current two-slot implementation checks.
+
+The selected ownership target is
+[Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md).
+Its one working core per job/checkpoint family, actual cold captures and tails
+supersede the topology/constant-capture assumptions below. Existing benchmark
+entry points remain useful; migrate lifecycle assertions with their owning
+representation. Allocation/timing targets are measurement evidence, not
+additional implementation-closure blockers.
 
 ## Purpose and workflow
 

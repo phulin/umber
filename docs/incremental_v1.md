@@ -19,9 +19,14 @@ edited document from a retained checkpoint, detects convergence, and reuses the
 unchanged suffix. It refines the incremental-engine overview in
 [`architecture.md`](architecture.md) §11 and the normative state, effect,
 checkpoint, and hashing rules in [`core_state.md`](core_state.md) §§8–10.
-Where this document discusses retaining group roots, the representation and
-ownership rules in [`retained_group_roots.md`](retained_group_roots.md) remain
-normative.
+[Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
+now owns the selected generation/candidate, capture, group, definition and
+pruning representation. The two-slot/frozen-substrate mechanisms below are
+current implementation descriptions, not a second-eqtb target; checkpoint
+candidates already move the sole dense core, and genuine cold ownership
+wrappers/brands remain. Named scheduling,
+edit mapping and convergence semantics remain; inside-group checkpoints are
+excluded and the earlier retained-group proposal is deleted.
 
 Paragraph construction and line breaking follow ordinary execution after
 restart. V1 has no paragraph recorder, paragraph memo, retained-node mount, or
@@ -160,10 +165,8 @@ V1 deliberately restricts paragraph checkpoints to group depth zero. Ordinary
 paragraphs inside an open TeX group do not publish a boundary, even when the
 mode transition otherwise looks like paragraph completion. This prevents the
 session from depending on an exited journal lineage and keeps the first
-incremental implementation independent of enabling the broader grouped-
-paragraph rollout in `retained_group_roots.md`. Reconsidering that policy
-requires implementing and measuring that document's retained-lineage
-capability; it is not an executor-side structural check to loosen.
+incremental implementation on the selected quiescent checkpoint contract.
+Do not loosen this rule by inspecting group shape.
 
 Paragraphs built inside `\vbox`, `\hbox`, insertions, alignments, math, output
 routines, or another nested main-control invocation are not outer paragraphs
@@ -197,11 +200,6 @@ shipout and its artifact ordering are unchanged when publication is
 suppressed. This explicit restriction keeps v1 on the current destructive
 group-journal substrate: no v1 checkpoint can later be invalidated by group
 exit.
-
-The retained-lineage capability in `retained_group_roots.md` may later expand
-both paragraph and shipout eligibility. That rollout must be expressed as an
-aggregate state-layer capability and tested before `tex-exec` loosens the
-depth-zero rule; executor-side inspection of group shape is not sufficient.
 
 The shipout boundary also requires one of the two retained document roles. A
 package, class, generated-input, or format-initialization shipout still commits
@@ -364,11 +362,11 @@ accepted slot. Either transition returns to exactly one generation.
 
 Because retained substrates are frozen, v1 needs no per-checkpoint pinning of
 journal, node, or content spans: watermark prefixes below a retained
-checkpoint stay intact by construction. Fine-grained per-span retention (the
-`retained_group_roots.md` capability) remains a measured follow-up, not a v1
-prerequisite. The fork's O(state) cost is paid once per `advance` and is
-reported by the session's restart-latency metrics, separately from O(1)
-checkpoint capture.
+checkpoint stay intact by construction. The selected replacement uses actual semantic preimage roots and cold
+accepted tails rather than another mutable frozen substrate. Command capture
+copies actual cold rows/words and is not uniformly O(1); see
+[the aggregate inventory](aggregate_checkpoint_contract.md). Report current
+fork/restart costs as measurements, not requirements for the target.
 
 ## Effects and artifacts across shipout
 

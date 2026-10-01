@@ -11,10 +11,10 @@ measurement-dependent.
 This proposal replaces the input, expansion, and main-control core with a
 machine shaped like TeX's own:
 
-- one token memory;
-- a dense table of packed meanings;
-- a stack of 16-byte frames;
-- a TeX save stack.
+- direct immutable token spans and one retained argument store;
+- dense packed meanings;
+- compact frame-owned reader positions;
+- a direct TeX save stack and checkpoint first-touch history.
 
 Checkpoints, resource replay, provenance, observation, and fuel move off the
 per-token path. They attach to boundaries the engine already has: frame pushes,
@@ -27,24 +27,26 @@ them.
 
 ## Reconciliation after the first implementation wave
 
-This section is authoritative for the current tree. The proposal's original
-two-ended token heap, allocator, and blanket deletion list are candidate
-designs, not prerequisites. The implementation through `eb754fc2d` has
+This section controls implementation order.
+[Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
+is the sole authority for the selected storage, mutation and lifecycle model. The proposal's original
+two-ended token heap, reference-count rollback epochs/quarantine, and blanket
+deletion list are retired. Compact frame-layout experiments are not prerequisites. The implementation through `eb754fc2d` has
 already removed several named owners, and the next changes must follow the
 measured costs that remain. Every replacement deletes its predecessor in the
 same logical stage; no compatibility format, API shim, feature fallback, or
 second engine is retained.
 
-| Original stage                   | State at `eb754fc2d`                                       | Reconciliation                                                                                                                                                                                                                                                                                                                                                                                             |
-| -------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0. Harness                       | Complete in `b5dc8429c`                                    | Keep the original case table and thresholds. Receipts are per-revision evidence.                                                                                                                                                                                                                                                                                                                           |
-| 1. Halt and rollback             | Implementation complete; performance gates carried forward | Sticky halt and checkpoint replay replaced command rollback. The old `roll_attempt_operation` path is deleted. `settle_attempt` remains a boundary check that clears command scratch; do not schedule deletion of the already-removed scope protocol. The original `group` and `toks` measurements missed their intermediate limits and remain open performance evidence for later stages.                 |
-| 2. Transient checkpoint state    | Partial in `0552fe902` and `270b0ef91`                     | Journals and transient snapshots were deleted and named captures moved by value. Keep the existing full-checkpoint admission rules and verify all checkpoint kinds, replay, and incremental restore. The `mbody` intermediate limit has not been met.                                                                                                                                                      |
-| 3. Definitions and token storage | Partial in `73434d995`                                     | Definition bodies are shared immutable spans. Resident macro and durable-list rows retain those owners and read the spans directly; matched arguments remain transient words. The proposed unified two-ended `mem`, eqtb rewrite, collector, reference-count epochs, quarantine, and interval allocator are not adopted by default. Address global-row reclamation separately from active-frame ownership. |
-| 4. Frames and delivery           | Partial in `eb754fc2d`                                     | The six-domain replay lane was replaced by one token stack, and immutable definition/list activation no longer copies payloads. Frames and delivery are still larger/richer than the proposed machine. Finish one-pass argument construction, matcher plans, packed delivery, and meaning resolution as separate measured changes.                                                                         |
-| 5. Main control                  | Not started                                                | Keep dense mode/command dispatch and direct prefixed-command execution as a later stage, after the packed delivery seam is stable.                                                                                                                                                                                                                                                                         |
-| 6. Code layout                   | Not started                                                | Apply cold attributes, generic removal, PGO, and post-link layout only against the hot symbols and full-book profile of the then-current tree.                                                                                                                                                                                                                                                             |
-| 7. Node memory                   | Not started                                                | Retain the existing node/checkpoint contract. Move storage to epochs only if profiling shows node allocation or page/box journals still block the full-book target.                                                                                                                                                                                                                                        |
+| Original stage                   | State at `eb754fc2d`                                       | Reconciliation                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0. Harness                       | Complete in `b5dc8429c`                                    | Keep the original case table and thresholds. Receipts are per-revision evidence.                                                                                                                                                                                                                                                                                                           |
+| 1. Halt and rollback             | Implementation complete; performance gates carried forward | Sticky halt and checkpoint replay replaced command rollback. The old `roll_attempt_operation` path is deleted. `settle_attempt` remains a boundary check that clears command scratch; do not schedule deletion of the already-removed scope protocol. The original `group` and `toks` measurements missed their intermediate limits and remain open performance evidence for later stages. |
+| 2. Transient checkpoint state    | Partial in `0552fe902` and `270b0ef91`                     | Journals and transient snapshots were deleted and named captures moved by value. Keep the existing full-checkpoint admission rules and verify all checkpoint kinds, replay, and incremental restore. The `mbody` intermediate limit has not been met.                                                                                                                                      |
+| 3. Definitions and token storage | Partial in `73434d995`                                     | Definition bodies are shared immutable spans. Resident macro and durable-list rows retain those owners and read the spans directly; matched arguments remain transient words. The earlier two-ended `mem`, reference-count rollback epochs, quarantine and interval allocator are retired. Address global-row reclamation separately from active-frame ownership.                          |
+| 4. Frames and delivery           | Partial in `eb754fc2d`                                     | The six-domain replay lane was replaced by one token stack, and immutable definition/list activation no longer copies payloads. Frames and delivery are still larger/richer than the proposed machine. Finish one-pass argument construction, matcher plans, packed delivery, and meaning resolution as separate measured changes.                                                         |
+| 5. Main control                  | Not started                                                | Keep dense mode/command dispatch and direct prefixed-command execution as a later stage, after the packed delivery seam is stable.                                                                                                                                                                                                                                                         |
+| 6. Code layout                   | Not started                                                | Apply cold attributes, generic removal, PGO, and post-link layout only against the hot symbols and full-book profile of the then-current tree.                                                                                                                                                                                                                                             |
+| 7. Node memory                   | Not started                                                | Retain the existing node/checkpoint contract. Move storage to epochs only if profiling shows node allocation or page/box journals still block the full-book target.                                                                                                                                                                                                                        |
 
 The immutable-span stage replaces macro-body and durable stored-list copies
 with direct input-frame reads. The input stack retains the shared owner for the
@@ -129,16 +131,16 @@ gate. Performance receipts and the original numerical budgets are informative
 architectural goals. The user's 2026-10-01 instruction explicitly makes them
 nonblocking for implementation closure; report misses without weakening targets.
 
-| Order | Focus                                                                | Required semantic and deletion evidence                                                                                                                                                                                                               |
-| ----- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | Combined immutable spans and packed delivery (`.4`/`.11`)            | No body/list activation copy; native scalar consumer loop and one final meaning target; obsolete reader carriers and font column deleted; retained owners survive group exit and release on retirement/restore; named checkpoints reject live macros. |
-| 2     | Definition-owned matcher plans (`.5`)                                | No per-call plan/failure-table allocation; TeX82 matcher cases pass.                                                                                                                                                                                  |
-| 3     | One-pass macro argument construction (`.10`)                         | No scratch-to-input second copy; final frame-readable argument storage preserves provenance.                                                                                                                                                          |
-| 4     | Unified full-checkpoint and TeX group ownership (`.14`, `.6`, `.13`) | Settle one coherent design for actual group saves, checkpoint retention, and reclamation before replacing bookkeeping; delete each displaced owner.                                                                                                   |
-| 5     | Direct main-control dispatch (`.6`)                                  | No duplicate dispatch engine or eligibility shim; exact semantics, effect ordering, and byte-exact story.                                                                                                                                             |
-| 6     | Checkpoint, halt, reclamation, and provenance closure audit (`.12`)  | Full restore reproduces hashes/incremental state; resource replay leaves no parser continuation; exact owner release and forwarded provenance; bounded halt unwind.                                                                                   |
-| 7     | Hot-set layout and full-book performance (`.7`)                      | Report production instruction, cycle, time, RSS, and cache receipts against unchanged goals; retain layout changes only with evidence.                                                                                                                |
-| 8     | Node memory if required (`.8`)                                       | One node/page/box checkpoint ownership contract; old journals deleted; semantic retention gates pass.                                                                                                                                                 |
+| Order | Focus                                                               | Required semantic and deletion evidence                                                                                                                                                                                                               |
+| ----- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Combined immutable spans and packed delivery (`.4`/`.11`)           | No body/list activation copy; native scalar consumer loop and one final meaning target; obsolete reader carriers and font column deleted; retained owners survive group exit and release on retirement/restore; named checkpoints reject live macros. |
+| 2     | Definition-owned matcher plans (`.5`)                               | No per-call plan/failure-table allocation; TeX82 matcher cases pass.                                                                                                                                                                                  |
+| 3     | One-pass macro argument construction (`.10`)                        | No scratch-to-input second copy; final frame-readable argument storage preserves provenance.                                                                                                                                                          |
+| 4     | Full-checkpoint and TeX group ownership (`.14`, `.6`, `.13`)        | Follow the selected aggregate contract: direct group stack and indexed interval undo under one mutation policy; one mutable generation with cold accepted tails; counted dynamic definitions; delete displaced owners.                                |
+| 5     | Direct main-control dispatch (`.6`)                                 | No duplicate dispatch engine or eligibility shim; exact semantics, effect ordering, and byte-exact story.                                                                                                                                             |
+| 6     | Checkpoint, halt, reclamation, and provenance closure audit (`.12`) | Full restore reproduces hashes/incremental state; resource replay leaves no parser continuation; exact owner release and forwarded provenance; bounded halt unwind.                                                                                   |
+| 7     | Hot-set layout and full-book performance (`.7`)                     | Report production instruction, cycle, time, RSS, and cache receipts against unchanged goals; retain layout changes only with evidence.                                                                                                                |
+| 8     | Node memory if required (`.8`)                                      | One node/page/box checkpoint ownership contract; old journals deleted; semantic retention gates pass.                                                                                                                                                 |
 
 The microbenchmark table below remains the original per-operation target.
 Intermediate-stage misses do not change its numbers or block implementation
@@ -190,8 +192,9 @@ boundaries. At every full checkpoint:
 - no alignment, matching, or definition scan is active;
 - the mode nest has one vertical level.
 
-So the input stack, parameter stack, save stack, scanner state, and mode nest
-need no journal at all. They are small at every checkpoint, so they can be
+So input delivery, parameter storage, scanner state, and the quiescent mode
+record need no checkpoint journal. TeX grouping still requires its actual
+local save stack, which is distinct from checkpoint history. They are small at every checkpoint, so they can be
 copied by value there.
 
 Only long-lived global state needs an interval journal: meanings and registers,
@@ -487,161 +490,35 @@ decrement and a branch into the innermost loop.
 
 ## The machine
 
-```rust
-struct Machine {
-    // Long-lived state, journaled first-touch per checkpoint interval.
-    mem: Vec<u32>,              // token memory: heap grows up, transient grows down
-    eqtb: Vec<u64>,             // meanings, registers, parameters, codes
-    names: CsTable,             // append-only control-sequence names
-    // Transient state, small or empty at every checkpoint.
-    top: Frame,                 // TeX's cur_input
-    frames: Vec<Frame>,         // TeX's input_stack
-    frame_cold: Vec<FrameCold>, // call names, call sites, completion fences
-    params: Vec<Span>,          // TeX's param_stack
-    collector: Vec<u32>,        // token lists under construction
-    save: Vec<SaveEntry>,       // TeX's save_stack
-    cond: Vec<CondEntry>,       // TeX's condition stack
-    nest: Vec<ModeRecord>,      // TeX's semantic nest
-    // Control.
-    cur_level: u16,
-    align_state: i32,
-    scanner: ScannerStatus,
-    slow: u8,
-    budget: i64,
-    halt: Option<HaltReason>,
-}
-```
+The selected core has direct packed token/meaning reads, frame-owned cursors,
+immutable definition/list spans, retained arguments, and one direct dispatch
+loop. Its generation owns the dense banks, group stack and checkpoint undo
+log. Level and host epoch metadata stay off the meaning-only read path.
 
-### Token memory (measurement-dependent proposal)
+The previous two-ended `mem` proposal, span `rc`/`hold` rollback epochs,
+quarantine, blanket token-list arena replacement and assumed 16-byte save
+record are retired. They are not an alternative implementation lane. Keep the
+real immutable payload owners and specialized node/PDF storage; replace the
+measured immediate-consumption paths and their bookkeeping.
 
-This section describes one possible storage substrate, not a required stage.
-The reconciled implementation first reuses the immutable definition/list spans
-already present in the tree. Adopt the allocator below only if a current-tree
-profile shows that direct span delivery is insufficient and a simpler
-retention design cannot meet the unchanged acceptance targets.
+### Packed meanings and assignments
 
-One `Vec<u32>` holds every stored token, as TeX's `mem` does:
+The production scalar reader already resolves into final `CommandWord` from
+one canonical packed row. Meanings preserve their typed font or compact macro
+coordinate. Dense bank access is direct; assignment level and checkpoint
+metadata are not copied into ordinary commands.
 
-- The **heap** grows up from offset zero.
-- The **transient stack** grows down from the end.
-- When the two meet, the vector grows. The transient region moves to the new end
-  and transient offsets in frames and the parameter stack are rebased. That is
-  O(stack depth), amortized by doubling.
-- Reading a token is `mem[pos]` whatever owns it.
+All meaning/register/parameter/code and box-binding mutations use the central
+policy in [the checkpoint contract](aggregate_checkpoint_contract.md): one
+local-level predicate, one indexed host-epoch comparison, independent group
+and interval preimages only when required, then root-safe replacement.
+Checkpoint stamps are monotone host metadata, never restored TeX state.
+Dynamic definitions use stable counted slots; active frames retain the full
+payload. No count or checkpoint work occurs on word reads/substitution.
 
-#### Heap spans
-
-A heap span holds a definition, a token register or parameter, a mark, a
-`\write` list, an alignment template part, or `\output`. Its header is four
-words:
-
-```text
-[rc][hold][born:16 | logged:16][shape]   then words
-```
-
-- **`rc`** counts persistent holders: eqtb cells, save entries, interval logs,
-  and checkpoints.
-- **`born` and `logged`** are epoch stamps for checkpoint intervals (see
-  Checkpoints).
-- **`shape`** encodes the length and, for a definition, the parameter count, the
-  parameter-text length, and the offset of its matcher plan.
-- **`hold`** counts the frames reading the span. It is never journaled. A span
-  is free when `rc` and `hold` are both zero.
-
-Allocation and freeing:
-
-- Spans are allocated from size-class free lists, with a bump tail.
-- Spans from the loaded format lie below `format_mark` and are immortal.
-  Reference operations skip them with one compare, so the format prefix stays
-  read-only and shareable, as
-  [fork-arena dense prefixes](fork_arena_dense_prefix_emplacement.md) need.
-
-#### Transient stack
-
-The transient stack holds macro arguments, backed-up and inserted tokens, and
-`\the` and `\number` results.
-
-- It is LIFO by region. Retiring the top region truncates the stack.
-- Retiring a lower region marks it dead, and dead regions are reclaimed when the
-  stack unwinds past them.
-- A macro call in tail position compacts its new arguments down over a dead
-  region beneath them. Recursive `\loop` patterns therefore run in constant
-  transient space.
-
-#### Collector
-
-The collector is a separate LIFO `Vec<u32>` for lists under construction:
-
-- definitions, `\edef`, `\toks`, `\message`, `\write`, `\mark`, and
-  `\csname` names;
-- nested collection pushes a sub-region.
-
-Sealing a list copies it once into an exactly sized heap span. Consumers that
-do not store the list read it in place: `\message`, `\csname`, and immediate
-`\write`.
-
-#### What this replaces
-
-- `DefinitionArena`, with its regions, chunk handles, leases, and
-  local-definition slots;
-- `TokenListArena`;
-- the attempt arena and its promotion path;
-- the command scratch argument store;
-- all six storage domains.
-
-Arguments become contiguous copies, not TeX's per-token linked lists, so
-argument handling can beat pdfTeX.
-
-### Packed meanings
-
-eqtb is a dense `Vec<u64>` indexed by control-sequence id and by TeX's
-parameter, register, and code regions. Every cell has one layout:
-
-```text
-bits  0..8   cmd     TeX command code, ordered so expandable codes sort last
-bits  8..16  flags   MACRO | LONG | OUTER | PROTECTED | SLOW
-bits 16..32  level   TeX eq_level (xeq_level for integer and dimension cells)
-bits 32..64  equiv   chr code, register value, font, or heap offset of a definition
-```
-
-Classification:
-
-- `cmd >= FIRST_EXPANDABLE` is TeX's `cur_cmd > max_command`.
-- `flags & (OUTER | SLOW)` is the only extra test the reader needs.
-- A character token does not touch eqtb. Its meaning is
-  `CHAR_MEANING[cat] | ch << 32`, except that active characters read their eqtb
-  cell.
-
-Assignment is TeX's `eq_define`, `eq_word_define`, and `geq_define`, plus a
-first-touch test:
-
-```rust
-#[inline(always)]
-fn eq_define(&mut self, p: Cell, w: u64) {
-    let old = self.eqtb[p];
-    if level(old) == self.cur_level {
-        self.release(old)
-    } else if self.cur_level > LEVEL_ONE {
-        self.save.push(SaveEntry::restore(p, old))
-    }
-    self.touch(p, old); // first write this interval? log (p, old), moving its reference
-    self.eqtb[p] = with_level(w, self.cur_level);
-}
-```
-
-- Integer and dimension cells keep their `xeq_level` semantics in the level
-  field.
-- e-TeX's 32,768 registers of each class are dense: about 1.5 MB in all.
-- Glue cells point at reference-counted specifications in node memory, as in
-  TeX.
-
-This replaces:
-
-- the `StateCell`, `StateWord`, and `BankCell` enums;
-- the admission chain, `Universe` to core to admitted state to bank, with a
-  `Result` at each step;
-- `meaning_word` decoding;
-- the shared save-and-rollback mutation journal.
+The remaining frame/reader pseudocode describes hot-loop shape and layout
+experiments, not a required new allocator or second engine. Typed owner
+coordinates and provenance must preserve the authoritative storage contract.
 
 ### Frames
 
@@ -793,56 +670,40 @@ Scanners call `get_x_token` and use `(tok, m)` directly:
 
 ### Macro calls
 
-```rust
-#[inline(always)]
-fn macro_call(&mut self, cs: u32, m: u64) {
-    let d = equiv(m);
-    let h = self.header(d);
-    if h.parameter_text_len() != 0 {
-        return self.macro_call_match(cs, m, d, h); // warm, not inlined
-    }
-    self.conserve_frames(); // §390: retire exhausted list frames
-    if h.body_len() == 0 {
-        return;
-    }
-    self.hold(d); // one compare against format_mark, one increment
-    self.push(Frame::body(d, h.body(), self.params.len()));
-    self.frame_cold_name(cs);
-    self.charge(h.body_len()); // fuel; the budget test is the poll
-}
-```
+A committed macro activation admits the full immutable definition payload once,
+then borrows its packed parameter/replacement words and sealed matcher directly.
+The input frame owns the payload and sole cursor. A parameterless empty body
+can elide its frame under the established observed/recovery rules. TeX82 §390
+conservation still retires exhausted list frames before body push.
 
-`macro_call_match` follows the definition's matcher plan. Sealing a definition
-builds the plan once, from TeX's parameter text:
+The definition's marker index and compiled failure links provide:
 
-- **Undelimited parameters** skip spaces, then either copy one token or copy a
-  balanced group without its outer braces (§392 to §399).
-- **Delimited parameters** run KMP over the delimiter words, using failure links
-  stored in the plan.
-- **Leading literal text** is compared word by word.
+- undelimited matching that skips spaces and accepts a token or trimmed balanced
+  group;
+- delimited matching that reuses the longest literal prefix; and
+- direct comparison of leading literal text.
 
-Matched arguments go straight to the transient stack and `params`:
+The accepted-token writer retains held source origins, brace depth, paragraph
+and outer checks and TeX recovery. Failure links do not replace those semantics.
+Arguments write once into the invocation-owned pooled region; the body owns it
+and parameter frames borrow it. No per-call plan/failure allocation or
+scratch-to-input second copy remains after `.5`/`.10`.
 
-- Copies from list frames run over contiguous words, stopping only at braces,
-  special words, `\par`, or the frame end.
-- The `\par` check for a non-`\long` macro is one compare against `par_token`.
-- Outer validity is checked only while some `\outer` definition exists. A
-  counter maintained by `eq_define` makes the usual case free.
-
-TeX's saving of `scanner_status` and `warning_index` around the call becomes two
-locals. That replaces the scanner-episode object, the builder identity, and the
-`MacroPlan`.
+Scanner status and warning context follow ordinary synchronous cleanup. A
+resource miss unwinds the match and host replay restores the full checkpoint;
+it never retains a matcher or Rust caller continuation. See
+[Expansion memory lifetimes](expansion_memory_lifetimes.md).
 
 ### Retirement
 
-| Kind              | Retirement                                                                 |
-| ----------------- | -------------------------------------------------------------------------- |
-| Body              | release the hold; truncate `params` to `base`; release the argument region |
-| Param             | nothing                                                                    |
-| Backup, Inserted  | release the region                                                         |
-| Stored            | release the hold                                                           |
-| `COLD_RETIRE` set | cold handler                                                               |
-| Source            | cold handler: end of file, `\endinput`, `\everyeof`, closing               |
+| Kind              | Retirement                                                      |
+| ----------------- | --------------------------------------------------------------- |
+| Body              | drop full immutable payload; release body-owned argument region |
+| Param             | nothing                                                         |
+| Backup, Inserted  | release the region                                              |
+| Stored            | drop actual immutable list owner                                |
+| `COLD_RETIRE` set | cold handler                                                    |
+| Source            | cold handler: end of file, `\endinput`, `\everyeof`, closing    |
 
 TeX's §390 conservation retires exhausted list frames before a macro pushes its
 body, so tail recursion does not deepen the stack.
@@ -881,22 +742,19 @@ The existing `main_character_run` source-byte path becomes the `CharRun` arm.
 
 ### Groups and the save stack
 
-`new_save_level` pushes one boundary entry and increments `cur_level`. Each
-entry is 16 bytes:
+Use the direct group representation in
+[Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md).
+Empty groups push/pop only scalar boundary/kind/source information. Actual
+local first writes save old value and TeX level; same-level writes do not save
+again. Global writes set level one and suppress displaced local saves.
 
-```text
-SaveEntry { cell: u32, kind: u8, level: u16, word: u64 }
-```
-
-`unsave` pops entries until it reaches the boundary. For each entry:
-
-- If the cell was not set globally in the meantime, it releases the current
-  value and restores the saved word.
-- `\aftergroup` tokens sit in the save stack and are pushed as a Backup region
-  when the group ends.
-
-Definitions made inside a group are ordinary heap spans. A group allocates
-nothing and touches no definition storage.
+The stack owns ordered classic/box restores, lazy e-TeX sparse-chain markers,
+aftergroup tokens and actual builder payloads. Preserve reference restoration
+and backup order. Unsaving restores the current epoch, emits demanded
+restoration diagnostics synchronously while owners remain valid, then drops
+losing roots. Delete duplicate box/command/definition group topology,
+`GroupRestorations` and immediate-consumption token vectors. Definitions do not
+allocate a group region or require local-to-global promotion.
 
 ### Errors and halts
 
@@ -1004,167 +862,46 @@ nothing.
 
 ## Checkpoints
 
-The three checkpoint kinds and their triggers do not change: job start, eligible
-outer paragraph end, and completed shipout. Neither do:
+[Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
+defines the complete `EngineCheckpoint` inventory, actual cold capture costs,
+quiescence, first-touch undo, repeated roots, candidate reverse/forward swaps,
+root-before-suffix restore, memory accounting, pruning and full resource
+replay. This section intentionally contains no second checkpoint algorithm.
 
-- [aggregate checkpoint](aggregate_checkpoint_contract.md) marks and restore
-  order;
-- [resource replay](checkpoint_resource_replay.md);
-- the host's `CheckpointSink`.
+The named schedule remains JobStart, eligible outer paragraph and outermost
+shipout, with no active groups/macros/scanners/builders/alignment. Open
+conditionals and non-macro input may remain. Command/input captures copy their
+actual cold rows and owned transient words; dense state is not snapshotted.
+Capture is not uniformly O(1). Only assignments compare indexed epochs;
+ordinary token/meaning reads and macro substitution perform no checkpoint
+bookkeeping. Empty groups capture no other owners.
 
-What changes is how each component is captured.
+One mutable generation executes candidates while accepted alternates remain
+in cold tails. Rejection undoes current and forward-swaps accepted; acceptance
+drops old alternates. Restore installs all semantic roots before backing
+suffixes drop, preserves the selected root for repeated restore, and advances
+the host epoch. Fuel and high-water counters never rewind.
 
-### Quiescence
+Definition slot roots follow actual live cells and group/checkpoint/candidate
+owners; active frames retain one immutable payload. Payload release follows
+its final real owner. Node/page/box regions and PDF version roots keep their
+specialized semantics; there is no token/node quarantine or reference-count
+undo scheme. Optional convergence identity remains complete and fail-closed:
+missing component roots cannot be replaced with cursor/allocator identities.
 
-Named checkpoint admission requires the following:
+Resource misses unwind ordinary calls and restore the full root/host prefix
+before parsing again. No scanner, matcher, Rust caller or output continuation
+crosses that boundary. See
+[Resource-miss checkpoint replay](checkpoint_resource_replay.md).
 
-- **Expansion and scanning:** no active expansion depth, no macro activation
-  on the input stack, no replay completions, `ScannerStatus::Normal`, and no
-  pending diagnostics. See `validate_summary_quiescence` and
-  `validate_format_dump_quiescence` in
-  `crates/tex-command/src/snapshot/boundary.rs`.
-- **Builders and alignment:** no token builders, attempt state, rollback roots,
-  or alignment.
-- **Groups:** no active groups, from `checkpoint_eligible` in the save journal.
-- **Mode:** one vertical level, from `restart_checkpoint_is_quiescent` in
-  `crates/tex-exec/src/mode.rs`.
-
-Two things may remain at a checkpoint:
-
-- open conditionals;
-- non-macro token lists, such as a backed-up token or an inserted `\par`.
-
-### What a checkpoint holds
-
-| Component                                 | At a checkpoint                          | Capture                                                   | Hot-path cost                                           |
-| ----------------------------------------- | ---------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
-| Frames and `frame_cold`                   | source frames and a few non-macro lists  | by value, with the transient words those frames reference | none                                                    |
-| `params`, collector, save stack           | empty                                    | asserted empty                                            | none                                                    |
-| Condition stack                           | a few entries                            | by value                                                  | none                                                    |
-| Mode nest                                 | one vertical record                      | by value; its list belongs to node memory                 | none                                                    |
-| Scanner, `align_state`, `cur_level`, misc | fixed                                    | by value                                                  | none                                                    |
-| eqtb                                      | arbitrary                                | interval log of first-touch pre-images                    | one test per write                                      |
-| Control-sequence names, strings, fonts    | append-only                              | high-water marks                                          | none                                                    |
-| Token heap                                | arbitrary                                | epoch state, a first-touch reference log, and quarantine  | one compare per `rc` change and per free of an old span |
-| Node memory                               | page contents, box registers, insertions | the same epoch scheme                                     | the same                                                |
-| Output, log, and diagnostics              | buffered effects                         | length marks, as today                                    | none                                                    |
-
-The capture is O(open files + open conditionals + live transient words), a few
-hundred bytes. Restoring copies the same bytes back.
-
-### Interval logs
-
-Each checkpoint begins an interval. Within an interval:
-
-- **eqtb.** A dirty bitmap marks touched cells. The first write to a cell pushes
-  `(cell, old word)` to the interval log, and the log entry takes over the old
-  word's heap reference. Later writes in the interval are plain stores. A new
-  interval clears exactly the bits its predecessor's log names.
-- **Heap and node references.** The first `rc` change to an old span (`born`
-  earlier than the current epoch) pushes `(span, rc)` and stamps `logged`.
-
-Frame holds never change `rc`, so macro activation touches no log. That is why
-`hold` and `rc` are separate counts. TeX folds them together, but at a
-checkpoint every hold not owned by a captured frame is zero.
-
-### Heap and node epochs
-
-Allocation in interval `k` prefers, in order:
-
-1. young free lists, holding blocks born and freed in `k`;
-2. the per-class stacks of old free blocks;
-3. the bump tail.
-
-The interval records the old stacks' low-water marks and the tail at its start.
-
-Freeing:
-
-- A block born in `k` returns to a young free list immediately.
-- An older block goes to `quarantine[k]` with its contents intact.
-
-At the next checkpoint:
-
-- young free lists merge into the old stacks;
-- the entries the merge overwrites are saved with interval `k`, which costs
-  O(allocations from the old stacks).
-
-A quarantined block becomes reusable only when the host drops every retained
-checkpoint that could resurrect it.
-
-Quarantine grows by at most the number of old spans freed in each interval. That
-is bounded by the first-touch log volume the aggregate contract already charges.
-LaTeX's churn of temporaries such as `\reserved@a` frees mostly young spans,
-because only the first redefinition in each interval frees an old one.
-
-[Node word arena](node_word_arena.md) storage adopts the same contract for
-nodes:
-
-- page building and `\vsplit` first-touch the old page nodes they mutate;
-- shipped pages enter quarantine.
-
-### State identity
-
-The commutative state hash moves from every write to checkpoint time. For each
-log entry of the closing interval, the checkpoint adds the cell's hash under its
-current word and subtracts its hash under its old word.
-
-For a cell that refers to a span, the hash uses the span's content hash rather
-than its offset. Sealed spans are immutable, so the content hash is computed on
-demand and memoized in the header.
-
-The cost is proportional to the cells touched in an interval, not to the writes.
-A cell that is written and then restored to its old value contributes nothing.
-
-### Restore and redo
-
-Rewinding interval `k` takes five steps:
-
-1. Swap each eqtb log entry with its cell, in reverse. References move with the
-   words in both directions, so no reference counts change.
-2. Swap logged `rc` values back.
-3. Return quarantined blocks to life. Their counts are restored and their
-   contents never changed.
-4. Reset the bump tail and old-stack lengths to their interval-start values.
-   This frees every block born in `k` at once, with no per-block work.
-5. Copy the captured transient components back.
-
-Because restoration swaps, the same logs serve redo of the accepted head. Redo
-is valid until new work runs, the same rule as today's aggregate head.
-
-Rewinding several intervals applies these steps per interval in reverse order.
-That is the positional-mark model, with fewer and cheaper logs.
-
-### Resource replay
-
-A resource miss:
-
-- sets `halt`;
-- returns an empty file or `nullfont` to its caller;
-- is reported at the next poll.
-
-The host then restores the latest full checkpoint and applies the answer, as
-`restore_pending_resource` does today. No per-command unit is needed: the
-operation in progress is discarded with everything else after the checkpoint.
-The synchronous provider path still resolves in place without halting.
-
-### Soundness
-
-Three invariants carry the contract:
-
-1. **Every component that can differ between a checkpoint and a later state is
-   captured or logged.** Transient components are empty or copied by value at
-   quiescence. Long-lived components log the first pre-image of each cell and
-   span reference in an interval. Append-only components keep high-water marks.
-2. **Every byte a restore needs is preserved until no retained checkpoint can
-   need it.** Interval logs own the references they saved. Quarantine keeps old
-   freed blocks intact. Reclamation follows checkpoint retention, which the host
-   already manages.
-3. **Nothing a halted run does is observable.** Effect sinks refuse commits
-   after `halt`, and every halt ends the job or restores a checkpoint.
-
-The tests for these invariants already exist as owner checks: restore cursors,
-releasing each owner exactly once, and resource replay. They move from
-per-component journals to the interval log and the by-value capture.
+The production 588-page profile has detail counters disabled. Historical
+command-lane counts have no available revision-scoped census receipt; there
+is no verified read/write/group/save/checkpoint ratio. Qualitative inference:
+reads and macro expansion dominate body traffic; local assignments are common
+within style/environment/scratch work, globals/root writes in package setup
+and counters. Groups can be frequent with sparse first-write saves. Named
+boundaries and replay/candidates are much rarer than token traffic. No numeric
+ratio or inferred percentage is part of the design.
 
 ## Instruction budgets
 
@@ -1192,7 +929,7 @@ realistic because:
 - there is no `check_interrupt` per pop.
 
 Bounds checks and the budget test cost a little. The targets below are the
-acceptance thresholds for the microbenchmark harness:
+original targets for the microbenchmark harness (informative, not closure blockers):
 
 | Case      |  Today | pdfTeX | Target |
 | --------- | -----: | -----: | -----: |
@@ -1250,123 +987,46 @@ each stage.
   depth limit. TeX recursion through expansion, macro calls, and scanning stays
   native recursion with small frames.
 
-## What is deleted
+## Deletions and implementation sequence
 
-- **Input:** `InputLevel` and its rows, `MacroBodyCursor`, `ResidentTokenRow`,
-  `InputStack` history, displaced-row slabs, input-level identities and their
-  timeline records, `ResidentWord`, `ResidentWordRead`, `ResidentColdOutcome`,
-  `InputRetirement`, and `RetirementHandoff`.
-- **Commands:** `TokenMeaning`, `ExpansionCandidate`, `HotCommand`, and
-  `CurrentCommand` as a hot-path value, with its settlement and classification
-  stages.
-- **Storage:** `DefinitionArena` regions, chunk handles, region leases,
-  `LocalDefinitionSlots`, `TokenListArena`, the attempt arena and its
-  promotion path, and `TracedTokenWord` on stored paths.
-- **Macro calls:** `MacroPlan`, scanner episodes for matching, argument builder
-  identities, and per-call failure links.
-- **Commands and checkpoints:** `DirectOperationMark`, cold-episode preparation
-  and promotion, per-command journals in the mode nest and durable boxes, the
-  combined save and rollback mutation journal, and the per-write state hash.
-- **Timeline marks:** the command timeline's marks for input, conditions,
-  groups, after-group tokens, and alignment.
+The source-specific deletion map is in
+[the checkpoint contract](aggregate_checkpoint_contract.md). Beads owns task
+state; the sequence is:
 
-## Migration
+1. `.4`/`.11`: immutable span activation and final packed scalar delivery,
+   deleting resident token/meaning carriers and duplicated font columns.
+2. `.5`: immutable definition-owned matcher, deleting per-call plans and
+   failure tables. One payload owns words, matcher and origin.
+3. `.14`: selected full-checkpoint/group/definition design, including concrete
+   owner inventory and mutation costs; documentation only.
+4. `.10`: invocation-owned pooled `ArgumentArena` vectors, body-owned and
+   parameter-borrowed. Delete the scratch-to-input second copy and per-argument
+   allocations/leases; preserve provenance and recovery. Arguments are empty at
+   named capture; returned capacity is an allocator cache charged once.
+5. `.6`: central assignment policy and direct group stack, then direct
+   mode/command dispatch and integration with the existing sole mutable core
+   and cold accepted tails. Preserve genuine coarse owners, slots and brands.
+   Delete old save serials, stamp maps, duplicate group topology/restoration
+   collections, eager owner captures, lane eligibility and cold-operation
+   preparation/application protocols. Port every real consumer in the same
+   logical change; no second dispatch or compatibility adapter remains.
+6. `.13`: pinned format and stable counted dynamic definition slots. Delete
+   append-only payload retention, local row truncation/group marks, promotion
+   memo and accidental whole-row candidate-tail liveness. Root insertion/drop
+   follows the central policy and memory charges follow final payload release.
+7. `.12`: integrated checkpoint/replay/reclamation/provenance/halt audit,
+   including repeated restore, branch epochs, candidate settlement and pruning.
+8. `.7`: evidence-based hot code layout and full-book measurements. `.8` changes
+   node storage only when fresh profiling identifies remaining work; preserve
+   node-region and box/PDF semantics.
 
-Each stage changes an owning representation and deletes its predecessor within
-the same stage. No compatibility adapter, old path, or temporary materializing
-shim is permitted; port the consumers and delete the predecessor in the same
-logical stage.
-
-**Stage 0. Harness.**
-
-- Commit the microbenchmark harness, `scripts/interp-microbench.py`. It needs:
-  - the case table and the oracle environment;
-  - a JSON receipt;
-  - the per-operation report against the targets above.
-- Record the starting receipt.
-- Counter access needs privileges, so the harness is a measured review
-  requirement, not part of the routine test suite.
-
-**Stage 1. Error and halt contract.**
-
-- Make every recoverable error recover in place.
-- Introduce the halt reasons and the budget poll.
-- Route fuel, cancellation, capacity, and resource misses through halt.
-- Gate effect sinks on halt.
-- Delete `DirectOperationMark`, per-command rollback in every owner, and the
-  attempt arena's rollback roots.
-- Gates:
-  - resource replay and incremental tests pass;
-  - canonical fixtures match;
-  - `group` at most 2,000;
-  - `toks` at most 8,000.
-
-**Stage 2. By-value transient capture.**
-
-- Capture frames, conditions, the mode top, and scanner fields by value at the
-  three checkpoint kinds.
-- Delete the input history journal, displaced rows, input identities, and the
-  timeline marks for transient components.
-- Gates:
-  - checkpoint, aggregate, and snapshot-performance gates pass;
-  - `mbody` at most 1,200.
-
-**Stage 3. Token memory and packed meanings.**
-
-- Introduce `mem` with its heap, transient stack, and collector.
-- Introduce the `u64` eqtb, holds and reference counts, epochs, quarantine,
-  first-touch logs, and checkpoint-time hashing.
-- Move definitions, registers, marks, templates, and output routines into the
-  heap.
-- Delete the definition arena's regions, `TokenListArena`, promotion, and the
-  per-write hash.
-- Gates:
-  - `def`, `let`, `toks`, and `group` reach their targets;
-  - the aggregate retention charges hold.
-
-**Stage 4. Frames, reader, and expansion.**
-
-- Introduce 16-byte frames, the fused reader, `macro_call`, matcher plans, and
-  the new scanner interface over `(tok, meaning)`.
-- Port consumers family by family behind the shim, then delete the shim and the
-  `ResidentWord`-to-`HotCommand` chain.
-- Gates:
-  - the macro, `relax`, `ifx`, `expandafter`, `csname`, and `base` targets.
-
-**Stage 5. Main control.**
-
-- Introduce the dense dispatch, the save stack, and direct prefixed commands.
-- Delete the cold-episode protocol and the lane's eligibility split.
-- Gates:
-  - `group`, `advance`, and `count` targets;
-  - the full-book exact-output gate.
-
-**Stage 6. Layout.**
-
-- Introduce the hot-set budget, cold attributes, removal of the coordinate
-  generic, and profile-guided and post-link layout in production.
-- Gates:
-  - L1 instruction-cache and iTLB misses within four times pdfTeX's;
-  - full-book cycles.
-
-**Stage 7. Node memory epochs.**
-
-- Bring [node word arena](node_word_arena.md) storage under the same checkpoint
-  contract.
-- Delete per-command page and box journals.
-
-The original ordering rationale is retained as design history. The current
-implementation order is the focused sequence in
-[Reconciliation after the first implementation wave](#reconciliation-after-the-first-implementation-wave):
-
-- Stages 1 and 2 remove the contracts that force journals before the storage
-  they protect is replaced, so Stage 3 does not reimplement journals it is
-  about to delete.
-- Stages 3 and 4 are the core of the rewrite.
-- Stages 5 to 7 rest on them.
-
-Every stage runs the owning tests, `cargo test -q --tests`, `scripts/check.sh`,
-and the canonical divergence workflow for any semantic difference.
+Each stage commits logical chunks and deletes the displaced representation
+with its replacement. No old API/format fallback, shim, second engine or
+unnecessary created-then-consumed carrier remains. Implementation runs owning
+tests, `cargo test -q --tests`, authoritative `scripts/check.sh`, byte-exact
+story and canonical verification. Preserve the exhaustive 663 ordered known
+divergence signatures for semantics-preserving work. Measurements and unchanged
+original budgets are informative speed goals, not implementation-closure gates.
 
 ## Risks
 
@@ -1378,10 +1038,10 @@ and the canonical divergence workflow for any semantic difference.
     committed oracle fixtures and
     [canonical divergence workflow](canonical_divergence_workflow.md).
 - **Bounds checks.**
-  - Risk: every `mem` read in safe Rust carries a check.
+  - Risk: direct slice reads can still carry redundant bounds checks.
   - Mitigation: iterate within a frame using slices. If a gate still fails, an
-    audited substrate crate under the existing `unsafe` exception can own the
-    token memory, as `tex-dense-prefix` owns its storage.
+    existing audited substrate boundary can own physical storage while
+    semantic callers retain safe slices and typed coordinates.
 - **Diagnostic ordering.**
   - Risk: in-place recovery can change where diagnostics appear compared with
     today's rollback-and-retry.
@@ -1397,8 +1057,8 @@ and the canonical divergence workflow for any semantic difference.
   - Mitigation: the observed tier provides them at frame and command
     boundaries.
 - **Long checkpoint retention.**
-  - Risk: quarantine and logs grow with retained checkpoints.
-  - Mitigation: both are charged against retention like today's journals. The
+  - Risk: actual preimage owners and cold captures grow with retained checkpoints.
+  - Mitigation: both are charged under the aggregate owner inventory. The
     host's checkpoint dropping policy reclaims them.
 - **Concurrent work.**
   - Risk: the book refactors are being implemented in `slot-1`, and their first
@@ -1408,9 +1068,9 @@ and the canonical divergence workflow for any semantic difference.
 
 ## Acceptance
 
-- **Per-operation gates.** Each stage meets its gates on the committed harness,
-  and the final state meets every target in the budget table.
-- **Full-book gates.** The full book passes the gates in
+- **Per-operation evidence.** Report each stage on the committed harness
+  against the unchanged budget table; target misses are not closure blockers.
+- **Full-book evidence.** Validate exact outputs and report performance in
   [Book performance refactors](book_performance_refactors.md):
   - exact auxiliary files;
   - all-page text and raster comparison;

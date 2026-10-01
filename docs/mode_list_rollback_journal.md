@@ -1,6 +1,14 @@
 # Mode-list rollback journal
 
-Status: production rollback representation
+Status: current internal rollback representation and retained mutation invariants.
+
+[Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
+owns the selected lifecycle. The per-command savepoint/rollback protocol below
+is migration storage, not a requirement around every direct dispatch. Resource
+errors unwind and restore a full checkpoint. Delete redundant operation
+histories while preserving actual construction/transfer atomicity, nested
+owner ordering and root-before-suffix release. The sole-empty-outer-level
+checkpoint rule remains.
 
 Scope: canonical aggregate operations in `tex-exec`. This document does not
 change TeX semantics or the atomic boundary in

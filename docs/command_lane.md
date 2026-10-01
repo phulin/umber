@@ -43,12 +43,16 @@ construction (~100), clearing an empty page-observation buffer (~100), and
 smaller diagnostic, trace, and evidence probes (~500). None of that work is
 semantic for `\relax`.
 
-The book census (`--profiling-stats`, 2606.24937) fixes the frequency order:
-35.9M main-control operations, led by `\let` (8.6M), `\def`/`\edef`/`\gdef`/
-`\xdef` (6.1M), `\relax` (2.3M), `\global` (2.2M), `\futurelet` (1.5M),
-`\advance` (1.1M), register and parameter assignments (3.2M), and
-`\begingroup`/`\endgroup` (1.6M). Expansion runs 38M macro calls, 16.1M
-`\expandafter`, 8.8M `\fi`, 8.3M `\ifx`, 3.0M `\else`, and 2.9M `\csname`.
+No revision-scoped receipt is available for the historical book operation
+census. Its numeric read/write/macro/group ratios are withdrawn as verified
+evidence. The production 588-page profile had detail counters disabled.
+[Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
+states the explicit qualitative frequency inference used by the redesign.
+
+The lane/episode protocol below describes the current implementation being
+replaced by `umber2-i0n5.6`. It is not the target: direct dispatch deletes the
+eligibility split and immediate-consumption cold-operation carriers, following
+[Minimal hot loop](minimal_hot_loop.md).
 
 ## Lane eligibility
 
@@ -187,8 +191,8 @@ equally to lane and generic delivery. See
 
 ## Expansion fast arms
 
-The census shows expansion events outnumbering main-control commands two to
-one. The fast arms stay inside `tex-command`'s one expansion loop; they are
+Macro expansion is inferred to be frequent in LaTeX body work; there is no
+verified numeric expansion/command ratio. The fast arms stay inside `tex-command`'s one expansion loop; they are
 not a separate expansion engine.
 
 - Macro calls. A matched macro with an empty replacement, such as

@@ -1,596 +1,369 @@
-# Aggregate checkpoint component contract
-
-Status: final bounded aggregate representation and historical pre-refactor
-evidence, 2026-08-30.
-
-## Scope
-
-This document fixes the ownership and measurement boundary for
-`EngineCheckpoint`. It does not authorize a cache, fast path, per-value owner,
-root registry, compaction, a third generation, per-checkpoint state bank, or
-heap indirection. The completed PDF scalar mark is reused unchanged.
-[Node-region ownership](node_region_ownership.md) is the authoritative
-node-specific specialization: exact paragraph checkpoints own exclusive page
-regions through history, never raw roots or dependency-counted page batches.
-
-One session owns an accepted prior generation and, only while executing an
-edit, one candidate current generation. A checkpoint contains bounded scalar
-cursors plus one coarse generation owner. Every live runtime value has one
-owner named below; a checkpoint is a reachability root, not another mutable
-state owner.
-
-## Aggregate transaction
-
-The accepted generation stays live at its physical head. Starting an edit is
-one aggregate transaction, never a collection of family-local restores:
-
-1. Validate every selected mark without mutation.
-2. In the fixed owner order below, inverse-rewind the accepted head to the
-   rooted mark. Retain every old/new journal entry needed to replay the saved
-   accepted delta; do not truncate that delta.
-3. Open an empty current suffix and enter `CandidateLive`. Execution is
-   forbidden before every owner reaches that state.
-4. On rejection, undo only the current suffix in reverse owner order, then
-   forward-redo the saved accepted delta in owner order. The source becomes
-   the exact accepted head again before it is admitted.
-5. On acceptance, discard the saved superseded accepted tail, splice or
-   promote the live current suffix, and publish only after every owner has
-   promoted. Pruning can then release whole obsolete journal/arena chunks.
-
-The protocol states are `AcceptedHead -> AcceptedRewound -> CandidateLive`,
-followed by either `CandidateUndo -> RejectionRedo -> AcceptedHead` or
-`AcceptedPromoted -> Published`. No component exposes an independently
-restored or independently committed state. Unwind cleanup uses the rejection
-path; it is not a second acceptance protocol.
-
-Incremental convergence is a complete aggregate terminal transition, not a
-third protocol state. The candidate stops at the first mapped schedule row
-with an equal complete reachable-state identity and detaches output only
-through that row. After all rehome and splice inputs validate, aggregate
-rejection drops the candidate. The accepted command/source owner then replaces
-only its root editor backing and maps retained physical offsets; its boundary
-lane drops the divergent interval and rebases the adopted suffix coordinates.
-The operation visits bounded marks, journal state, and boundary rows only. It
-does not copy a reachable graph, keep a candidate suffix alive, or create a
-history-owned generation.
-
-The fixed validation/rewind/redo/promotion order is core, command, mode, page,
-hyphenation, PDF, World, dependencies, and source/font. Candidate undo and
-partial-acquisition rollback use the exact reverse. Execution counters are
-copied only after the semantic owners reach `CandidateLive`, and publication
-metadata changes only after `AcceptedPromoted`.
-
-### Boundary-record ownership
-
-The executor sidecar stores boundary evidence and its optional move-only
-`EngineCheckpoint` together in one typed `BoundaryLane`. Fixed 16-row pages
-and a generation-checked free list keep cells stable and reusable without a
-descriptor allocation. Each stable owner-relative key is the row slot and its
-slot generation; a logical revision number is evidence, never physical owner
-identity.
-
-At edit start the selected prefix remains in the same physical arena. The
-exact later accepted suffix becomes `detached_prior`, and candidate records
-append only to `current`. Rejection drops current records and reattaches the
-prior suffix. Acceptance drops the prior suffix and promotes current records.
-Neither path clones a prefix, publishes replacement keys, or rebuilds an
-index from all boundary rows. A repeated acceptance therefore leaves every
-unchanged prefix key and the `EngineCheckpoint` marks stored in its cell
-physically valid.
-
-Lookup walks only the bounded live-row metadata and resolves an exact
-boundary/ordinal within that position. Evidence-only records fall back to the
-nearest prior live restart. Releasing a restart root consumes the whole row,
-increments its generation so stale keys fail deterministically, and returns
-the slot to the free list; detached evidence remains addressable in its own
-rows and no checkpoint payload is copied. The release produces one typed
-transaction that validates all owner-relative marks before it removes the
-command frame and page-history row. A command frame uses the same
-generation-checked reusable-row discipline. `JobStart` is an exact frozen
-format image plus explicit session metadata, not a live command or save-journal
-cursor. Removing a restart root therefore advances both journal families to
-the earliest surviving live floor, returns every whole prefix chunk to their
-pools, and invalidates older physical marks while keeping that floor exact.
-
-The page owner follows the same physical-prefix rule. Selecting a retained
-`PageMaterial` mark keeps the accepted prefix frames and list coordinates in
-the existing timeline, detaches only later frames/inverses, and settles that
-suffix on reject or accept. World, source, and font fork setup also restores
-their demand-maintained identity scalar to the selected mark before candidate
-mutation; replaying the same suffix consequently recreates the same semantic
-root instead of hashing it twice from the accepted head.
-
-Logical command stacks apply that rule without copying frame payloads into
-history. Each push admits the immutable token, source, command, or macro
-payload once; history thereafter carries only its mutable execution state. A
-first mutation in a checkpoint interval appends one packed handle and old-state
-record, and later cursor or phase changes coalesce into that record.
-Pop and replacement records use stable handles into reusable fixed slabs, so
-reject and accept can swap or retire exactly the prior/current suffix without
-an `ElementUndo<InputLevel>` clone, a per-event allocation, or a third lineage.
-
-## Component matrix
-
-| Component                                                                     | Sole live owner now and finally                                                                             | Historical baseline capture                                                                                                                   | Final checkpoint mark or root                                                                                                                                    | Restore order after complete validation                                                                                                                                         | Checkpoint retention charge                                                                                                                                            | Complete reachable-state identity                                                                                                                                                           |
-| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dense command environment, definitions, durable nodes, provenance             | `Universe::core` in the current retained-generation slot                                                    | `GenerationOwner` plus `JournalCursor`, durable-node cursor, and conservative page-node cursor; no dense-bank clone                           | The same one coarse generation owner and bounded state/journal/arena cursors                                                                                     | Acquire coarse owner; replay dense-state journal; transfer command/mode/page roots before truncating durable and page suffixes                                                  | Charge the generation substrate once across every checkpoint that shares it; charge checkpoint-exclusive cursor bytes per record                                       | Include every reachable live cell after resolving macro, token, glue, font, and node values; exclude dead arena suffixes and physical ids                                                   |
-| Command delivery, input, parameters, conditions, groups, replay, diagnostics  | One physical `CommandState` parked in the retained generation or moved into `MainControl`                   | `publish_summary` deep-cloned `CommandStateRoots` into one private `Rc`; clone aliased that root; restore cloned it again                     | One sealed typed-arena frame/list mark plus fixed logical-stack, attempt, source-anchor, and profile coordinates; aggregate roots are move-only                  | Prevalidate profile, generation, frame/list mark, all logical marks, quiescence, and roots; rewind/detach accepted chunks; reject redoes and reattaches prior, accept prunes it | Charge the caller-owned command chunk pool once, then only fixed mark/profile/source-anchor fields per checkpoint; aliases copy no payload                             | Include profile, future input bytes/cursors, parameters, conditions, groups, replay fences, pending semantic diagnostics, and required source/provenance roots                              |
-| Mode nest and open mode lists                                                 | The one direct `ModeNestStorage` owned by `MainControl`                                                     | `ModeNest::summary` cloned every level and its list; the intermediate rooted implementation shared the mutable store through `Rc<RefCell<_>>` | One inline sole-empty-outer-level scalar admitted only by a restart-eligibility receipt; no open-list or journal-tail root                                       | Install the scalar outer level and a fresh operation journal before page-arena truncation; retain the job-lifetime maximum-depth counter                                        | Charge the fixed rootless outer-level record per checkpoint; no shared mutable mode owner or accepted/candidate tail exists                                            | At legal boundaries include outer-mode scalars and the demand-maintained root; transient list, pending-character, math, alignment, and nested-mode payload is forbidden                     |
-| Page builder, lists, insertions, and marks                                    | One exclusive `PageRegion` per page-building period, owned by live execution or accepted checkpoint history | Deep-clones `PageBuilderState`; explicit page handles raise the generation's monotonic retained page bound                                    | Region id, four owner-relative PageBuilder roots, sealed payload/descriptor positions, scalar state, and journal position                                        | Restore roots while the region is attached; atomically settle payload and descriptor suffixes; drop later regions only after their checkpoint rows disappear                    | Charge each page region once and only fixed page cursors per checkpoint; never charge shipped detached artifacts or multiply a region by its boundary count            | Include contribution/current/discard lists, page dimensions/integers, insertions, marks, best break, and fire-up state                                                                      |
-| Hyphenation                                                                   | One direct `HyphenationTable` moved between accepted and candidate `Universe` owners                        | Deep-cloned language maps, trie vectors, exceptions, hyphen-code maps, and dependency projections                                             | One frozen initialized pattern-trie root shared by the generation, one mutable exception/code journal cursor, capacity scalars, and the maintained identity root | Reverse the accepted mutable suffix once, move the table into the candidate, then either undo candidate and redo accepted on rejection or discard accepted on acceptance        | Charge the frozen trie and mutable journal once per generation, the live exception/code payload once, and only the fixed root and cursor per checkpoint                | Include initialized patterns, exceptions, saved codes, capacities that affect TeX overflow, and `patterns_open`; exclude memoized dependency projections                                    |
-| World effects, streams, artifacts, clocks, randomness, and host-visible state | The one `World` inside `Universe`                                                                           | `World::snapshot` clones maps and reconstructs effect-root ancestry while sharing several `Arc` vectors                                       | Fixed effect, stream, artifact, input, publication, clock/random, and file-framing cursors rooted in one coarse World generation                                 | Validate forkable/retained ancestry; restore effects and stream buffers; restore artifact/input/publication roots; then release abandoned suffix owners                         | Charge retained effect/artifact/input blocks once per generation or output owner and fixed cursor bytes per checkpoint; detached accepted output is charged separately | Include every fact that can change future TeX behavior or emitted effects/artifacts, including stream partial lines, clocks/random state, shell policy, publication order, and file framing |
-| PDF                                                                           | The one `PdfStateSlot` inside `Universe`                                                                    | Allocation-free fixed `PdfStateSnapshot`; image/form payload is one coarse prefix plus a private candidate delta                              | Fixed scalar cursor plus general/color version-lane roots and coarse payload position                                                                            | Select the named general/color roots, reset canonical row selections, drop the private version and row suffixes, then truncate the payload delta last                           | Fixed mark per checkpoint; charge packed version events and image/form payload once to their owning lineage and the candidate-private suffix to current                | Include every canonical PDF scalar, row selection, mutable value, color stack, object/order fingerprint, and payload identity exactly as specified in `pdf_backend.md`                      |
-| Dependencies                                                                  | The one `DependencyRuntime` inside `Universe`                                                               | Clones a snapshot that shares the changed-at map through `Arc`                                                                                | Fixed invalidation epoch/root cursor in the generation dependency journal                                                                                        | Restore after semantic owners and before publishing any observation; no active recorder may cross a checkpoint                                                                  | Charge the shared changed-at root once and a fixed tracker mark per checkpoint                                                                                         | Include changed-at facts only where they affect future incremental validation; active recorder state and telemetry are excluded                                                             |
-| Sources and fonts                                                             | `SourceMap` and `FontStore` inside `Universe`; command input owns its live source frames                    | Existing scalar `SourceMapMark` and `FontStoreMark`; immutable validated font contexts live in fixed-capacity coarse generation chunks        | Keep the fixed source/font watermarks and one coarse generation owner; the font mark names logical rows and mutation journals, never payload liveness            | Validate fixed owner/ancestor marks; rewind mutable per-font dense rows and font identifier/expansion journals; truncate logical font coordinates and sources                   | Charge immutable source/font payload once per generation or exact external carrier; charge only fixed marks per checkpoint                                             | Include reachable source descriptors/bytes and immutable font recipes plus mutable font-runtime state; exclude stale logical coordinates and physical ids                                   |
-| Execution and fuel counters                                                   | `MainControl`/session-owned `ExecutionBudgetCounters`, command fuel ledger, and TeX job-lifetime maxima     | The two revision budget counters are copied into `EngineCheckpoint`; fuel and stack maxima remain outside semantic roots                      | Keep the fixed revision counters only when restart must continue the same configured budget; no heap owner                                                       | Restore counters at fork construction before execution resumes; same-generation semantic restore never refunds fuel or TeX high-water diagnostics                               | Exactly `size_of::<ExecutionBudgetCounters>()` per checkpoint; no payload charge                                                                                       | Excluded. These are monotonic operational evidence, not future TeX semantic state                                                                                                           |
-
-All validation is mutation-free. The normative owner order is the aggregate
-transaction order above. The accepted rewind retains its forward values and
-does not truncate command, durable-node, page-node, source, font, effect, or
-artifact storage. A failed validation leaves source and destination unchanged;
-a later failure reverses already-acquired owners before admission can resume.
-
-Font-bearing meanings, page/durable nodes, and PDF font operations/resources
-validate their exact `FontId` at mutation or publication. Those roots are
-therefore ordered before the `FontStoreMark` that captures them. Ordinary
-capture does not scan primitive meanings, dense banks or journals, node
-arenas, or PDF prefixes to rediscover that invariant, and same-generation
-restore validates only fixed marks. Logical font rows beyond the selected mark
-become stale, including through the identity allocator's ABA check, while the
-immutable `LoadedFont` payload remains address-stable in a fixed-capacity
-coarse chunk until its physical generation retires. Mutable font dimensions,
-character controls, PDF code tables, and ligature state remain in checkpointed
-dense storage. `RuntimeCheckpointFontScanCounters` exposes the zero-only
-capture/restore root-visit contract.
-
-## Optional identity outcome
-
-`EngineCheckpoint` schema 9 deletes the mode-only `mode_hash` and exposes an
-optional `ReachableStateIdentity` under its own schema version. Ordinary
-capture never asks for the identity. `CheckpointSink` makes demand explicit,
-and the incremental history sink is the sole production requester.
-
-The composer has one owner-bound typed input for every semantic component in
-the matrix: command summary, mode checkpoint, and runtime-published page,
-World, hyphenation, PDF, dependency, source, font, and core roots. It combines
-only journal-maintained scalar roots through a domain-framed fixed-seed stream.
-Missing any input returns `None`; no owner id, cursor, partial fingerprint, or
-traversal is accepted as a substitute. The aggregate layer contains no free
-placeholder functions that could later be filled from runtime coordinates.
-Until all owners populate their hooks, incremental convergence reports hash
-divergence and retains no suffix. This is the required fail-closed transition
-state, not a claim that a partial identity is complete.
-
-The integrated PDF owner now publishes an O(1) component root from its fixed
-canonical cursor: mutation-maintained semantic fragments and future-relevant
-scalars participate, while general/color version roots and undo positions
-remain restore coordinates only. Ordinary capture does not request even this
-fixed projection. A focused restore test proves that a semantic PDF mutation
-perturbs the root and restoring its canonical cursor restores the root.
-
-Mode and page now publish version-1 domain-separated canonical roots from their
-authoritative coarse owners. The incremental history session enables their
-inline root lanes before job start; ordinary batch owners keep them disabled
-and pay no node, token, alignment, insertion, mark, or arena-payload hashing.
-Enabled ordered lanes compose accepted/current and contribution
-front/prior/back roots in bounded scalar work. Checkpoint capture copies the
-mode root and publishes the page root only under exact-identity demand; neither
-path hashes a timeline, frame, cursor, owner, arena row, or payload scan.
-Page-material publication maintains the same version-1 composable sequence
-identity in coarse payload-chunk summaries and canonical range descriptors.
-Arbitrary list slices and active retained ranges combine whole stored summaries
-and hash only values in partial boundary chunks; list composition combines
-already maintained roots. The metadata detaches, reattaches, promotes, accepts,
-rejects, and prunes in the same chunk or descriptor envelope as its canonical
-payload. It is neither a per-node prefix index nor a registered root. Disabled
-batch owners perform zero identity-node hashes and zero summary combinations.
-Command, World, hyphenation, dependency, source, font, and core now publish
-demand-enabled canonical roots beside the existing mode, page, and PDF roots.
-Selection occurs before incremental JobStart setup; ordinary batch owners do
-no added identity hashing. A late selection after an owner has crossed an
-untracked mutation barrier remains explicitly unavailable, so the aggregate
-continues to fail closed instead of substituting a cursor or owner id.
-
-The focused perturbation test changes each component root independently and
-checks that every resulting complete identity differs. A separate capture
-test proves that ordinary capture performs no semantic traversal. The
-profiling-only
-`checkpoint_identity_gate` compares the two paths after warmup at one and 32
-mode levels and requires identical allocation calls and requested bytes. It
-also retains an enabled early complete checkpoint across one and 4,096 suffix
-mutations, reads the aggregate identity and published mode/page roots 4,096
-times, and requires zero allocation calls and zero requested bytes at both
-depths.
-
-## Publication-time retention outcome
-
-Every aggregate checkpoint carries an allocation-independent logical charge.
-The charge names command, mode, page, World, hyphenation, PDF, dependency,
-source/font, and core coarse owners, plus fixed checkpoint metadata containing
-the execution counters. Each charge pairs an opaque process-local owner id with
-its closed owner-family tag. The incremental publisher keeps the largest
-observed byte scalar for each exact `(owner, family)` pair, so a growing
-append/journal owner is charged once without merging distinct families or
-building a second ownership graph. Command and mode charges come from their
-authoritative timeline owners; the aggregate no longer charges only the size
-of their checkpoint handles. It charges fixed metadata once for each
-restart-capable checkpoint and every detached `BoundaryRecord` separately,
-because comparison evidence cannot itself seed restart.
-
-The budget is enforced immediately after each boundary is published. Pruning
-first releases restart roots, preferring paragraph roots, and then removes
-intermediate detached evidence while preserving JobStart and the newest
-observation. Protected JobStart retention and the first/newest evidence pair
-may exceed an impossible budget; that overage is reported explicitly. The
-accepted-generation transition only validates and prunes the already-bounded
-root set, so it no longer hides a larger pre-acceptance peak.
-
-Logical retention counts are accounting only and never node-liveness
-authority. Page-region history owns contiguous page/epoch boundary intervals;
-removing the last row in one interval drops the whole exclusive region. No
-per-checkpoint, per-list, or batch reference count releases node chunks. Other
-coarse append/journal owners remain charged once while their direct aggregate
-owner is retained. The dense save journal maintains its exact physical
-capacity charge at vector and pool capacity-change points. Reading that charge
-for an execution budget is constant work and never scans groups, journal
-chunks, or checkpoint roots.
-
-`RetentionMetrics` reports the shared-owner, per-root metadata, and detached
-evidence terms independently, with `checkpoint_root_bytes` equal to their sum.
-The retained-owner test checks that multiplying the restart-root count never
-multiplies the shared coarse owner.
-
-## Representative baseline
-
-Run:
-
-```bash
-cargo run --release --manifest-path benchmarks/tex-exec/Cargo.toml \
-  --bin aggregate_checkpoint_baseline
-```
-
-The recorded run used commit
-`fb81261388a608c16fe26f2cc44084d4574ac2eb`, `rustc 1.93.0
-(254b59607 2026-01-19)`, Cargo 1.93.0, release profile, Linux
-`x86_64-unknown-linux-gnu`, one process, and the profiling features selected by
-the standalone manifest. Fixture construction and capacity growth are outside
-the measurement regions. Times are single-run diagnostics; allocations and
-requested bytes are deterministic promotion evidence.
-
-| Fixture               | Boundaries | Capture ns / allocations / bytes | Clone ns / allocations / bytes |   Fork ns / allocations / bytes | Restore ns / allocations / bytes |          Semantic checksum |
-| --------------------- | ---------: | -------------------------------: | -----------------------------: | ------------------------------: | -------------------------------: | -------------------------: |
-| Minimal, 1 unit       |          1 |              26,315 / 29 / 8,967 |             7,720 / 24 / 7,383 |         450,428 / 138 / 351,551 |             27,343 / 29 / 44,887 |     35,406,262,337,344,433 |
-| Minimal, 1 unit       |         32 |          224,137 / 897 / 286,944 |        211,523 / 737 / 236,256 |  3,490,032 / 4,416 / 11,249,632 |        167,714 / 928 / 1,436,384 |  6,640,767,404,918,139,627 |
-| Accumulated, 64 units |          1 |           62,772 / 469 / 116,544 |          33,925 / 370 / 84,728 |       435,840 / 1,304 / 596,284 |           78,422 / 438 / 151,968 | 12,141,055,338,598,652,146 |
-| Accumulated, 64 units |         32 |   3,600,448 / 14,977 / 3,729,408 | 2,532,809 / 11,809 / 2,711,296 | 9,656,388 / 41,728 / 19,081,088 |   2,326,954 / 14,016 / 4,862,976 | 15,155,759,750,561,970,511 |
-
-For the accumulated one-boundary row, the exact fixture payload charges
-printed by the binary are: command 133,120 bytes; mode 24,168; page 158,208;
-hyphenation 7,168; World 7,168; PDF payload 0; dependencies 1,024;
-sources/fonts 2,048; execution counters 16. The PDF mark itself is fixed scalar
-metadata; its independent payload-retention and zero-allocation authority is
-the completed `pdf_checkpoint_gate` evidence from `umber2-66p0.23.1`.
-
-The 2026-08-27 post-mode/page-identity retention audit reports minimal mode/page
-charges of 1,968/528 bytes and accumulated 64-unit charges of 34,704/162,816
-bytes. Relative to the recorded pre-identity accumulated row, this is
-+10,536 mode bytes and +4,608 page bytes in the existing coarse owners. The
-increase is fixed inline booleans/scalar sequence and component roots plus the
-bounded mode checkpoint root array; it creates no heap owner, registry, per-node
-allocation, or additional generation. Disabled batch owners have the same
-layout charge but execute none of the semantic hashing.
-
-At the recorded baseline, capture and restore copied accumulated command, mode, page,
-hyphenation, and World state. Checkpoint clone repeats most of those copies.
-Fork performs unavoidable construction of one destination generation but also
-copies the same accumulated families. At that baseline, the first destination
-mutation could also trigger additional World copy-on-write; this was a deferred
-first-mutation copy and was not misreported as capture. PDF payload mutation
-already appended to its private delta and copied no prefix.
-
-### Final aggregate gate
-
-`EngineCheckpoint` is now deliberately move-only. There is no ordinary clone
-API to benchmark: cloning a live aggregate root would create a second authority
-for command, page, and generation ownership. The final gate reports
-`clone_api=deleted` and measures copying its fixed public accounting projection
-(`CheckpointRetention` plus execution counters) instead. That projection
-performs zero allocations and requests zero bytes.
-
-The 2026-08-30 optimized run has byte-for-byte identical allocation evidence
-for minimal and accumulated payload at each boundary count:
-
-| Boundaries | Capture allocations / bytes | Bounded mark copy allocations / bytes | Fork plus reject allocations / bytes | Restore allocations / bytes |
-| ---------: | --------------------------: | ------------------------------------: | -----------------------------------: | --------------------------: |
-|          1 |                38 / 173,496 |                                 0 / 0 |                      148 / 1,516,604 |                12 / 540,280 |
-|         32 |                38 / 329,984 |                                 0 / 0 |                   4,800 / 49,094,784 |            384 / 17,288,960 |
-
-The executable asserts those equalities. Counts scale with the number of
-operations requested by the boundary fixture, but not with command, mode,
-page, hyphenation, World, effect, artifact, or source payload accumulated
-before capture. Component retention columns come directly from
-`CheckpointRetention`; they intentionally grow from minimal to accumulated
-fixtures because they charge live payload rather than checkpoint-copy cost.
-Elapsed nanoseconds remain single-run diagnostics.
-
-The mutable hyphenation exception/code maps were the final payload-dependent
-capture. They now stay in one direct table with a reversible journal. A
-checkpoint clones only the initialized pattern trie's coarse `Arc` and copies
-its journal mark and fixed scalars. Fork moves the table to the sole candidate;
-rejection replays the detached accepted suffix, while acceptance drops it.
-Neither path clones the trie or mutable maps.
-
-The separate early mode/page row no longer claims that restoring an old page
-mark is zero work. It reports the exact accepted page-journal distance: 28
-operations after one unit and 65,548 after 4,096 units in the representative
-fixture. That work is explicit rollback semantics, not hidden capture or
-clone work, and the mode owner remains constant-work.
-
-## World, source, and font ownership outcome
-
-`umber2-pei0.2.4` replaces the World/source/font portion of that historical
-baseline with fixed marks and coarse accepted blocks. The concrete ownership
-classification is:
-
-| Column or family                                  | Representation at a retained boundary                                                                                                                                   | Retained-byte owner and release                                                                                                                                    |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Effect records and aligned publication sidecars   | One immutable accepted block per admitted lineage plus a destination-private suffix; the checkpoint stores absolute base and aligned scalar lengths                     | Each block charges its record payload and seven aligned sidecar columns once to the lineage that produced it; stream-open context is position-aligned, not scanned |
-| Publication and semantic counters                 | Current-lineage maps plus one undo journal; the checkpoint stores only the journal length and scalar identity frontiers                                                 | Accepted next ordinals are recovered from immutable aligned effect columns, so no counter map crosses or is cloned at fork                                         |
-| Stream state                                      | Fixed read-record/byte cursors, immutable write-path ids, terminal-input cursor, and scalar terminal/log offsets; numbered streams retain no unused partial-line mirror | Immutable input records, bytes, and path spellings stay in the stable World session owner; mutable stream positions and offsets belong directly to the live World  |
-| Input records and immutable bytes                 | Coarse accepted record/content blocks plus an empty destination-private record/content suffix; the checkpoint stores record and identity cursors                        | Input bytes are charged once to the block containing their record; accepted identities are shared as run blocks and new identities use the candidate               |
-| Reduced input dependencies                        | Coarse accepted maps plus a private override map and undo journal; the checkpoint stores the journal length and exact effective count                                   | Accepted observations remain in their source lineage block; rollback deletes candidate-only overrides and terminal detachment materializes once                    |
-| Artifact commits                                  | A retained artifact cursor; a fork starts an empty candidate commit ledger at that cursor                                                                               | Verified/committed bytes cross once into the durable artifact owner; provisional page receipts are quiescent transaction state and cannot checkpoint               |
-| Sources                                           | Immutable accepted registration/backing blocks plus private vectors and sparse index for the candidate; `SourceMapMark` remains fixed                                   | Descriptor bytes, line indexes, regions, and generated backing are charged once to their accepted block; logical positions and marks are scalar                    |
-| Fonts                                             | Immutable accepted loaded-font/index/hash blocks plus a private loaded-font suffix; identifier and expansion changes use candidate overrides with bounded undo marks    | Loaded metrics and recipes are charged once to their accepted block; mutable identifier/expansion values roll back without copying immutable fonts                 |
-| Dependency tracker and execution/identity scalars | Revision/invalidation epochs and run-compressed accepted identity metadata                                                                                              | No changed-at map or per-value identity table is cloned; job/revision counters remain fixed scalar state                                                           |
-
-The source component of the history-budget estimate uses an incrementally
-maintained sum of live registered source-span lengths plus fixed row charges.
-Capture copies that scalar without scanning source rows. It never treats the
-process-wide logical source position as retained bytes: rejected timelines
-leave coordinate gaps, but those gaps own no source payload. The estimate does
-not create another owner or copy backing bytes at each checkpoint.
-
-Only prior and current lineages are mutable authorities. Accepted blocks are
-immutable row storage, not additional generations, and no block registers
-roots or compacts/relocates values. Reads select accepted prefix or current
-suffix directly; mutation appends to the current suffix or its explicit undo
-journal. Same-owner candidate settlement drains the exact accepted suffix into
-one reusable World-owned detached-prior aggregate. Rejection replays those
-rows and journal writes; acceptance clears the buffers while retaining their
-capacity. Semantic appends warm every aligned detached lane, so fork performs
-no prefix scan, `split_off`, payload clone, or per-checkpoint tail allocation.
-Restore first validates every mark, reverses mutable journals, resets scalars,
-and then truncates suffix columns. A generation fork shares the exact marked
-immutable prefix, excludes source rows after the mark, and allocates only the
-new lineage's empty containers.
-
-`WorldSnapshot` retains no `Arc<StreamBufState>`. Capture and checkpoint clone
-copy only the fixed stream cursor tuple. A read slot stores an immutable input
-record id plus its byte cursor, a write slot stores an immutable session path
-id, and the terminal/log state is the scalar offset TeX actually consults.
-Restore resolves the 16 slots through stable session-owned path spellings; no
-mutable stream owner, partial-line string, or first-mutation COW crosses the
-checkpoint.
-
-The enforced `world_checkpoint_gate` compares both 1 versus 64 payload units
-and 1 versus 32 retained boundaries. Its recorded optimized result is zero
-allocations for capture, checkpoint clone, and no-op restore; World fork is
-26 allocations / 1,120 requested bytes at both payload sizes, source/font fork
-is 20 / 984, and retained-boundary-only forks are respectively 22 / 888 and
-16 / 680 at both boundary counts. First candidate mutation is also flat:
-World is 15 / 2,627 and source/font is 26 / 4,706. The fixture reports logical
-retained-payload ownership separately (World 848 versus 48,476 bytes and
-source/font 2,820 versus 97,068 bytes), demonstrating that real retained data
-scales while checkpoint representation and fork setup do not.
-
-## Command ownership outcome
-
-The command family has since passed its standalone promotion gate:
-
-```text
-COMMAND_CHECKPOINT_GATE capture=Counts { allocations: 0, bytes: 0 } clone=Counts { allocations: 0, bytes: 0 } restore=Counts { allocations: 0, bytes: 0 } first_mutation=Counts { allocations: 0, bytes: 0 } fork=Counts { allocations: 0, bytes: 0 } fork_first_mutation=Counts { allocations: 0, bytes: 0 }
-```
-
-The gate compares one live command unit with 64 accumulated source and
-stored-token units, requires identical counts, and verifies rollback plus
-repeated-fork isolation. Capture and clone retain fixed marks only. Main-control
-drop returns the exclusive command-root loan; fork restores the selected marks
-and gives the sole current candidate that root. A rejected candidate returns
-the same storage after discarding its current logical suffix.
-
-Command-frame order now lives in the same physical owner as stable reusable
-frame rows. Each row stores its direct predecessor and successor; a rooted
-selection unlinks the selected row's accepted successor in constant work and
-opens a private candidate chain. Rejection retires only candidate rows and
-reattaches the saved chain; acceptance retires the saved rows and leaves the
-candidate chain attached. Retirement moves the discarded chain's existing
-head, tail, and length into one reusable-chain owner without visiting a row or
-manufacturing a free-list key. Publication later consumes one row from that
-owner, drops its obsolete frame payload, and assigns a fresh incarnation at
-the reuse point, so an ABA-stale mark fails while settlement remains constant.
-There is no `VecDeque` order index, position search, `split_off`, or copied
-frame-key suffix. Packed-journal counters separately
-report the exact selected rewind, candidate rejection, accepted redo, candidate
-chunk release, and obsolete accepted chunk release. The enforced gate's
-73-record accepted delta and 5-record candidate delta report `73/5/73` work on
-rejection and `73/0/0` on acceptance, with 5 candidate or 73 accepted chunks
-released respectively, one frame-chain transfer, zero settlement row visits,
-zero reuse/incarnation work during settlement, and zero settlement allocations.
-The size gate reports those same values for both one and 4,096 discarded rows,
-then exactly one row visit and one incarnation assignment on the next
-publication.
-
-## Core state, node arena, and primitive ownership target
-
-Dense state remains a direct mutable owner in one accepted lineage. Runtime
-nodes instead use the exclusive region ownership specified in
-[Node-region ownership](node_region_ownership.md). A retained checkpoint stores
-only a journal cursor and an owner-relative key into its history-owned page
-region. It never owns a `StateCore` or `DenseState` bank, clones a page region,
-or treats a raw node coordinate as ownership. Multiple sibling marks inside a
-page share one backing region without creating more mutable authorities.
-
-Each dense journal record stores its cell coordinate and one durable alternate
-value. Rewinding the accepted suffix swaps old values into the banks in reverse,
-leaving the accepted forward values in the same detached records. Rejection
-first swaps candidate records backward and then swaps those detached accepted
-records forward. Acceptance drops the superseded accepted suffix and promotes
-the candidate journal. The checkpoint-delta lane is a typed `ForkArena` over
-one caller-owned coarse `ChunkPool`; capture seals a fixed whole-chunk mark and
-copies no delta value. Stack and arena journals use the same bidirectional rule
-with reversible logical coordinates. Durable values and node payloads are not
-copied into checkpoints or reconstructed by replaying page prefixes.
-
-The replacement page-node substrate uses the existing caller-owned
-`ChunkPool<Node>` plus typed coordinate-only `ForkArena` lanes. An exclusive
-move-only `PageRegion` owns the chunk envelopes and PageBuilder roots for one
-page-building period. Payload is append-once in fixed-byte logical chunks
-stored many per coarse pool page. An immutable region/pool borrow returns
-stable direct node references, while every physical mutation requires the
-caller's exclusive mutable borrow. The only logical list is normally one
-direct `ArenaRange` or, when composition is necessary, one arena-owned
-nonrecursive sequence of direct ranges with cumulative endpoints. Candidate
-rewind/reject truncates current payload and descriptor chunks to whole-chunk
-marks. There is no complete-row list owner, parallel `NodePiece` stream,
-linked-node lane, `Vec<Node>` mirror, recursive rope, overlay, per-node owner,
-dependency-counted page batch, compaction, or per-chunk heap.
-
-Retained page succession permits exactly two arena lineages over a sealed
-self-contained suffix. Per-chunk metadata has two lineage-position slots and a
-publication-time direct-child floor; each lineage has its own chunk list and
-private mutable tail. Sharing and dropping walk chunk keys only, never nodes.
-Dropping one lineage releases exclusive chunks and leaves shared chunks under
-the other slot; the last drop destroys payload and advances incarnations. A
-third lineage, an unsealed suffix, or a child dependency before the suffix is
-rejected before ownership changes. Page-to-durable closure publication remains
-an explicit semantic copy.
-
-An operation mark may include a partial tail and is never retainable. A
-checkpoint mark can be created only by consuming live builders and sealing
-payload and descriptor tails. Fork ownership is exactly `Accepted` or `Forked
-{ prefix, detached_prior, current }`. Reject drops current and reattaches the
-saved prior suffix; accept drops the obsolete prior suffix and retains
-prefix-plus-current. Page regions after the selected checkpoint detach and
-settle wholesale. Pruning drops a whole region after its contiguous checkpoint
-interval disappears; it never infers liveness by scanning or counting roots.
-
-Prepared output pages follow the same coarse ownership rule in the executor.
-One retained-generation sidecar owns a `ChunkPool<PreparedDviPage>` and an
-`OutputLane` arena directly. A checkpoint stores only the sealed whole-chunk
-mark and page count. Fork moves that sole authority to current after detaching
-the selected accepted suffix; rejection returns the settled authority to
-prior, while acceptance keeps it in current and drops the superseded suffix.
-Candidate drop uses the same rejection settlement. Terminal capture walks the
-borrowed canonical rows directly into the final detached page vector, without
-an `Rc`/`Arc` owner, mutable accepted tail, parent spine, replay, `split_off`,
-or intermediate prepared-page vector.
-
-Long-lived construction uses a move-only `ActiveListBuilder` containing only
-the arena owner, its partial operation coordinate, one pending range, and
-descriptor-tail scalars. It holds no pool/arena borrow, pointer, or shared
-owner. Every push, range append, split, finalize, and rollback presents the
-caller-owned pool and typed arena explicitly, validates the builder owner, and
-returns before the exclusive borrow ends. An open builder blocks checkpoint
-sealing; finalization produces only the canonical range/list coordinate, while
-rollback truncates its operation suffix. The builder has distinct vacant,
-open, and sealed states and has no conversion to `CheckpointMark`.
-
-Alignment construction is deliberately candidate-only under this rule. Active
-cells and rows move page-material list roots through packaging, width setting
-borrows `NodeCursor` views, and append-only replacements retain unchanged
-source ranges while appending only genuinely new set boxes and running rules.
-The final ordinary or display handoff moves the same typed root. No alignment
-root, node buffer, or clone fallback participates in checkpoint publication.
-
-Math construction is likewise candidate-only. Choice expansion and Appendix G
-passes borrow source nodes through `(PageListId, index)` coordinates; only a
-noad actually changed by ligature processing becomes an owned draft. Runtime
-lowering streams generated nodes into detached page-material builders and
-retains opaque native leaves as source ranges. Inline/display/eqno completion,
-fraction and middle-math transfer, display reversal, prototype replacement,
-packing, and mode/page handoff all carry the canonical `PageListId`. No
-production `Vec<Node>`, native-node clone carrier, or math checkpoint root is
-created.
-
-The primitive registry remains immutable after initialization. Pruning drops
-whole history-owned page regions and obsolete transactional suffix chunks only
-after their owner-relative checkpoint rows have been removed. It does not scan
-the engine, register roots, compact coordinates, or perform per-value
-ownership accounting. The former bank-loan allocation figures are historical
-diagnostic evidence only and are not a promoted representation.
-
-The rooted-lifecycle work in `umber2-pei0.2.13` replaces these independently
-materialized checkpoint banks with scalar marks plus one explicit edit-start
-rewind/materialization transaction. The identity seam is deliberately narrow:
-each owner keeps its demand latch and canonical accumulator, mutation barriers
-continue to apply the same old/new keyed contribution or ordered append, and
-the future checkpoint mark copies only the accumulator scalar. Rewind and
-candidate rejection restore that scalar through the same existing journal or
-owner mark. No identity placeholder, checkpoint census, or compensating scan
-is needed when `.2.13` removes `StateCore::checkpoint_copy` and the current
-World/source/font accepted-block fork path.
-
-The command component now follows the same rule. Checkpoint frames retain their
-stable `ForkArena` range identities, but scalar mutations append fixed-size
-undo/redo records directly to reusable linked chunks and publish no per-write
-list descriptor. Interval-local dense first-touch bits reduce repeated writes
-to first-old/final-new; ordered diagnostic pushes remain one record per event,
-and the large owned pending-filename slot has a separate fixed-chunk lane.
-Rollback visits current records backward, rejection redoes the detached prior
-suffix forward, and acceptance returns obsolete chunks to the same owner pool.
-
-Mode completion is likewise explicit even though its legal retained mark is
-rootless. Forking labels the restored `ModeNest` as the sole current candidate;
-MainControl completion parks that capability rather than dropping it. Session
-then consumes exactly one accept or reject transition in the aggregate owner
-order. Acceptance keeps the constructed candidate topology without replay or
-prefix publication, rejection discards only candidate topology, and an
-unresolved normal drop is an invariant failure. The accepted fixed mark and its
-sibling marks are never rewritten by either transition.
-
-CandidateRun's detached runtime/MainControl interval is guarded explicitly.
-Unwind first parks those two typed owners without allocation or a second panic;
-the enclosing owned generation guard then rejects mode, command, boundary,
-output ledger, state, page, and PDF owners in their normal aggregate order.
-Normal settlement still requires one consuming accept or reject, and the
-production MainControl-to-prepared transitions move the existing ModeNest
-storage without constructing a default replacement.
-
-## Promotion thresholds
-
-Later ownership-family children must retain the final gate without weakening
-any standing component gate:
-
-- aggregate capture, fork plus rejection, and restore allocation counts and
-  requested bytes are identical at one and 64 accumulated units for both one
-  and 32 requested operations;
-- the fixed checkpoint accounting projection remains zero allocations and zero
-  requested bytes; `EngineCheckpoint` remains move-only and must not grow a
-  clone API;
-- component-local warmed capture and no-mutation restore gates that already
-  prove zero allocation remain zero;
-- one restart fork performs only one destination-generation construction and
-  bounded per-revision setup; its allocation/requested-byte counts are
-  independent of accumulated units;
-- no capture copy or deferred first-mutation copy walks an accumulated prefix;
-  mutation opens only the destination's private journal/arena/log suffix;
-- repeated optimized timing may promote the single-run nanoseconds to a ratio
-  gate only after a stable runner records at least 31 samples; and
-- semantic checksums, cold/incremental parity, PDF scalar-mark gates, routine
-  tests, and quality gates remain unchanged.
-
-Timing is diagnostic in the standalone executable. Flat allocation and
-requested-byte assertions are deterministic and enforced there.
-
-## Releasing history during terminal cleanup
-
-Restoring an ordinary checkpoint requires quiescent group state. Releasing
-its retained history does not restore execution and must also work when a
-complete TeX job ends inside a group: TeX.web §1335 reports that condition
-as a terminal warning. Dense checkpoint and ordinary group-save records
-have separate owners. Prefix release validates the checkpoint owner and
-retained coordinate, rejects active transactions and unsettled forks, and
-reclaims only the checkpoint prefix. It leaves current group saves and
-values intact. Aggregate release uses that release-specific validation;
-ordinary restore retains its stronger quiescence requirement.
+# Full checkpoints and TeX group ownership
+
+Status: selected implementation contract for `umber2-i0n5.14`, 2026-10-01.
+This document specifies the target; the source mapping below names remaining
+implementation work. Documentation approval does not mean that work has landed.
+
+## One authority and one mutable generation
+
+One job/checkpoint family owns one working mutable engine generation, its
+immutable loaded format, and retained named checkpoints. Independent jobs or
+format admissions may have their own generations. An edit temporarily retains the accepted
+alternate values and cold captures while the same engine executes a candidate.
+Accepted and candidate are two histories, not two mutable eqtb banks or two
+interpreters. Only one candidate transaction can be active.
+
+This contract supersedes earlier two-slot _target_ architectures, fixed-size
+command-capture claims, group-retained checkpoint proposals, token-reference
+rollback epochs/quarantine, and prohibitions on direct definition root counts.
+Current `Universe::fork_runtime_checkpoint` already moves the sole
+`StateCore`, page, World and other mutable owners into candidate execution;
+`StateCore::begin_checkpoint_candidate` reverse-swaps the same dense banks.
+The second retained session slot holds a cold/loaned aggregate wrapper, not a
+second eqtb. Preserve necessary coarse generation/checkpoint owners, stable
+branded IDs and cold slot admission lifetimes. No session/FFI API rewrite is
+required merely to remove the old document's two-bank wording. Delete actual
+duplicate captures/topology, not genuine cold owners. No second interpreter,
+compatibility wrapper, old-format importer or parallel storage authority is
+justified. Specialized node, PDF, provenance, resource, and
+format contracts retain their actual semantic invariants; their session
+ownership is governed here.
+
+The hot machine reads packed tokens and meanings directly. TeX assignments
+share one mutation policy. That policy writes two compact histories only when
+their distinct semantic lifetimes require them:
+
+- `GroupSaveStack`: a contiguous, reusable LIFO sequence for TeX local scope;
+- `CheckpointUndoLog`: first-touch preimages for retained checkpoint intervals.
+
+These are not two assignment engines. They have one owner policy and different
+preimages. With checkpoint `x=0`, global `x=1`, then group-local `x=2`, group
+exit needs `1`, whereas checkpoint restore needs `0`. Sharing one linked entry
+between both histories would require multiple memberships and freeing rules
+without eliminating those two values. Keep the sequential storage instead.
+
+## Concrete state and mutation layout
+
+A cell has a packed value and TeX assignment level. Its host checkpoint stamp
+lives in a parallel indexed metadata bank, away from meaning-only reads. Use
+one monotone `u64` host epoch per generation. Dense banks index metadata
+directly; extended register and font-runtime pages allocate their corresponding
+metadata page once. Box binding and scalar-lineage metadata use direct indexed
+rows, replacing stamp hash maps. No assignment hashes a key or searches history.
+
+`CellKey` uses the existing packed family/index scheme in
+`tex-state/src/journal/cell.rs`, including code-table kind and font operands.
+It must retain the complete coordinate; the old proposed `u32` key cannot
+represent every current family. A common scalar restore record contains the
+key, packed old value, and old TeX level. It contains no old host epoch,
+checkpoint lease, owner serial, linked-list membership, or `Rc` per scalar.
+Typed token/glue/font/box values preserve their real ownership: a box record
+moves an exclusive region owner through a typed annex, never treats its naked
+list coordinate as an owner. Fixed record slabs and sequential annexes retain
+capacity after pop; growth is paid when a real save crosses capacity.
+
+One validated assignment performs the following:
+
+1. Resolve effective local/global scope, including `\globaldefs`, and validate
+   the typed value and any required publication capacity before mutation.
+2. If a retained restart needs undo and `stamp[cell] != host_epoch`, append the
+   old value and TeX level to the checkpoint log and stamp the cell. The log
+   owns that preimage. Without a retained restart, no checkpoint entry is
+   produced.
+3. For a local write below level one, save the old value and level only when
+   `old_level != current_level`. The group entry independently owns its
+   preimage. Repeated writes at the same level append no group entry.
+4. Install the value with level one for a global write, otherwise current
+   level. Acquire new semantic roots before releasing displaced roots. Alias
+   and ownership-transfer operations use the same policy.
+
+Compute the two predicates before replacing the cell; append/acquire owners
+before any decrement can tombstone the old definition. When both histories
+need a preimage, two shallow values are necessary. A repeated write still pays
+one level predicate and one indexed stamp comparison; it performs no history
+append. Root-level writes never need a group record.
+
+At capture, restore, candidate admission, and candidate settlement, reserve a
+fresh host epoch. Never serialize it into a format, hash it as semantic state,
+or restore it from TeX history. On exhaustion, fail at the cold boundary before
+mutation; do not wrap and revalidate old stamps.
+
+Macro arguments use invocation-owned pooled region vectors in the retained
+`ArgumentArena`. The macro body frame owns its invocation's argument region;
+parameter frames borrow that region. Construct all arguments into its one
+vector without per-argument allocation, second copy, or lease. Named
+checkpoint admission proves arguments empty. Returned vector capacities form
+an allocator cache charged once to the engine, not semantic checkpoint state.
+The `.10` implementation details may refine this physical pool without
+creating argument undo history.
+
+## The real TeX save stack
+
+A group pushes one scalar boundary containing prior level, kind, source line,
+stack/annex positions, and required diagnostic projections. Empty groups touch
+no definition store, box group owner, fifteen-owner operation snapshot, or
+checkpoint log. Warm empty push/pop allocates nothing. Typed builder groups
+still own their actual box, math, alignment, insertion, or output state; this
+does not require captures for an ordinary empty group.
+
+Tagged stack records cover local restores, `\aftergroup` tokens, typed builder
+payloads, and e-TeX sparse restoration. A sparse save lazily creates its
+TeX-required restore marker and links its preimages by stack index under that
+one group owner. At that marker, restore the sparse chain in reference order.
+Classic scalar and box saves share their actual push chronology. Simply
+reversing all classic and extended register writes would change e-TeX tracing
+order; preserve the dense/sparse boundary implemented today in
+`env/restoration.rs`, without its scalar/box merge scratch or duplicate group
+stacks. This sparse chain is language semantics, not a graph shared with the
+checkpoint log.
+
+Group close validates kind and boundary before mutation, then walks the save
+stack in TeX order. A current level-one binding suppresses a saved local value;
+otherwise transfer the saved value and its old TeX level into the current
+cell. Release each losing owner exactly once. A later local assignment after
+a global write can create another save in the same group: restoring that
+level-one value then suppresses the older local save, as TeX requires.
+
+Group unsave stamps the restored cell with the _current_ host epoch. Proof:
+checkpoint captures are forbidden while a group is open, so the epoch cannot
+change between group entry and exit. Any cell the group restores was written
+in that interval and already has the checkpoint preimage if one is required.
+A group save restores value and TeX level, not checkpoint membership. Resource
+or candidate restore abandons the entire group tail before advancing the epoch.
+No old stamp belongs in a group payload or an extra unsave checkpoint record.
+
+Emit real restoration diagnostics synchronously after each decision, using
+that entry's now-current tracing/print parameters while saved and live owners
+are still valid. The unobserved path constructs no restoration collection.
+Delete `GroupRestorations` and its immediately consumed executor carrier.
+Any genuinely retained diagnostic result must contain owned text or an explicit
+payload owner, not an uncounted `ResolvedMeaning` coordinate.
+
+Popped `\aftergroup` tokens go directly to ordinary backup input in TeX order;
+multiple saved tokens execute in their original saving order. Do not build a
+second token vector merely to consume it immediately. `\afterassignment` is
+one pending semantic token, distinct from group history. Successful assignment
+consumes it once at the established input point; failed scanning or assignment
+does not consume it. Preserve box-construction application timing, group
+mismatch recovery, source diagnostics, save-stack overflow, and high-water
+projections.
+
+Box dimension writes are unscoped scalar mutations of the current box lineage,
+not local binding assignments. Restore binding owners before checkpoint scalar
+preimages, and apply those scalars only to the matching restored lineage.
+Destructive box/unbox moves preserve a closure only when an actual history
+owner needs it; ordinary groups alone do not pin current boxes. See
+[Durable box root mutation](durable_box_root_mutation.md) and
+[Node-region ownership](node_region_ownership.md).
+
+## Full checkpoint inventory and capture cost
+
+`EngineCheckpoint` is the aggregate restart authority. Component marks cannot
+be restored or settled independently. Existing legal boundaries remain
+`JobStart`, eligible `OuterParagraphEnd`, and outermost `ShipoutComplete`.
+Admission requires no active group, macro, scanner/build/attempt, alignment,
+replay completion, pending diagnostic, or unfinished output operation, and one
+empty outer vertical mode. Root-document/include source-role policy remains.
+Open conditionals and non-macro backed-up/stored input may remain.
+
+The inventory maps the actual fields of `tex-exec/src/checkpoint.rs`,
+`tex-state/src/universe.rs`, and `tex-command/src/snapshot{,/boundary}.rs`:
+
+| Owner                                          | Checkpoint content and retention                                                                                                                                                                                                                                                                           | Restore obligation                                                                                                                                                     |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session, generation, format, profile           | Coarse identity/capability, immutable format and explicit job metadata; undo interval position. No eqtb image per named checkpoint; keep stable generation brands/coarse owners.                                                                                                                           | Validate session, owner, profile/schema, branch ancestry, and every retained position.                                                                                 |
+| Dense TeX environment                          | Meanings, all register/parameter/code banks, current/family fonts and mutable font-runtime cells through first-touch undo; box binding and dimension-lineage inverses.                                                                                                                                     | Restore values/levels and transfer their semantic owners; no bank census.                                                                                              |
+| Immutable definitions, lists, glue, provenance | Current cells and history entries own semantic roots; frame/capture payloads own their real immutable storage. Publisher/annex marks retain compact glue/provenance rows under their specialized policy.                                                                                                   | Preserve roots before suffix release; never restore a tombstoned definition from an unowned coordinate.                                                                |
+| Command and input                              | Actual cold `InputCapture`, source/stored/backup frame positions and owned transient words, conditional frames, alignment scalars, pending afterassignment, last diagnostic site. Groups/aftergroup/builders are empty. Job configuration and pending-source registrations have explicit session lifetime. | Install the complete capture; clear abandoned scanner, group, builder, replay, and diagnostic state. Preserve registered future sources and input identity high water. |
+| Executor and modes                             | `ModeCheckpoint` outer scalar; executor root anchor and budget counters. No open builder, mode list, or save stack is retained.                                                                                                                                                                            | Replace outer mode before reclaiming backing nodes; reset transient executor state.                                                                                    |
+| Page, nodes, durable boxes/forms               | `PageRegionCheckpointKey`, four PageBuilder roots, contributions/discards, insertions/marks/break state and node/descriptor positions; exact region ownership through history.                                                                                                                             | Transfer roots while backing regions remain attached; settle root inverses before payload suffixes.                                                                    |
+| PDF                                            | `PdfStateSnapshot` general/color roots, scalars, row selections, payload frontier and form owners.                                                                                                                                                                                                         | Select roots, settle mutable rows, release lookup/version/row suffixes, then payloads. Preserve canonical object order.                                                |
+| World and resources                            | `WorldSnapshot` effects, stream/input/artifact/publication marks, clocks/randomness, framing and host policy; host replay transaction prefix is paired with the root.                                                                                                                                      | Rewind semantic effects and streams before dropping abandoned payload; verified resource outcomes remain outside engine rollback.                                      |
+| Source and fonts                               | `SourceMapMark`, `FontStoreMark`, immutable source/font owners and mutable font journals.                                                                                                                                                                                                                  | Restore all meaning/input/node/PDF roots before logical source/font suffix release.                                                                                    |
+| Hyphenation                                    | Frozen initialized trie owner, exception/code undo position, capacities and initialization scalars.                                                                                                                                                                                                        | Restore mutable state and pattern initialization semantics; share immutable pattern payload.                                                                           |
+| Dependencies and engine scalars                | Tracker root/mark, interaction mode, prepared magnification, engine-usage state, optional complete component identities.                                                                                                                                                                                   | Restore before observation or incremental publication; no active dependency recorder crosses capture.                                                                  |
+| Output ledger                                  | `OutputLedgerCheckpoint`, root/effect/artifact prefixes and generated-file/artifact transaction marks.                                                                                                                                                                                                     | Restore the same visible prefix as the engine; output publication occurs once after settlement.                                                                        |
+| Fuel and high water                            | One session fuel ledger, cancellation/error policy and TeX job-lifetime stack maxima stay outside rollback. Configured revision counters are explicit cold metadata.                                                                                                                                       | Never refund spent fuel or reset diagnostic maxima on replay/rejection.                                                                                                |
+
+A command mark may reference an owned capture row; that row's vectors and
+transient words still cost memory and copying. Capture/restore costs
+`O(live source/input rows + conditional rows + owned transient words)` for
+those cold values, plus component marks and required checkpoint publication
+work. Source bytes and immutable stored-list payloads share their real owners.
+Do not claim every component is O(1), every capture is a few hundred bytes,
+or cold captures have zero allocations. Ordinary token delivery maintains no
+input undo history for these captures.
+
+Frozen JobStart owns an exact detached image and explicit metadata. Fallback
+materializes it atomically into the sole engine after retaining whatever
+accepted alternates rejection requires. It is not a permanent decoded format
+engine, a second runtime eqtb, or a live journal floor at zero. Format loading
+and import remain cold; internal representation changes do not require an
+old-format compatibility reader.
+
+## Restore, repeated roots, and candidates
+
+Preflight every component and reserve required cold storage before mutation.
+A failed preflight leaves the aggregate unchanged. First unwind interrupted
+Rust calls; their scanners, collectors, borrowed contexts, and temporary
+commands cannot cross restore. Abandon interrupted group state without
+executing its aftergroup tokens or rendering ordinary group-exit diagnostics.
+
+Restore proceeds in two phases under one transaction:
+
+1. Restore/swap dense values, box bindings/scalars, command/input, mode, page,
+   hyphenation, PDF, World, dependency, source/font logical roots and output
+   prefix while both replaced and selected backing owners remain available.
+2. After every restored root is installed, reclaim abandoned command,
+   definition, provenance, node/page/form, source/font, effect/artifact and
+   output suffixes in dependency order. No fallible semantic action or
+   external publication occurs between these phases.
+
+The existing `validate -> acquire -> restore dense -> transfer roots ->
+truncate -> release` state seam remains useful. It must extend to _all_
+aggregate owners; a source/font or definition suffix cannot drop before a
+restored input, diagnostic, node, or meaning transfers its root. Identity
+metadata follows the selected semantic roots; host epochs do not.
+
+A normal named restore reverses undo entries to the root and drops the
+abandoned tail after root transfer. Keep the selected capture and protected
+undo prefix intact. It can be restored repeatedly after different subsequent
+writes, each in a fresh epoch. Restore invalidates only newer roots on the
+abandoned branch, never the retained root itself.
+
+For an edit candidate, reverse-swap the accepted suffix into an owned
+contiguous tail. Each log alternate becomes the forward value needed to
+recover the accepted head; its semantic owner moves with it. Retain accepted
+cold command/input captures and actual specialized page/PDF/World suffix
+owners, then execute the candidate in the sole engine with a fresh epoch.
+Rejection reverses the candidate suffix, transfers/drops candidate roots,
+reattaches accepted backing, and forward-swaps accepted entries in forward
+order. Acceptance drops the retained accepted alternates and promotes current
+history. Both settle every owner before publication and advance the epoch.
+Swapping two existing owning positions changes no definition root count;
+creating or destroying a position does.
+
+Use plain cold tail owners wherever sufficient; delete checkpoint-log
+`ForkArena`, leases, slot adapters and copied topology when contiguous owned
+tails provide the same exact identity. Specialized page-region or PDF version
+structures remain where their real semantics require them. This is not a
+blanket deletion of node topology or output ordering.
+
+History pruning uses the earliest surviving restart as the undo floor.
+Retained prefix keys/positions stay valid; prefix removal drops preimage
+owners exactly once and releases whole consumed storage chunks. Charge cold
+captures per root, shared substrate/payload once per actual owner domain,
+page regions once across their boundary interval, and accepted/candidate
+private tails explicitly. Dropping the last root releases its protected
+history; detached accepted output retains only its own bytes/recipes.
+
+Resource misses retain a typed need and matching full root/host prefix. Restore
+that aggregate, admit the verified outcome via ordinary VFS/World state, and
+parse again. No partial parser, matcher, Rust caller, or output continuation is
+retained. Synchronous provider resolution may complete the current cold call.
+The contract is [Resource-miss checkpoint replay](checkpoint_resource_replay.md).
+
+## Definition roots and prompt reclamation
+
+Keep one pinned immutable format bank and one monotone dynamic slot bank.
+Local/global allocation namespaces and local-to-global copies are unnecessary:
+scope is the meaning cell's TeX level. `\let` to a global binding aliases the
+same dynamic key. Delete local-row group marks/truncation and
+`DefinitionPromotion`, including its weak memo, rather than retaining an
+invalidation subsystem.
+
+Each dynamic slot contains its payload option and a direct non-atomic root
+count. `DefinitionRef` stays a compact copyable _nonowner_. Central owner
+operations increment/decrement the indexed count for live meaning cells,
+independent group and checkpoint preimages, candidate/accepted alternates,
+and actual retained cold command/request owners. A newly sealed definition
+has an unpublished temporary owner until assignment consumes it or failure
+drops it. Audit every insertion, replacement, restore, transfer and drop.
+There is no eqtb/log census on assignment, activation, or checkpoint capture.
+
+At zero roots, tombstone the slot and drop its arena payload owner immediately.
+Slot coordinates are never reused or truncated to allocate new definitions,
+including after rejection. Small tombstone metadata grows with definitions
+issued; payload bytes follow actual liveness. Capacity exhaustion remains
+bounded and explicit. A stale ref deterministically fails rather than
+resolving a different definition. Formats are pinned and use no dynamic count.
+
+Active matching/replacement frames retain one `Rc` of the full immutable
+payload: packed words, compiled matcher and origin together. They read slices
+without counts or slot lookup per token, and remain valid after the arena
+slot tombstones. Count a frame's actual payload owner, not a separate slot
+root when it never resolves that key again. Ordinary borrowed
+`CurrentCommand`/`HotCommand` keys can outlive no owner mutation unless they
+acquire the needed payload first. Cold read/input placeholders must be removed
+with direct dispatch, or become explicit counted owners while they remain.
+There is no second matcher-plan store.
+
+Canonical definition memory is charged once per immutable payload and released
+on its final real payload-owner drop, including an active frame after slot
+retirement. Slot root counts are not payload `Rc` counts: aliases need not
+allocate or duplicate memory charges. Existing row-drop accounting must
+migrate with this policy; replacing a row must neither undercount an active
+body nor retain its charge forever. The accounting hook updates only the
+existing scalar aggregate, not a registry or store traversal. Retained-byte
+reporting separately charges slot/history capacity and shared payload once.
+
+## Operation frequency and hot costs
+
+There is no verified production read/write/group/save/checkpoint ratio. The
+588-page production profile ran with detail counters disabled. Historical
+`command_lane.md` counts (35.9M commands, 38M macros, 1.6M group commands) have
+no available revision-scoped census receipt and are not frequency evidence.
+Do not infer percentages or savings from those numbers.
+
+The following are explicit workload inferences: token/meaning reads and macro
+expansion dominate ordinary LaTeX body execution; assignments are sparser than
+reads. Local style/environment/scratch assignments are common _within
+assignments_. Global/root writes are common while loading packages, creating
+definitions, and updating counters. Groups can be frequent while distinct
+first-written cells are sparse; repeated same-level writes do not save again.
+Named host boundaries are much rarer than token traffic; candidate settlement
+and resource replay are exceptional. These observations justify putting
+bookkeeping on mutations and cold boundaries without inventing ratios.
+
+| Operation                                    | Necessary bookkeeping                                                                    | Allocation/copy cost                                                 |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Token/meaning read, replacement substitution | Zero checkpoint stamps, logs or root counts; direct read.                                | None after frame admission.                                          |
+| Macro activation/retirement                  | One actual immutable payload retain/drop and frame push/pop.                             | No body/matcher copy; no checkpoint log.                             |
+| Assignment, already touched/current level    | Level predicate, indexed epoch comparison; actual root replacement when meaning changes. | No history append; no allocation with available bank storage.        |
+| First local write                            | Above plus one group preimage owner.                                                     | Sequential append, shallow scalar/key copy; typed owners transfer.   |
+| First interval write                         | Above plus one checkpoint preimage owner.                                                | Sequential append; both histories may need independent roots.        |
+| Empty group                                  | Scalar boundary/kind/source push/pop and exact TeX diagnostics projection.               | No eager owner capture; warmed stack capacity reused.                |
+| Group unsave                                 | Walk actual saves in TeX order; owner transfers; real demanded diagnostics.              | No restore-results vector or extra checkpoint preimages.             |
+| Named capture/restore                        | Validate component marks; capture/install cold values; undo changed state.               | Actual cold vectors/words copied and charged; no eqtb deep snapshot. |
+| Candidate/replay/prune                       | Aggregate tail swap/transfer/drop and owned cold captures.                               | Cold storage may grow; no per-token fork metadata.                   |
+
+## Source deletions and implementation order
+
+| Tracked work                        | Source now                                                                                                                                             | Required replacement and deletion                                                                                                                                                                                                                                                                                        |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.10` arguments                     | `tex-command/src/macro_call.rs` and input argument activation still move collected argument words into frame storage.                                  | Construct each argument once in final retained storage; preserve origins and matcher semantics. Checkpoint design adds no argument history.                                                                                                                                                                              |
+| `.6` groups/mutations               | `tex-state/src/journal.rs`, `env.rs`, `env/restoration.rs`, `env/durable_boxes.rs`; command `group_payloads`/aftergroup lanes; definition group hooks. | Central assignment ownership; direct group stack and indexed interval stamps; remove old group serial fields, duplicate box/command topology and restoration carriers. Preserve sparse ordering and box scalar lineage.                                                                                                  |
+| `.6` dispatch/aggregate integration | `tex-exec/src/main_control{,/lane,/hot_apply,/resources,/settlement}.rs`, `ColdOperation` protocol; `Universe`/retained-generation two-slot admission. | One direct mode/command loop including prefixes and cold semantics; delete eligibility split, immediate-consumption operation/request carriers and eager multi-owner captures. Preserve existing sole-core move/alternate-tail lifecycle and genuine coarse slot/brand ownership; simplify only real redundant adapters. |
+| `.13` definitions                   | `definition_arena.rs` format/global/local vectors, `AcceptedDefinitionTail`, local marks, promotion memo and row-based memory release.                 | Pinned format plus stable counted dynamic slots; tombstones, payload accounting, centralized root transitions. Delete append-only payload retention and local/global promotion. Accepted alternates own roots rather than accidental row tails.                                                                          |
+| `.12` closure                       | `tex-exec/src/checkpoint.rs`, `Universe` aggregate restore, command snapshot/capture, `tex-incr` history/resource drivers.                             | Prove complete inventory, repeatable roots, validate-all/root-before-drop, candidate reject/accept, JobStart, pruning, replay, monotone fuel/high water and forwarded provenance; delete obsolete adapters remaining across the seams.                                                                                   |
+
+`.14` settles the design only. `.10` completes arguments, then `.6` replaces
+save/dispatch ownership in reviewable logical chunks, `.13` installs counted
+reclamation against those central transitions, and `.12` audits the integrated
+engine. Each implementation must delete its displaced representation and port
+all real consumers in the same logical change. No shim or second engine may
+remain; a design split is for review, not parallel authority.
+
+Required proof cases include the `0 -> global 1 -> local 2` example, nested
+local/global/local suppression, repeated same-level writes, repeated named
+restore, fresh branch epochs, sparse/classic/box tracing order, aftergroup and
+afterassignment timing, interrupted groups discarded on replay, payload
+survival after slot tombstone, aliases and candidate tails, final-root drop,
+box binding/dimension chronology, full output/resource rollback, and stale
+handles. Source/provenance and fuel/high-water cases remain mandatory.
+Implementation runs owning tests, `cargo test -q --tests`, authoritative
+`scripts/check.sh`, byte-exact story and the canonical workflow; a
+semantics-preserving stage must match the exhaustive existing 663 ordered
+divergence signatures, not claim clean conformance. Performance measurements
+and unchanged original targets remain evidence and architectural goals, not
+arbitrary implementation-closure blockers.

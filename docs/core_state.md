@@ -1,6 +1,16 @@
 # Core Engine State
 
-Status: authoritative current contract.
+Status: current implementation map and semantic state responsibilities.
+
+[Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
+is the selected authority for assignments, groups, checkpoints, candidates,
+definition roots and their deletion sequence. Two-slot admissions, combined
+journal descriptions and per-value-root prohibitions below describe the
+migration source and are superseded as target requirements. The target uses
+one working mutable core per job/checkpoint family (the current checkpoint
+fork already moves that core), direct indexed semantic roots on definition owner
+mutation, separate compact group/checkpoint histories and actual cold command
+captures. It adds no read-time census or compatibility engine.
 
 The approved `umber2-du4r` resource boundary is
 [checkpoint_resource_replay.md](checkpoint_resource_replay.md). A resource

@@ -1,1143 +1,156 @@
 # Expansion memory lifetimes
 
-Status: implementation map, migration guide, and retention audit for the core
-command expansion engine.
-
-For `umber2-du4r`, resource misses use the ordinary parser plus host-owned
-full-checkpoint replay in [checkpoint_resource_replay.md](checkpoint_resource_replay.md).
-Resource misses unwind scanner and expansion calls to the host-owned full
-checkpoint. The language-semantic input, macro, group, conditional, alignment,
-and expression stacks remain live engine state; they are not resource-retry
-state.
-
-The normative end state is [Runtime storage lifetimes](runtime_storage_lifetimes.md).
-This document answers the narrower practical question: when expansion scans,
-expands, unwinds for replay, rolls back, and crosses an editor revision, who
-owns each byte and when can it be reclaimed?
-
-[Node-region ownership](node_region_ownership.md) supplies the node-specific
-coarse-owner rules: exact paragraph checkpoints retain exclusive page regions,
-raw list coordinates are borrowed capabilities, and TeX copy versus consuming
-move remains explicit.
-
-Three labels keep implemented behavior separate from design intent:
-
-- **Implemented now** is verified by the current source and routine gates.
-- **Migration in progress** is a safe current representation which the
-  normative storage rewrite still requires us to replace.
-- **Target invariant** is required by `runtime_storage_lifetimes.md`; it must not
-  be cited as an implemented guarantee until the named gap is closed.
-
-The older `reachability_owned_values.md` described the deleted region/root
-registry. It is available only in Git history and is not an alternative live
-ownership model.
-
-The input frames themselves own all resumable reader state. Delivery borrows
-one exposed frame at a time without a second storage-selection cache. The
-borrow ends before nesting or retirement; the parent physical cursor remains
-in its semantic row. See [Command delivery kernel](command_delivery_kernel.md).
-
-## Terms
-
-A **session** is one long-lived editor or batch-engine instance. A **revision
-generation** is the move-only lease and complete slot payload for one accepted
-or candidate revision. A **durable value** is immutable data which may be named by live TeX
-state, an input cursor, or a checkpoint for the rest of that generation.
-**Scratch** is reusable unpublished storage whose last user can be identified
-exactly. A **replay anchor** is an existing full checkpoint plus matching host
-transaction-prefix marks; it is owned by the session and never contains a
-scanner or caller continuation. **Sealing** publishes a generation-branded
-immutable owner; a sealed builder cannot be appended to again.
-
-"Chunk" always means a fixed-capacity physical backing unit inside an arena.
-A chunk is not a revision, a history entry, or an independent lifetime owner.
-
-## Lifecycle at a glance
-
-```text
-process-immutable tables and compiled semantics
-  `-- caller-owned ReachabilityStore + append-only interning epoch
-        `-- engine/editor session borrow
-        +-- prior accepted slot lease (optional, read-only)
-        `-- current candidate slot lease (exclusive)
-              +-- dense TeX state + exact save journal
-              +-- definition row stores + shared token-list carriers
-              +-- command/input/scanner state and checkpoint roots
-              +-- reusable ExecutionScratch
-              `-- one active operation
-                    +-- ordinary Rust stack locals
-                    +-- nested macro frames and scanner state
-                    `-- host-owned ResourceReplayAnchor, when the host is needed
-
-accept candidate:
-  validate and quiesce -> clear old prior slot -> candidate becomes prior
-
-reject or cancel candidate:
-  drop its replay anchor -> drop command/executor roots -> clear current slot
-```
-
-The driver-completed primitive registry belongs to the first
-process/session-immutable row above. An executor can retain its fixed-width,
-generation-typed `PrimitiveHandle<G>` values and borrow the named immutable
-rows directly. Handles contain no definition owner, never address mutable eqtb
-cells, and are excluded from command roots, snapshots, formats, detached
-continuations, and revision transfer. Extending a registry invalidates handles
-issued against its prior extent; ordinary sessions bind only after complete
-INITEX installation or format-registry reconstruction.
-
-The implementation therefore has at most two live revision generations: the optional
-prior accepted generation and the exclusively leased current candidate. There
-is no third historical arena and no chunk-by-chunk history.
-
-Ordinary macro-argument and `scan_toks` collection keeps its shared brace and
-first-token cursor on the Rust stack beside the caller-owned output sink.
-Already-admitted plain input spans advance that cursor and the sink once per
-run, without a second pending-facts representation. A resource miss unwinds
-the collector; no `scan_toks` continuation is published. The host restores a
-full replay anchor before ordinary collection runs again.
-
-The production `scan_toks_buffers` path keeps its one `TokenCollector` in one
-stack location from destination admission through scanning, sealing, and
-cleanup. Its scope, scanner episode, diagnostic start, configuration, and
-phase remain adjacent locals rather than a `ScanToksLocal` aggregate that owns
-the collector or a by-value successful `Result<TokenCollector, ...>` carrier.
-The admitted definition writer is still released before attempt-scope or
-resource rollback; only the small completed storage descriptor crosses the
-scanner boundary. The separate `read_toks` line collector may retain its cold
-by-value construction because it uses attempt-owned definition storage and is
-not the production `scan_toks_buffers` route.
-
-## Lifetime matrix
-
-"May cross" below means that the value may intentionally survive the named
-boundary. A heap allocation is permitted only at the owner boundary shown; it
-does not authorize a smaller hidden arena.
-
-| Lifetime and examples                                                                                 | State owner and allocation                                                                                                                                                    | Nested or reusable                                                                                                                                                                                     | Exact release                                                                                                                                | May cross replay boundary / revision                            | Copy and heap rule                                                                                                                                                                                                                                                                                                                                |
-| ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Process/session immutable resources: compiled command semantics, profile tables, immutable catalogues | Process binary, immutable configuration, or session capability owner; usually static data, `Arc`, or an owned validated resource                                              | Shared, not nested; reuse is expected                                                                                                                                                                  | Process exit, session disposal, or last immutable owner                                                                                      | Yes / yes when identity permits                                 | Startup/cold heap ownership is allowed; hot expansion borrows it                                                                                                                                                                                                                                                                                  |
-| Interned control-sequence names and spellings                                                         | `SessionInternerEpoch` owns one append-only `Interner`                                                                                                                        | One epoch per session; entries are reused by `Symbol`                                                                                                                                                  | Whole epoch retirement                                                                                                                       | Yes / yes, within that session                                  | Bounded heap growth is allowed; no rollback copy or per-revision reinterning                                                                                                                                                                                                                                                                      |
-| Prior accepted generation                                                                             | `Session::prior_generation` owns one move-only lease into its `ReachabilityStore`                                                                                             | Not nested and not reusable as candidate scratch                                                                                                                                                       | Clear its physical store slot immediately before installing the accepted candidate, or session drop                                          | N/A / exactly one acceptance boundary                           | A retained checkpoint may seed the other slot atomically; definition/token payload allocations are shared and the prior remains unchanged                                                                                                                                                                                                         |
-| Current candidate generation                                                                          | `RevisionCandidate::generation` owns the other lease into that same store after execution begins                                                                              | Exactly one session-issued candidate lease; its fixed slot is reused only after release                                                                                                                | Candidate rejection/drop clears the slot; acceptance moves the lease into the prior role                                                     | Yes / becomes the new prior                                     | One destination-local aggregate may be prepared from an accepted checkpoint; no relocation, rehome, wire round trip, or cross-generation id rewrite                                                                                                                                                                                               |
-| Dense meanings, registers, parameters, and rollback records                                           | `DenseState` plus split `SaveJournal` group segments, checkpoint deltas, and a flat retry-transaction suffix in the current generation                                        | Group segments pop and reuse buffers; first-before checkpoint deltas retain one alternate per interval; the reusable retry suffix retains assignment inverses only and owns no parallel group topology | A cell is overwritten/restored; groups retire whole segments, rejected retries truncate their flat suffix, and generation drop ends capacity | Yes / only through a retained checkpoint in the same generation | Reads remain direct dense indexing; global/root writes outside a checkpoint or retry construct no inverse, meaning writes never hash definitions, and demanded semantic roots traverse the authoritative banks directly. No overlay, cache, second eqtb, census, densification, compaction, forwarding, per-entry owner, or live-entry relocation |
-| Macro definitions                                                                                     | One shared immutable definition payload (packed words, sealed matcher, origin) per format, global, or local-stack row; eqtb/save lanes hold opaque eight-byte non-owning refs | Group exit truncates the local stack; aliases copy only refs; one admitted macro-body row clones its row's `Rc` once                                                                                   | Checkpoint suffix settlement, group-exit truncation after meanings restore, final resident-row drop, or generation/format retirement         | Yes / no runtime ref crosses revision                           | Direct scans fill one build lane and seal one span. A local-to-global let shares the span once; resident delivery is one slice index and performs no per-word owner lookup or body copy                                                                                                                                                           |
-
-| Token lists used by toks registers, token parameters, marks, hooks, PDF records, and stored replay | Every live semantic carrier owns one private generation-branded `Rc<[TokenWord]>` handle | Builders may nest and recycle chunks; sealing transfers words to one immutable shared allocation | Last exact semantic-owner drop | Yes / no runtime handle crosses revision | Builder scratch remains arena-backed; publication may allocate the final slice; aliasing and replay allocate nothing |
-| Glue and provenance rows | Compact direct-index `GlueArena` and `ProvenanceArena` vectors inside the current store slot | Not nested and not reused after publication | Whole-slot retirement | Yes / only after explicit handle-free detachment | Small value copy and arena growth are allowed; shared heap ownership would cost more than these compact values |
-| Checkpointable page nodes and shipout-derived nodes | Exclusive `PageRegion` owners over one current-slot `ChunkPool<Node>`, exclusive durable box/form regions, and one separate `ShipoutScratchArena<G>` | Paragraph checkpoints in one page share its region; raw roots are borrowed capabilities; scratch rows nest by scalar marks and retain warmed capacity | A region drops after output/held-over evacuation when no checkpoint interval owns it; terminal success/rollback resets scratch wholesale | Page regions may cross exact same-generation checkpoints; scratch ids never cross suspension/revision | Ordinary transforms retain ranges and append new nodes; consuming TeX moves transfer unique regions, TeX copy operations and history-preserved moves copy exact closures, and shipout constructs only derived scratch nodes |
-| Initialized hyphenation patterns and job-local hyphenation mutations | `HyphenationTable` moves its completed language tries into one coarse immutable `Arc` owner; exception and saved-code maps remain in the one direct mutable table | The pattern builder is mutable only before TeX82 §919/§1335 initialization. Checkpoint capture aliases the initialized owner and records a mutable-journal cursor plus fixed scalars. Candidate creation moves the direct table, rejection undoes the candidate suffix and redoes the accepted suffix, and acceptance discards the accepted suffix | The pattern owner ends after the last live generation/checkpoint carrier; mutable exception/code rows and their journal end when the owning generation retires | Yes / yes through the ordinary prior/current fork | Initialization moves the trie map once without copying nodes. Ordinary reads borrow it directly; no checkpoint clones the mutable maps, and there is no per-pattern owner, read-time COW, registry, compaction, extra generation, or extra node indirection |
-| `ExecutionScratch` macro matching | One reusable pending-match word vector and fixed argument ranges in `CommandState::scratch` | Synchronous matching owns brace, delimiter, paragraph and trim facts through a stack-local writer; matching does not nest | Activation transfers matched words into the input stack and clears the pending match; failure unwinds scratch | No / no | Current activation copies arguments once from scratch; one-pass final argument construction is tracked by `umber2-i0n5.10` |
-| Transitional attempt/scanner storage | One `CommandAttempt` owns general-list/import rows and one shared fixed-chunk scanner-token lane; ordinary definitions use final region transactions | Child scopes and scanners nest; each general scanner owns only a typed lane branch coordinate. A resource miss unwinds the ordinary collector; the host retries the complete scan from a full checkpoint | Commit/rollback or cancellation truncates the exact attempt branch or definition-region word mark; physical capacities end with `CommandState`/generation | No scanner state crosses the replay boundary / no | `\def`, `\gdef`, `\edef`, and `\xdef` append directly to their selected transactional destination. General/read/import scans retain only their independently required semantic storage |
-| Scanner episodes and temporary builders | `ScannerState` stores status; call-local `ScannerEpisode` and typed builder/sink coordinates name attempt or destination storage | Nested scanner calls use child state, not a new arena; all phase enums and cursors are ordinary Rust locals | Return, rollback, or resource-error unwind | No scanner field crosses a resource boundary / no | Ordinary scalar copies are allowed. Token sinks are branch coordinates in shared fixed-chunk storage, never persistent per-scanner word vectors |
-| Ordinary Rust call-stack values | The executing Rust function owns commands, counters, enums, small cursors, and temporary borrows | Naturally nested calls; stack slots may be reused by Rust | Function return or resource-error unwind | No / no | Scalar and small fixed-value copying is allowed; an incidental call-local heap object must drop on return and cannot become a hidden mailbox |
-| Command fuel and its profiling census | One top-level `CommandFuelLedger`; each `CommandProcessor` stores only a mutable borrow of its singular `CommandFuel` | Reborrowed by bounded processor and executor leaf episodes; never copied or reconstructed. One mutable remaining-budget countdown owns fuel; the immutable admitted limit derives consumed fuel only for terminal or explicitly requested publication | Session or standalone ledger drop | The ledger crosses replay rounds in its session owner / no revision or snapshot payload | Production charging performs one exhaustion check and one decrement through the borrowed scalar ledger. The `profiling` resolution adds five exact non-fuel detail counters and their statically gated updates; the default resolution has no detail fields or calls. Neither resolution has a stored consumed count, batch-charge path, processor-owned alternative, ownership dispatch, heap indirection, or rollback refund |
-| Host resource replay anchor | Host-owned full checkpoint plus the typed `NeedResource` request and transaction prefix needed to retry the operation | No command-side continuation, scanner frame, caller edge, or parked output crosses the host boundary; retry restores the complete checkpoint and calls ordinary parsing again | Replay consumes the request and the anchor; cancellation drops both | Yes / no live command state crosses | Cold request/anchor allocation is allowed at the host boundary; no live engine id, command owner, scanner cursor, or opaque mailbox is copied |
-| Detached semantic recipe | Private handle-free metadata used by a later fresh operation or portable boundary | Contains no runtime generation and cannot encode a nested command, scanner, or resource retry | DTO drop | N/A / yes, because it contains no live engine state | Cold copying and heap allocation are allowed only for bounded semantic DTOs; materialization builds fresh destination-local values atomically |
-| Source and input cursor storage | Row-owned source slot, immutable macro/list owners, transient traced-word suffix and argument spans | Frames nest in LIFO order; one common frame owns each delivery position; scalar callbacks retain no reader owner | Retirement releases row owners and owned suffix; restore replaces the full input aggregate | Yes at eligible full checkpoint / no runtime coordinate crosses revision | No immutable activation copy, per-token owner clone, reader cache, or input inverse journal; source owners and transient words are copied only at checkpoint capture |
-| Diagnostics and observations | Command semantic queues, operation-local `DiagnosticEffects`, one reusable typed receipt in `ObservationBuffer`, then `World`/output effect storage | Operation-local batches may contain nested diagnostic programs; receipt category vectors retain only their warmed capacity after an in-place reset | Rollback drops the batch; commit drains/publishes it; receipt reset clears every completed category; accepted effects end with output/world or generation/session disposal | A completed operation may move the sole buffer / detached effects may cross revisions | Owned strings/vectors are allowed at diagnostic/effect boundaries; the receipt aggregate is not copied or allocated per operation, and no semantic result may wait in an untyped hidden queue |
-| Pure memo and render caches | Session/executor cache owner; `PureMemoRuntime` and editor render-map cache enforce entry/byte budgets | Reusable and evictable, not semantic nesting | Eviction, explicit clear, or session drop | Yes / yes only as handle-free validated results | Bounded heap retention is allowed; cache identity cannot provide runtime liveness |
-| Format image and format construction | `DetachedFormatImage` transiently owns bytes plus decoded handle-free rows; admission consumes it into a fresh destination generation | Complete validation precedes admission; construction then drains decoded rows in canonical dependency order | Encoded bytes drop before destination construction; each decoded payload drops or moves when its final column is installed; runtime rows end with the generation | N/A / yes, via handle-free schema | Cold decode allocation and DTO-local relocation are allowed. Admission does not retain duplicate decoded/live payloads. Live ids, chunks, and generation owners are forbidden on the wire |
-
-`ExecutionScratch` owns reusable macro-argument and bounded expression storage,
-but no expansion-work lane. The expanded loop keeps its
-compact token/meaning pair and all structural, scalar, conditional, and
-collector operands in ordinary Rust locals while it calls the canonical
-scanner grammar. A resource miss unwinds those calls, clears the bounded
-expression stack, and returns `NeedResource` to the host. The host restores a
-full replay anchor and invokes the same ordinary parser again; no command,
-scanner phase, parent edge, active-control tag, or name accumulator survives
-the boundary. Fixed-capacity scratch remains reusable generation storage, never
-checkpoint payload or a continuation mailbox.
-
-`PageMaterialArena` owns one `ChunkPool<Node>` and one coordinate-only
-`ForkArena`. Fixed payload chunks own each `Node` once. An `ArenaList` is the
-sole list topology: it names one source range or one arena-owned nonrecursive
-range record with cumulative endpoints. Detached active builders append
-genuinely new nodes or retain immutable source ranges; neither operation
-materializes source payload. Candidate rollback truncates payload and
-descriptor chunks through the same arena mark. Indexed borrowed views resolve
-the canonical ranges directly. `ParagraphTape`, alignment setting, and
-`LineMaterializer` carry only list roots and compact scalar/index scratch; they
-never own or materialize the source node lane.
-
-The compact production arena applies the same admitted-episode rule used by
-resident command input. A raw stored list coordinate is validated once when a
-borrowed view or mutation-compatible chunk cursor is created. That admission
-resolves the direct typed block coordinate and rejects a stale rollback or
-recycled incarnation. Reads inside the admitted block then perform only the
-block-table lookup, payload index, and cursor increment; a logical predecessor
-crossing resolves the next block once. The cursor is episode-local evidence,
-not a serializable owner or another resident representation.
-
-Construction uses move-only Rust capabilities for the facts already known in
-process. An exclusive `ForkArenaBuilder` borrows its exact arena and pool,
-moves each value into one vacant initialized-prefix slot, and is consumed by
-infallible finish. Its unique result owns the only unpublished predecessor
-authority and consuming publication can occur once. The reusable page-builder
-shell similarly moves out its one private open owner on production finish.
-Dynamic checks remain only for allocation/capacity, admission of stored
-integer roots, semantic child and annex dependencies, block transitions,
-rollback/fork settlement, and cross-region move/copy preflight.
-
-If convergence identity is enabled before publication, original node append
-also maintains one composable whole-chunk summary and descriptor publication
-stores the exact summary of each canonical range. Slice and retained-range
-identity combine those summaries, hashing payload only in bounded partial
-boundary chunks; compose uses the already maintained list roots. Operation
-rollback restores the partial-tail summary, while promotion and checkpoint
-settlement move summary metadata in the same coarse envelopes. The exposed
-identity node-hash and summary-combine counters prove this sublinear source
-work, disabled-demand zero work, and unchanged `source_nodes_copied`.
-
-Alignment rows and cells are transient candidate material and cannot occur at
-an eligible retained boundary. Cell packaging moves the completed mode-list
-root into the unset child, row packaging moves that child root into the
-alignment list, and final width setting replaces unset nodes through detached
-active builders while retaining unchanged `\noalign`, interline-glue, and
-tabskip ranges at their original addresses. Display and ordinary handoff move
-the finished `PageListId`; lifecycle diagnostics retain row/cell counts, not a
-parallel root or node container.
-
-Math lists are also transient and ineligible at retained boundaries. The pure
-choice/noad pass stores borrowed page coordinates for unchanged source leaves
-and owns only genuinely rewritten or generated drafts. Execution lowers those
-drafts through detached active builders, retains native source ranges at their
-original addresses, and hands inline, display, equation-number, and packaged
-box results onward as the canonical `PageListId`. `source_nodes_copied` remains
-unchanged while generated math boundaries and layout nodes advance
-`new_semantic_nodes`.
-
-### Process and session state
-
-The command profile and compiled semantic dispatch are configuration, not
-revision history. Expansion borrows them. Host capabilities are also borrowed
-for an admitted episode; they are not smuggled into tokens or definitions.
-The active profile is a direct immutable command root. Expansion execution has
-no persistent counter or root: one expanded-delivery invocation owns a local
-bit recording whether that delivery expanded, and drops it on return. A
-resource miss unwinds the invocation and is represented only by the
-host-owned full-checkpoint replay request.
-Recoverable reports live once in the canonical semantic-diagnostic queue and
-transfer to the executor as one owner; resource resolution, dependency
-observation, semantic barriers, and snapshots have no parallel expansion
-ledger.
-The last §342 file diagnostic coordinate is a journaled command scalar:
-checkpoint rollback restores the file, line, and column that a later fatal
-report may need after its source frame retires. A candidate from a raw source
-read lives only in the current `CommandProcessor` fetch, is cleared on the
-next fetch, and is discarded when §789 intercepts an alignment delimiter.
-The source row continues to own the actual immutable token backing; §363
-replacement does not transfer that byte provenance to the original file.
-One stack-branded `OperationHostPreparation` remains stationary from host
-preparation through delivery preflight, transaction classification, semantic
-application, and save-stack settlement. One `CommandContext` is admitted at
-the start of an uninterrupted ordinary run and reused across successive
-preflights, applications, and operation-journal settlements. It fills its
-mode, effective-tail, PDF-mode, and group fields in place; the
-transaction boundary borrows those exact scalars instead of reconstructing
-the 240-byte admitted facade. Hot and ordinary cold application use their
-already-resident semantic context to write the post-apply checked save depth
-back into the same preparation, and settlement drains only that scalar.
-Measured definition, let, and catcode delivery retains that same borrow through
-expansion, scanning, semantic application, named-token publication, §1269
-`afterassignment` backup, state/mode/page settlement, and the following
-ordinary command's delivery. The run passes only narrow mutable borrows; it
-neither returns nor moves the admitted aggregate. Group application ends the
-admission before its
-possible page-output boundary and reacquires only for command-local
-publication afterward.
-Residual transaction and cold scanning similarly construct one directly
-admitted context and reborrow it through tracked-region projection, main-control entry,
-command processing, and scanner settlement. The direct-episode caller passes
-only its already-known tracking bit; nested cold execution propagates that bit
-without retaining the context. The callback ends before diagnostic reporting,
-resource preparation, host replay, cold or hot semantic application, and
-rollback or publication.
-Diagnostic or host boundaries which can change the sampled state refresh only
-their affected fields after the live dialogue. No layer returns, takes, or
-stores a whole admitted context or duplicate facts aggregate. Resource
-resolution, full-checkpoint replay, rollback, and outer executor publication
-still occur only after the applicable call-local context is dropped, so this
-adds no owner, cache, heap indirection, or lifetime mechanism.
-
-`ReachabilityStore::new` creates the session's interning epoch and one coarse
-allocation containing its inline two-slot store. Its `Interner` holds an
-append-only string arena,
-entry vector, and hash buckets. Symbols remain stable through edits, so group
-exit, operation rollback, and candidate rejection do not remove names.
-Explicit budgets cap names, slots, and bytes. A symbol is an id, not an owner.
-
-### Prior and current generations
-
-The implemented invariant is exactly two inline slots in one external store,
-not "two plus any number of candidates callers happen to retain." The prior
-slot is optional and read-only. The current candidate has the only execution
-lease. Acceptance first proves that scratch and typed operations are
-quiescent, prunes optional checkpoint roots, clears the old prior slot, and
-moves the candidate lease into the prior role. Rejection clears only the
-current slot.
-
-`RetainedEngineGeneration::fork_checkpoint` is the generic transition between
-those roles. It validates an accepted `EngineCheckpoint`, prepares the complete
-state/command/mode runtime and its fresh command timeline before insertion, and
-then occupies the sole free store slot. A failed build or a rejected candidate
-cannot alter the accepted slot. The checkpoint's definition and stored-token
-carriers clone only their existing private shared handles, so their payload
-bytes are not recopied; publisher scratch and mutable execution roots are
-destination-local.
-
-PDF is the concrete mutable-runtime exception to generation copying. A
-checkpoint holds a fixed scalar `PdfStateSnapshot`, not cloned PDF rows. The
-reachability store exclusively moves the one `PdfState` authority from the
-accepted slot into the candidate; accepted admission is unavailable until
-that transaction commits or rejects. A resource miss leaves the candidate
-owner available for full-checkpoint replay; it does not retain a suspended
-executor continuation. Dense row families keep accepted storage in place behind
-logical base lengths and append candidate rows to private deltas. Exact undo
-entries above the base swap in place into redo entries, so rejection restores
-the accepted state and history while acceptance discards prior-only suffixes.
-Image/form byte addresses remain identical throughout. No shared mutable
-container, per-value owner, COW write, hash overlay, current-table clone, or
-third generation participates.
-
-`Session` allocates one private `CandidateLeaseState` when the session starts.
-Every `start_*_candidate` factory atomically claims that state and moves the
-non-cloneable lease into `RevisionCandidate`. Preparing a completed candidate
-moves the same lease into `RevisionTransaction`, so the slot cannot be reused
-between preparation and atomic acceptance. Candidate or transaction rejection,
-ordinary drop, failed preparation, and acceptance all release the lease
-deterministically. A second factory returns `CandidateAlreadyLive` before it
-can issue another candidate or construct another generation. Claiming the
-existing session state performs allocation-free coarse store and candidate-
-lease retains: the store uses same-thread `Rc`, while the host cancellation
-lease remains independently thread-safe.
-
-A direct `&mut Session` borrow tied to `RevisionCandidate` would prevent the
-public persistent compile coordinator from storing host replay metadata beside
-the session across host turns. Both instead share one caller-owned
-`ReachabilityStore`; their lifetime marker statically prevents escape beyond
-that owner without making either value self-referential. Exported FFI sessions
-may instead own the one coarse store allocation directly. The
-coarse session-boundary lease and fixed store slots remain interior owners;
-neither is a
-per-value row, runtime registry, or ordinary-read lookup.
-
-Runtime handles are invariantly branded by a generation. Definition and stored
-token-list handles are deliberately non-`Copy`: a move transfers ownership and
-an explicit clone records a true alias by changing a non-atomic `Rc` count.
-The coarse store and move-only retained lease still govern generation
-admission, but they no longer retain unreachable definition or token-list
-payloads. No individual value owns an `Arc` or `Weak`.
-
-### Durable rows and chunks
-
-`TokenListArena` keeps its fixed 64-word chunks solely as reusable builder
-scratch. A builder appends semantic `TokenWord`s directly to a chain. Sealing
-performs the final immutable shared-slice allocation, publishes a branded
-owner, and immediately returns the entire builder chain to the free list. A
-discarded _unpublished_ builder follows the same recycling path without ever
-publishing an owner.
-
-`DefinitionArena` instead owns three row stores: immutable format rows,
-checkpointed global rows, and one LIFO local stack. Eqtb and save rows carry
-only an opaque copy-only `DefinitionRef`; the arena alone decodes its store and
-row. Each row holds one `Rc` payload containing exactly sized contiguous
-parameter/replacement words, their boundary, definition origin, and the sealed
-`MacroParameterPattern`. Publication compiles delimiter failure links once;
-ordinary calls borrow the marker index and delimiter word/link slices without
-constructing a plan or allocating metadata. Empty and single-word delimiters
-need no failure allocation. Macro admission retains that complete payload once
-in the eight-byte `ResidentMacroBody`, and delivery indexes its words at the
-packed frame position. The input row's logical position is the complete rollback
-coordinate; there is no physical cursor, chunk handle, or region owner.
-
-`begin_group` records the local stack length and allocates nothing.
-`end_group` restores meanings and then truncates the local stack to that mark.
-An executing body whose definition was local keeps its span alive through its
-own payload `Rc`, so the matcher and origin remain live alongside the words.
-There is no region lease, retirement state, or structural parent pin
-exists. Checkpoints are taken only at group depth zero, so the local stack is
-empty at every checkpoint. A checkpoint cursor is the format and global row
-counts; candidate settlement detaches, re-appends, or releases exactly those
-suffixes, and restore truncates them, clears the local stack, and aborts any
-active build.
-
-Ordinary `\def` and `\gdef` select their local or global destination before
-scanning. The collector opens the arena's one build lane, validates parameter
-structure while writing each semantic word once, and seals one exactly sized
-span with its final origin. Failure clears the lane. Raw definition scanning is
-synchronous and owns no continuation. `\edef` and `\xdef` use the same build
-and local scalar scan state; a resource miss unwinds expanded scanning and host
-replay restores the complete checkpoint. Cold memo, format, and read-import
-paths may use detached `DefinitionBuilder` staging because their input already
-has a separate lifetime; that is not the ordinary scanner representation.
-
-A global `\let` of a local source is the exceptional promotion. It shares the
-source payload into one new global row and memoizes the pair in a sorted vector
-that group-exit truncation trims with the local rows.
-
-Active macro and durable-list rows own their immutable span directly. Scalar
-and bulk readers select that span once per borrow; activation copies no body
-or stored-list words. Retirement drops the frame owner, while aggregate
-checkpoint capture retains immutable owners and copies transient words and
-coordinates. Named checkpoints still exclude live macros. Global definition
-rows remain append-only; `umber2-i0n5.13` tracks their separate reclamation.
-
-The processor episode owns Web2C's shared recursive expansion depth. Primitive
-expansion and expression evaluation increment that scalar for the duration of
-their synchronous call, restoring it on success or error. Iterative macro
-delivery and expression parentheses do not increment it. The scalar never enters
-a snapshot; a resource failure unwinds it before checkpoint replay.
-
-Raw delivery, expansion, unexpanded collection, and main-control text share
-one semantic input reader. The exposed frame owns its physical cursor across
-nested input and rollback; the synchronous read carries only packed spelling,
-origin, and frame-local delivery facts. No reader cache or additional ownership
-enters command roots. Attempt extents are authenticated at admission, and replay
-refreshes its physical cursor only at prefix or segment boundaries.
-
-The consumer selects representation lifetime. Ordinary expansion resolves once
-into the existing packed meaning and invokes macros with definition, flags,
-name, and origin. No command record is constructed for successful ordinary
-unobserved macro activation. A diagnostic callback retains only spelling and
-invocation facts across synchronous argument scanning. Prefix diagnostics
-construct their site directly, without retaining delivery geometry or creating
-a command. Matching's local storage lives in the activation call, outside
-suspended primitive-expansion frames.
-Unexpanded bodies append packed words through their existing local collector.
-Literal tokens need no meaning lookup; control sequences resolve for outer
-validity. Only illegal-parameter backup and exceptional settlement materialize
-a command. Source text can lend its retained span to main control; resident
-text admits literal characters without commands.
-
-Actual command delivery, primitive scanners, observation, suppression,
-alignment, and outer recovery materialize the existing `HotCommand` from
-already-resolved facts. Public boundaries construct `CurrentCommand` into the
-caller's destination. Command-sensitive scanners and expanded token-list
-splicing retain their synchronous hot slots. `DeliveryMode` remains the sole
-persistent semantic-regime aggregate; token-local flags stay in local read facts.
-Conditional state owns its kind, source line, and inversion after opener
-consumption. The expanded consumer's has-expanded bit is call-local and is
-recomputed on replay. EOF, completion, and failure clear outward destinations;
-resource failure unwinds consumers and scanner scratch before host-owned
-full-checkpoint replay.
-The hot pair is neither global nor a mailbox and never survives independently
-of its request. A materialized `CurrentCommand` retains only its compact
-immediate-delivery coordinate and the `OriginId` already packed in its
-spelling. Physical ranges, active source identity, macro ancestry, and
-observation payloads are resolved from immutable source/provenance owners only
-at backup, observation, tracing, diagnostic, or publication demand. The
-executor keeps the compact source role only because operand scanning may
-retire the originating input frame before application. `CommandProcessor`
-derives observation order from its next-delivery cursor. For stored-token,
-macro-body, and macro-argument delivery, immediate freshness is derived on
-demand from the command's compact coordinate, the authoritative resident
-cursor, and one episode-local availability bit; the hot transition does not
-mirror the coordinate. Direct-source positions, synthetic `endv`, and a
-genuinely settled command use one explicit exceptional coordinate
-because they have no derivable resident predecessor. Neither the ordinary nor
-profiling path updates a parallel freshness-publication census; focused
-fixtures derive their exact admitted delivery volume at the measurement
-boundary. A host checkpoint retry re-admits input from restored semantic state
-rather than resuming a command cursor.
-Resolved-command and delivery-stamp writes obey the same rule: each successful
-raw delivery writes both fields exactly once, so production profiling derives
-their volume from the singular command-work ledger rather than updating a
-second thread-local ownership census. Test builds retain the direct counters
-for structural assertions. Backup copies remain distinct from host replay:
-replay re-admits the restored input rather than moving a suspended command
-cursor.
-No decoded provenance copy, command projection, or delivery owner is stored in
-executor preparation.
-
-Resident source tokens and literal macro arguments return directly from input
-delivery. Stored-token access projects an out-parameter slot from the packed
-word already at the storage boundary and carries only that optional fact to
-macro-parameter replay. The ordinary path therefore does not reconstruct a
-complete token merely to ask whether it needs interception, and meaning
-resolution remains the single full spelling classification.
-
-Macro argument collection begins only after that raw-delivery boundary. The
-matcher reuses the caller-owned `HotCommand` slot and reads its spelling,
-literal brace kind, paragraph-token identity, and required recovery flags
-directly; there is no matcher-specific delivery wrapper or rich intermediate
-projection. An admitted `MacroMatchWriter` owns the one accepted-token
-settlement over the reusable word lane: the lane returns its new absolute
-cursor and the same borrow updates writer-local paragraph, brace-depth, and
-removable-outer-group aggregates. Delimiter-prefix storage is the existing
-semantic holdback lane, enriched with those first facts; overlap recovery moves
-the retained record into the writer without classifying its word or provenance
-again. The matcher reads the writer's depth directly, and sealing projects its
-aggregate without scanning stored words. No command, input frame, token buffer,
-or second argument representation crosses this transition.
-Definitions carry their validated marker offsets and sealed delimiter failure
-links in the shared immutable payload, so invocation reconstructs neither the
-pattern nor its overlap table. The same marker index supplies delimiter word
-and link bounds; no parallel matcher-plan store exists. A compulsory literal prefix with
-no numbered parameters is matched directly and never creates a `MacroMatch`,
-collector, argument block, or `ArgumentSet`.
-
-An admitted control-sequence spelling probes and borrows its dense meaning row
-once. The packed-token resolver accepts the final native meaning target; the canonical
-row writes its validated packed static word, typed font id, or sole macro
-owner directly into `CommandWord<G>`. No meaning-projection carrier,
-intermediate `ResolvedMeaning`, whole-row copy, or second command is
-reconstructed. The same token
-classification reports the work ledger's meaning-lookup fact, and no second
-spelling decode precedes resolution. A macro row writes one compact
-`DefinitionRef<G>` key into `CommandWord<G>`; it acquires no definition owner.
-Trace eligibility and expanded-loop classification read the direct command
-class and operand without a lifetime operation.
-The expanded loop classifies that word once into return, `end_template`,
-macro activation, undefined recovery, or the exact primitive dispatch. That
-borrowed decision drives the expansion call, tracing, and work accounting;
-policy and primitive dispatch do not repeat the meaning match.
-The temporary bank borrow ends before any command-driven mutation. A macro
-call borrows the definition span through synchronous matching, tracing, and
-replacement-length inspection. Once matching and recovery settle, admission retains the definition's span `Rc` once and moves it into the macro
-input row. Prefix mismatch and retry retain only the already-required
-compact command/input state. A resource miss unwinds the call tree; TeX assignment level
-and journal state stay in the bank row and never enter the command. `\ifx`
-keeps its two raw-delivery slots while comparing borrowed definition spans.
-
-The definition arena owns published rows in its three stores. Cold format
-capture compacts reachable keys into handle-free rows, and load places them in
-the immutable format store. There is no runtime compaction, forwarding pointer,
-id rewrite, or move to another generation apart from the explicit one-time
-local-to-global promotion.
-
-The resident owner is also the diagnostic authority for an active macro.
-TeX82 §§323/319 keep the macro token-list reference on the input level, so
-`show_context` reads the resident parameter and replacement spans even after
-the defining local group has dropped its row. It never
-re-resolves the row's non-owning `DefinitionRef` for that projection.
-
-A specialized macro-body row is the live call record: name, invocation origin,
-retained immutable body, transient region start, and argument base/count.
-The common frame indexes the definition's replacement at its native parameter
-boundary. Parameterless calls require no pending match or argument block. An
-ordinary unobserved empty replacement records the logical stack maximum but
-publishes no immediately exhausted row; observation, tracing, recovery, and
-replay-completion retain the canonical lifecycle.
-
-### Macro, scanner, and operation nesting
-
-The input stack is the logical macro stack. Matching uses one reusable scratch
-word vector and fixed argument ranges. A stack-local `MacroArgumentWriter`
-tracks delimiter holdback, brace depth, paragraph identity, and outer-pair trim
-facts. Accepted words enter that vector once; completion publishes their
-range/facts. Activation currently copies the matched argument suffix into the
-input stack and clears the scratch vector. One-pass construction in final
-retained storage is the next `.10` replacement, separate from immutable body
-delivery. Nested active calls retain argument coordinates in `parameters`;
-body retirement truncates its argument words and parameter suffix.
-A resource miss unwinds the unfinished match before host full-checkpoint replay.
-
-When raw matching is already inside a balanced group, the ordinary unobserved
-path consumes literal macro-body and macro-argument words one admitted physical
-and provenance span at a time. It appends directly into the same writer and
-advances the authoritative input frame by the settled run length. A run stops
-before a control sequence or active character, parameter substitution, brace
-or alignment transition, provenance/block boundary, exhaustion, or fuel limit;
-the canonical scalar delivery path handles that boundary word. Observation
-retains exact per-token delivery and therefore deliberately uses the scalar
-path. No span borrow, cached position, or second token representation survives
-the call.
-
-Scanner control is ordinary stack state: a `ScannerEpisode`, phase enum,
-counters, and sink coordinates. `AttemptArena` owns one shared fixed-chunk
-token lane. Each ordinary token scan reserves a parent-owned row containing
-only a branch coordinate, appends accepted words directly to that branch, and
-seals it by changing token-list metadata. Truncation clears word lengths and
-returns complete chunks to the lane free list without visiting or moving
-individual words. A resource miss unwinds the scanner and discards its local
-phase; the host retries from a full checkpoint. There is no global pending-scan
-or pending-expansion scheduler, configuration search, or coordinate repair.
-
-Scalar, expression, font, hyphenation, and token-list assignment scanners
-materialize a call-local command only at the outward scanner boundary that
-consumes rich command state. Nested expansion is a normal Rust call, and a
-resource error unwinds both scanners; retry recreates the same compact delivery
-from the restored checkpoint. The rich value ends with the scanner call and
-never becomes command-state storage, rollback state, or a searchable result
-channel.
-
-The canonical `scan_toks` replacement collector keeps one caller-owned
-`HotCommand` destination for both its synchronous expanded and unexpanded
-(`get_token`) loops. Packed class/operand inspection, observation, brace
-accounting, and token spelling all use that value directly, and a successful
-iteration clears it for immediate reuse. `\csname` and `\ifcsname` use the same compact destination while
-appending literal character words to their existing name builder; the
-`end_cs_name` meaning is a packed command boundary rather than a source-spelling
-test. Only actual backup, diagnostic, outer-recovery, or an outward scanner
-boundary materializes `CurrentCommand`; observation projects directly from the
-compact value. A resource error unwinds the collector and its nested
-expansion, and the host restores a full checkpoint before entering the same
-resident loop again. No collector
-continuation, per-token rich command, or hidden result cache survives that
-boundary.
-
-The same invocation keeps its complete replacement progress stationary in
-one local row. Opening installs `ReplacementProgress` into that row once;
-ordinary delivery, brace depth, parameter matching, and direct-splice operands
-then mutate it through a borrow. A synchronous or resource error returns
-through the call tree and cleanup borrows the same row. There is no
-replacement-progress failure carrier or per-token phase reconstruction.
-
-The same scanner frame retains the one phase-tagged `TokenCollector` and the
-deferred-diagnostic cursor established when its destination was reserved.
-That generic owner is now exclusive to token-list and definition scanning;
-its phase tag is the only parameter-versus-replacement write authority, so a
-definition destination does not mirror or revalidate that phase.
-macro matching has no destination variant or generic publication relay. Both
-paths reuse one `ClassifiedToken`, but macro brace, delimiter, pending-
-parameter, and publication state live only in `MacroArgumentWriter`. Macro
-arguments remain generation scratch owned; ordinary general lists remain
-attempt-lane owned; ordinary definitions write semantic words directly into
-the definition arena's one build lane. Standalone escaping general text instead owns one
-isolated generation replay builder: nested input cannot interleave its span,
-sealing moves its storage header into the final replay entry, and LIFO
-retirement truncates its fixed chunks into the builder-lane high-water pool.
-Case shifting selects that destination and applies `\uccode` or `\lccode` as
-each accepted traced word is written, so it creates no attempt list,
-publication copy, or completed-list traversal.
-For a general list the collector advances its active writer from the parameter
-branch to the replacement branch. For a macro definition it advances the same
-compact arena build key from parameter validation to replacement writing.
-Every accepted word is appended once to that active final or
-rollback-truncatable storage; sealing changes metadata and returns the compact
-definition key without a whole-list handoff copy. Successful
-completion finds no episode-owned runaway report and returns without
-allocating, copying, or rendering diagnostic context. If EOF or outer-validity
-recovery did publish a report, completion borrows the existing collector views
-before their scope retires and walks each word once into the report's final
-selector-aware partial string, carrying the macro match character across the
-synthetic `->` separator. No diagnostic token vector, second token traversal,
-or success-path string exists; a resource error drops the collector locals and
-the host retries from its full checkpoint.
-
-A nested `\unexpanded` general-text scan owns a separate child collector
-because its scanner episode and rollback mark must remain independently
-abortable while the parent collector is active. Completion does
-not justify a second word lifetime: a token-buffer parent adopts the child's
-fixed-chunk sink chain in O(1), invalidating the child list coordinate without
-rereading a word. Standalone `\unexpanded` replay points its input level at the
-completed attempt list directly instead of copying it into the replay lane.
-An expanded macro definition is the exact boundary where child chain adoption
-is not valid: traced child words shed provenance while being appended once to
-the definition arena's build lane. Sealing copies them once into the
-exactly sized published span.
-
-### Diagnostic-context publication coordinates
-
-TeX82 §§310--318 input context has one live owner: `InputState`. Ordinary
-executor scan/apply handoffs do not project that owner into a `String`.
-`DiagnosticContextCoordinate` carries only the command-timeline owner and the
-current exposed-row and context-scalar coordinates. A source top contributes
-its packed frame, ABA-checked slot key, immutable backing identities, and
-copy-small current-line/lexer state; stored and direct macro-argument tops
-contribute their packed frame. The existing input-history lineage coordinate,
-row-admission serial, and source-owner lifetime serial reject rollback,
-push/pop ABA, and buried generated-source replacement.
-Retained line, pending-source frontier, `force_eof`, and the runtime-only
-terminal-string owner are compared directly. Capturing performs one top-row
-read and, only for a source top, one owner-slot read; it performs no stack walk,
-pseudoprint, allocation, clone, hash, or buffer move. Publication validates
-that structural coordinate before traversing the live stack. A foreign owner,
-input advance, push/pop, rollback, source-line or source-owner replacement, or
-terminal-context replacement is stale and is rejected before rendering. The
-coordinate owns no row or backing, so it is neither a cache nor a lifetime
-registry and cannot cross a detached continuation boundary.
-
-The context-consumer audit has these publication boundaries:
-
-- command-core scanner and macro recovery render synchronously only after the
-  specific error/runaway branch is selected, while their source, macro
-  parameters, attempt words, and execution scratch are still live;
-- `MisplacedAlignmentDelimiter`, `DeleteLast`, `SetInteractionModeValue`,
-  `Unbox`, and `LastBox` carry one compact coordinate through the ordinary
-  executor operation frame and render only inside the apply-side reporter;
-- page building borrows live `CommandState` and renders only after selecting a
-  page diagnostic; replay after a resource-restart boundary supplies detached
-  text instead;
-- terminal/fatal reporting renders at the terminal error seam, before command
-  rollback can retire the triggering input; failure-only causal summaries are
-  separate content-free bounded facts;
-- `file_warning`, output-routine close, immediate output, shipout, and observer
-  extraction are externally visible output seams and therefore materialize
-  their final selector-aware text there; and
-- portable or host-retained continuations never contain a live coordinate.
-  A boundary that must outlive the admitted command generation renders once
-  before detaching and retains only the final owned text.
-
-The focused measurement around `InputState::output_open_context` records zero
-renders, owned allocations, and owned bytes for coordinate capture, exactly
-one render/allocation at publication, and no additional render when a stale or
-foreign coordinate is rejected. This directly measures removal of the former
-success-path context allocation/copy work without adding a mirror or cache.
-
-Resource failure is an ordinary owner transaction. The collector unwinds its
-scanner episode, closes its scope, and truncates through the pre-sink attempt
-mark before returning `NeedResource`; the host then restores the full
-checkpoint. Definition/token-buffer capacity remains reusable, and no moved
-child, status, sink coordinate, or attempt row survives the failed publication.
-
-TeX82's separate `read_toks` collector wraps scanner-status installation,
-`align_state := 1000000`, builder setup, line collection, sealing, and scope
-retirement in one structured cleanup transaction. Every setup, collection,
-validation, or finalization error restores the saved alignment scalar and
-complete prior scanner episode before truncating the exact attempt child
-scope. No failure can leave a partial definition builder or eqtb write behind;
-the executor installs the target meaning only after successful durable
-promotion.
-
-Multi-child primitives keep their child ownership in ordinary local variables.
-For example, `\pdfstrcmp` scans its left operand into a local result before
-scanning the right operand; no retained parent phase distinguishes
-the two. A resource miss unwinds both locals, and replay starts the complete
-primitive again from the full checkpoint.
-
-pdfTeX's file enquiries retain their requested intent in ordinary call-local
-state rather than a shared command-state mailbox. The same typed destination
-rule covers `\pdfmatch`, object/form/image/graphics scanners, glyph mappings,
-document fragments, and navigation actions: each optional or repeated
-balanced-text site names its exact phase and keeps already-scanned operands in
-local variables. Success consumes the phase; a resource error unwinds it and
-host replay starts from the restored checkpoint.
-
-Alignment preamble collection is likewise a typed caller. Its reusable scratch
-frame keeps the live scanner episode, builder, attempt-buffer coordinates, and
-partially collected columns in ordinary local state. The expansion immediately
-after `\span` is a nested synchronous call; a resource error unwinds the
-preamble and host replay restores the complete checkpoint before scanning it
-again. No alignment scanner owner or command retry edge crosses the boundary.
-
-Direct-to-final construction means the eventual owner supplies the builder.
-An unknown-length toks value, mark, hook, or other durable list appends into
-its final generation chunks and seals the row only after validation. A failed
-builder discards its unpublished chunks. Scratch is not "promoted," copied,
-spliced, or rehomed into durable storage. The token-list destination API now
-exists, but scanners still collect traced words in attempt buffers before
-promotion, so the complete hot-path invariant is not yet implemented.
-
-### Replay, input, and delivery
-
-An ordinary function local does not survive a resource miss. The command
-processor returns `NeedResource` through its normal `Result` boundary; the host
-owns the full checkpoint, transaction prefix, and request, then replays
-ordinary delivery from restored semantic state. `CommandState` retains no
-command-side retry owner. Preparation writes diagnostic fields into the
-caller-owned operation slot and returns only a compact readiness coordinate. A
-successful ordinary scan installs one compact hot payload into that slot or one
-uncommon cold leaf into its adjacent caller-owned typed slot and returns only a
-compact tag. The slot's singular payload field owns the hot value or a
-cold-occupancy tag, so the 264-byte cold leaf does not inflate every resident
-hot record. Preparation lends those exact
-resident fields to the checked promotion writer, which changes the cold leaf's
-small attempt-root fields to prepared-root fields in place without a builder
-batch or duplicate owner receipt; application
-admits one semantic `CommandContext`, consumes semantic leaves through a mutable
-borrow while that context stays resident, then clears and immediately reuses
-both slots. Named token-list push receipts produced during semantic apply drain
-directly into the existing optional operation observer through the same
-admission before detached evidence crosses settlement. They construct no
-intermediate input-record or observation vector, and an unobserved publication
-constructs no record and allocates nothing. Only a
-genuine host boundary releases that context. A resource miss unwinds the
-operation and occupied cold slot instead of boxing a prepared operation or
-retaining completed operations in a generation-long lane. `MainControl` keeps
-only its caller-owned operation slot during the uninterrupted run; checkpoint
-replay reconstructs command, scanner, and alignment locals from restored state.
-This keeps exactly the current generation alive, not one owner per token.
-
-Cold operand helpers use the same destination rule before any resource miss:
-scalar, structured, alignment, recovery, arithmetic, and leader scanners
-borrow the adjacent cold slot, construct their terminal leaf there, and return
-only `Result<()>` or a compact boolean. The uncommon enum therefore remains at
-one address from completion through preparation and application; a by-value
-`Result<ColdOperation>` carrier is absent. A resource error unwinds the slot;
-host replay rebuilds it from the restored checkpoint.
-
-The physical executor split follows those same ownership transitions without
-splitting the interpreter. `main_control/delivery.rs` performs delivery and
-preflight through direct static calls; `main_control/settlement.rs` owns
-commit, rollback, and publication settlement; and `main_control.rs` retains
-the one `MainControl` loop and host checkpoint orchestration. The sibling
-modules use direct calls and introduce no transport value, heap owner, parser
-continuation, or alternate command representation.
-
-Nested scanner and expansion work uses ordinary Rust locals plus the bounded
-semantic expression stack. The collector, scalar, alignment, and structured
-grammars call the compact expanded loop directly; no optional dispatch carrier,
-typed expansion key, heterogeneous continuation lane, or caller-order mailbox
-exists. An in-progress `\csname`, `\number`, or `\romannumeral` keeps its
-accumulator in the current synchronous call. A resource miss unwinds that call
-and the host retries from a full checkpoint.
-
-The scalar scanner family owns optional-equals, keyword and matched-prefix
-restoration, integer, dimension, glue, filename, internal-value, expression,
-and font-selector progress in call-local state. Nested scalar calls use the
-same bounded `ScalarCallFrame<T>` and return ordinary `Result` values. A
-resource error unwinds the whole scan; no scanner key, result envelope, fallback
-API, result tape, mailbox, heap owner, or second representation is retained.
-
-The direct preflight entry owns only the caller-provided command destination
-and compact delivery facts for the current synchronous call. It returns a
-compact delivery result at the semantic boundary; it does not move an
-operation through a scanned-result tuple, parent frame, or delivery mailbox.
-Initial raw and expanded delivery write directly into that destination, and
-settlement consumes the facts before the call returns. A resource error drops
-the local destination and host replay reconstructs it from the full
-checkpoint. Its exact operation cases cover register and box-dimension
-assignments; unary
-integer, dimension, and glue commands; paragraph-shape and penalty arrays;
-fontdimen, font-integer, font-code, font-expansion, and font-only operations;
-code tables and catcodes; openout filename scanning; marks; math families;
-arithmetic target/keyword/operand sequences; and leader payload, command, and
-glue delivery. Primitive helpers own number, internal-value, font, mark-class,
-margin-kern, PDF scalar, balanced-text, and file-enquiry operands in their
-ordinary call locals. ConditionStack owns pushed condition identity and
-inversion while canonical scanners consume numeric/font/box/stream operands.
-Alignment preamble locals own tabskip optional-equals and glue phases beside
-their scanner episode and partially built templates.
-
-Structured scanner parents retain character/register definitions, token-list
-register and parameter assignments, glue parameters, rules, packing, insert,
-box, input-stream, filename, font-definition, generated-font, math, accent,
-hyphenation, PDF object/form/image/graphics/navigation/action/document
-fragments, immediate extension, write-stream, and expanded-write phases. A
-token-list right-hand side retains its completed selector and owner before a
-nested scalar or collector begins; an expanded write retains the artificial
-write episode, stopper level, already-collected list, and write-word count.
-Consequently a completed selector or earlier operand is never reconstructed
-from the command opcode after input has advanced.
-
-Success consumes each nested call before its caller and moves the result into
-the named destination. A resource error unwinds the call tree and drops
-unpublished locals; the host restores the full checkpoint before retry. No
-resource-capable scalar site uses an inferred owner, destination search, root
-mailbox, per-command retry queue, caller-order result tape, input rollback
-replay, or fallback redispatch.
-
-Host replay metadata is a cold host-owned value. It contains no live command,
-scanner, input, or generation coordinate; replay materializes fresh
-destination-local state only after the complete checkpoint has been restored.
-
-A source row owns one boxed `SourceSlot`: immutable backing, lexer/line
-cursor, replacement backing, `everyeof`, opening ancestry, and retirement rule.
-During TeX82 §363 firming, valid normalized UTF-8 remains a borrowed slice.
-Malformed exact-byte display text may require a cold lossy string; a terminal
-replacement becomes the slot's line backing. Retirement drops that row owner.
-The stack retains warmed vector capacity without retaining popped backing.
-
-Every resident row owns one common packed frame. Immutable stored lists and
-macro bodies carry their retained span directly. Insertions, backups, attempt
-lists, and matched macro arguments use the input stack's one traced-word
-suffix. A macro argument references its owning activation's absolute range;
-its own retirement releases no words. The body retirement truncates the
-activation's argument and parameter suffix and drops its immutable body.
-
-Input capture copies rows, source execution state, transient words, parameters,
-and scalar counters together. Restore replaces this aggregate and releases
-all displaced row owners; source-owner changes release intermediate backing
-immediately. No input inverse, exposure journal, alternate chronology, or
-per-token rollback marker remains. Named admission rejects active macros,
-matching, scanners, and alignment work; cloning a native row in generic capture
-code does not widen legal checkpoint contents.
-
-`consume_resident_input` selects the top and storage once per synchronous run.
-It advances the owning frame and passes packed word/origin scalars directly to
-a statically selected consumer. Parameter substitution intercepts the word
-before meaning resolution. Actual source acquisition, exhaustion, retirement,
-and argument substitution are the only returned cold transition facts.
-The borrow ends before any stack mutation. `consume_input` retries those
-transitions under one semantic-token fuel charge. Source tokenization passes
-its packed result and direct-line policy to the same consumer.
-
-Expanded delivery resolves once into the final native `CommandWord`: static
-word, macro key/flags, or font capability. Ordinary unobserved macros activate
-from that value and invocation spelling/origin. Observation, suppression,
-alignment, outer recovery, scanners, and execution construct their actual
-`HotCommand`/`CurrentCommand` at the consumer boundary. There is no
-`ResidentWordRead`, `ResidentColdOutcome`, `ResidentWord`, `TokenMeaning`,
-operand adapter, or parallel command font column. Raw delivery writes the
-caller's command directly. Collector and skipped-text consumers retain only
-the facts required by their grammar; resident main-control characters call the
-character consumer without meaning lookup or command construction.
-
-Settlement preserves brace accounting, suppression, outer validity, alignment
-classification, diagnostic publication, and observation order. Backup consumes
-the recorded alignment adjustment. Exhausted ordinary rows retire exactly
-once; an exhausted v-template remains until semantic `endv`. TeX82 §§325/390
-stack conservation transfers replay-completion ownership to the exact future
-backup or macro descendant before admission. Its final retirement publishes
-completion once. No ordinary token advance polls a completion mailbox.
-
-EOF, replay completion, and errors clear outward destinations. Resource
-errors unwind scanner and expansion locals before host full-checkpoint replay;
-no callback, reader borrow, or parser continuation crosses that boundary.
-ErrorStop insert/delete remains an explicit input mutation. Pending source
-registrations remain usable until opened or command-state retirement.
-
-### Diagnostics, effects, groups, caches, and ids
-
-Diagnostics are transactional output, not generation ownership. A
-`Diagnostic` builds owned print operations in an operation-local
-`DiagnosticEffects`. Rollback drops them; commit moves them into `World` and
-its effect/output journal. Observation buffers follow the same single-owner
-rule and commit or roll back with the operation; they never move into a parser
-resource-replay request. Published effects may grow with the document because they are
-externally observable output, then end with the world/output owner. Queue
-capacities may remain as bounded high water.
-
-World checkpoints now own only scalar effect/input/artifact positions, fixed
-stream cursor/offset and clock state, and undo-journal marks. Read streams name
-immutable input records plus byte cursors, write streams name immutable
-session path ids, and terminal/log state is the scalar column offset TeX
-actually consults. A checkpoint owns no shared mutable stream buffer and
-causes no first-mutation COW. Effect rows, aligned
-publication sidecars, input records/content, and reduced dependency facts live
-in coarse immutable accepted blocks; a candidate appends into private suffixes
-and private counter/dependency journals. Within one World owner, selecting a
-candidate drains the exact accepted suffix into reusable detached-prior
-buffers whose capacity was warmed by the original semantic appends. Rejection
-moves those payloads and journal writes back; acceptance clears the buffers
-without releasing capacity. Thus candidate settlement performs no prefix scan,
-`split_off`, payload clone, or per-checkpoint tail allocation, and heap payload
-addresses remain stable across both paths. Source registrations use that same
-accepted-block/private-suffix split. Loaded and generated immutable font
-contexts instead live in fixed-capacity coarse chunks owned by the physical
-generation. A logical font row holds only its chunk coordinate; rollback
-truncates that coordinate and its mutable dense runtime row while leaving the
-context address stable until whole-generation retirement. Font identifier and
-expansion mutations are candidate overlays with exact reverse journals. Every
-font-bearing meaning, node, and PDF record validates at publication, so
-checkpoint capture and same-generation restore copy fixed font cursors without
-scanning those roots. Dense source/font/input identities share run-compressed
-accepted metadata and mint a fresh candidate run, so neither payload count nor
-retained-boundary count is a fork-time copy. Provisional page-output receipts
-cannot cross a quiescent
-checkpoint; committed artifact bytes have already crossed exactly once to the
-durable artifact ledger. Numbered write streams do not retain a redundant
-partial-line mirror because TeX never consults it for wrapping or any later
-semantic decision; terminal and log offsets remain exact direct live state.
-
-A TeX group is both a save-and-restoration boundary and a local-definition
-region boundary. The save journal records old compact values and exact group
-entry/exit order. On exit it restores local meanings and preserves later global
-assignments before the definition store retires every segment belonging to
-that group. A checkpoint or active local macro input row may delay release of
-the whole retired region, but no definition inside it has an individual owner.
-Stored token-list lifetime remains carrier-based. `aftergroup` and
-`afterassignment` payloads are command roots until their specified replay
-point.
-
-Command checkpoint envelopes do not describe those private roots. One retained
-generation owner carries the attempt mark and exact ABA-checked timeline row,
-and its copied cursor is only that row's serial. The timeline row stores each
-logical stack's real `{top, undo}` rollback mark once. In particular, it stores
-the aftergroup lane mark directly instead of counting or traversing group or
-aftergroup payloads during capture or restore; replay, diagnostic, and
-afterassignment occupancy are not duplicated as cursor fields.
-
-The pure memo and render-map caches are operational, handle-free, and
-explicitly byte/entry bounded. They may reuse results across revisions only
-after validating their semantic stamps. Eviction drops payloads and cannot
-retire runtime rows. Monotonic generation, frame, source, and input ids are
-small identity scalars; an id consumes no backing memory by itself and cannot
-keep an owner alive.
-
-### Format build and load
-
-Format capture is a cold boundary. `DetachedFormatImage` owns encoded bytes and
-a decoded logical image containing names, definitions, token lists, glue,
-fonts, sparse cells, and other handle-free recipes. Runtime ids and generation
-owners are absent. Loading validates the complete graph, allocates fresh
-destination-local rows, stamps all destination ids, and publishes the staged
-runtime atomically. Failure drops staging without partially replacing the
-live universe.
-
-Session admission retains the validated encoded container as the exact frozen
-`JobStart` image. The first execution materializes destination-local
-definitions, token lists, glue, fonts, nodes, dense values, PDF state, and
-hyphenation state from those bytes, then publishes complete component identity.
-Fresh jobs capture the same image after pre-job setup. The session binds the
-image to explicit command profile, compatibility, and job-clock metadata and
-charges image and metadata bytes separately from live checkpoint history.
-`JobStart` itself remains evidence-only in that history: fallback cold-loads a
-new independent generation, while ordinary candidates keep using the exclusive
-prior/current fork path.
-
-Cold format work may allocate and copy. It is the one place where DTO-local
-index relocation is appropriate. It does not authorize live compaction or
-forwarding. Current capture enumerates every interner entry and every durable
-definition/token/glue row, including rows no live cell reaches; the retention
-and format-size consequence is audited below.
-
-Macro scratch has one narrower pre-seal rule. A live `MacroArgumentWriter`
-keeps its exact append coordinates, and sealed arguments never move. Once a
-pending child's writer has published and its last active ancestor retires,
-however, no input cursor can yet name that child: its unpublished word suffix,
-argument ranges, and provenance runs rebase together into the newly dead
-prefix. This bounded copy is what keeps same-depth tail replacement at the
-concurrent high water instead of retaining document-linear scratch.
-
-## Worked nested example
-
-Suppose macro `\outer` calls `\inner`. While matching `\inner`'s second
-argument, a toks scanner expands an `\input`-dependent command and the host has
-not supplied the file.
-
-1. `\outer` has one live macro activation and one sealed frame in the shared
-   `ExecutionScratch`. Its argument words occupy scratch segments A and B.
-2. `\inner` seals another scratch frame and segment C. Its absolute ranges are
-   nested semantically under `\outer`, but C belongs to the same bump stack,
-   not a child arena.
-3. The toks scanner owns its phase/counter state and branch coordinates in
-   ordinary call-local state and appends accepted words to the parent attempt
-   lane. If the dependent input is unavailable, the call unwinds and scratch
-   segments A--C remain generation-owned; no scanner key or caller edge moves.
-4. The host records `NeedResource` with a full checkpoint and transaction
-   prefix. Ordinary Rust locals end before control returns to the host; no
-   command, scanner, or expansion owner is retained.
-5. Replay restores the complete checkpoint and invokes the same ordinary scan
-   again. The scanner rebuilds its local phase and appends accepted semantic
-   words directly to `TokenListBuilder`; attempt sinks are promoted afterward.
-6. If scanning fails, its unpublished destination chunks are discarded and
-   may be reused. If it succeeds, sealing publishes a durable row and every
-   chunk in that row stays until generation retirement.
-7. `\inner` finishes first, so the live stack rewinds before C and returns its
-   physical segment to the spare pool. `\outer` may reuse C later while A and
-   B remain live. When `\outer`'s replacement input retires, the stack rewinds
-   before A and B. The durable toks list is unaffected.
-
-No step creates a scanner arena, promotes a scratch chunk, copies an arena
-owner into each frame, or treats A, B, or C as revision history.
-
-Checkpoint history retains only frame versions that an observable mark can
-name. `LogicalStack` admits a frame into one reusable physical row and tags
-that row with the current checkpoint interval. A push after a pop overwrites
-the row directly when it was admitted or already replaced in that same
-interval and its current occupant has no compact or stored inverse: no
-intervening checkpoint or operation mark can observe the old payload. A
-partially captured occupant is replacement-visible even in that interval, so
-reuse moves it aside before its inverse can address the new row. The first replacement of a row visible at a mark moves its old
-payload into one generation-checked slab slot and journals only that handle;
-later replacements and mutable cursor, phase, or status changes coalesce in
-the same interval. Acceptance, rejection, or rollback releases the required
-old version without scanning roots, cloning `InputLevel`, or retaining a third
-lineage. Memory therefore follows physical stack high water plus one required
-version per marked depth and interval, never unobserved push/pop count.
-
-## Retention audit
-
-This is a source audit, not an RSS measurement. **Fact** means the ownership
-and release path are directly visible in the cited source. **Impact hypothesis**
-means the topology is verified but workload size or frequency still needs a
-benchmark, heap profile, or counter. The category numbers are:
-
-1. intentional coarse-owner retention until wholesale retirement;
-2. bounded reusable high-water capacity;
-3. stale or unreachable payload still retained by a live owner; and
-4. true unbounded/per-operation growth or an API which permits it.
-
-| Category and confidence                        | Owner/type and source                                                                                                                                       | Retention trigger and release today                                                                                                                                                                                                                                                                                                                                                                                                                                       | Model verdict and likely impact                                                                                                                                                                                                                                                                                                                                                                       | Principled correction                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Resolved, fact                                 | `DefinitionRef<G>`, shared definition payloads, and exact-owner `TokenListId<G>` in `crates/tex-state/src/{definition_arena,durable_arena}.rs`              | Definition keys are non-owning. Definition rows and admitted macro bodies retain one payload containing words, sealed matcher, and origin; token lists retain exact non-atomic owners                                                                                                                                                                                                                                                                                     | Local group exit and checkpoint suffix settlement release row owners. Active bodies retain the complete payload until frame retirement; global rows remain append-only pending `umber2-i0n5.13`                                                                                                                                                                                                       | Preserve compact keys, one shared payload lifetime, and aggregate checkpoint retention. Do not add separate matcher owners, region leases, allocator histories, atomics, registries, compaction, relocation, or rehome                                                                                                                                                                                                                                        |
-| Resolved, fact                                 | Initialized trie owner and bounded runtime mutation value in `crates/tex-state/src/hyphenation.rs`                                                          | TeX82 §919/§1335 moves the completed pattern map into one coarse immutable `Arc`; runtime exceptions are capped by `hyph_size`, and saved codes contain at most 256 byte-character mappings for each of 256 languages                                                                                                                                                                                                                                                     | Aggregate capture/clone/restore and prior-to-current fork clone no initialized node, edge, or value vector. The fixed mutable exception/code workload is copied independently for exact rollback and fork isolation. The explicit `hyphen_checkpoint_gate` reports identical allocation calls and requested bytes at 64 and 7,000 initialized pattern nodes for all four operations                   | Charge initialized pattern payload bytes once to their coarse owner in aggregate retained-byte accounting, and charge each checkpoint only for its bounded mutable exception/code value plus the shared-owner handle. Preserve the two-generation lifecycle and do not add per-value owners, a registry, compaction, read-time COW, or another indirection inside trie rows                                                                                   |
-| 1, fact                                        | `SessionInternerEpoch`/`Interner` in `crates/tex-state/src/{session_epoch,interner}.rs`                                                                     | First intern retains spelling/hash entry through all revisions; epoch retirement releases it                                                                                                                                                                                                                                                                                                                                                                              | Intended session stability, bounded by explicit interner budgets; stale spellings can remain but are not a revision-generation leak                                                                                                                                                                                                                                                                   | Preserve one bounded epoch; detach spellings at cold boundaries rather than cloning interners                                                                                                                                                                                                                                                                                                                                                                 |
-| 1, fact                                        | Accepted `EffectJournal`, `World` effects, source fragments protected by retained checkpoints                                                               | Semantic publication or checkpoint reachability keeps output/source evidence until output disposal, checkpoint pruning, generation retirement, or session drop                                                                                                                                                                                                                                                                                                            | Intended externally observable/document-linear retention. Source fragment bytes are pruned when no accepted layout or retained checkpoint needs them; retired metadata has a budget                                                                                                                                                                                                                   | Keep exact roots and budgets; measure output retention separately from expansion scratch                                                                                                                                                                                                                                                                                                                                                                      |
-| 2, fact                                        | `ExecutionScratch` macro slots, absolute-offset segment stack, sealing lane, and spare-segment pool in `crates/tex-command/src/execution_scratch.rs`        | A deeper/larger set of simultaneously live macro arguments grows storage; strict-LIFO frame return rewinds the logical suffix while physical segment and descriptor capacities end with generation                                                                                                                                                                                                                                                                        | Correct reusable generation high water, bounded by maximum simultaneously live macro-argument demand. Sealing and warmed indexed delivery allocate and copy zero bytes                                                                                                                                                                                                                                | Preserve the single scratch owner, direct segment/slot access, and runtime stale-frame rejection; expose counters/budgets if adversarial nesting needs a hard ceiling                                                                                                                                                                                                                                                                                         |
-| 2, fact; resolved                              | `AttemptArena::token_lane` in `crates/tex-command/src/attempt.rs` and `crates/tex-command/src/attempt/token_lane.rs`                                        | Scanner rows hold only typed branch coordinates into one attempt-owned fixed-chunk lane. Commit publishes the existing branch; rollback or cancellation truncates rows and returns complete chunks                                                                                                                                                                                                                                                                        | Retained payload is reusable generation high water bounded by maximum simultaneous scanner output. There is no stale per-scanner payload or word-vector owner, and warmed one/4,096-scan evidence allocates and transfers zero words                                                                                                                                                                  | Preserve destination-directed append, metadata-only seal, and chunk-granular truncation. A resource miss unwinds local scanner state and replays the full checkpoint; do not add promotion, rehome, compaction, a root registry, duplicate lists, or per-scan heap owners                                                                                                                                                                                     |
-| 2, fact                                        | Popped input/pending/diagnostic vectors in `crates/tex-command/src/{input/mod,state}.rs` and `DiagnosticEffects` in `crates/tex-state/src/diagnostic.rs:67` | Pop/drain removes payload but retains vector allocation; state/generation or operation owner drop releases capacity                                                                                                                                                                                                                                                                                                                                                       | Reusable stack/queue high water. Live pending entries are future-relevant; no stale source payload after an ordinary pop was found                                                                                                                                                                                                                                                                    | Keep typed stacks where needed, shrink only at a cold quiescent boundary; unwind failed scanner locals and replay from a full checkpoint rather than adding pending scanner/expansion mailboxes                                                                                                                                                                                                                                                               |
-| Resolved, fact                                 | Split `SaveJournal` storage in `crates/tex-state/src/journal.rs`                                                                                            | TeX saves occupy reusable per-group segments and retire whole at exit; checkpoint intervals retain one first-before delta per written cell; nested operation attempts retain only their ordered suffix until commit or rollback. Exact group, checkpoint-pool, and operation capacity scalars change only with their physical capacities                                                                                                                                  | The former 112-byte mixed generation-long row and 56 MiB vector high water are removed. Dense reads remain unchanged, stable checkpoint cursors pin only legitimate open-group segments, and the ordinary level-zero policy leaves no closed group history retained. Per-command budget enforcement reads three scalars instead of walking every live and spare segment                               | Preserve direct reads, reverse rollback, packed entries, O(1) append and budget projection, whole-segment retirement, and profiling of live/spare capacity; do not add overlays, censuses on ordinary commands or checkpoint capture, densification, compaction, forwarding, or per-entry ownership                                                                                                                                                           |
-| Target corrected by `node_region_ownership.md` | `PageRegion`, exclusive durable node regions, `ShipoutScratchArena<G>`, and typed shipout sources in `tex-state`/`tex-exec`                                 | Each page-building period owns one move-only region; its paragraph checkpoints occupy one contiguous history interval and share payload once. Shipout-only rows reuse stable scratch buffers and are unreachable from semantic carriers                                                                                                                                                                                                                                   | Handle-free output plus held-over evacuation releases an uncheckpointed page immediately; pruning the last row drops a historical page region wholesale; generation replacement drops all remaining page/scratch storage                                                                                                                                                                              | Preserve typed borrowed coordinates, direct scratch construction, source-token streaming, atomic payload/descriptor settlement, and the raw-root compile-fail boundary. Do not add a page-batch graph, reference count, root registry, or per-row reclamation                                                                                                                                                                                                 |
-| Target corrected by `node_region_ownership.md` | Ordinary box, unbox, setbox, page, math, alignment, PDF-form, and node-token lifetime transitions                                                           | Runtime list coordinates are borrowed under exclusive page/durable regions; node token fields share immutable stored-token allocations                                                                                                                                                                                                                                                                                                                                    | Unique consuming moves transfer regions without copies. `\copy`/`\unhcopy`, a move whose source is retained by history, and a retained nested child copy exactly the bounded recursive closure                                                                                                                                                                                                        | Preserve exact TeX deep copy versus consuming transfer, group/save-journal ownership, rollback, region-local child closures, and cold-only format materialization; never restore live relocation or token-word rebuilding                                                                                                                                                                                                                                     |
-| Target corrected by `node_region_ownership.md` | Superseded or rollback-abandoned durable immutable values and core/node checkpoint state                                                                    | Definition regions own payload structurally and token-list carriers release private shared payloads on last drop. Dense state remains one directly journaled owner. Checkpoint history directly owns exclusive page regions and durable save-journal closures; a checkpoint row retains only fixed marks and owner-relative roots. Glue/provenance retain direct-index rows with bounded publisher cursors. The completed primitive registry is one immutable shared root | Candidate fork, restore, reject, accept, and first mutation allocate independently of accumulated dense writes, save history, glue/provenance rows, unchanged page-node prefixes, and primitive rows. Rejection/retry restores exact region ids and chunk generations. There is no ordinary-read overlay, first-write COW, per-value owner, prefix replay, coordinate relocation, or page-batch count | Preserve direct dense reads, exclusive page/durable regions, exact private-suffix journals/cursors, direct history ownership, and the two-lineage bound. Publication and retained-region accounting belong to checkpoint history; do not move them back into candidate construction or raw root coordinates                                                                                                                                                   |
-| Resolved, fact                                 | `CommandCheckpoints` and `CommandCapture` in `crates/tex-command/src/snapshot.rs` plus host-owned full-checkpoint replay                                    | Each named quiescent boundary copies the input levels, replay rows, conditions, group and aftergroup payloads, alignment preamble, and scanner remnants by value into one capture; aggregate release drops that capture, and restore drops every newer capture                                                                                                                                                                                                            | Ordinary delivery writes no journal, mark, or inverse. Retention is charged per capture under its own aggregate owner key                                                                                                                                                                                                                                                                             | Keep checkpoints at quiescent boundaries only; do not reintroduce per-operation journals, timeline marks, or retained displaced rows                                                                                                                                                                                                                                                                                                                          |
-| Target corrected by `node_region_ownership.md` | Coarse `ModeNestStorage`, `PageBuilderState`, and exclusive page-region history in `tex-exec` and `tex-state`                                               | Eligible named boundaries retain one rootless outer-mode mark plus owner-relative PageBuilder roots in their current page region. Candidate fork moves the accepted region/history authority into one transaction, detaches the selected suffix and later page regions, and rejection returns it after rollback                                                                                                                                                           | Capture copies fixed runtime/page marks but no node. Multiple paragraph boundaries in a page share its region. Acceptance/rejection settle PageBuilder roots before payload/descriptors; publication charges every page region once, fixed marks/counters per restart root, and detached evidence separately                                                                                          | Preserve short typed mode read/write guards, direct checkpoint-history region ownership, rollback before returning a rejected owner, one-way handle-free shipout detachment, and flat accumulated-state allocation gates. Optional convergence identity must use complete journal-maintained component roots and fail closed while any root is absent. Do not expose `RefCell`, add page-batch counts, COW, compaction, root registration, or a third lineage |
-| Resolved for payload retention                 | Format capture in `crates/tex-state/src/format.rs` and `StateCore::capture_format_values`                                                                   | Cold capture visits semantic state, node recipes, and PDF-only token/node roots; live payloads serialize at stable serial coordinates and dead serials become empty compatibility rows                                                                                                                                                                                                                                                                                    | Detached images no longer keep stale definition/token bytes, and materialization does not publish dead definitions. Empty coordinate holes preserve schema references without relocating live handles                                                                                                                                                                                                 | Preserve the cold handle-free traversal and PDF root coverage; do not turn it into runtime liveness authority or live-handle relocation                                                                                                                                                                                                                                                                                                                       |
-| Resolved, fact                                 | Frozen `DetachedFormatImage` bytes in `tex-incr::FrozenJobStartAnchor` plus destination staging                                                             | Session admission retains exactly one immutable encoded image and explicit profile/compatibility/job-clock metadata. JobStart fallback decodes it into an independent current generation; decoded staging disappears after atomic publication                                                                                                                                                                                                                             | The separately charged image replaces a live bootstrap generation/checkpoint root. Runtime journals can release and physically reuse obsolete prefixes while format-loaded, fresh, dense, hyphenation, font, PDF, and page state retain byte-exact fallback identity                                                                                                                                  | Preserve the exact immutable image, explicit metadata validation, cold atomic materialization, complete component identity, and ordinary prior/current bound. Do not add a decoded session overlay, format-owned runtime generation, root registry, or streaming decode unless a later measured cold-input peak independently requires it                                                                                                                     |
-| 1, fact                                        | Host replay anchor and `NeedResource` request at the retained-generation boundary                                                                           | A resource miss returns the typed request after ordinary call-stack unwind; the host checkpoint is consumed on replay or dropped on cancellation                                                                                                                                                                                                                                                                                                                          | Intentional host-boundary retention only. No command/scanner state delays retirement of a candidate generation                                                                                                                                                                                                                                                                                        | Keep the move-only full-checkpoint replay anchor; never retain a live command owner, scanner cursor, or parent state                                                                                                                                                                                                                                                                                                                                          |
-| Resolved, fact                                 | `CandidateLeaseState`/`CandidateLease` and public candidate creation in `crates/tex-incr/src/{candidate_lease,lib}.rs`                                      | The session owns one atomic slot; the move-only lease transfers from candidate to transaction and releases on acceptance, explicit rejection, failure, or drop                                                                                                                                                                                                                                                                                                            | Exactly one current slot can coexist with the optional prior. A second factory fails before issuing a candidate or generation; repeated claims reuse the one session allocation                                                                                                                                                                                                                       | Implemented. Keep lifecycle, 8,192-cycle reuse, prior-plus-current high-water, and second-factory rejection controls active                                                                                                                                                                                                                                                                                                                                   |
-| 1/2, fact                                      | `PureMemoRuntime` and `RenderMapCache` in `crates/tex-state/src/pure_memo.rs` and `crates/tex-incr/src/lib.rs`                                              | Validated results remain until byte/entry eviction, explicit clear, or session drop; container capacity may remain after clear                                                                                                                                                                                                                                                                                                                                            | Intentional bounded cache retention, not semantic ownership and not a generation leak                                                                                                                                                                                                                                                                                                                 | Preserve hard budgets and handle-free entries; make retained-byte metrics include container overhead where useful                                                                                                                                                                                                                                                                                                                                             |
-| Resolved, fact                                 | Input/source stack and registrations in `crates/tex-command/src/input`                                                                                      | Ordinary resident exhaustion truncates the authoritative logical top once and releases its replay or argument owner once, without a retired-level projection. Source EOF remains cold and drops its slot after borrowing copy-small finalization facts; opening a pending source removes it from the map; never-opened registrations end with command state. V-template and `every_eof` retention follow TeX semantics                                                    | No stale popped source owner or per-line leak was found. Ordinary macro/token retirement adds no allocation, payload copy, or second representation. Input vector capacity is category 2; pending registrations are still callable                                                                                                                                                                    | Preserve the direct resident truncation, exact cold source finalization, retirement classifications, and two-generation rollback ownership                                                                                                                                                                                                                                                                                                                    |
-| Resolved, fact                                 | Semantic diagnostics, operation observations, and host replay request                                                                                       | A completed processor episode moves the semantic-diagnostic `Vec` allocation wholesale to the executor and leaves command state with a fresh empty queue; rollback/drop discards it, while a resource request retains only the host checkpoint and typed need                                                                                                                                                                                                             | The former drain/collect element-copy seam is absent, with no duplicated diagnostic representation or unbounded per-operation diagnostic leak. Published effects can grow with real output                                                                                                                                                                                                            | Keep transactional whole-owner delivery and keep resource requests outside command scratch; measure effect-ledger growth as output, not scratch                                                                                                                                                                                                                                                                                                               |
-
-The command checkpoint timeline keeps one stable reusable frame-row arena with
-direct accepted-order links. Root selection detaches its later accepted chain
-without searching or copying a key index, candidate publication links only a
-private current chain, rejection cancels any retained host replay anchor before
-undoing that chain and redoing the detached prior journals, and acceptance
-releases obsolete journal chunks while retaining candidate marks. Either
-settlement moves the discarded frame chain's existing head, tail, and length
-to one reusable-chain owner in constant work. It visits no discarded row and
-manufactures no row key; the next publication takes one row lazily and assigns
-its fresh incarnation then. Production
-non-JobStart coverage crosses input, macro-definition, scanner, condition,
-alignment, mode/page, resource-need, and cancellation boundaries; the standalone
-gate exposes exact delta work, identical one-versus-4,096 settlement counters,
-zero settlement allocations, and the single lazy reuse visit/incarnation.
-
-The external reachability-store prerequisite, append-only command-timeline
-inconsistency, and aliasable immutable payload retention are resolved.
-Prior/current share one physical owner domain; checkpoint pruning drops its
-direct command-root owner; definition and token-list payloads follow their
-exact semantic carriers; and cold format capture includes state, node, and PDF
-roots without retaining dead payload bytes. No compactor, forwarding scheme,
-tracing collector, ownership registry, relocation, rehome, or third generation
-is part of the correction.
-
-Exact TeX main-memory totals follow those same lifecycle facts. Definition
-regions add each sealed span's precomputed canonical charge and subtract it on
-checkpoint truncation or whole-region release. Stored-token publication adds
-its charge once and its real last shared owner subtracts it; node arenas add or
-subtract row charges at publication and release. The single generation-local
-aggregate stores no ids or roots. Ordinary box and page work reads it directly;
-it no longer scans meanings, the 65,536 token and box registers, payload
-identities, or node closures merely to discover the current total.
-
-Borrow-scoped host preparation similarly owns no copied page-insertion map.
-Expansion-time insertion enquiries read the authoritative row through the live
-`CommandContext`; the borrow ends with that processor episode and no projection
-survives list mutation or error re-entry. A resource miss ends the borrow and
-the host restores a full checkpoint before ordinary parsing resumes.
-
-`Universe` does not collect these command-visible stores into a by-value
-resident aggregate. Session identity, retained-generation state, durable box
-and form closures, shipout scratch, and the page region remain distinct owners
-with their existing transfer and reclamation boundaries. `CommandContext` is
-only the bounded safe-reference view that brings those owners together with the
-admitted dense core for an uninterrupted interpreter run; the same admitted
-view is reused by every raw, expanded, scanner, and ordinary semantic command
-until a boundary. A genuine host-resource, diagnostic, rollback, or publication
-barrier ends the borrow before the owning `Universe` transition runs; no
-resource continuation is packaged at that boundary.
-
-## Non-negotiable prohibitions
-
-- No compactor, in-place relocation, forwarding pointer, live-id rewrite, or
-  cross-generation rehome.
-- No attempt-local definition body beside the definition arena's one build
-  lane. Sealing copies that lane once into one exactly sized span.
-- No per-macro, per-scanner, or per-operation arena. Local definitions live on
-  one LIFO stack that group exit truncates.
-- No untyped or hidden `Vec` mailbox for resource replay payload.
-- No historical runtime generation beyond the optional prior and exclusive
-  current candidate.
-- No treating a backing chunk as a revision, checkpoint, independently
-  reclaimable history segment, or lifetime owner.
-- No stored Rust reference, per-value `Arc`/`Weak`, atomic ownership, or
-  liveness lookup on the ordinary expansion path. Private non-atomic shared
-  handles retain stored token lists and complete immutable definition payloads;
-  definition keys remain compact and non-owning.
-- No heap allocation after bounded hot-path warmup except at an explicitly
-  cold host, diagnostic, format, or output boundary.
-- No runtime id in a format, detached continuation, memo wire value, output,
-  process message, or thread message.
-
-These restrictions leave three deliberate reclamation policies: exact arena
-reuse for scratch, row retirement with last-owner release for definition
-payloads, and last-semantic-owner drop for stored token lists. Coarse generation
-retirement remains the final boundary for compact inline arenas and publisher
-scratch capacity.
+Status: current source map and required migration, 2026-10-01.
+
+[Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
+is the authority for checkpoint/group/candidate and definition ownership.
+[Runtime storage lifetimes](runtime_storage_lifetimes.md) supplies the other
+storage roles. This map does not revive the retired structural-definition
+regions, two mutable eqtb target, input inverse timeline, or per-command
+resource retry protocol.
+
+## Current source and target differences
+
+| Area                  | Current owner/path                                                                                                                                     | Required lifetime and remaining work                                                                                                                                                                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Meaning delivery      | `tex-state` packed dense row writes final `CommandWord`; `tex-command` selects expansion/return/primitive.                                             | Token and meaning reads acquire no checkpoint or definition owner. A temporary key is valid only while its semantic owner remains, or after full payload admission.                                                                                                    |
+| Definitions/matcher   | `definition_arena{,/body,/build_lane}.rs`: format/global/local rows share one immutable payload with words, sealed `MacroParameterPattern` and origin. | `.5` removes invocation matcher-plan/failure allocation. `.13` still must replace append-only global and LIFO local payload retention with counted stable dynamic slots.                                                                                               |
+| Macro frames          | Input rows retain `ResidentMacroBody` with full payload `Rc`; position is in the packed frame.                                                         | One admission retain, direct slices thereafter. Payload survives row retirement; target slot tombstoning does not invalidate it.                                                                                                                                       |
+| Arguments             | `macro_call.rs` accepted-token writer and delimiter holdback; input argument activation.                                                               | `.10` writes once into invocation-owned pooled ArgumentArena vectors; body owns the region and parameter frames borrow it. No per-argument allocation/copy/lease; free capacity is an engine allocator cache, not snapshot state. Preserve origins and brace trimming. |
+| Stored lists/backup   | Input rows own shared immutable list handles or actual transient words.                                                                                | Activation reads immutable storage directly; retirement drops the actual owner once. Backup is semantic input, distinct from host replay.                                                                                                                              |
+| Scanner/build scratch | Call-local scanner episodes and nested marks, reusable unpublished lanes.                                                                              | Failed calls unwind/truncate; no parked scanner or caller crosses a host boundary. Delete immediate-consumption carriers as their real consumers migrate.                                                                                                              |
+| Groups                | State `SaveJournal`, durable-box groups, command group/aftergroup payloads; executor restoration rendering.                                            | `.6` replaces duplicate topology with the direct ordered save stack. Render while real owners live; delete `GroupRestorations` and post-unsave borrowed definition hazards.                                                                                            |
+| Named capture         | `CommandCapture`/`InputCapture` in command snapshot code copy actual cold rows and transient words.                                                    | Ordinary delivery produces no input undo entries. Actual vectors are charged; capture is not uniformly O(1). Active macros/groups remain forbidden.                                                                                                                    |
+| Host need             | Typed resource request plus full checkpoint and matched host transaction prefix.                                                                       | Unwind, restore aggregate, admit verified outcome, parse again; no command/matcher/scanner continuation.                                                                                                                                                               |
+
+The removed `ResidentWord`/`TokenMeaning` chain and duplicated font column must
+not return as adapters. One interpreted token resolves once into the final
+native meaning. Actual recovery, tracing, observation and execution consumers
+construct only the rich command they require. `CurrentCommand` as a cold
+semantic value is not itself an immutable definition root.
+
+## Definitions, aliases and memory
+
+The current sealed payload owns contiguous parameter/replacement words,
+validated marker offsets, compiled delimiter failure links and final origin.
+A matching/replacement frame retains that payload; it reconstructs no plan or
+failure table. Empty/single-token delimiters need no failure allocation.
+Overlap links select the reusable literal prefix while the argument writer
+continues to own held origins, brace depth, paragraph/outer checks and recovery
+under TeX82 §§392--399. No parallel plan store exists.
+
+The target uses pinned format rows and one monotone dynamic bank. Meaning
+cells and independent group/checkpoint/candidate preimages use direct indexed
+slot roots. Local/global aliasing uses the same key; no definition promotion
+copy, local stack mark, promotion memo or per-token counter is needed.
+Zero-root slots tombstone without reusing coordinates. Active frames own the
+full payload independently, so release follows its final actual owner.
+Current row-based memory accounting must migrate to final-payload release;
+counting an arena row alone can undercount a still-active body.
+
+Cold `CurrentCommand`, read placeholders, saved restorations and pending
+requests must be audited for arena dereference after an owner mutation.
+Immediate-consumption restoration/dispatch carriers should disappear. A real
+retained consumer instead owns its payload or semantic root explicitly;
+copying a `DefinitionRef` is never enough. The authoritative contract names
+every owner insertion/drop/swap and the candidate tail migration.
+
+## Input and source retirement
+
+The input frame owns its mutable reader position. Delivery borrows one exposed
+frame at a time; the borrow ends before nested activation, replacement or
+retirement. No mirrored reader owner/cache or input inverse journal tracks
+that position. Immutable source/replay payloads share their actual owners.
+
+Resident exhaustion truncates the logical top once and releases its argument,
+macro or list owner once. Source EOF is cold: borrow copy-small finalization
+facts, then drop the source slot. Opening a registered future source removes
+its backing from the pending map; never-opened registrations have explicit
+session lifetime. `force_eof`, retained line number, terminal context and
+`every_eof`/template retirement remain genuine TeX facts.
+
+A named checkpoint can own source/stored/backup rows and open conditionals,
+with the actual transient words those rows need. Generic clone support for a
+macro row never authorizes a checkpoint with a live macro. Command install
+clears abandoned scanner/build/replay/group/diagnostic state and retains
+session configuration, registered future sources and identity high water.
+Candidate command setup/restoration uses real cold captures; its cost is
+proportional to their contents rather than per-token work.
+
+## Scanner cleanup and direct construction
+
+Ordinary `def`/`gdef`/`edef`/`xdef` know the assignment destination before
+publication. The build lane appends once, validates parameter structure, and
+seals one immutable payload. Failure clears unpublished words. Already
+detached format/import data may use a cold builder. Dynamic definition scope
+will move entirely to the assignment level when `.13` removes namespaces.
+
+Numeric/expression scanners, `read_toks`, alignment-preamble collection,
+expanded-definition recursion and multi-child primitives use ordinary
+synchronous calls. Saved scanner status/alignment fields restore on every
+error before scratch truncates. `read_toks` must not publish a partial target
+meaning; multi-child primitives keep already-scanned operands in locals.
+Balanced-text destinations preserve each exact optional/repeated phase.
+[Structured scanner ownership](structured_scanner_ownership.md) names the
+families and their processor authority.
+
+A resource miss unwinds all those locals, matching holdback, builders and
+borrowed contexts. The host restores the full aggregate, not the immediate
+collector mark. Verified readiness belongs to the host/VFS outside rollback.
+Synchronous provider fulfillment can complete the cold call; a declined need
+uses [Resource-miss checkpoint replay](checkpoint_resource_replay.md).
+Language-semantic input/conditional/alignment stacks remain real TeX state;
+they are not resource continuations.
+
+## Provenance and diagnostics
+
+Forwarded arguments preserve original source positions through nested macros;
+generated tokens preserve derivation. Definitions, frames, cold captures,
+nodes and detached output retain only the provenance their actual semantic
+roles require. Follow [Structural provenance](structural_provenance.md) and
+[Source spans and provenance](source_spans_and_provenance.md). No provenance
+owner may keep a superseded definition alive merely by incidental history.
+
+Diagnostic context is demand-driven. Compact publication coordinates own no
+input backing and must validate before rendering. Source/macro scanner
+recovery renders synchronously while source, parameters and scratch are live;
+terminal/fatal reporting renders before rollback retires the trigger. Page,
+output, shipout and observer publication materialize final selector-aware
+text at their actual output seam. A host-retained diagnostic detaches owned
+text/location before the source generation can retire. No success-path
+`String`, decoded source projection or context cache is required.
+
+Group restoration tracing is especially order-sensitive: restoring a print or
+trace parameter changes how later restoration entries render. Target unsave
+observes each decision with its now-current controls while both live/saved
+payloads exist, then drops losing roots. The current created-then-consumed
+restoration collection is a migration gap, not an owner exemption.
+
+Diagnostics and observations are transactional output. Completed semantic
+queues move their existing allocation to the executor/World rather than
+drain-and-collect a second vector. Host replay owns none of those live queues.
+Halted execution gates effect sinks; fuel and stack high water do not roll back.
+
+## Cold format, output and retention audit
+
+Formats traverse actual semantic values, node recipes and PDF-only token/node
+roots into handle-free bytes. JobStart fallback owns the immutable image and
+explicit metadata, not a permanent decoded runtime. See
+[Frozen format](frozen_format.md). This traversal is not a hot liveness census.
+
+A definition payload, stored list, input backing or diagnostic result ends at
+its final real owner. Reusable vector/build/stack capacity can remain at high
+water without retaining dead payloads. Dynamic tombstone metadata remains
+stable and is charged separately. Current append-only global definition
+payloads are the explicit `.13` gap; command snapshot copies are legitimate
+cold retention, not per-token activation history.
+
+Page/box/node/PDF lifetimes remain their specialized exclusive region and
+version-root contracts. `.6` deletes redundant group/operation protocols while
+preserving real transfers; `.12` audits complete checkpoint restore/drop,
+repeatable roots, candidates, resources, provenance and bounded halt. The
+migration and proof cases live in
+[the checkpoint contract](aggregate_checkpoint_contract.md) and
+[Minimal hot loop](minimal_hot_loop.md); no second engine, backwards
+compatibility surface, read-time census, relocation or tracing collector is
+part of the redesign.

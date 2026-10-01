@@ -27,11 +27,13 @@ Documents here embed TeX syntax, and `dprint` rewrites markdown content rather
 than only its layout. Follow the "Writing Markdown" rules in the repository-level
 `AGENTS.md` before adding a code span, a fenced block, or a wrapped link.
 
-`snapshot_performance.md` defines the focused snapshot latency and retained-allocation gate, including its asymptotic budgets and measurement semantics.
+`snapshot_performance.md` records focused lifecycle/allocation measurement entry points and current two-slot checks; target ownership follows the aggregate contract.
 
-`aggregate_checkpoint_contract.md` defines the component-by-component final
-checkpoint marks, restore order, retention charges, complete optional identity,
-representative pre-refactor benchmark, and later flat-scaling gates.
+`aggregate_checkpoint_contract.md` is the sole selected full-checkpoint, TeX
+group-stack, assignment, candidate and definition-root ownership contract. It
+maps actual aggregate owners, cold capture costs, first-touch epochs, ordered
+saves, one mutable generation, counted stable definitions, source deletions,
+frequency-evidence limits and the implementation sequence.
 
 `profiling.md` documents the persistent in-process Gentle profiler, its
 Samply wrapper, prerequisites, counters, measurement controls, and capture
@@ -47,10 +49,10 @@ remains open.
 definition-owned matcher and collector integration, and direct operation path
 using the current full-book profile and explicit acceptance boundaries.
 
-`minimal_hot_loop.md` proposes the pdfTeX-shaped core: one token memory, packed
-meanings, 16-byte frames, the TeX save stack, in-place errors with a budget
-poll, and checkpoint capture by value plus first-touch interval logs, with
-per-operation instruction budgets and deletion-first migration stages.
+`minimal_hot_loop.md` specifies direct immutable spans, packed meanings,
+frame-owned cursors, the TeX save stack, in-place errors with bounded polling,
+and the selected aggregate contract. Its instruction budgets are informative
+and its implementation sequence deletes each displaced representation.
 
 `paired_measurement.md` documents the owner-maintained prebuilt-executable
 paired runner in `scripts/paired-measure.py`, its JSON/JSONL receipt contract,
@@ -191,10 +193,9 @@ macro storage, fixed-size journal/arena marks, persistent fused dispatch, cold
 evidence publication, module boundaries, migration order, and pinned arXiv
 performance gates.
 
-`runtime_storage_lifetimes.md` is the normative end-state contract for session
-interning epochs, dense journaled TeX state, generation-scoped immutable
-definitions, operation and node arenas, promotion, checkpoints, compaction,
-provenance, and handle-free boundaries.
+`runtime_storage_lifetimes.md` maps general storage roles, interning, scratch,
+node/provenance/detached boundaries and scalar accounting. It defers
+checkpoint/group/candidate/definition authority to the aggregate contract.
 
 `node_region_ownership.md` is the authoritative node-specific ownership
 contract. It preserves exact paragraph restart while defining exclusive page
@@ -277,10 +278,6 @@ memoization design and points to the current restart-from-summary contract.
 
 `paragraph_replay_deletion_baseline.md` records the reproducible before/after
 deletion measurements and workload identities.
-
-`retained_group_roots.md` specifies the proposed persistent/COW environment
-history needed for durable paragraph checkpoints inside ordinary open groups,
-including store ownership, reclamation, hashing, rollout, and validation.
 
 `source_spans_and_provenance.md` specifies the adopted compact source-map,
 source-span, derived-provenance, packing, capacity, and validation contract.
