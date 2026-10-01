@@ -10,8 +10,8 @@ removing implementation identities from conformance claims.
 `command_delivery_kernel.md` specifies frame-owned reader access, the shared
 raw/expanded fetching kernel, observation specialization, and validation.
 
-`command_lane.md` specifies main control's minimal inner loop for its most
-frequent commands, its eligibility, hand-off, rollback units, and stages.
+`main_control_dispatch.md` maps the single direct mode/command/prefix engine,
+its scanner/application ownership, and the deletion of eligibility handoffs.
 
 `structured_scanner_ownership.md` maps the structured command scanner
 families, their shared processor authority, and their replay boundary.

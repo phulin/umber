@@ -1052,7 +1052,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         modes
             .push(Mode::RestrictedHorizontal)
             .expect("test mode push");
-        boxes.active_boxes.push(ActiveReplayBox {
+        boxes.push_box(ActiveReplayBox {
             target: None,
             shipout_region: None,
             box_segment_start: None,

@@ -598,7 +598,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     if !kind.horizontal() {
         commit_box_normal_paragraph(modes, stores, command);
     }
-    boxes.active_boxes.push(ActiveReplayBox {
+    boxes.push_box(ActiveReplayBox {
         target,
         shipout_region,
         box_segment_start,

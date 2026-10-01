@@ -311,7 +311,7 @@ reporting separately charges slot/history capacity and shared payload once.
 
 There is no verified production read/write/group/save/checkpoint ratio. The
 588-page production profile ran with detail counters disabled. Historical
-`command_lane.md` counts (35.9M commands, 38M macros, 1.6M group commands) have
+`main_control_dispatch.md` counts (35.9M commands, 38M macros, 1.6M group commands) have
 no available revision-scoped census receipt and are not frequency evidence.
 Do not infer percentages or savings from those numbers.
 
@@ -355,6 +355,28 @@ all real consumers in the same logical change. No shim or second engine may
 remain; a design split is for review, not parallel authority.
 
 ### Implemented group seam and remaining direct-control migration
+
+The direct-control replacement (`.15`) selects commands from the packed meaning
+and current mode. Each selected arm owns its synchronous operand scan, genuine
+token or definition publication, semantic application, and ordered evidence.
+Family helpers accept typed operands, without a universal operation union,
+readiness mailbox, or eligibility handoff. Cold host-resource calls end command
+admission and keep only real request and payload owners on the Rust stack.
+Failure unwinds those owners and halts for full-checkpoint replay.
+
+Ordinary expanded fetching and horizontal raw lookahead remain explicit fetch
+labels. Prefix accumulation and `reswitch` consume the delivered command without
+backup or redelivery. Diagnostic expansion and nested `do_assignments` enter
+the same command arms. Observation selects evidence within those arms, never
+another interpreter. Alignment retains command-owned delivery semantics and
+executor-owned builders.
+
+Shorthand scanners render a replaced meaning before their provisional `Relax`
+write releases its cell owner. Final assignment needs no delayed nonowning old
+meaning. Definition publication remains owned until assignment consumes it;
+`.13` replaces arena ownership at that lifetime boundary. Save capacity and its
+monotone high-water projection use native stack metadata plus box-spec words
+maintained at box push/pop transitions, without per-command collection walks.
 
 The `.6` implementation moves the real local-definition retirement frontier
 into the sole scalar group boundary. Until `.13` replaces the definition

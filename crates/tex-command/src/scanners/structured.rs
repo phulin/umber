@@ -246,9 +246,24 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         class: RestrictedIntegerClass,
         provisional_global: bool,
-    ) -> Result<ScannedCharacterDefinition<G>, CommandError> {
+        trace: impl FnOnce(
+            &mut tex_state::CommandContext<'_, G>,
+            &mut tex_state::diagnostic::DiagnosticEffects,
+            Token,
+            ResolvedMeaning<G>,
+            Meaning,
+            bool,
+        ),
+    ) -> Result<ScannedCharacterDefinition, CommandError> {
         let target = self.scan_definition_target()?;
-        let provisional_old = self.state.meaning(target);
+        trace(
+            self.state,
+            self.diagnostic_effects,
+            Token::Cs(target),
+            self.state.meaning(target),
+            Meaning::Relax,
+            provisional_global,
+        );
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         observe!(
@@ -264,7 +279,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let scanned = self.scan_restricted_integer_retained(class).into_result()?;
         Ok(ScannedCharacterDefinition {
             target,
-            provisional_old,
             class,
             value: scanned.value,
             scanned: scanned.scanned,
@@ -280,9 +294,24 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_register_definition(
         &mut self,
         provisional_global: bool,
-    ) -> Result<ScannedRegisterDefinition<G>, CommandError> {
+        trace: impl FnOnce(
+            &mut tex_state::CommandContext<'_, G>,
+            &mut tex_state::diagnostic::DiagnosticEffects,
+            Token,
+            ResolvedMeaning<G>,
+            Meaning,
+            bool,
+        ),
+    ) -> Result<ScannedRegisterDefinition, CommandError> {
         let target = self.scan_definition_target()?;
-        let provisional_old = self.state.meaning(target);
+        trace(
+            self.state,
+            self.diagnostic_effects,
+            Token::Cs(target),
+            self.state.meaning(target),
+            Meaning::Relax,
+            provisional_global,
+        );
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         observe!(
@@ -306,11 +335,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let result = self.scan_eight_bit_register_index_retained();
             result.into_result()?
         };
-        Ok(ScannedRegisterDefinition {
-            target,
-            provisional_old,
-            index,
-        })
+        Ok(ScannedRegisterDefinition { target, index })
     }
 }
 

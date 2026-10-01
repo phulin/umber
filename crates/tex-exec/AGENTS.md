@@ -105,13 +105,6 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   continuations never cross a resource-need unwind. Delivery fields remain in
   the same caller slot and no fact cache, compatibility preparation path, or
   per-token payload exists.
-- `src/main_control/lane.rs`: the command lane (`docs/command_lane.md`), the
-  admitted run's minimal inner loop. It samples lane eligibility once per
-  admitted iteration and settles lane-owned commands in place, handing every
-  other command to the admitted run in its unchanged command slot.
-- `src/main_control/lane/scalar.rs`: the lane's scalar family. Register and
-  parameter assignments and register arithmetic scan through the admitted
-  run's cold scanners and commit through the cold arms' scalar committer.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
   ordinary-group families. These commands bypass `ColdOperation`; dispatch
@@ -272,7 +265,8 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   behavior modules in `src/main_control/tests/`: initialization and formats,
   assignments, tracing, diagnostics and recovery, alignment, resource replay,
   shipout, PDF commands, list material, shared box bodies, paragraph and
-  math, execution lifecycle, and episode observation. These remain one
+  math, execution lifecycle, episode observation, and observed/unobserved
+  equivalence. These remain one
   library test target.
 - `src/main_control/tests/tracked_region_coverage.rs`: cross-layer tracked-region
   perturbation, omission detection, lifecycle cleanup, and recording parity

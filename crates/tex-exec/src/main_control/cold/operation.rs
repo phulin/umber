@@ -1083,8 +1083,6 @@ pub(in crate::main_control) enum ColdOperation<
     CharacterDefinition {
         primitive: UnexpandablePrimitive,
         target: Symbol,
-        /// Meaning replaced by §1224's already-applied provisional `\relax`.
-        provisional_old: tex_state::meaning::ResolvedMeaning<G>,
         /// `cur_val` after §434/§436's recover-to-zero.
         value: i32,
         global: bool,
@@ -1115,8 +1113,6 @@ pub(in crate::main_control) enum ColdOperation<
     RegisterDefinition {
         primitive: UnexpandablePrimitive,
         target: Symbol,
-        /// Meaning replaced by §1224's already-applied provisional `\relax`.
-        provisional_old: tex_state::meaning::ResolvedMeaning<G>,
         index: u16,
         global: bool,
     },

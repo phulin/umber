@@ -175,7 +175,7 @@ savings target to this one.
 
 ## Third: direct scanner-to-executor operation path
 
-Extend the [command lane](command_lane.md) into the common group, box, and
+Extend the [command lane](main_control_dispatch.md) into the common group, box, and
 mode-specific operation paths, with one shared execution implementation per
 command family. A successful common command should scan directly into the
 owner that applies it and settle one command-sized rollback unit.

@@ -1529,8 +1529,6 @@ fn with_etex<R>(
 mod alignment;
 #[path = "tests/assignments.rs"]
 mod assignments;
-#[path = "tests/command_lane.rs"]
-mod command_lane;
 #[path = "tests/csname_runs.rs"]
 mod csname_runs;
 #[path = "tests/diagnostics_recovery.rs"]
@@ -1543,6 +1541,8 @@ mod execution_lifecycle;
 mod initialization_formats;
 #[path = "tests/list_material.rs"]
 mod list_material;
+#[path = "tests/observation_equivalence.rs"]
+mod observation_equivalence;
 #[path = "tests/paragraph_math.rs"]
 mod paragraph_math;
 #[path = "tests/pdf_commands.rs"]

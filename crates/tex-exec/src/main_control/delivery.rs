@@ -189,11 +189,6 @@ pub(super) fn command_requires_transaction_from_facts<G>(
     {
         return true;
     }
-    // A resident command whose prefix the lane consumed continues §1211
-    // exactly as a resident prefix would.
-    if matches!(frame.phase, Some(PreflightCommandPhase::Prefixed { .. })) {
-        return true;
-    }
     frame.current_option().is_some_and(|command| {
         matches!(
             command.meaning(),
@@ -238,7 +233,6 @@ impl<G> MainControl<G> {
                 hot_admission = None;
                 hot_operation = None;
                 direct_cold_operation = false;
-                let mut lane_applied = None;
                 let mode = self.modes.current_mode();
                 if self.active_alignment.is_some()
                     || (mode == Mode::DisplayMath
@@ -256,7 +250,7 @@ impl<G> MainControl<G> {
                         &mut self.operation_observations,
                     );
                 }
-                let mut innermost_group = context.innermost_group_kind();
+                let innermost_group = context.innermost_group_kind();
                 let tracked_region_is_active = context.tracked_region_is_active();
                 let job_is_all_over = crate::page_output::job_is_all_over(context);
                 let display_eq_no = self.modes.current_list().display_eq_no().is_some();
@@ -378,50 +372,8 @@ impl<G> MainControl<G> {
                     // otherwise ordinary preflight publishes the unexpandable
                     // command's expanded observation directly and continues in place
                     // only when expansion is actually required.
-                    let lane = super::lane::LaneContext {
-                        mode,
-                        raw_main_loop_delivery,
-                        observing,
-                        tracked_region_is_active,
-                        host_boundary_pending: self.page_region_succession_pending
-                            || self.paragraph_checkpoint_cut,
-                        leader_pending: self.boxes.pending_leader.is_some(),
-                        characters_pending: self.modes.current_list().pending_hchars().is_some(),
-                    };
-                    let mut lane_exit = None;
-                    // A prefix the lane consumed before a command it does
-                    // not own; that command's dispatch continues §1211.
-                    let mut lane_prefix = None;
                     let delivery = if raw_main_loop_delivery {
                         processor.main_loop_lookahead_into(&mut frame.command)
-                    } else if lane.is_eligible() && diagnostics.is_empty() {
-                        let mut owners = super::lane::LaneOwners {
-                            boxes: &self.boxes,
-                            cold: &mut *cold,
-                            max_save_stack: &mut self.max_save_stack,
-                        };
-                        let exit = super::lane::run(
-                            &mut processor,
-                            &mut frame.command,
-                            operations,
-                            max_operations,
-                            &mut owners,
-                        );
-                        // Lane group transitions move the innermost group,
-                        // which the hand-off command's dispatch selects on.
-                        innermost_group = processor.lane_parts().0.innermost_group_kind();
-                        match exit {
-                            Ok(super::lane::LaneExit::Delivered(status)) => Ok(status),
-                            Ok(super::lane::LaneExit::Prefixed { global }) => {
-                                lane_prefix = Some(global);
-                                Ok(tex_command::DeliveryStatus::Command)
-                            }
-                            Ok(exit) => {
-                                lane_exit = Some(exit);
-                                Ok(tex_command::DeliveryStatus::Command)
-                            }
-                            Err(error) => Err(error),
-                        }
                     } else {
                         processor.preflight_command_into(&mut frame.command)
                     };
@@ -452,44 +404,7 @@ impl<G> MainControl<G> {
                         self.shown_mode = Some(mode);
                     }
                     let mut reported = false;
-                    // A lane exit has already scanned, and possibly applied,
-                    // the slot's command; only its settlement remains.
-                    if let Some(exit) = lane_exit {
-                        match exit {
-                            super::lane::LaneExit::Delivered(_)
-                            | super::lane::LaneExit::Prefixed { .. } => {
-                                unreachable!("delivered lane exits return their status")
-                            }
-                            super::lane::LaneExit::Scanned(operation) => {
-                                frame.clear_preflight();
-                                hot_operation = Some(operation);
-                            }
-                            super::lane::LaneExit::ScannedCold => {
-                                frame.clear_preflight();
-                                // Scalar lane operations are admitted scalar
-                                // assignments or §1236's invalid target, and
-                                // the lane runs only unobserved.
-                                let operation = frame.unavailable(cold);
-                                if operation.executes_directly()
-                                    || operation.is_admitted_scalar_assignment()
-                                {
-                                    direct_cold_operation = true;
-                                } else {
-                                    host_preparation.fill_delivery(OperationDelivery::ResidentCold);
-                                }
-                            }
-                            super::lane::LaneExit::ScanFailed(error) => {
-                                frame.discard_resident_command();
-                                frame.error = Some(error);
-                            }
-                            super::lane::LaneExit::Applied(applied) => {
-                                frame.clear_preflight();
-                                lane_applied = Some(applied);
-                            }
-                        }
-                    } else if diagnostics.is_empty()
-                        && status == tex_command::DeliveryStatus::Command
-                    {
+                    if diagnostics.is_empty() && status == tex_command::DeliveryStatus::Command {
                         let continues_main_loop = self.main_loop_active
                             && matches!(
                                 frame.current().meaning(),
@@ -521,14 +436,7 @@ impl<G> MainControl<G> {
                             frame.current().meaning(),
                         )
                         .then(|| processor.int_param(IntParam::PDF_OUTPUT));
-                        // §1212's prefix error is reported by the resident
-                        // path, as it is for a resident prefix.
-                        let prefix_error = lane_prefix.is_some()
-                            && !tex_command::exceeds_max_non_prefixed_command(static_meaning(
-                                frame.current().meaning(),
-                            ));
                         let needs_barrier = tracked_region_is_active
-                            || prefix_error
                             || barrier.is_some()
                             || command_requires_transaction_from_facts(
                                 mode,
@@ -560,7 +468,7 @@ impl<G> MainControl<G> {
                                 &mut diagnostics,
                                 None,
                                 true,
-                                lane_prefix.map(|global| (global, MeaningFlags::EMPTY)),
+                                None,
                             );
                             diagnostics.extend(
                                 processor
@@ -614,9 +522,7 @@ impl<G> MainControl<G> {
                                         )
                                 )
                             );
-                        if let Some(global) = lane_prefix {
-                            frame.mark_resident_prefixed(global, Some(cursor));
-                        } else if raw_main_loop_delivery && continues_main_loop {
+                        if raw_main_loop_delivery && continues_main_loop {
                             frame.mark_resident_raw(Some(cursor));
                         } else {
                             frame.mark_resident_settled(Some(cursor));
@@ -641,28 +547,6 @@ impl<G> MainControl<G> {
                         &mut operation,
                     );
                     hot_admission = Some((admission, output_start));
-                }
-                if let Some(applied) = lane_applied.take() {
-                    let output_start = OperationOutputStart {
-                        outer_paragraph_was_active,
-                        artifact_count: applied.artifact_count,
-                        effect_count: applied.effect_count,
-                        prepared_page_count: self.prepared_dvi_pages.len(),
-                        tracked_region_is_active: false,
-                    };
-                    host_preparation.record_checked_save_stack_words(applied.save_stack_words);
-                    let settled_in_admission = applied.result.is_ok();
-                    hot_admission = Some((
-                        HotApplyAdmission {
-                            result: applied.result,
-                            main_loop_active: None,
-                            settled_in_admission,
-                            fires_afterassignment: applied.fires_afterassignment,
-                            pending_page_output: PendingPageOutputFacts::capture(context),
-                            assignment_receipts: None,
-                        },
-                        output_start,
-                    ));
                 }
                 if !diagnostics.is_empty() && direct_cold_operation {
                     // Scanning the operand raised a recoverable diagnostic
@@ -1482,13 +1366,6 @@ pub(super) fn scan_preflight_command<G>(
     if let Some(cursor) = command.cursor {
         processor.resume_delivery_cursor(cursor);
     }
-    let phase = command
-        .phase
-        .expect("operation frame owns its delivery phase");
-    let prefix = match phase {
-        PreflightCommandPhase::Prefixed { global } => Some((global, MeaningFlags::EMPTY)),
-        PreflightCommandPhase::Settled | PreflightCommandPhase::Raw => None,
-    };
     dispatch_main_control_command(
         processor,
         command,
@@ -1502,7 +1379,7 @@ pub(super) fn scan_preflight_command<G>(
         diagnostics,
         None,
         true,
-        prefix,
+        None,
     )
 }
 

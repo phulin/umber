@@ -933,9 +933,9 @@ pub(crate) fn trace_meaning_write<G>(
 /// definition's numeric operand. That mutation must remain scanner-owned so a
 /// self-referential target terminates the scan, but e-TeX [17.687--750]
 /// observes it through the same `eq_define` hook as the later committed
-/// meaning. Carrying the copyable pre-image across the scan/apply seam lets
-/// this renderer preserve that ownership without replaying the mutation.
-pub(crate) fn trace_completed_provisional_meaning_write<G>(
+/// meaning. Render while the old cell still owns its payload, before the
+/// provisional write; no nonowning preimage escapes the scanner.
+pub(crate) fn trace_provisional_meaning_write<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     token: Token,

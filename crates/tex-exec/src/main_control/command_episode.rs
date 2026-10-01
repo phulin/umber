@@ -22,11 +22,6 @@ pub(super) enum OperationDelivery {
 pub(super) enum PreflightCommandPhase {
     Settled,
     Raw,
-    /// §1211's prefix loop consumed a `\global` prefix and delivered this
-    /// command, which the loop must continue with.
-    Prefixed {
-        global: bool,
-    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -164,14 +159,6 @@ impl<G> CommandEpisode<G> {
         cursor: Option<tex_command::CommandDeliveryCursor>,
     ) {
         self.mark_resident_command(PreflightCommandPhase::Settled, cursor);
-    }
-
-    pub(super) fn mark_resident_prefixed(
-        &mut self,
-        global: bool,
-        cursor: Option<tex_command::CommandDeliveryCursor>,
-    ) {
-        self.mark_resident_command(PreflightCommandPhase::Prefixed { global }, cursor);
     }
 
     pub(super) fn mark_resident_raw(&mut self, cursor: Option<tex_command::CommandDeliveryCursor>) {

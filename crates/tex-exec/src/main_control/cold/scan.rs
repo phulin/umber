@@ -1043,14 +1043,17 @@ pub(in crate::main_control) fn scan<G>(
                 }
             };
             let definition = processor
-                .scan_character_definition(class, global)
+                .scan_character_definition(
+                    class,
+                    global,
+                    assignment_tracing::trace_provisional_meaning_write,
+                )
                 .map_err(command_error)?;
             complete_cold_scan!(
                 cold,
                 ColdOperation::CharacterDefinition {
                     primitive,
                     target: definition.target,
-                    provisional_old: definition.provisional_old,
                     value: definition.value,
                     global,
                 }
@@ -1064,14 +1067,16 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::ToksDef),
         ) => {
             let definition = processor
-                .scan_register_definition(global)
+                .scan_register_definition(
+                    global,
+                    assignment_tracing::trace_provisional_meaning_write,
+                )
                 .map_err(command_error)?;
             complete_cold_scan!(
                 cold,
                 ColdOperation::RegisterDefinition {
                     primitive,
                     target: definition.target,
-                    provisional_old: definition.provisional_old,
                     index: definition.index,
                     global,
                 }

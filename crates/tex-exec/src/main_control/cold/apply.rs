@@ -2058,7 +2058,6 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::CharacterDefinition {
             primitive,
             target,
-            provisional_old,
             value,
             global,
             ..
@@ -2071,14 +2070,6 @@ pub(in crate::main_control) fn apply<G>(
                 UnexpandablePrimitive::MathCharDef => Meaning::MathCharGiven(*value as u16),
                 _ => unreachable!("character-definition step carries only §1224 primitives"),
             };
-            assignment_tracing::trace_completed_provisional_meaning_write(
-                stores,
-                command.diagnostic_effects,
-                Token::Cs(*target),
-                *provisional_old,
-                Meaning::Relax,
-                *global,
-            );
             let observed = match primitive {
                 UnexpandablePrimitive::CharDef => ObservationValue::Character(*value as u32),
                 UnexpandablePrimitive::MathCharDef => ObservationValue::Integer(i64::from(*value)),
@@ -2106,7 +2097,6 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::RegisterDefinition {
             primitive,
             target,
-            provisional_old,
             index,
             global,
         } => {
@@ -2118,14 +2108,6 @@ pub(in crate::main_control) fn apply<G>(
                 UnexpandablePrimitive::ToksDef => Meaning::ToksRegister(*index),
                 _ => unreachable!("register-definition step carries only §1224 primitives"),
             };
-            assignment_tracing::trace_completed_provisional_meaning_write(
-                stores,
-                command.diagnostic_effects,
-                Token::Cs(*target),
-                *provisional_old,
-                Meaning::Relax,
-                *global,
-            );
             let observed_name =
                 if command.state.profile().capabilities().supports_etex() && *index > 255 {
                     if *primitive == UnexpandablePrimitive::ToksDef {
@@ -2971,7 +2953,7 @@ pub(in crate::main_control) fn apply<G>(
             // \hangafter local to the just-opened insert group, exactly like
             // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
             crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
-            boxes.active_boxes.push(ActiveReplayBox {
+            boxes.push_box(ActiveReplayBox {
                 target: None,
                 shipout_region: None,
                 box_segment_start: None,
@@ -3137,7 +3119,7 @@ pub(in crate::main_control) fn apply<G>(
             if !kind.horizontal() {
                 commit_box_normal_paragraph(modes, stores, command);
             }
-            boxes.active_boxes.push(ActiveReplayBox {
+            boxes.push_box(ActiveReplayBox {
                 target: None,
                 shipout_region: None,
                 box_segment_start: None,
@@ -3466,8 +3448,7 @@ pub(in crate::main_control) fn apply<G>(
             if let ReplayBoxKind::Insert(class, pre) = box_kind {
                 let step = finish_insert_or_adjust_group(class, pre, modes, stores, command)?;
                 let inserted = boxes
-                    .active_boxes
-                    .pop()
+                    .pop_box()
                     .expect("successful insert completion retains its active owner");
                 if let Some(start) = inserted.migration_segment_start {
                     let segment = stores.close_page_box_segment(start);
@@ -3627,8 +3608,7 @@ pub(in crate::main_control) fn apply<G>(
                     Node::MathNoad(MathNoad::new(NoadKind::VCenter, MathField::SubBox(boxed))),
                 );
                 boxes
-                    .active_boxes
-                    .pop()
+                    .pop_box()
                     .expect("successful vcenter completion retains its active owner");
                 return Ok(ReplayStep::Continue);
             }
@@ -3639,13 +3619,11 @@ pub(in crate::main_control) fn apply<G>(
                     })?;
                 boxes.pending_leader = Some((kind, payload));
                 boxes
-                    .active_boxes
-                    .pop()
+                    .pop_box()
                     .expect("successful leader completion retains its active owner");
             } else if *ships_out {
                 let box_state = boxes
-                    .active_boxes
-                    .pop()
+                    .pop_box()
                     .expect("successful shipout packaging retains its active owner");
                 let region = box_state
                     .shipout_region
@@ -3657,8 +3635,7 @@ pub(in crate::main_control) fn apply<G>(
                 });
             } else if has_target {
                 let target = boxes
-                    .active_boxes
-                    .pop()
+                    .pop_box()
                     .expect("successful setbox packaging retains its active owner")
                     .target
                     .expect("setbox completion retains its target");
@@ -3690,8 +3667,7 @@ pub(in crate::main_control) fn apply<G>(
                     crate::box_runtime::apply_box_shift_delta(&mut node, shift.delta)?;
                 }
                 let box_state = boxes
-                    .active_boxes
-                    .pop()
+                    .pop_box()
                     .expect("successful box append retains its active owner");
                 if let Some(start) = box_state.box_segment_start {
                     crate::box_runtime::append_box_node_with_segment(

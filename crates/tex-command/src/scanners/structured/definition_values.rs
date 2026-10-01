@@ -75,10 +75,8 @@ pub struct ScannedMacroDefinition<G> {
 /// control receives no token or input capability: it only applies the
 /// assignment's effective scope and reports the recovery diagnostic.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedCharacterDefinition<G> {
+pub struct ScannedCharacterDefinition {
     pub target: Symbol,
-    /// The meaning replaced by §1224's scanner-time provisional `\relax`.
-    pub provisional_old: ResolvedMeaning<G>,
     /// The restricted class §1224 selects for this primitive.
     pub class: RestrictedIntegerClass,
     /// `cur_val` after §434/§436's recovery.
@@ -96,10 +94,8 @@ pub struct ScannedCharacterDefinition<G> {
 /// receives only the chosen target and register selector to apply with the
 /// already determined assignment scope.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedRegisterDefinition<G> {
+pub struct ScannedRegisterDefinition {
     pub target: Symbol,
-    /// The meaning replaced by §1224's scanner-time provisional `\relax`.
-    pub provisional_old: ResolvedMeaning<G>,
     pub index: u16,
 }
 

@@ -108,7 +108,6 @@ mod delivery;
 mod discretionary;
 mod executor_facts;
 mod hot_apply;
-mod lane;
 mod resources;
 mod root_source;
 mod settlement;
@@ -646,6 +645,7 @@ struct ReplayBoxes<G> {
     pending_shipout: Option<tex_state::node_region::PageClosureBuildMark>,
     pending_leader: Option<(GlueKind, LeaderPayload)>,
     active_boxes: Vec<ActiveReplayBox>,
+    box_spec_words: usize,
     suspended_alignments: Vec<ActiveReplayAlignment<G>>,
     recovery_simple_group_pending: bool,
     recovery_simple_group_open: bool,
@@ -660,6 +660,7 @@ impl<G> Default for ReplayBoxes<G> {
             pending_shipout: None,
             pending_leader: None,
             active_boxes: Vec::new(),
+            box_spec_words: 0,
             suspended_alignments: Vec::new(),
             recovery_simple_group_pending: false,
             recovery_simple_group_open: false,
@@ -670,6 +671,17 @@ impl<G> Default for ReplayBoxes<G> {
 }
 
 impl<G> ReplayBoxes<G> {
+    fn push_box(&mut self, active: ActiveReplayBox) {
+        self.box_spec_words += active.kind.save_stack_spec_words();
+        self.active_boxes.push(active);
+    }
+
+    fn pop_box(&mut self) -> Option<ActiveReplayBox> {
+        let active = self.active_boxes.pop()?;
+        self.box_spec_words -= active.kind.save_stack_spec_words();
+        Some(active)
+    }
+
     fn format_dump_is_quiescent(&self) -> bool {
         self.pending_setbox.is_none()
             && self.pending_shipout.is_none()
@@ -2733,14 +2745,9 @@ impl<G> MainControl<G> {
         // TeX82 §§645/1083 keeps ordinary box specs immediately below their
         // §273 boundaries. Vcenters and insertions deliberately have smaller
         // projections (§§1167/1099), so derive the words from each live kind.
-        let box_spec_words = boxes
-            .active_boxes
-            .iter()
-            .map(|active| active.kind.save_stack_spec_words())
-            .fold(0_usize, usize::saturating_add);
         stores
             .checked_save_stack_words(profile.capabilities().supports_etex())
-            .saturating_add(box_spec_words)
+            .saturating_add(boxes.box_spec_words)
     }
 
     /// Drains the field-level save projection after application. Exceptional
