@@ -1,18 +1,17 @@
 //! Immutable, generation-branded macro-definition storage.
 //!
-//! Every published definition is one immutable row whose words live in a
-//! shared `Rc<[TokenWord]>` span. Format and global rows are append-only and
+//! Every published definition is one immutable row retaining a shared payload
+//! containing its words, compiled parameter matcher, and definition origin. Format and global rows are append-only and
 //! rewind only to checkpoint cursors. Local rows form one LIFO stack whose
 //! group marks truncate it at group exit. An executing macro retains its own
-//! span handle, so retiring a row never invalidates a body being read and no
+//! payload handle, so retiring a row never invalidates its words or matcher and no
 //! region lease, slot incarnation, or retirement queue is needed.
 
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
-use std::rc::Rc;
 
 use crate::generation::ArenaToken;
-use crate::macro_definition::{MacroParameterPattern, MacroParameterPatternBuilder};
+use crate::macro_definition::MacroParameterPatternBuilder;
 use crate::memory_accounting::MemoryAccounting;
 use crate::token::TokenWord;
 
@@ -143,28 +142,15 @@ impl<G> DefinitionArena<G> {
         let entry = self.entry(id)?;
         if entry.parameter_len == 0 {
             let body = (!entry.words.is_empty()).then(|| ResidentMacroBody::admit(entry));
-            return Some(AdmittedMacroDefinition::SimpleMacro {
-                pattern: entry.pattern,
-                body,
-            });
+            return Some(AdmittedMacroDefinition::SimpleMacro { body });
         }
         Some(AdmittedMacroDefinition::MatchingMacro {
-            pattern: entry.pattern,
-            parameter_len: entry.parameter_len as usize,
             body: ResidentMacroBody::admit(entry),
         })
     }
 
-    pub(crate) fn admit_macro_body(
-        &self,
-        id: DefinitionRef<G>,
-    ) -> Option<(MacroParameterPattern, usize, ResidentMacroBody<G>)> {
-        let entry = self.entry(id)?;
-        Some((
-            entry.pattern,
-            entry.parameter_len as usize,
-            ResidentMacroBody::admit(entry),
-        ))
+    pub(crate) fn admit_macro_body(&self, id: DefinitionRef<G>) -> Option<ResidentMacroBody<G>> {
+        Some(ResidentMacroBody::admit(self.entry(id)?))
     }
 
     pub(crate) fn contents_equal(&self, left: DefinitionRef<G>, right: DefinitionRef<G>) -> bool {
@@ -301,7 +287,7 @@ impl<G> DefinitionArena<G> {
     fn release_rows(&self, rows: &[DefinitionEntry]) {
         for row in rows {
             self.accounting
-                .release_shared_dynamic(definition_memory_words(row.words.len()));
+                .release_shared_dynamic(definition_memory_words(row));
         }
     }
 
@@ -356,12 +342,12 @@ impl<G> DefinitionArena<G> {
         &mut self,
         builder: &mut DefinitionBuilder,
     ) -> DefinitionRef<G> {
-        let entry = DefinitionEntry {
-            words: Rc::from(builder.words()),
-            parameter_len: builder.parameter_len,
-            origin: crate::token::OriginId::UNKNOWN,
-            pattern: builder.pattern.finish(),
-        };
+        let entry = DefinitionEntry::new(
+            builder.words().into(),
+            builder.parameter_len,
+            crate::token::OriginId::UNKNOWN,
+            builder.pattern,
+        );
         builder.phase = DefinitionBuildPhase::Published;
         self.push_row(GLOBAL_REGION, entry)
     }
@@ -389,7 +375,7 @@ impl<G> DefinitionArena<G> {
                 .map_err(DefinitionBuildError::from)
                 .map_err(map_build_error)?;
         }
-        let words: Rc<[TokenWord]> = row
+        let words: Box<[TokenWord]> = row
             .parameter_text
             .iter()
             .chain(&row.replacement_text)
@@ -401,18 +387,18 @@ impl<G> DefinitionArena<G> {
             .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
         Ok(self.push_row(
             FORMAT_REGION,
-            DefinitionEntry {
+            DefinitionEntry::new(
                 words,
                 parameter_len,
-                origin: crate::token::OriginId::UNKNOWN,
-                pattern: pattern.finish(),
-            },
+                crate::token::OriginId::UNKNOWN,
+                pattern,
+            ),
         ))
     }
 
     fn push_row(&mut self, region: u32, entry: DefinitionEntry) -> DefinitionRef<G> {
         self.accounting
-            .allocate_shared_dynamic(definition_memory_words(entry.words.len()));
+            .allocate_shared_dynamic(definition_memory_words(&entry));
         let rows = match region {
             FORMAT_REGION => &mut self.format,
             GLOBAL_REGION => &mut self.global,
@@ -567,10 +553,12 @@ fn map_build_error(error: DefinitionBuildError) -> DefinitionAllocationError {
     }
 }
 
-fn definition_memory_words(word_len: usize) -> usize {
-    let header_words =
-        std::mem::size_of::<DefinitionEntry>().div_ceil(std::mem::size_of::<usize>());
-    word_len
+fn definition_memory_words(entry: &DefinitionEntry) -> usize {
+    let header_words = (std::mem::size_of::<body::DefinitionPayload>()
+        + std::mem::size_of::<DefinitionEntry>()
+        + 2 * std::mem::size_of::<usize>())
+    .div_ceil(std::mem::size_of::<usize>());
+    (entry.words.len() + entry.pattern.failure_len())
         .checked_mul(std::mem::size_of::<TokenWord>())
         .and_then(|bytes| bytes.checked_add(std::mem::size_of::<usize>() - 1))
         .map(|bytes| bytes / std::mem::size_of::<usize>())

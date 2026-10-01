@@ -420,8 +420,7 @@ fn main_loop_character_run_charges_resident_macro_body_once_per_character() {
             .command_context()
             .expect("macro body context")
             .admit_macro_body(definition)
-            .expect("resident macro body")
-            .2;
+            .expect("resident macro body");
         let mut command = CommandState::default();
         command
             .push_macro_activation(macro_name, body, None, OriginId::UNKNOWN)
@@ -508,8 +507,7 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
             .command_context()
             .expect("macro body context")
             .admit_macro_body(body_definition)
-            .expect("resident macro body")
-            .2;
+            .expect("resident macro body");
         command
             .push_macro_activation(macro_name, body, Some(matching), OriginId::UNKNOWN)
             .expect("macro activation");

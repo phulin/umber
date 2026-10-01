@@ -408,14 +408,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.definitions().contents_equal(left, right)
     }
 
-    pub(crate) fn admit_macro_body(
-        &self,
-        id: DefinitionRef<G>,
-    ) -> Option<(
-        crate::macro_definition::MacroParameterPattern,
-        usize,
-        ResidentMacroBody<G>,
-    )> {
+    pub(crate) fn admit_macro_body(&self, id: DefinitionRef<G>) -> Option<ResidentMacroBody<G>> {
         self.generation.definitions().admit_macro_body(id)
     }
 

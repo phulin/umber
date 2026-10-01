@@ -843,8 +843,7 @@ fn warmed_parameterless_macro_rows_copy_only_compact_definition_keys() {
             for _ in 0..activations {
                 let body = context
                     .admit_macro_body(definition)
-                    .expect("resident macro body")
-                    .2;
+                    .expect("resident macro body");
                 let level = state
                     .push_macro_activation(name, body, None, OriginId::UNKNOWN)
                     .expect("macro activation");

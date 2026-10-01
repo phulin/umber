@@ -1,7 +1,6 @@
 //! Private canonical scalar macro-call state machine.
-use smallvec::SmallVec;
 use tex_state::env::banks::IntParam;
-use tex_state::macro_definition::MacroParameterPattern;
+use tex_state::macro_definition::MacroDelimiter;
 use tex_state::meaning::MeaningFlags;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 use tex_state::{DefinitionRef, ResidentMacroBody};
@@ -20,50 +19,6 @@ use crate::observation::{
 
 const EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0395;
 pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct MacroDelimiter {
-    start: usize,
-    len: usize,
-}
-
-/// One admitted immutable macro invocation.
-///
-/// The definition region/body owner and parameter pattern are acquired once
-/// at the opener. Matching then walks the packed parameter span through this
-/// resident owner; it never asks the command state to rediscover the
-/// definition for each pattern token.
-#[derive(Debug)]
-struct MacroPlan<G> {
-    flags: MeaningFlags,
-    macro_name: tex_state::interner::Symbol,
-    call_origin: OriginId,
-    definition: DefinitionRef<G>,
-    pattern: MacroParameterPattern,
-    parameter_len: usize,
-    body: ResidentMacroBody<G>,
-}
-
-impl<G> MacroPlan<G> {
-    #[inline(always)]
-    fn parameter_word(&self, index: usize) -> Result<TokenWord, CommandError> {
-        self.body
-            .parameter_word(index)
-            .ok_or_else(CommandError::input_invariant)
-    }
-
-    #[inline(always)]
-    fn delimiter_word(
-        &self,
-        delimiter: MacroDelimiter,
-        index: usize,
-    ) -> Result<TokenWord, CommandError> {
-        if index >= delimiter.len {
-            return Err(CommandError::input_invariant());
-        }
-        self.parameter_word(delimiter.start + index)
-    }
-}
 
 /// Activation shape of one already-admitted immutable macro definition.
 ///
@@ -196,8 +151,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             .state
             .admit_macro_definition(definition)
             .ok_or_else(CommandError::input_invariant)?;
-        let (activation, pattern, parameter_len, body) = match admitted {
-            tex_state::AdmittedMacroDefinition::SimpleMacro { pattern, body } => {
+        let (activation, body) = match admitted {
+            tex_state::AdmittedMacroDefinition::SimpleMacro { body } => {
                 let activation = self.classify_macro_activation(true, body.is_none());
                 if activation == MacroActivationClass::Simple {
                     record_macro_activation_class(activation);
@@ -205,45 +160,26 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 let body = match body {
                     Some(body) => body,
-                    None => {
-                        self.state
-                            .admit_macro_body(definition)
-                            .ok_or_else(CommandError::input_invariant)?
-                            .2
-                    }
+                    None => self
+                        .state
+                        .admit_macro_body(definition)
+                        .ok_or_else(CommandError::input_invariant)?,
                 };
-                let parameter_len = body.parameter_len();
-                (activation, pattern, parameter_len, body)
+                (activation, body)
             }
-            tex_state::AdmittedMacroDefinition::MatchingMacro {
-                pattern,
-                parameter_len,
-                body,
-            } => (
-                self.classify_macro_activation(false, body.is_empty()),
-                pattern,
-                parameter_len,
-                body,
-            ),
-        };
-        let plan = MacroPlan {
-            flags,
-            macro_name,
-            call_origin: call_site,
-            definition,
-            parameter_len,
-            pattern,
-            body,
+            tex_state::AdmittedMacroDefinition::MatchingMacro { body } => {
+                (self.classify_macro_activation(false, body.is_empty()), body)
+            }
         };
         record_macro_activation_class(activation);
-        self.trace_macro_invocation(plan.macro_name, &plan.definition);
+        self.trace_macro_invocation(macro_name, &definition);
         // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
         // macro therefore feeds its replacement directly, without a transient
         // `matching` scanner episode. Literal leading tokens still need the
         // matcher even when there are no numbered parameters.
-        let parameter_count = plan.pattern.parameter_count();
-        let leading_end = plan.pattern.leading_end(plan.parameter_len);
+        let parameter_count = body.parameter_pattern().parameter_count();
+        let leading_end = body.parameter_pattern().leading_end(body.parameter_len());
         let needs_matching = leading_end != 0 || parameter_count != 0;
         // Only numbered parameters need the reusable argument lane. A macro
         // whose parameter text is solely a compulsory literal prefix matches
@@ -272,7 +208,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
         let scanned_arguments = if needs_matching {
-            self.macro_call_scalar(matching.as_ref(), &plan)
+            self.macro_call_scalar(matching.as_ref(), &body, flags, macro_name)
         } else {
             Ok(())
         };
@@ -322,15 +258,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         // finished stored replay -- before `begin_token_list(..., macro)`.
         // Those retirements must precede this body's input push. The pending
         // frame stays canonical if an older active frame retires beneath it.
-        if activation == MacroActivationClass::Matching && plan.body.is_empty() {
+        if activation == MacroActivationClass::Matching && body.is_empty() {
             return self.finish_empty_matching_macro(matching, episode, parameter_count);
         }
         self.conserve_input_stack_for_descendant()?;
         let parameter_base = self.command.input.levels.parameters.len();
-        let macro_name = plan.macro_name;
         let _level = self
             .command
-            .push_macro_activation(macro_name, plan.body, matching, plan.call_origin)
+            .push_macro_activation(macro_name, body, matching, call_site)
             .map_err(|_| CommandError::input_invariant())?;
         observe!(
             self,
@@ -506,14 +441,18 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn macro_call_scalar(
         &mut self,
         matching: Option<&PendingArgumentSet<G>>,
-        plan: &MacroPlan<G>,
+        body: &ResidentMacroBody<G>,
+        flags: MeaningFlags,
+        macro_name: tex_state::interner::Symbol,
     ) -> Result<(), CommandError> {
         let paragraph_token = self.paragraph_word();
-        let parameter_count = plan.pattern.parameter_count();
-        let leading_end = plan.pattern.leading_end(plan.parameter_len);
+        let parameter_count = body.parameter_pattern().parameter_count();
+        let leading_end = body.parameter_pattern().leading_end(body.parameter_len());
         let mut delivery = None;
         for index in 0..leading_end {
-            let expected = plan.parameter_word(index)?;
+            let expected = body
+                .parameter_word(index)
+                .ok_or_else(CommandError::input_invariant)?;
             if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::MacroPrefixMismatch);
             }
@@ -536,38 +475,35 @@ impl<G> CommandProcessor<'_, '_, G> {
         // compulsory leading pattern rather than an argument delimiter.
         if parameter_count == 0
             && leading_end != 0
-            && is_begin_group(plan.parameter_word(leading_end - 1)?)
+            && is_begin_group(
+                body.parameter_word(leading_end - 1)
+                    .ok_or_else(CommandError::input_invariant)?,
+            )
         {
             self.undo_delimiter_begin_group_delivery();
         }
 
         for parameter in 0..parameter_count {
             let matching = matching.ok_or_else(CommandError::input_invariant)?;
-            let (start, end) = plan.pattern.delimiter_bounds(parameter, plan.parameter_len);
-            let delimiter = MacroDelimiter {
-                start,
-                len: end - start,
-            };
-            let argument = if delimiter.len == 0 {
-                self.scan_undelimited_argument(matching, plan.flags, paragraph_token)?
+            let delimiter = body
+                .parameter_pattern()
+                .delimiter(parameter, body.parameter_words());
+            let argument = if delimiter.is_empty() {
+                self.scan_undelimited_argument(matching, flags, paragraph_token)?
             } else {
-                self.scan_delimited_argument(
-                    matching,
-                    plan.flags,
-                    plan,
-                    delimiter,
-                    paragraph_token,
-                )?
+                self.scan_delimited_argument(matching, flags, delimiter, paragraph_token)?
             };
-            let marker =
-                plan.pattern
-                    .marker_index(parameter)
-                    .map_or(Ok('#'), |index| {
-                        match plan.parameter_word(index)?.semantic_token() {
-                            Token::Char { ch, .. } => Ok(ch),
-                            _ => Err(CommandError::input_invariant()),
-                        }
-                    })?;
+            let marker = body.parameter_pattern().marker_index(parameter).map_or(
+                Ok('#'),
+                |index| match body
+                    .parameter_word(index)
+                    .ok_or_else(CommandError::input_invariant)?
+                    .semantic_token()
+                {
+                    Token::Char { ch, .. } => Ok(ch),
+                    _ => Err(CommandError::input_invariant()),
+                },
+            )?;
             self.trace_macro_argument(marker, parameter + 1, &argument)?;
             let argument_token_count = argument
                 .visible_len()
@@ -577,8 +513,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 CommandObservation::TokenList(TokenListRecord {
                     transition: "splice",
                     purpose: "macro_delimiter_match",
-                    tokens: (0..delimiter.len)
-                        .filter_map(|index| plan.delimiter_word(delimiter, index).ok())
+                    tokens: delimiter
+                        .words()
+                        .iter()
+                        .copied()
                         .map(|word| {
                             self.observed_token(TracedTokenWord::from_parts(
                                 word,
@@ -591,7 +529,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             observe!(
                 self,
                 CommandObservation::Macro(MacroRecord::Argument {
-                    control_sequence: self.state.resolve(plan.macro_name).to_owned(),
+                    control_sequence: self.state.resolve(macro_name).to_owned(),
                     parameter: (parameter + 1) as u8,
                     token_count: argument_token_count as u64,
                     tokens: self
@@ -914,22 +852,16 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX.web §394's literal, scalar delimiter matcher. A failed delimiter
     /// prefix commits only the part that cannot be reused as an overlapping
     /// prefix, then retains the maximal suffix that still matches the start
-    /// of the delimiter. This is intentionally not a compiled string matcher:
-    /// token catcodes, brace depth, and the recovery splice are semantic here.
+    /// of the delimiter using its sealed failure links. Token catcodes,
+    /// brace depth, and the recovery splice remain semantic here.
     fn scan_delimited_argument(
         &mut self,
         matching: &PendingArgumentSet<G>,
         flags: MeaningFlags,
-        plan: &MacroPlan<G>,
-        delimiter: MacroDelimiter,
+        delimiter: MacroDelimiter<'_>,
         paragraph_token: Option<TokenWord>,
     ) -> Result<MacroArgumentWriter<G>, CommandError> {
-        debug_assert_ne!(delimiter.len, 0);
-        // Build immutable KMP failure links once for this delimiter.  The
-        // matcher retains only the current state in its writer; overlap
-        // fallback therefore stays linear in the input stream.
-        let mut failure = SmallVec::<[u32; 32]>::new();
-        self.build_delimiter_failure(plan, delimiter, &mut failure)?;
+        debug_assert!(!delimiter.is_empty());
         let mut tokens = self
             .command
             .scratch
@@ -951,7 +883,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(|_| CommandError::input_invariant())?
                     == 0
             {
-                let stop_word = plan.delimiter_word(delimiter, 0)?;
+                let stop_word = delimiter.words()[0];
                 let run =
                     self.consume_argument_run(&mut tokens, paragraph_token, Some(stop_word))?;
                 if run.at_transition && self.settle_resident_run_boundary()? {
@@ -991,8 +923,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .delimiter_prefix_len(&tokens)
                 .map_err(|_| CommandError::input_invariant())?;
             if tokens.brace_depth() == 0
-                && prefix_len < delimiter.len
-                && spelling == plan.delimiter_word(delimiter, prefix_len)?
+                && prefix_len < delimiter.len()
+                && spelling == delimiter.words()[prefix_len]
             {
                 self.command
                     .scratch
@@ -1003,7 +935,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .scratch
                     .delimiter_prefix_len(&tokens)
                     .map_err(|_| CommandError::input_invariant())?
-                    == delimiter.len
+                    == delimiter.len()
                 {
                     // `#{` consumes the opening brace as parameter text. Raw
                     // delivery has accounted for it, but no replacement-body
@@ -1022,8 +954,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
 
             if prefix_len != 0 {
-                let retained =
-                    self.delimiter_overlap(plan, delimiter, &failure, prefix_len, spelling)?;
+                let retained = delimiter.overlap(prefix_len, spelling);
                 // If the current token is retained, every already-held word
                 // before that suffix is now committed.  If no suffix remains,
                 // all held words are committed and the current token is
@@ -1116,61 +1047,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.command
             .consume_plain_resident_run(tokens, self.fuel, admission)
-    }
-
-    /// Builds KMP failure links over one immutable parameter-text delimiter.
-    /// The packed parameter reader is the sole pattern source; no semantic
-    /// token or delimiter copy is created.
-    fn build_delimiter_failure(
-        &self,
-        plan: &MacroPlan<G>,
-        delimiter: MacroDelimiter,
-        failure: &mut SmallVec<[u32; 32]>,
-    ) -> Result<(), CommandError> {
-        failure.clear();
-        failure
-            .try_reserve(delimiter.len)
-            .map_err(|_| CommandError::input_invariant())?;
-        if delimiter.len == 0 {
-            return Ok(());
-        }
-        failure.push(0);
-        for index in 1..delimiter.len {
-            let mut matched = failure[index - 1] as usize;
-            let current = plan.delimiter_word(delimiter, index)?;
-            while matched != 0 && current != plan.delimiter_word(delimiter, matched)? {
-                matched = failure[matched - 1] as usize;
-            }
-            if current == plan.delimiter_word(delimiter, matched)? {
-                matched += 1;
-            }
-            failure.push(u32::try_from(matched).map_err(|_| CommandError::input_invariant())?);
-        }
-        Ok(())
-    }
-
-    /// Returns the next KMP state for a token which did not extend the held
-    /// delimiter prefix. Failure links make the fallback linear in the input.
-    fn delimiter_overlap(
-        &self,
-        plan: &MacroPlan<G>,
-        delimiter: MacroDelimiter,
-        failure: &[u32],
-        prefix_len: usize,
-        current: TokenWord,
-    ) -> Result<usize, CommandError> {
-        let mut matched = prefix_len;
-        while matched != 0 && current != plan.delimiter_word(delimiter, matched)? {
-            matched = failure
-                .get(matched - 1)
-                .copied()
-                .map(|value| value as usize)
-                .ok_or_else(CommandError::input_invariant)?;
-        }
-        if current == plan.delimiter_word(delimiter, matched)? {
-            matched += 1;
-        }
-        Ok(matched.min(delimiter.len - 1))
     }
 
     fn check_argument_paragraph(

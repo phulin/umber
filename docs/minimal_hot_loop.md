@@ -75,6 +75,22 @@ belong to that plan, not to a per-call matcher. The plan must implement TeX82
 §§392--399, including leading literals, undelimited arguments, brace trimming,
 paragraph and outer checks, and delimiter recovery.
 
+The sealed definition owns one shared payload containing the packed parameter
+and replacement words, definition origin, and `MacroParameterPattern`. The
+pattern retains its validated marker index and compiles packed-word delimiter
+failure links during publication, including direct scans, memo import, and
+format materialization. Promotion shares this same payload. A resident macro
+body retains the payload through matching and replacement delivery, so retiring
+a definition row cannot invalidate its matcher.
+
+Calls borrow the pattern and each delimiter's word/failure slices directly.
+They construct no invocation plan and allocate no failure table. Failure links
+only select the longest reusable literal prefix: the existing argument writer
+still owns held source origins, brace depth, paragraph checks, outer recovery,
+and group trimming under TeX82 §§392--399. Empty and single-word delimiters
+need no failure allocation. Arguments still transfer from matching scratch to
+the input stack until the separate `.10` replacement.
+
 The combined immutable-span and packed-delivery replacement resolves each
 interpreted token once into the final native meaning. Ordinary unobserved
 macros activate directly; actual scanner, execution, observation, alignment,

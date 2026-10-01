@@ -52,7 +52,7 @@ fn letter(ch: char) -> TokenWord {
 #[test]
 fn definition_handles_stay_compact() {
     assert_eq!(std::mem::size_of::<super::DefinitionRef<()>>(), 8);
-    assert_eq!(std::mem::size_of::<super::ResidentMacroBody<()>>(), 24);
+    assert_eq!(std::mem::size_of::<super::ResidentMacroBody<()>>(), 8);
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn executing_local_body_outlives_its_group() {
         ];
         let definition =
             direct_definition(arena, DefinitionDestination::Local, &parameters, &words);
-        let (_, _, body) = arena
+        let body = arena
             .admit_macro_body(definition)
             .expect("resident local body");
         assert_eq!(body.profile_region_owner_count(), 2);
@@ -246,10 +246,7 @@ fn admitted_macro_definition_classifies_simple_matching_and_empty() {
         ));
         assert!(matches!(
             arena.admit_macro_definition(matching),
-            Some(AdmittedMacroDefinition::MatchingMacro {
-                parameter_len: 1,
-                ..
-            })
+            Some(AdmittedMacroDefinition::MatchingMacro { body }) if body.parameter_len() == 1
         ));
     });
 }
@@ -331,7 +328,7 @@ fn restore_discards_open_groups_and_an_active_build() {
         let checkpoint = arena.cursor();
         arena.begin_group().expect("group");
         let local = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('l')]);
-        let (_, _, body) = arena.admit_macro_body(local).expect("body");
+        let body = arena.admit_macro_body(local).expect("body");
         let build = arena
             .begin_build(
                 DefinitionDestination::Local,
@@ -587,7 +584,7 @@ fn checked_builder_accepts_custom_markers_and_all_nine_parameters() {
         let view = generation.definitions().get(definition);
         let reference = crate::macro_definition::MacroParameterPattern::from_words(&parameters)
             .expect("independent one-shot parameter program");
-        assert_eq!(view.parameter_pattern(), reference);
+        assert_eq!(view.parameter_pattern(), &reference);
         assert_eq!(view.parameter_pattern().parameter_count(), 9);
         assert_eq!(view.parameter_pattern().marker_index(0), Some(0));
         assert_eq!(view.parameter_pattern().marker_index(8), Some(16));
@@ -739,5 +736,55 @@ fn distinct_refs_compare_validated_contents_and_boundaries_lazily() {
                 .definitions()
                 .contents_equal(ordinary, different_replacement)
         );
+    });
+}
+
+#[test]
+fn sealed_matcher_survives_promotion_group_exit_and_format_materialization() {
+    with_generation(|mut generation| {
+        let arena = generation.definitions_mut();
+        let parameters = [
+            letter('p'),
+            TokenWord::pack(Token::param(1)),
+            letter('a'),
+            letter('b'),
+            letter('a'),
+            letter('b'),
+        ];
+        arena.begin_group().expect("group");
+        let local = direct_definition(
+            arena,
+            DefinitionDestination::Local,
+            &parameters,
+            &[TokenWord::pack(Token::param(1))],
+        );
+        let resident = arena.admit_macro_body(local).expect("resident definition");
+        let promoted = arena.promote_global(local).expect("promotion");
+        let wire = arena.get(promoted).capture_format();
+        let imported = arena
+            .publish_format_row(&wire)
+            .expect("format materialization");
+        let allocated = arena
+            .allocate(&parameters, &[TokenWord::pack(Token::param(1))])
+            .expect("detached builder publication");
+        arena.end_group();
+        assert_eq!(
+            resident.parameter_pattern(),
+            arena.get(promoted).parameter_pattern()
+        );
+        assert_eq!(
+            resident.parameter_pattern(),
+            arena.get(imported).parameter_pattern()
+        );
+        assert_eq!(
+            resident.parameter_pattern(),
+            arena.get(allocated).parameter_pattern()
+        );
+        let delimiter = resident
+            .parameter_pattern()
+            .delimiter(0, resident.parameter_words());
+        assert_eq!(delimiter.words(), &parameters[2..]);
+        assert_eq!(delimiter.overlap(3, letter('b')), 3);
+        assert_eq!(delimiter.overlap(3, letter('a')), 1);
     });
 }

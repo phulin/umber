@@ -422,9 +422,11 @@ collector (see `src/conditionals.rs`).
   caller that starts from a broader notion and subtracts them by hand is
   re-deriving this predicate one exception at a time.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
-  macro matcher, destination-directed construction into execution-scratch
-  segments, stable sealed direct-slot descriptors, uniform one-scalar parameter
-  replay, exact tail/nested retirement, and focused tests.
+  macro matcher borrowing the definition-owned parameter pattern and delimiter
+  failure links. Calls construct no `MacroPlan` or failure table. One scratch
+  writer retains argument holdback and source origins until activation transfers
+  them to the input stack; focused tests cover scalar recovery, overlap, group
+  trimming, nested replay, and source-origin forwarding.
 - `src/conditionals.rs`: private independent condition-stack machine; also
   renders e-TeX 2.6's `\tracingifs` `{...}` trace lines at conditional entry
   and at each `\or`/`\else`/`\fi` delimiter resolution, printed directly

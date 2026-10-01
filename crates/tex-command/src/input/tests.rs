@@ -50,7 +50,6 @@ fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
             stores
                 .admit_macro_body(definition)
                 .expect("resident macro body")
-                .2
         };
         let probe = body.clone();
         let mut command = CommandState::default();

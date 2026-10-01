@@ -2,7 +2,6 @@
 
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
-use std::rc::Rc;
 
 use crate::macro_definition::MacroParameterPatternBuilder;
 use crate::token::TokenWord;
@@ -295,12 +294,12 @@ impl<G> DefinitionArena<G> {
         rows.try_reserve(1)
             .map_err(|_| DefinitionBuildError::AllocationFailed)?;
         let build = self.active_build.take().expect("validated active build");
-        let entry = DefinitionEntry {
-            words: Rc::from(self.build_words.as_slice()),
-            parameter_len: build.parameter_len,
-            origin: build.origin,
-            pattern: build.pattern.finish(),
-        };
+        let entry = DefinitionEntry::new(
+            self.build_words.as_slice().into(),
+            build.parameter_len,
+            build.origin,
+            build.pattern,
+        );
         self.build_words.clear();
         Ok(self.push_row(region, entry))
     }

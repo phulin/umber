@@ -932,16 +932,8 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     /// Resolves one opaque definition reference into the exact resident macro
-    /// body state. Header decoding and the optional local-region lease happen
-    /// once here, before the input row becomes visible.
-    pub fn admit_macro_body(
-        &self,
-        id: DefinitionRef<G>,
-    ) -> Option<(
-        crate::macro_definition::MacroParameterPattern,
-        usize,
-        ResidentMacroBody<G>,
-    )> {
+    /// body owner, including its sealed parameter matcher.
+    pub fn admit_macro_body(&self, id: DefinitionRef<G>) -> Option<ResidentMacroBody<G>> {
         self.admitted.admit_macro_body(id)
     }
 

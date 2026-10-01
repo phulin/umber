@@ -59,15 +59,15 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/definition_arena.rs`: 8-byte compact generation-branded definition
   keys over three row stores: the immutable format rows, the checkpointed
   global rows, and one LIFO local stack truncated at each group exit. Each row
-  is one exactly sized shared immutable word span, so group exit drops rows
-  while executing bodies keep their own span alive. Checkpoint candidates
+  retains one shared immutable payload containing packed words, compiled
+  matcher, and origin; executing bodies keep that payload alive after group exit. Checkpoint candidates
   detach and restore only the format and global suffixes; restore truncates
   rows and discards open groups. Exceptional local-to-global `let` promotion
   shares the span once and memoizes the mapped global row until its local row
   is dropped.
 - `src/definition_arena/body.rs`: Opaque definition references, immutable
-  definition rows, borrowed definition views, and the 24-byte resident macro
-  body whose reads are one slice index at the packed frame position.
+  definition payloads, borrowed definition views, and the eight-byte resident
+  macro owner whose reads index the retained words at the packed frame position.
 - `src/definition_arena/build_lane.rs`: The one live definition build and its
   direct scan-episode writer, which seals into one exactly sized span.
 - `src/definition_arena/builder.rs`: Build phases, build errors, and the
@@ -261,9 +261,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   first-alternate deduplication, cursor, and foreign-owner rejection tests.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
 - `src/macro_definition.rs`: Storage-independent allocation-free macro
-  parameter validation and the compact at-most-nine-marker pattern stored in
-  each immutable definition header. Invocation borrows this prevalidated
-  metadata directly and never rescans parameter text to rebuild it.
+  parameter validation, at-most-nine-marker index, and sealed delimiter failure
+  links in `MacroParameterPattern`. Calls borrow delimiter word/link slices
+  directly; definition publication compiles them once for scans, imports, and
+  format loading.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed compact
   macro definition keys and the canonical dense-row writer which decodes one

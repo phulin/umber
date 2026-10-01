@@ -1594,3 +1594,100 @@ fn direct_macro_prefix_diagnostics_match_delivered_command_diagnostics() {
         assert_eq!(run(false, source), run(true, source));
     }
 }
+
+#[test]
+fn overlapping_delimiter_preserves_source_origins_through_forwarded_arguments() {
+    // TeX82 §394's failed prefix becomes literal argument material. Both its
+    // source locations and the ordinary words must survive nested forwarding.
+    crate::test_harness::with_universe(|universe| {
+        let inner = install_macro(
+            universe,
+            "inner",
+            &[
+                Token::param(1),
+                letter('a'),
+                letter('b'),
+                letter('a'),
+                letter('b'),
+            ],
+        );
+        let outer_definition = universe
+            .allocate_definition(
+                &[
+                    TokenWord::pack(Token::param(1)),
+                    TokenWord::pack(other('!')),
+                ],
+                &[TokenWord::pack(inner), TokenWord::pack(Token::param(1))],
+            )
+            .expect("forwarding definition");
+        let outer = universe.intern("outer").expect("macro name");
+        universe
+            .assign_meaning(
+                outer,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, outer_definition),
+                AssignmentScope::Global,
+            )
+            .expect("forwarding meaning");
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"\\outer xabxabab!z"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        let mut call = crate::test_harness::expect_raw_command(&mut processor);
+        assert!(processor.macro_call(&mut call).expect("outer match"));
+        let origins: Vec<_> = processor
+            .command
+            .input
+            .levels
+            .innermost_macro_activation()
+            .expect("outer activation")
+            .0[0]
+            .iter()
+            .map(|word| word.origin())
+            .collect();
+        let mut forwarded = Vec::new();
+        for (index, expected) in "xabx".chars().enumerate() {
+            let result = crate::test_harness::expect_expanded_command(&mut processor);
+            assert_eq!(result.spelling().semantic_token(), letter(expected));
+            assert_eq!(result.origin(), origins[index]);
+            let provenance = processor
+                .source_provenance(&result)
+                .expect("forwarded source location");
+            assert_eq!(provenance.range().start(), 7 + index as u64);
+            forwarded.push(result);
+        }
+        let after = crate::test_harness::expect_expanded_command(&mut processor);
+        assert_eq!(after.spelling().semantic_token(), letter('z'));
+        // Origin resolution still works after both nested macro rows retire.
+        assert!(
+            processor
+                .command
+                .input
+                .levels
+                .innermost_macro_activation()
+                .is_none()
+        );
+        for (index, result) in forwarded.iter().enumerate() {
+            let provenance = processor
+                .source_provenance(result)
+                .expect("retired macro source location");
+            assert_eq!(provenance.range().start(), 7 + index as u64);
+        }
+    });
+}

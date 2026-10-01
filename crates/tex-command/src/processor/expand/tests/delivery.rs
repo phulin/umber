@@ -51,8 +51,7 @@ fn sequential_macro_body_reads_advance_once_in_optimized_delivery() {
             .command_context()
             .expect("macro body context")
             .admit_macro_body(definition)
-            .expect("resident macro body")
-            .2;
+            .expect("resident macro body");
         let mut command = CommandState::default();
         command
             .push_macro_activation(macro_name, body, None, OriginId::UNKNOWN)

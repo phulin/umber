@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 use core::num::{NonZeroU32, NonZeroU64};
 use std::rc::Rc;
 
-use crate::macro_definition::MacroParameterPattern;
+use crate::macro_definition::{MacroParameterPattern, MacroParameterPatternBuilder};
 use crate::state_hash::StateHasher;
 use crate::token::TokenWord;
 
@@ -86,19 +86,49 @@ impl<G> DefinitionRef<G> {
     }
 }
 
-/// One immutable published definition.
-///
-/// The word span is shared with every executing body which admitted it, so
-/// a group exit may drop the row while an activation still reads its words.
+/// One row owner of an immutable definition payload.
 #[derive(Clone)]
-pub(super) struct DefinitionEntry {
-    pub(super) words: Rc<[TokenWord]>,
+pub(super) struct DefinitionEntry(Rc<DefinitionPayload>);
+
+/// Words, compiled matcher, and origin share exactly one semantic lifetime.
+pub(super) struct DefinitionPayload {
+    pub(super) words: Box<[TokenWord]>,
     pub(super) parameter_len: u32,
     pub(super) origin: crate::token::OriginId,
     pub(super) pattern: MacroParameterPattern,
 }
 
+impl core::ops::Deref for DefinitionEntry {
+    type Target = DefinitionPayload;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl DefinitionEntry {
+    pub(super) fn new(
+        words: Box<[TokenWord]>,
+        parameter_len: u32,
+        origin: crate::token::OriginId,
+        pattern: MacroParameterPatternBuilder,
+    ) -> Self {
+        let pattern = pattern.finish(&words[..parameter_len as usize]);
+        Self(Rc::new(DefinitionPayload {
+            words,
+            parameter_len,
+            origin,
+            pattern,
+        }))
+    }
+
+    pub(super) fn contents_equal(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+            || (self.parameter_len == other.parameter_len && self.words == other.words)
+    }
+}
+
+impl DefinitionPayload {
     #[inline(always)]
     pub(super) fn parameter_words(&self) -> &[TokenWord] {
         &self.words[..self.parameter_len as usize]
@@ -108,22 +138,15 @@ impl DefinitionEntry {
     pub(super) fn replacement_words(&self) -> &[TokenWord] {
         &self.words[self.parameter_len as usize..]
     }
-
-    pub(super) fn contents_equal(&self, other: &Self) -> bool {
-        self.pattern == other.pattern
-            && self.parameter_len == other.parameter_len
-            && (Rc::ptr_eq(&self.words, &other.words) || self.words == other.words)
-    }
 }
 
 /// Executing macro replacement body.
 ///
-/// Admission clones the definition's word span once. The packed input frame
+/// Admission retains the definition payload once. The packed input frame
 /// owns the sole logical position, and every read is one slice index; there
 /// is no physical cursor to advance, rebuild, or restore.
 pub struct ResidentMacroBody<G> {
-    words: Rc<[TokenWord]>,
-    start: u32,
+    payload: Rc<DefinitionPayload>,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -133,23 +156,15 @@ pub struct ResidentMacroBody<G> {
 /// observed or recovery path explicitly requests the traditional empty input
 /// row.
 pub enum AdmittedMacroDefinition<G> {
-    SimpleMacro {
-        pattern: MacroParameterPattern,
-        body: Option<ResidentMacroBody<G>>,
-    },
-    MatchingMacro {
-        pattern: MacroParameterPattern,
-        parameter_len: usize,
-        body: ResidentMacroBody<G>,
-    },
+    SimpleMacro { body: Option<ResidentMacroBody<G>> },
+    MatchingMacro { body: ResidentMacroBody<G> },
 }
 
 impl<G> ResidentMacroBody<G> {
     #[inline(always)]
     pub(super) fn admit(entry: &DefinitionEntry) -> Self {
         Self {
-            words: Rc::clone(&entry.words),
-            start: entry.parameter_len,
+            payload: Rc::clone(&entry.0),
             _brand: PhantomData,
         }
     }
@@ -158,7 +173,7 @@ impl<G> ResidentMacroBody<G> {
     #[must_use]
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.words.len() - self.start as usize
+        self.payload.words.len() - self.payload.parameter_len as usize
     }
 
     #[must_use]
@@ -170,22 +185,37 @@ impl<G> ResidentMacroBody<G> {
     /// Number of parameter-text words retained with this active macro.
     #[must_use]
     #[inline(always)]
-    pub const fn parameter_len(&self) -> usize {
-        self.start as usize
+    pub fn parameter_len(&self) -> usize {
+        self.payload.parameter_len as usize
     }
 
     /// The whole definition: its parameter text, then its replacement.
     #[must_use]
     #[inline(always)]
     pub fn definition_words(&self) -> &[TokenWord] {
-        &self.words
+        &self.payload.words
+    }
+
+    /// Borrows the sealed matcher owned by this retained definition.
+    #[must_use]
+    #[inline(always)]
+    pub fn parameter_pattern(&self) -> &MacroParameterPattern {
+        &self.payload.pattern
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub fn parameter_words(&self) -> &[TokenWord] {
+        self.payload.parameter_words()
     }
 
     /// Reads one parameter-text word.
     #[must_use]
     #[inline]
     pub fn parameter_word(&self, position: usize) -> Option<TokenWord> {
-        self.words[..self.start as usize].get(position).copied()
+        self.payload.words[..self.payload.parameter_len as usize]
+            .get(position)
+            .copied()
     }
 
     /// Reads one replacement word at a logical frame position.
@@ -199,8 +229,9 @@ impl<G> ResidentMacroBody<G> {
     #[must_use]
     #[inline(always)]
     pub fn word_at(&self, position: u32) -> Option<TokenWord> {
-        self.words
-            .get(self.start as usize + position as usize)
+        self.payload
+            .words
+            .get(self.payload.parameter_len as usize + position as usize)
             .copied()
     }
 
@@ -213,7 +244,7 @@ impl<G> ResidentMacroBody<G> {
 
     #[inline(always)]
     fn replacement(&self) -> &[TokenWord] {
-        &self.words[self.start as usize..]
+        &self.payload.words[self.payload.parameter_len as usize..]
     }
 
     /// Number of live holders of this body's word span, including the
@@ -222,15 +253,14 @@ impl<G> ResidentMacroBody<G> {
     #[doc(hidden)]
     #[must_use]
     pub fn profile_region_owner_count(&self) -> usize {
-        Rc::strong_count(&self.words)
+        Rc::strong_count(&self.payload)
     }
 }
 
 impl<G> Clone for ResidentMacroBody<G> {
     fn clone(&self) -> Self {
         Self {
-            words: Rc::clone(&self.words),
-            start: self.start,
+            payload: Rc::clone(&self.payload),
             _brand: PhantomData,
         }
     }
@@ -244,7 +274,7 @@ impl<G> core::fmt::Debug for ResidentMacroBody<G> {
 
 impl<G> PartialEq for ResidentMacroBody<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.start == other.start && Rc::ptr_eq(&self.words, &other.words)
+        Rc::ptr_eq(&self.payload, &other.payload)
     }
 }
 
@@ -252,8 +282,7 @@ impl<G> Eq for ResidentMacroBody<G> {}
 
 impl<G> core::hash::Hash for ResidentMacroBody<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.start.hash(state);
-        (Rc::as_ptr(&self.words).cast::<TokenWord>() as usize).hash(state);
+        (Rc::as_ptr(&self.payload) as usize).hash(state);
     }
 }
 
@@ -353,8 +382,8 @@ impl ExactSizeIterator for DefinitionWordIter<'_> {}
 
 impl<G> DefinitionView<'_, G> {
     #[must_use]
-    pub fn parameter_pattern(&self) -> MacroParameterPattern {
-        self.entry.pattern
+    pub fn parameter_pattern(&self) -> &MacroParameterPattern {
+        &self.entry.pattern
     }
 
     #[must_use]

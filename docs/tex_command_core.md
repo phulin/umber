@@ -2784,11 +2784,13 @@ matching at depth zero, input exhaustion/change, observation, recovery, or a
 fuel limit. The boundary word remains owned by the canonical `get_token` path,
 so outer validity, `\long`, rollback, and suspension semantics are unchanged.
 
-The initial promoted implementation does not use a compiled delimiter
-automaton, macro bytecode, or alternate fast matcher. Such acceleration may be
-added only through the optimization policy in section 32, with the canonical
-scalar matcher retained as the specification fallback and test oracle inside
-the new subsystem.
+Definition publication compiles delimiter failure links into the existing
+`MacroParameterPattern` once. Words, matcher, and origin share one immutable
+payload retained by definition rows and active macro bodies. Calls borrow that
+pattern directly and construct no invocation plan or failure table. The same
+scalar matcher uses those links to select a reusable literal prefix while its
+argument writer preserves source origins, brace depth, paragraph/outer checks,
+recovery splices, and group trimming; there is one matching implementation.
 
 TeX82 §392 skips the parameter matcher entirely for a definition beginning
 with `end_match`: a parameterless macro pushes its replacement body directly,
@@ -2837,8 +2839,8 @@ entry/restoration, completed arguments, activation, delimiter completion, and
 overlap recovery to their canonical observers. Crate tests additionally prove
 that rollback before a successful call replays the same activation and
 argument ranges while appending exactly one compact invocation record per replay;
-an architecture gate preserves one raw scalar fallback and rejects alternate
-matcher types.
+the matcher remains the sole consumer of raw argument delivery, including
+nested forwarding and retained delimiter-prefix source locations.
 
 ## 20. Canonical `scan_toks`
 
