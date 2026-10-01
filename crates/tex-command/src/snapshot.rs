@@ -1135,52 +1135,6 @@ impl<G> CommandStateSnapshot<G> {
     }
 }
 
-/// Move-only rollback point for a synchronous nested command episode.
-///
-/// Unlike [`CommandStateSnapshot`], this cursor may name the exact open
-/// attempt suffix owned by its caller. It cannot be cloned, summarized,
-/// serialized, or detached, and rollback consumes it once. The caller must
-/// therefore finish the nested episode before the enclosing operation can
-/// commit or close its scope.
-pub struct TransientCommandSnapshot<G> {
-    generation: CommandGenerationOwner<G>,
-    cursor: CommandSnapshotCursor,
-    replay: crate::input::ReplayTransientMark,
-    scratch: crate::execution_scratch::ExecutionScratchTransientMark,
-    brand: PhantomData<fn(&G) -> &G>,
-}
-
-impl<G> fmt::Debug for TransientCommandSnapshot<G> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("TransientCommandSnapshot")
-            .field("generation", &self.generation)
-            .field("cursor", &self.cursor)
-            .finish()
-    }
-}
-
-impl<G> TransientCommandSnapshot<G> {
-    fn new(
-        generation: CommandGenerationOwner<G>,
-        cursor: CommandSnapshotCursor,
-        replay: crate::input::ReplayTransientMark,
-        scratch: crate::execution_scratch::ExecutionScratchTransientMark,
-    ) -> Self {
-        Self {
-            generation,
-            cursor,
-            replay,
-            scratch,
-            brand: PhantomData,
-        }
-    }
-
-    fn addresses(&self, generation: &GenerationOwner<G>, timeline_owner: u64) -> bool {
-        self.generation.addresses(generation, timeline_owner)
-    }
-}
-
 /// Restartable command state retained at a named in-session boundary.
 ///
 /// A summary differs from an operation snapshot only in its publication

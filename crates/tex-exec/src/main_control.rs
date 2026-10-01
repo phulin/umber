@@ -6974,17 +6974,6 @@ impl<G> MainControl<G> {
             output_start,
         } = episode;
         let tracked_region_is_active = output_start.tracked_region_is_active;
-        let nested_snapshot = operation
-            .executes_nested_operations()
-            .then(|| {
-                self.command
-                    .state_mut()
-                    .transient_snapshot(stores)
-                    .map_err(|_| ExecError::MissingToken {
-                        context: "nested operation rollback snapshot",
-                    })
-            })
-            .transpose()?;
         let parking = self.suspend_main_control_parking(operation);
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_phase(
@@ -7003,18 +6992,6 @@ impl<G> MainControl<G> {
         ) {
             let result =
                 self.finish_host_owned_step(applied, output_start, stores, diagnostic_effects);
-            if let Some(snapshot) = nested_snapshot {
-                let settled = if result.as_ref().is_err_and(execution_error_is_resource) {
-                    self.command
-                        .state_mut()
-                        .rollback_transient(snapshot, stores)
-                } else {
-                    self.command.state_mut().commit_transient(snapshot, stores)
-                };
-                settled.map_err(|_| ExecError::MissingToken {
-                    context: "nested operation command settlement",
-                })?;
-            }
             *resource_provider = operation_resource_provider;
             return result;
         }

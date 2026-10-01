@@ -706,7 +706,7 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
                      _: &mut DiagnosticEffects,
                      _: PrintSink,
                      tokens: tex_state::ShipoutTokenSource<G>| {
-        replay_write_transaction(
+        replay_shipout_write(
             &mut command.borrow_mut(),
             modes,
             stores,
@@ -718,7 +718,7 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
                       _: &mut DiagnosticEffects,
                       kind: crate::shipout::ReplayTextKind,
                       tokens: tex_state::ShipoutTokenSource<G>| {
-        replay_text_transaction(
+        replay_shipout_text(
             &mut command.borrow_mut(),
             modes,
             stores,
@@ -764,11 +764,9 @@ pub(in crate::main_control) fn replay_text<G>(
     tokens: tex_state::TokenListId<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<Vec<u8>, ExecError> {
-    // Output replay is an isolated nested input transaction. Its synthetic
-    // token levels may allocate immutable token lists and publish observer
-    // events, but they must never advance or replace the surrounding source
-    // cursor. This also gives a failing nested form replay an exact command
-    // rollback boundary independent of the artifact/resource transaction.
+    // Output replay's synthetic token levels may allocate immutable token
+    // lists and publish observer events, but they retire before returning and
+    // never advance or replace the surrounding source cursor.
     let (expanded, pending) = command.with_processor_for_modes(stores, modes, |processor| {
         let result = processor
             .expand_output_replay(tokens)
@@ -861,7 +859,11 @@ pub(in crate::main_control) fn replay_write<G>(
     ))
 }
 
-fn replay_text_transaction<G>(
+/// Expands one `\special` or `\pdfliteral` replayed during shipout.
+///
+/// Like TeX82 §1368's `special_out`, the expansion consumes and pops the
+/// token levels it pushed; nothing is rolled back afterwards.
+fn replay_shipout_text<G>(
     command: &mut CommandMachine<'_, '_, G>,
     modes: &ModeNest,
     stores: &mut Universe<G>,
@@ -869,65 +871,37 @@ fn replay_text_transaction<G>(
     tokens: tex_state::ShipoutTokenSource<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<Vec<u8>, ExecError> {
-    let snapshot =
-        command
-            .state
-            .transient_snapshot(stores)
-            .map_err(|_| ExecError::MissingToken {
-                context: "output replay snapshot",
-            })?;
-    let result = {
-        let mut context = stores
-            .command_context()
-            .map_err(|_| ExecError::MissingToken {
-                context: "output replay admission",
-            })?;
-        let tokens = context
-            .admit_shipout_tokens(tokens)
-            .expect("output replay fits admitted durable storage");
-        replay_text(command, modes, &mut context, kind, tokens, diagnostics)
-    };
-    command
-        .state
-        .rollback_transient(snapshot, stores)
+    let mut context = stores
+        .command_context()
         .map_err(|_| ExecError::MissingToken {
-            context: "output replay rollback",
+            context: "output replay admission",
         })?;
-    result
+    let tokens = context
+        .admit_shipout_tokens(tokens)
+        .expect("output replay fits admitted durable storage");
+    replay_text(command, modes, &mut context, kind, tokens, diagnostics)
 }
 
-fn replay_write_transaction<G>(
+/// Expands one `\write` replayed during shipout.
+///
+/// TeX82 §1371's `write_out` reads through its inserted `\endwrite` and pops
+/// the write list; nothing is rolled back afterwards.
+fn replay_shipout_write<G>(
     command: &mut CommandMachine<'_, '_, G>,
     modes: &ModeNest,
     stores: &mut Universe<G>,
     tokens: tex_state::ShipoutTokenSource<G>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<crate::shipout::ExpandedWrite, ExecError> {
-    let snapshot =
-        command
-            .state
-            .transient_snapshot(stores)
-            .map_err(|_| ExecError::MissingToken {
-                context: "write replay snapshot",
-            })?;
-    let result = {
-        let mut context = stores
-            .command_context()
-            .map_err(|_| ExecError::MissingToken {
-                context: "write replay admission",
-            })?;
-        let tokens = context
-            .admit_shipout_tokens(tokens)
-            .expect("write replay fits admitted durable storage");
-        replay_write(command, modes, &mut context, tokens, diagnostics)
-    };
-    command
-        .state
-        .rollback_transient(snapshot, stores)
+    let mut context = stores
+        .command_context()
         .map_err(|_| ExecError::MissingToken {
-            context: "write replay rollback",
+            context: "write replay admission",
         })?;
-    result
+    let tokens = context
+        .admit_shipout_tokens(tokens)
+        .expect("write replay fits admitted durable storage");
+    replay_write(command, modes, &mut context, tokens, diagnostics)
 }
 
 /// Selects TeX82 §1370 `write_out`'s destination for a stream number that
@@ -1748,7 +1722,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         let mut command = command_cell.borrow_mut();
         let mut diagnostics = Vec::new();
         let result =
-            replay_text_transaction(&mut command, modes, stores, kind, tokens, &mut diagnostics)
+            replay_shipout_text(&mut command, modes, stores, kind, tokens, &mut diagnostics)
                 .map(crate::shipout::ExpandedReplayText);
         replay_diagnostics.borrow_mut().extend(diagnostics);
         result

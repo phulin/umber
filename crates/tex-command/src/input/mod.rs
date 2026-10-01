@@ -24,7 +24,7 @@ pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputLevelInlineState,
     MacroArgumentCursor, MacroBodyCursor, PackedInputFrame, PackedTokenOwnership,
     PackedTokenSources, PackedTokenSpanHandle, PackedTokenSpanSource, ReplayInputBuilderId,
-    ReplayLane, ReplayPayloadId, ReplayTrace, ReplayTransientMark, ResidentReplayCursor,
+    ReplayLane, ReplayPayloadId, ReplayTrace, ResidentReplayCursor,
     ResidentTokenRow, ResidentTokenStorage, RetirementBehavior, SourceLevel,
     SourceLevelExecutionState, SourceLexExecutionState, SourceOpenDepths, SourceRetirement,
     SourceSlot, SourceSlotKey, StoredReplayReason, TokenBehavior, TokenRowHeader,
@@ -156,31 +156,6 @@ impl<G> InputState<G> {
             pending_source_count: self.pending_sources.len(),
             force_eof: self.force_eof,
         }
-    }
-
-    pub(crate) fn begin_transient_replay(&mut self) -> ReplayTransientMark {
-        self.replay.begin_transient()
-    }
-
-    pub(crate) fn rollback_transient_replay(
-        &mut self,
-        mark: ReplayTransientMark,
-    ) -> Result<(), ()> {
-        self.replay.rollback_transient(mark);
-        for level in self.levels.iter() {
-            if let InputLevel::Resident(ResidentTokenRow {
-                storage: ResidentTokenStorage::Replay { replay, .. },
-                ..
-            }) = level
-            {
-                self.replay.reactivate(*replay);
-            }
-        }
-        self.replay.end_transient().map_err(|_| ())
-    }
-
-    pub(crate) fn commit_transient_replay(&mut self) -> Result<(), ()> {
-        self.replay.end_transient().map_err(|_| ())
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {

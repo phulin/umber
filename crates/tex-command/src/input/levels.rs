@@ -1141,11 +1141,6 @@ impl ResidentReplayCursor {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct ReplayTransientMark {
-    entries: usize,
-}
-
 #[derive(Debug, Eq, Hash, PartialEq)]
 struct ReplaySegment<T> {
     values: Vec<T>,
@@ -1550,7 +1545,6 @@ pub(crate) struct ReplayLane<G> {
     spare_input_builders: Vec<OwnedReplayWords>,
     input_builder_high_water: usize,
     words: SegmentedReplayLane<TracedTokenWord>,
-    transient_depth: u32,
     _generation: PhantomData<fn(&G) -> &G>,
 }
 
@@ -1562,7 +1556,6 @@ impl<G> Default for ReplayLane<G> {
             spare_input_builders: Vec::new(),
             input_builder_high_water: 0,
             words: SegmentedReplayLane::default(),
-            transient_depth: 0,
             _generation: PhantomData,
         }
     }
@@ -1582,7 +1575,6 @@ impl<G> Clone for ReplayLane<G> {
             spare_input_builders: Vec::with_capacity(input_builder_high_water),
             input_builder_high_water,
             words: self.words.clone(),
-            transient_depth: 0,
             _generation: PhantomData,
         }
     }
@@ -1985,44 +1977,7 @@ impl<G> ReplayLane<G> {
             return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
         }
         self.entries[index].released = true;
-        if self.transient_depth == 0 {
-            self.reclaim_released_suffix()?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn begin_transient(&mut self) -> ReplayTransientMark {
-        self.transient_depth = self
-            .transient_depth
-            .checked_add(1)
-            .expect("nested replay rollback depth is bounded");
-        ReplayTransientMark {
-            entries: self.entries.len(),
-        }
-    }
-
-    pub(crate) fn rollback_transient(&mut self, mark: ReplayTransientMark) {
-        let first = mark.entries.min(self.entries.len());
-        for entry in &mut self.entries[first..] {
-            entry.released = true;
-        }
-    }
-
-    pub(crate) fn reactivate(&mut self, replay: ReplayPayloadId<G>) {
-        if let Some(entry) = self.entries.get_mut(replay.entry as usize) {
-            entry.released = false;
-        }
-    }
-
-    pub(crate) fn end_transient(&mut self) -> Result<(), crate::execution_scratch::ScratchError> {
-        self.transient_depth = self
-            .transient_depth
-            .checked_sub(1)
-            .ok_or(crate::execution_scratch::ScratchError::InvalidCoordinate)?;
-        if self.transient_depth == 0 {
-            self.reclaim_released_suffix()?;
-        }
-        Ok(())
+        self.reclaim_released_suffix()
     }
 
     fn reclaim_released_suffix(&mut self) -> Result<(), crate::execution_scratch::ScratchError> {

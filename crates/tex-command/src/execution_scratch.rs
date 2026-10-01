@@ -250,13 +250,6 @@ struct MacroSlot {
     parent_slot: u32,
     sealed: bool,
     live: bool,
-    /// Nonzero while a synchronous command rollback point keeps this
-    /// logically retired frame's storage available for exact restoration.
-    transient_retired_at: u32,
-    /// Depth which reused this previously free slot, plus its original link.
-    /// These two scalars restore the free list without copying slot payloads.
-    transient_reused_at: u32,
-    transient_free_parent: u32,
 }
 
 impl MacroSlot {
@@ -269,9 +262,6 @@ impl MacroSlot {
         self.parent_slot = NO_MACRO_SLOT;
         self.sealed = false;
         self.live = false;
-        self.transient_retired_at = 0;
-        self.transient_reused_at = 0;
-        self.transient_free_parent = NO_MACRO_SLOT;
     }
 }
 
@@ -660,7 +650,6 @@ pub(crate) struct ExecutionScratch<G> {
     free_macro_slot: u32,
     macro_words: MacroWordLane,
     next_macro_serial: u64,
-    transient_depth: u32,
     expression_frames: Vec<crate::scanners::ExpressionFrame<G>>,
     _generation: PhantomData<fn(&G) -> &G>,
     #[cfg(test)]
@@ -693,7 +682,6 @@ impl<G> Default for ExecutionScratch<G> {
             free_macro_slot: NO_MACRO_SLOT,
             macro_words: MacroWordLane::default(),
             next_macro_serial: 1,
-            transient_depth: 0,
             expression_frames: Vec::new(),
             _generation: PhantomData,
             #[cfg(test)]
@@ -712,18 +700,6 @@ impl<G> Default for ExecutionScratch<G> {
             match_word_reads: Cell::new(0),
         }
     }
-}
-
-#[derive(Debug)]
-pub(crate) struct ExecutionScratchTransientMark {
-    depth: u32,
-    macro_slots_len: usize,
-    macro_words_len: u32,
-    macro_depth: u32,
-    active_macro_slot: u32,
-    pending_macro_slot: u32,
-    free_macro_slot: u32,
-    next_macro_serial: u64,
 }
 
 impl<G> ExecutionScratch<G> {
@@ -774,7 +750,6 @@ impl<G> ExecutionScratch<G> {
         if self.pending_slot().is_ok() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let mut reused_free_parent = None;
         let slot_index = if self.free_macro_slot == NO_MACRO_SLOT {
             let index = self.macro_slots.len();
             let packed_index = u32::try_from(index).map_err(|_| ScratchError::CapacityOverflow)?;
@@ -791,7 +766,6 @@ impl<G> ExecutionScratch<G> {
                 .filter(|slot| !slot.live)
                 .ok_or(ScratchError::InvalidCoordinate)?;
             ArgumentSetId::<G>::new(self.free_macro_slot, self.next_macro_serial)?;
-            reused_free_parent = Some(slot.parent_slot);
             self.free_macro_slot = slot.parent_slot;
             index
         };
@@ -819,11 +793,6 @@ impl<G> ExecutionScratch<G> {
         slot.parent_slot = NO_MACRO_SLOT;
         slot.sealed = false;
         slot.live = true;
-        slot.transient_retired_at = 0;
-        slot.transient_reused_at = reused_free_parent
-            .map(|_| self.transient_depth)
-            .unwrap_or(0);
-        slot.transient_free_parent = reused_free_parent.unwrap_or(NO_MACRO_SLOT);
         self.pending_macro_slot =
             u32::try_from(slot_index).expect("macro slot representability was preflighted");
         Ok(PendingArgumentSet {
@@ -1389,101 +1358,6 @@ impl<G> ExecutionScratch<G> {
         self.macro_depth as usize
     }
 
-    pub(crate) fn begin_transient(&mut self) -> ExecutionScratchTransientMark {
-        self.transient_depth = self
-            .transient_depth
-            .checked_add(1)
-            .expect("nested scratch rollback depth is bounded");
-        ExecutionScratchTransientMark {
-            depth: self.transient_depth,
-            macro_slots_len: self.macro_slots.len(),
-            macro_words_len: self.macro_words.len(),
-            macro_depth: self.macro_depth,
-            active_macro_slot: self.active_macro_slot,
-            pending_macro_slot: self.pending_macro_slot,
-            free_macro_slot: self.free_macro_slot,
-            next_macro_serial: self.next_macro_serial,
-        }
-    }
-
-    pub(crate) fn rollback_transient(
-        &mut self,
-        mark: ExecutionScratchTransientMark,
-    ) -> Result<(), ScratchError> {
-        if mark.depth != self.transient_depth
-            || mark.macro_slots_len > self.macro_slots.len()
-            || mark.macro_words_len > self.macro_words.len()
-        {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.truncate_macro_words(mark.macro_words_len)?;
-        for slot in &mut self.macro_slots[..mark.macro_slots_len] {
-            if slot.transient_reused_at >= mark.depth {
-                let parent = slot.transient_free_parent;
-                slot.clear();
-                slot.parent_slot = parent;
-            }
-            if slot.transient_retired_at >= mark.depth {
-                slot.transient_retired_at = 0;
-            }
-        }
-        self.macro_slots.truncate(mark.macro_slots_len);
-        self.macro_depth = mark.macro_depth;
-        self.active_macro_slot = mark.active_macro_slot;
-        self.pending_macro_slot = mark.pending_macro_slot;
-        self.free_macro_slot = mark.free_macro_slot;
-        self.next_macro_serial = mark.next_macro_serial;
-        self.transient_depth -= 1;
-        Ok(())
-    }
-
-    pub(crate) fn commit_transient(
-        &mut self,
-        mark: ExecutionScratchTransientMark,
-    ) -> Result<(), ScratchError> {
-        if mark.depth != self.transient_depth {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        if mark.depth > 1 {
-            for slot in &mut self.macro_slots {
-                if slot.transient_retired_at == mark.depth {
-                    slot.transient_retired_at -= 1;
-                }
-                if slot.transient_reused_at == mark.depth {
-                    slot.transient_reused_at -= 1;
-                }
-            }
-            self.transient_depth -= 1;
-            return Ok(());
-        }
-
-        let reclaim_mark = self
-            .macro_slots
-            .iter()
-            .filter(|slot| slot.transient_retired_at != 0)
-            .map(|slot| slot.reclaim_mark)
-            .min();
-        self.transient_depth = 0;
-        for index in 0..self.macro_slots.len() {
-            if self.macro_slots[index].transient_retired_at != 0 {
-                self.release_macro_slot(index as u32);
-            } else {
-                self.macro_slots[index].transient_reused_at = 0;
-                self.macro_slots[index].transient_free_parent = NO_MACRO_SLOT;
-            }
-        }
-        if let Some(reclaim_mark) = reclaim_mark
-            && self
-                .macro_slots
-                .iter()
-                .filter(|slot| slot.live)
-                .all(|slot| slot.lane_mark < reclaim_mark)
-        {
-            self.truncate_macro_words(reclaim_mark)?;
-        }
-        Ok(())
-    }
-
     #[cfg(test)]
     pub(crate) fn retained_slot_len(&self) -> usize {
         self.macro_slots.len()
@@ -1593,14 +1467,8 @@ impl<G> ExecutionScratch<G> {
             if pending.reclaim_mark > reclaim_mark {
                 pending.reclaim_mark = reclaim_mark;
             }
-        } else if self.transient_depth == 0 {
+        } else {
             self.truncate_macro_words(reclaim_mark)?;
-        }
-        if self.transient_depth != 0 {
-            self.macro_slots[frame.slot() as usize].transient_retired_at = self.transient_depth;
-            self.macro_depth -= 1;
-            self.active_macro_slot = parent_slot;
-            return Ok(());
         }
         self.release_macro_slot(frame.slot());
         self.macro_depth -= 1;
@@ -1609,10 +1477,6 @@ impl<G> ExecutionScratch<G> {
     }
 
     fn release_macro_slot(&mut self, slot_index: u32) {
-        if self.transient_depth != 0 {
-            self.macro_slots[slot_index as usize].transient_retired_at = self.transient_depth;
-            return;
-        }
         let slot = &mut self.macro_slots[slot_index as usize];
         slot.clear();
         slot.parent_slot = self.free_macro_slot;

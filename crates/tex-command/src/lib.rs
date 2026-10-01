@@ -172,7 +172,7 @@ pub use scanners::{
 pub use snapshot::{
     CommandCheckpointReleaseReceipt, CommandGenerationOwner, CommandRestoreError,
     CommandStateSnapshot, CommandSummary, CommandSummaryError, CommandTimelineCounters,
-    PreparedCommandReplayRestore, PreparedCommandRestore, TransientCommandSnapshot,
+    PreparedCommandReplayRestore, PreparedCommandRestore,
 };
 pub use state::{
     CommandGroupError, CommandGroupExit, CommandReplayEpisode, CommandSemanticDiagnostic,
