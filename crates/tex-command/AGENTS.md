@@ -47,30 +47,16 @@ collector (see `src/conditionals.rs`).
   releases its rows, and a failed synchronous scanner or child scope
   truncates its own suffix to a mark. A resource miss halts the command and
   the host replays from a full checkpoint.
-- `src/execution_scratch.rs`: current-generation reusable execution scratch.
-  Argument admission validates the pending macro frame and its next fixed slot
-  once, then mints the writer's exact fixed-block append position, provenance-
-  run boundary, delimiter rollback coordinates, brace depth, and first-scan
-  facts. Each accepted delivery writes its packed word at that resident
-  position, classifies its literal catcode once into a compact open, close, or
-  neither brace delta for both first-scan and depth settlement, and advances
-  those scalars exactly once without another frame/slot lookup or processor
-  forwarding helper. Inside an already-balanced argument group, ordinary
-  unobserved macro-body and argument input lends one physical/provenance span
-  directly to that writer and settles its literal prefix with one input/fuel
-  advance; control sequences, active characters, parameters, braces,
-  alignment tabs, observation, and storage boundaries return to scalar
-  delivery. Publication validates the frame once
-  and installs the already-written span and facts directly in the slot;
-  delimiter-prefix holdback retains the first classification until commit.
-  Sealing changes only the frame role; retirement
-  truncates to its absolute mark and returns suffix chunks to a reusable high
-  water. A pending child can inherit a retiring parent's earlier reclaim mark,
-  and its unpublished suffix may rebase only after the last active ancestor
-  retires. Activations never own a heap buffer or arena scope. `scan_toks`
-  owners and definition writers are call-local synchronous state; a resource
-  miss unwinds them and the host replays a full checkpoint. Only semantic
-  input/replay stacks and bounded expression storage remain in engine state.
+- `src/execution_scratch.rs`, `src/execution_scratch/tests.rs`: reusable
+  execution scratch. The one pending macro match writes its arguments into a
+  single word vector through a stack-local `MacroArgumentWriter` that owns the
+  brace depth, first-scan facts, outer-group trim, and delimiter-candidate
+  holdback. Matching never nests, so activation copies the finished arguments
+  onto the input token stack (`transfer_macro_match`) and clears the vector.
+  Plain argument runs append whole input-stack slices. Bounded expression
+  frames also live here. `scan_toks` owners and definition writers are
+  call-local synchronous state; a resource miss unwinds them and the host
+  replays a full checkpoint.
 - `src/scanner_kernel.rs`: stack-local synchronous scanner cursor shared by
   macro arguments and `scan_toks`. It keeps brace and first-token facts beside
   the caller-owned output sink and settles already-admitted plain input runs
@@ -256,73 +242,23 @@ collector (see `src/conditionals.rs`).
   tests. A cursor with no loaded line returns `NeedLine`; physical acquisition
   belongs to the singular input-top owner and never receives a backing registry
   through the ordinary token path.
-- `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
-  source/token cursors. `InputLevel` has exactly a source variant and one
-  resident-token variant. Every resident row embeds one authoritative
-  `TokenRowHeader`; its packed frame carries identity, source context,
-  position, limit, semantic kind, delivery flags, and retirement flags beside
-  the row rollback marker. A tagged `ResidentTokenStorage` carries only the
-  replay, durable, attempt, macro-body, or macro-argument lifetime coordinate.
-  Replay, macro
-  replacement/argument, attempt, and durable sources adapt once at level
-  creation; ordinary delivery writes through that lifetime tag into the
-  frame-owned `HotToken` and `CommandWord`, resolves the resident packed word
-  directly, returns only the
-  scalar packed-resolution fact,
-  reuses the resolver's literal-catcode classification for brace treatment,
-  and advances only the common frame position. All resident storage domains
-  share one header transition for logical position advance,
-  parameter interception, and exhaustion; the storage tag performs only the
-  lifetime-specific word read. A successful safe read proves the admitted
-  frame position and advances that scalar without a second bounds decision.
-  Attempt-list admission validates the exact extent once, so resident delivery
-  directly indexes its lifetime-specific storage without rebuilding a list view
-  or repeating its attempt key and row authentication. Replay keeps only its
-  physical run, segment, and in-segment offset outside the header; prefix and
-  fixed-segment refreshes are cold boundary helpers, while an ordinary word
-  reads the current segment and advances its resident coordinates. A
-  source frame installs its external-source identity in the common packed
-  frame, and replay/macro frames inherit that context at admission. Delivery
-  consequently carries the active source to main control with one top-row read
-  and no ancestry or source-slot lookup. Test builds retain exact structural
-  domain-dispatch counters, while ordinary profiling builds derive known
-  fixture volumes at the benchmark boundary and update no counter merely to
-  classify the resident row. Resident source tokens and literal
-  macro arguments return directly; stored-token access projects its optional
-  packed out-parameter slot while the word is resident. Admission consumes the
-  storage handle into an exact replay, attempt, or durable top-row variant;
-  the warm loop dispatches directly from that tag, loads one word, advances one
-  scalar, and otherwise writes the reused destination with at most one meaning
-  lookup; only the parameter branch enters replay. A parameter candidate overwrites the same
-  unresolved value before meaning resolution; there is no raw command envelope
-  or second delivery slot. The store-minted resident macro body owns its
-  absolute replacement cursor; the command row adds no second bounds or
-  position carrier. Delivery returns the relative semantic position with the
-  word, while rollback swaps one opaque store coordinate. That coordinate
-  derives a flat region-local chunk slot in constant time and changes chunks
-  only at a 4,096-word boundary. The macro-argument row likewise owns the
-  admitted range's absolute scratch-lane coordinate directly. Warm delivery
-  checks that coordinate against the range end and advances it once; admission
-  already proved the lower bound and lane extent. The same operation returns
-  the relative delivery position plus separate packed word/origin parts, so it
-  neither revalidates the admitted range nor constructs and immediately splits
-  a `TracedTokenWord`. Rollback journals the exact absolute coordinate and
-  provenance run. A
-  source row contains only its common frame and one eight-byte ABA-checked key
-  into the `InputStack`'s fixed reusable source-slot pages. The slot solely
-  owns backing, replacement, `everyeof`, ancestry, source classification, and
-  retirement state. Ordinary history stores
-  only its copy-small lexer cursor; cold line, backing, and everyeof changes
-  move prior owners into the same logical-stack journal. The slot's runtime-only
-  incarnation never rolls back with its semantic `InputLevelId`, so stale or
-  foreign compact and stored inverses fail before mutation. The module also owns cold backup source coordinates,
-  explicit stored/transient/backed-up TeX82 cell ownership, exact LIFO segment
-  reuse, and orthogonal delivery/retirement classifications. A source slot's
-  replay words retain their packed origin directly and own no parallel decoded
-  source-provenance lane. Escaping general-text collectors write once into an
-  isolated generation replay builder so nested input cannot interleave their
-  span; sealing moves only its header, and LIFO retirement truncates its chunks
-  into the builder-lane high-water pool for allocation-free reuse. A source
+- `src/input/levels.rs`, `src/input/levels/tests.rs`: input rows and the
+  token stack's admission seeds. `InputLevel` is a source row or a
+  `ResidentTokenRow`, whose packed frame header holds identity, source
+  context, start, position, limit, kind, and delivery/retirement flags. Every
+  token row reads `words[frame.start() + frame.position()]` from the
+  `InputStack`'s one token stack, TeX82's `mem` for live input.
+  `ResidentTokenStorage` only tags the row: a `List` with its stored,
+  transient, or backed-up ownership; a `MacroBody` whose activation region
+  holds the argument copies, the parameter text, and the replacement; or a
+  `MacroArgument` delivering one argument span. `PackedTokenSpanSource` seeds
+  append a list's words at admission (durable and attempt lists, transient
+  and backed-up tokens, and `PendingInsertion` suffixes collected by
+  escaping `scan_toks`). A source row contains its common frame and a key
+  into the `InputStack`'s reusable source-slot pages; the slot owns backing,
+  replacement, `everyeof`, ancestry, classification, and retirement state.
+  A source
+  slot's optional `open_depths` owner isA source
   slot's optional `open_depths` owner is
   `\tracingnesting`'s own record. Nested source
   opening installs it before the frame becomes visible; retirement borrows it
@@ -340,8 +276,8 @@ collector (see `src/conditionals.rs`).
   into the canonical processor loop, including its final meaning resolution,
   suppression, fuel, and alignment settlement; no per-word result or
   settlement helper separates cursor advancement from expansion
-  classification. Every non-source replay-token,
-  durable-token, attempt-token, macro-body, and macro-argument arm enters one
+  classification. Every token-list, macro-body, and macro-argument arm enters
+  one
   compile-time-inlined resident-token transition for parameter
   handling, exhaustion, and final delivery. Each arm keeps only its concrete
   lifetime-specific word read and cursor update. The storage tag is selected
@@ -390,7 +326,7 @@ collector (see `src/conditionals.rs`).
   meaning, applied one-delivery suppression, classified only required
   alignment work, and returned no command reference. The files also own the singular
   physical-line acquisition owner, the canonical frame-push transition and scalar maximum
-  update, centralized replay-lane admission, retained v-template lifecycle,
+  update, centralized token-stack admission, retained v-template lifecycle,
   scalar active macro-body/parameter accounting, macro-activation cleanup,
   borrowed source-ancestry comparison with copy-only
   retirement facts, `param_start` parameter replay ownership, and
@@ -565,17 +501,13 @@ collector (see `src/conditionals.rs`).
   only `ClassifiedToken`; its purpose-built writer and generation-owned words
   live in `execution_scratch.rs`, with no generic destination dispatch.
 - `src/macro_call.rs`, `src/input/levels.rs`, and `src/execution_scratch.rs`:
-  macro invocation borrows the definition synchronously and admits one
-  specialized macro-body row. That row shares the definition's immutable word
-  span and carries an optional `ArgumentSetId`; parameterless macros create no
-  matcher or argument state. Resident selection returns the bare body or
-  argument cursor, relies on checkpoint or exposure capture, and
-  advances one packed word before testing `Param` and writing the final command
-  slot. Argument cursors admit word/origin parts directly, derive the delivery
-  position from their one absolute coordinate, and advance one provenance-run
-  index only at run boundaries. A body word read is one slice index at the
-  packed frame position, and plain runs lend the span suffix directly.
-  Tail-child argument spans never rebase or copy.
+  macro invocation borrows the definition synchronously. Activation appends
+  the matched arguments, pushes their spans onto the parameter stack (TeX82's
+  `param_stack`), appends the definition's parameter text and replacement, and
+  pushes one `MacroBody` row over the replacement. Retiring that row
+  truncates the token stack and parameter stack back to the activation's
+  marks. An out-parameter word pushes a `MacroArgument` row over its span.
+  Parameterless macros create no matcher or argument state.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses

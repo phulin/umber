@@ -901,8 +901,7 @@ impl<G> CommandState<G> {
     /// releases the command processor borrow.
     #[must_use]
     pub fn output_open_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
-        self.input
-            .output_open_context(stores, &self.attempt, &self.scratch)
+        self.input.output_open_context(stores)
     }
 
     /// Captures the allocation-free live-input coordinate used until a real
@@ -958,8 +957,7 @@ impl<G> CommandState<G> {
         &self,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> bool {
-        self.input
-            .open_context_starts_with_print_ln(stores, &self.attempt, &self.scratch)
+        self.input.open_context_starts_with_print_ln(stores)
     }
 
     pub(crate) fn output_retiring_source_context(
@@ -967,8 +965,7 @@ impl<G> CommandState<G> {
         source: &crate::input::SourceLevel<G>,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
-        self.input
-            .output_retiring_source_context(source, stores, &self.attempt, &self.scratch)
+        self.input.output_retiring_source_context(source, stores)
     }
 
     /// TeX82 §§1026/1028's context after the selected output list ends.
@@ -979,8 +976,7 @@ impl<G> CommandState<G> {
     /// exactly as it would after §1026's `end_token_list`.
     #[must_use]
     pub fn output_close_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
-        self.input
-            .output_close_context(stores, &self.attempt, &self.scratch)
+        self.input.output_close_context(stores)
     }
 
     /// Whether TeX82 §1370's artificial deferred-write input is live.
@@ -1439,25 +1435,16 @@ impl<G> CommandState<G> {
         if retained_v_template(top) {
             return Ok(());
         }
-        let exhausted_backed_up_endv = match top {
+        let exhausted_backed_up_endv = matches!(
+            top,
             InputLevel::Resident(crate::input::ResidentTokenRow {
                 header,
-                storage: crate::input::ResidentTokenStorage::Replay { replay, .. },
-            }) => {
-                matches!(header.behavior(), TokenBehavior::BackedUp(_))
-                    && self.input.replay.ownership(*replay)
-                        == Some(crate::input::PackedTokenOwnership::BackedUp)
-                    && header.frame.position() >= header.frame.limit()
-            }
-            InputLevel::Resident(crate::input::ResidentTokenRow {
-                header,
-                storage: crate::input::ResidentTokenStorage::BackedUpWord(_),
-            }) => {
-                matches!(header.behavior(), TokenBehavior::BackedUp(_))
-                    && header.frame.position() >= header.frame.limit()
-            }
-            _ => false,
-        };
+                storage: crate::input::ResidentTokenStorage::List(
+                    crate::input::PackedTokenOwnership::BackedUp
+                ),
+            }) if matches!(header.behavior(), TokenBehavior::BackedUp(_))
+                && header.frame.position() >= header.frame.limit()
+        );
         if exhausted_backed_up_endv
             && self
                 .input

@@ -207,6 +207,12 @@ impl<G> TokenListId<G> {
         }
     }
 
+    /// The list's words, for one bulk copy into the input token stack.
+    #[must_use]
+    pub fn words(&self) -> &[TokenWord] {
+        &self.words
+    }
+
     pub(crate) const fn semantic_identity(&self) -> Option<u64> {
         match self.packed_identity >> 32 {
             0 => None,
@@ -412,6 +418,12 @@ impl<G> TokenListView<G> {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.list.words.is_empty()
+    }
+
+    /// The list's words, for one bulk copy into the input token stack.
+    #[must_use]
+    pub fn words(&self) -> &[TokenWord] {
+        &self.list.words
     }
 
     /// Transfers this immutable span's owner without another shared-owner

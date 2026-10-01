@@ -53,7 +53,9 @@ fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
                 .2
         };
         let mut command = CommandState::default();
-        command.push_macro_activation(name.symbol(), body, None, OriginId::UNKNOWN);
+        command
+            .push_macro_activation(name.symbol(), &body, None, OriginId::UNKNOWN)
+            .expect("macro activation");
 
         universe
             .end_group(tex_state::GroupKind::Simple)

@@ -104,26 +104,14 @@ fn install_replacement_macro<G>(
 }
 
 fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
-    let arguments = processor
+    let (arguments, _) = processor
         .input
         .levels
+        .innermost_macro_activation()
+        .expect("macro activation");
+    arguments[0]
         .iter()
-        .rev()
-        .find_map(|level| level.macro_body().and_then(|body| body.arguments))
-        .expect("macro argument set");
-    let range = processor
-        .scratch
-        .argument_range(arguments, 1)
-        .expect("live frame")
-        .expect("first argument");
-    (0..processor.scratch.argument_len(range).expect("live range"))
-        .map(|index| {
-            processor
-                .scratch
-                .argument_word(range, index)
-                .expect("argument word")
-                .semantic_token()
-        })
+        .map(|word| word.semantic_token())
         .collect()
 }
 
@@ -243,9 +231,12 @@ fn observed_parameterless_macro_keeps_exceptional_activation_semantics() {
         assert_eq!(after.simple - before.simple, 0);
         assert_eq!(after.empty_rows_elided - before.empty_rows_elided, 0);
         assert!(
-            processor.command.input.levels.last().is_some_and(|level| {
-                level.macro_body().is_some_and(|body| body.body.is_empty())
-            })
+            processor
+                .command
+                .input
+                .levels
+                .innermost_macro_activation()
+                .is_some_and(|(_, replacement)| replacement.is_empty())
         );
     });
 }
@@ -339,34 +330,20 @@ fn empty_delimited_argument_reuses_its_direct_destination_for_the_next_argument(
         let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
         assert_eq!(processor.macro_call(&mut call), Ok(true));
-        let arguments = processor
+        let (arguments, _) = processor
             .command
             .input
             .levels
-            .iter()
-            .rev()
-            .find_map(|level| level.macro_body().and_then(|body| body.arguments))
-            .expect("macro argument set");
-        let first = processor
-            .command
-            .scratch
-            .argument_range(arguments, 1)
-            .expect("live frame")
-            .expect("first argument");
-        let second = processor
-            .command
-            .scratch
-            .argument_range(arguments, 2)
-            .expect("live frame")
-            .expect("second argument");
-        assert_eq!(processor.command.scratch.argument_len(first), Ok(0));
-        assert_eq!(processor.command.scratch.argument_len(second), Ok(1));
+            .innermost_macro_activation()
+            .expect("macro activation");
+        assert_eq!(arguments.len(), 2);
+        assert!(arguments[0].is_empty());
         assert_eq!(
-            processor.command.scratch.argument_word(second, 0),
-            Ok(tex_state::token::TracedTokenWord::pack(
+            arguments[1],
+            [tex_state::token::TracedTokenWord::pack(
                 letter('x'),
                 tex_state::token::OriginId::UNKNOWN,
-            ))
+            )]
         );
     });
 }
@@ -476,28 +453,24 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 retains_before,
                 "successful matching and activation borrow then move the resident owner"
             );
-            let body = processor
+            let (arguments, replacement) = processor
                 .command
                 .input
                 .levels
-                .last()
-                .and_then(crate::input::InputLevel::macro_body)
+                .innermost_macro_activation()
                 .expect("live macro body");
-            assert_eq!(body.arguments.is_some(), has_arguments);
+            assert_eq!(!arguments.is_empty(), has_arguments);
+            assert_eq!(replacement.len(), expected_replacement_len);
             assert_eq!(
-                processor.command.input.levels.active_macro_parameters(),
-                usize::from(has_arguments)
+                processor.command.input.levels.parameters.len(),
+                arguments.len()
             );
-            assert_eq!(
-                processor.command.scratch.frame_len(),
-                usize::from(has_arguments)
-            );
+            assert!(processor.command.scratch.is_quiescent());
             let tex_state::meaning::ResolvedMeaning::Macro { definition, .. } = call.meaning_ref()
             else {
                 panic!("macro meaning");
             };
             assert_eq!(definition.semantic_owner_count(), owners_before);
-            assert_eq!(body.body.len(), expected_replacement_len);
             assert!(matches!(
                 call.meaning_ref(),
                 tex_state::meaning::ResolvedMeaning::Macro { .. }
@@ -550,26 +523,17 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
             let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
             let activates = expected;
-            assert_eq!(processor.command.scratch.retained_slot_len(), 0);
-            let writer_before = processor.command.scratch.match_writer_operations();
             assert_eq!(processor.macro_call(&mut call), Ok(expected));
-            assert_eq!(
-                processor.command.scratch.match_writer_operations(),
-                writer_before
-            );
-            assert_eq!(processor.command.scratch.retained_slot_len(), 0);
-            assert_eq!(processor.command.scratch.argument_word_len(), 0);
-            assert_eq!(processor.command.scratch.frame_len(), 0);
-            assert_eq!(processor.command.input.levels.active_macro_parameters(), 0);
+            assert!(processor.command.scratch.is_quiescent());
+            assert!(processor.command.input.levels.parameters.is_empty());
             if activates {
-                let body = processor
+                let (arguments, _) = processor
                     .command
                     .input
                     .levels
-                    .last()
-                    .and_then(crate::input::InputLevel::macro_body)
+                    .innermost_macro_activation()
                     .expect("literal-prefix macro body");
-                assert!(body.arguments.is_none());
+                assert!(arguments.is_empty());
             }
         }
     });
@@ -653,7 +617,7 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('i')
         );
-        assert_eq!(processor.command.scratch.frame_len(), 0);
+        assert_eq!(processor.command.scratch.argument_word_len(), 0);
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -668,7 +632,7 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('t')
         );
-        assert_eq!(processor.command.scratch.frame_len(), 0);
+        assert_eq!(processor.command.scratch.argument_word_len(), 0);
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -683,7 +647,7 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('n')
         );
-        assert_eq!(processor.command.scratch.frame_len(), 0);
+        assert_eq!(processor.command.scratch.argument_word_len(), 0);
 
         assert_eq!(
             processor
@@ -699,9 +663,7 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
                 .semantic_token(),
             letter('i')
         );
-        assert_eq!(processor.command.scratch.frame_len(), 0);
-        assert_eq!(processor.command.scratch.retained_slot_len(), 0);
-        assert_eq!(processor.command.scratch.physical_macro_word_copies(), 0);
+        assert_eq!(processor.command.scratch.argument_word_len(), 0);
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -1373,27 +1335,7 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
         );
         let mut long_call = destination.take().expect("long macro command");
         assert_eq!(processor.macro_call(&mut long_call), Ok(true));
-        let arguments = processor
-            .command
-            .input
-            .levels
-            .iter()
-            .find_map(|level| level.macro_body().and_then(|body| body.arguments))
-            .expect("long macro argument set");
-        let range = processor
-            .command
-            .scratch
-            .argument_range(arguments, 1)
-            .expect("live long-macro frame")
-            .expect("long macro first argument");
-        let facts = processor
-            .command
-            .scratch
-            .argument_facts(range)
-            .expect("sealed long-macro facts");
-        assert!(facts.rejects_non_long_paragraph());
-        assert!(facts.removable_outer_group());
-        assert_eq!(processor.command.scratch.match_word_reads(), 0);
+        assert_eq!(active_argument_tokens(processor.command), [paragraph]);
 
         assert_eq!(
             processor
@@ -1420,7 +1362,7 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
             processor.macro_call(&mut short_call),
             Err(crate::CommandError::ParagraphInMacroArgument)
         );
-        assert_eq!(processor.command.scratch.frame_len(), 0);
+        assert_eq!(processor.command.scratch.argument_word_len(), 0);
         assert_eq!(
             crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
@@ -1509,28 +1451,6 @@ fn paragraph_delimiter_prefix_is_not_reclassified_after_commit() {
             active_argument_tokens(processor.command),
             [paragraph, letter('x')]
         );
-        let arguments = processor
-            .command
-            .input
-            .levels
-            .iter()
-            .find_map(|level| level.macro_body().and_then(|body| body.arguments))
-            .expect("delimited macro argument set");
-        let range = processor
-            .command
-            .scratch
-            .argument_range(arguments, 1)
-            .expect("live delimited-macro frame")
-            .expect("delimited macro first argument");
-        assert!(
-            !processor
-                .command
-                .scratch
-                .argument_facts(range)
-                .expect("sealed delimited-macro facts")
-                .rejects_non_long_paragraph()
-        );
-        assert_eq!(processor.command.scratch.match_word_reads(), 0);
     });
 }
 
@@ -1616,192 +1536,6 @@ fn paragraph_fact_uses_token_identity_not_current_meaning() {
             Err(crate::CommandError::ParagraphInMacroArgument)
         );
     });
-}
-
-#[cfg(feature = "profiling")]
-#[test]
-fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies() {
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    struct Evidence {
-        fact_classifications: u64,
-        token_settlements: u64,
-        fact_updates: u64,
-        writer_admissions: u64,
-        writer_finalizations: u64,
-        slot_validations: u64,
-        allocation_calls: u64,
-        requested_bytes: u64,
-        whole_token_copies: u64,
-        whole_command_copies: u64,
-        definition_retains: u64,
-        aggregate_word_reads: u64,
-    }
-
-    fn run(token_count: usize) -> Evidence {
-        crate::test_harness::with_universe(|universe| {
-            let paragraph = install_par(universe);
-            let definition = universe
-                .allocate_definition(&[TokenWord::pack(Token::Param(1))], &[])
-                .expect("empty replacement macro definition");
-            let symbol = universe.intern("measured").expect("macro name");
-            universe
-                .assign_meaning(
-                    symbol,
-                    MeaningWord::macro_definition(MeaningFlags::LONG, definition),
-                    AssignmentScope::Global,
-                )
-                .expect("macro meaning");
-            let macro_token = Token::Cs(symbol.symbol());
-            let argument = |count: usize| {
-                if count == 1 {
-                    return vec![letter('x')];
-                }
-                let begin = Token::Char {
-                    ch: '{',
-                    cat: Catcode::BeginGroup,
-                };
-                let end = Token::Char {
-                    ch: '}',
-                    cat: Catcode::EndGroup,
-                };
-                let mut tokens = Vec::with_capacity(count);
-                tokens.push(begin);
-                for index in 1..count - 1 {
-                    tokens.push(match index % 4 {
-                        0 => paragraph,
-                        1 => letter('a'),
-                        2 => other('!'),
-                        _ => Token::Char {
-                            ch: ' ',
-                            cat: Catcode::Space,
-                        },
-                    });
-                }
-                tokens.push(end);
-                tokens
-            };
-
-            let mut command = CommandState::default();
-            let mut capabilities = CommandHostCapabilities::default();
-            let mut fuel = crate::CommandFuelLedger::default();
-            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-
-            // Warm every owner with the larger shape, then retire the empty
-            // replacement so its macro frame and lane chunks become reusable.
-            let mut warm = Vec::with_capacity(4_097);
-            warm.push(macro_token);
-            warm.extend(argument(4_096));
-            crate::test_harness::push(&mut command, warm);
-            {
-                let mut context = universe.command_context().expect("warm command context");
-                let mut processor = crate::test_harness::processor(
-                    &mut command,
-                    &mut context,
-                    &mut capabilities,
-                    &mut fuel,
-                    &mut diagnostic_effects,
-                );
-                let mut call = crate::test_harness::expect_raw_command(&mut processor);
-                assert_eq!(processor.macro_call(&mut call), Ok(true));
-                {
-                    let mut destination = None;
-                    assert_eq!(
-                        processor
-                            .get_x_token_into(&mut destination)
-                            .expect("warm replacement retirement"),
-                        crate::DeliveryStatus::End
-                    );
-                    assert!(destination.is_none());
-                };
-            }
-            assert_eq!(command.scratch.frame_len(), 0);
-
-            let mut measured = Vec::with_capacity(token_count + 1);
-            measured.push(macro_token);
-            measured.extend(argument(token_count));
-            crate::test_harness::push(&mut command, measured);
-            let mut context = universe
-                .command_context()
-                .expect("measured command context");
-            let mut processor = crate::test_harness::processor(
-                &mut command,
-                &mut context,
-                &mut capabilities,
-                &mut fuel,
-                &mut diagnostic_effects,
-            );
-            let mut call = crate::test_harness::expect_raw_command(&mut processor);
-            processor
-                .command
-                .profile_reset_token_collector_path_counters();
-            let writer_before = processor.command.scratch.match_writer_operations();
-            let token_copies = processor.command.scratch.physical_macro_word_copies();
-            let aggregate_reads = processor.command.scratch.match_word_reads();
-            let command_copies = crate::command::command_ownership_counters().clones;
-            let definition_retains = tex_state::definition_retain_count();
-            let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
-            let allocations = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            {
-                let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-                assert_eq!(processor.macro_call(&mut call), Ok(true));
-            }
-            let after_allocations =
-                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            let after_commands = crate::command::command_ownership_counters();
-            let collector_counters = processor.command.profile_token_collector_path_counters();
-            let writer_after = processor.command.scratch.match_writer_operations();
-            Evidence {
-                fact_classifications: collector_counters.1,
-                token_settlements: writer_after.1 - writer_before.1,
-                fact_updates: writer_after.2 - writer_before.2,
-                writer_admissions: writer_after.0 - writer_before.0,
-                writer_finalizations: writer_after.3 - writer_before.3,
-                slot_validations: writer_after.4 - writer_before.4,
-                allocation_calls: after_allocations.calls - allocations.calls,
-                requested_bytes: after_allocations.requested_bytes - allocations.requested_bytes,
-                whole_token_copies: processor.command.scratch.physical_macro_word_copies()
-                    - token_copies,
-                whole_command_copies: after_commands.clones - command_copies,
-                definition_retains: tex_state::definition_retain_count() - definition_retains,
-                aggregate_word_reads: processor.command.scratch.match_word_reads()
-                    - aggregate_reads,
-            }
-        })
-    }
-
-    let one = run(1);
-    assert_eq!(
-        one,
-        Evidence {
-            fact_classifications: 1,
-            token_settlements: 1,
-            fact_updates: 1,
-            writer_admissions: 1,
-            writer_finalizations: 1,
-            slot_validations: 2,
-            allocation_calls: 0,
-            requested_bytes: 0,
-            whole_token_copies: 0,
-            whole_command_copies: 0,
-            definition_retains: 0,
-            aggregate_word_reads: 0,
-        }
-    );
-    for token_count in [64, 4_096] {
-        let measured = run(token_count);
-        assert_eq!(measured.fact_classifications, token_count as u64);
-        assert_eq!(measured.token_settlements, token_count as u64);
-        assert_eq!(measured.fact_updates, token_count as u64);
-        assert_eq!(measured.writer_admissions, 1);
-        assert_eq!(measured.writer_finalizations, 1);
-        assert_eq!(measured.slot_validations, 2);
-        assert_eq!(measured.allocation_calls, 0);
-        assert_eq!(measured.requested_bytes, 0);
-        assert_eq!(measured.whole_token_copies, 0);
-        assert_eq!(measured.whole_command_copies, 0);
-        assert_eq!(measured.definition_retains, 0);
-        assert_eq!(measured.aggregate_word_reads, 0);
-    }
 }
 
 #[test]

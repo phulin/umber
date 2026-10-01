@@ -221,7 +221,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     pub(super) fn transition_input_frame(
         &mut self,
-        transition: InputFrameTransition<G>,
+        transition: InputFrameTransition,
     ) -> Result<ResidentColdOutcome, CommandError> {
         let cold = match transition {
             InputFrameTransition::Boundary(boundary) => boundary,
@@ -229,15 +229,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 resident_index,
                 identity,
             } => {
-                let retirement = self
-                    .command
-                    .finish_resident_exhaustion(
-                        resident_index,
-                        identity,
-                        &mut self.observer,
-                        &mut self.immediate_write_retirement,
-                    )
-                    .map_err(|()| CommandError::input_invariant())?;
+                let retirement = self.command.finish_resident_exhaustion(
+                    resident_index,
+                    identity,
+                    &mut self.observer,
+                    &mut self.immediate_write_retirement,
+                );
                 let Some(retirement) = retirement else {
                     return Ok(ResidentColdOutcome::Retry);
                 };
@@ -245,16 +242,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             InputFrameTransition::Parameter {
                 slot,
-                arguments,
+                span,
                 active_source,
             } => {
                 self.command
-                    .push_resident_parameter_cursor(
-                        slot,
-                        arguments,
-                        active_source,
-                        &mut self.observer,
-                    )
+                    .push_resident_parameter_cursor(slot, span, active_source, &mut self.observer)
                     .map_err(|()| CommandError::input_invariant())?;
                 return Ok(ResidentColdOutcome::Retry);
             }

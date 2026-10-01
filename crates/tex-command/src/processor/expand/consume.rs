@@ -205,14 +205,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn skip_resident_run(
         &mut self,
         nested_conditions: &mut u32,
-    ) -> Option<ControlFlow<(), ResidentWordRead<G>>> {
+    ) -> Option<ControlFlow<(), ResidentWordRead>> {
         let index = self.command.roots.input.levels.rows.len().checked_sub(1)?;
         let Some(InputLevel::Resident(row)) = self.command.roots.input.levels.rows.get(index)
         else {
             return None;
         };
         #[cfg(feature = "profiling")]
-        let argument = matches!(row.storage, ResidentTokenStorage::MacroArgument(_));
+        let argument = matches!(row.storage, ResidentTokenStorage::MacroArgument { .. });
         // A `\noexpand`-marked frame settles its control sequence through
         // the ordinary reader; every other resident control sequence is
         // classified by one meaning lookup below.

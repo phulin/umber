@@ -13,7 +13,6 @@ use tex_state::token::{Catcode, TokenWord, TracedTokenWord};
 
 use crate::attempt::{AttemptDefinitionId, AttemptTokenBufferId, AttemptTokenListId};
 use crate::command::HotCommand;
-use crate::input::ReplayInputBuilderId;
 
 /// Per-word rewrite applied only while an escaping general-text collector
 /// writes its final replay owner.
@@ -128,9 +127,11 @@ pub(crate) enum TokenCollectorDestination<G> {
     AttemptDefinition {
         definition: AttemptDefinitionId,
     },
-    /// Final generation-owned storage for a standalone escaping inserted list.
+    /// A standalone escaping inserted list, written into the pending-insertion
+    /// words that its input level later adopts.
     ReplayInput {
-        builder: ReplayInputBuilderId<G>,
+        /// Pending-insertion length when collection began.
+        start: u32,
         transform: ReplayWordTransform,
         /// Observation-only source spelling for a non-identity transform.
         /// The ordinary unobserved path keeps no parallel word owner.
@@ -213,12 +214,12 @@ impl<G> TokenCollector<G> {
 
     pub(crate) fn prepare_replay_input(
         &mut self,
-        builder: ReplayInputBuilderId<G>,
+        start: u32,
         transform: ReplayWordTransform,
         observed: bool,
     ) -> Result<(), ()> {
         self.prepare_destination(TokenCollectorDestination::ReplayInput {
-            builder,
+            start,
             transform,
             observed_source: (observed && transform != ReplayWordTransform::Identity)
                 .then(Vec::new),

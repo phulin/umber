@@ -1,48 +1,10 @@
 //! Direct borrowing of the semantic input stack's physical readers.
 
 use super::{ReadSite, ResidentWord, ResidentWordRead};
-use crate::input::{InputLevel, PackedInputFrame, ResidentTokenStorage};
+use crate::input::{InputLevel, InputLevelId, ResidentTokenStorage};
 use crate::{CommandError, CommandProcessor, CommandState};
 use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
-
-/// Reads one packed word from an already-selected resident storage domain.
-///
-/// Stack mutation, exhaustion, substitution, diagnostics, and recovery must
-/// remain outside this instruction body. The loader is specific to the
-/// selected lifetime domain and the packed frame remains the sole logical
-/// cursor shared by all of them.
-#[inline(always)]
-fn next_word_from_current_frame(
-    frame: &mut PackedInputFrame,
-    load: impl FnOnce(u32) -> Option<(TokenWord, OriginId)>,
-) -> Option<LoadedWord> {
-    let position = frame.position();
-    if position >= frame.limit() {
-        return None;
-    }
-    let (word, origin) = load(position)?;
-    let consumed = frame.advance_resident();
-    debug_assert_eq!(consumed, position);
-    Some((word, origin, position))
-}
-
-/// Reads one word from an admitted macro replacement body: one frame bound
-/// check, one slice load, and one frame advance.
-#[inline(always)]
-fn next_macro_body_word_from_current_frame<G>(
-    frame: &mut PackedInputFrame,
-    body: &crate::input::MacroBodyCursor<G>,
-) -> Option<LoadedWord> {
-    let position = frame.position();
-    if position >= frame.limit() {
-        return None;
-    }
-    let word = body.body.word_at(position)?;
-    let consumed = frame.advance_resident();
-    debug_assert_eq!(consumed, position);
-    Some((word, OriginId::UNKNOWN, position))
-}
 
 /// One admission decision. It is deliberately infallible: a consumer whose
 /// admission can fail records the failure itself and answers `Stop`, so the
@@ -51,31 +13,6 @@ pub(super) enum ResidentAdmission {
     Continue,
     Stop,
     Boundary,
-}
-
-type LoadedWord = (TokenWord, OriginId, u32);
-
-/// Consume words under one storage selection. A rejected word has already
-/// advanced the reader and is returned exactly once for semantic settlement.
-#[inline(always)]
-fn read_selected_run(
-    mut load: impl FnMut() -> Option<LoadedWord>,
-    admit: &mut impl FnMut(TokenWord, OriginId) -> ResidentAdmission,
-    loaded: &mut u64,
-) -> ControlFlow<(), Option<LoadedWord>> {
-    loop {
-        let Some((word, origin, position)) = load() else {
-            return ControlFlow::Continue(None);
-        };
-        *loaded += 1;
-        match admit(word, origin) {
-            ResidentAdmission::Stop => return ControlFlow::Break(()),
-            ResidentAdmission::Continue => {}
-            ResidentAdmission::Boundary => {
-                return ControlFlow::Continue(Some((word, origin, position)));
-            }
-        }
-    }
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
@@ -98,15 +35,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         else {
             return Ok(false);
         };
-        let ResidentTokenStorage::MacroBody(body) = &row.storage else {
+        if !matches!(row.storage, ResidentTokenStorage::MacroBody(_)) {
             return Ok(false);
-        };
-        let position = row.header.frame.position();
-        if position >= row.header.frame.limit()
-            || body
-                .body
-                .word_at(position)
-                .and_then(|word| word.out_parameter_slot())
+        }
+        let frame = row.header.frame;
+        if frame.position() >= frame.limit()
+            || levels.words[frame.absolute_position()]
+                .token_word()
+                .out_parameter_slot()
                 .is_none()
         {
             return Ok(false);
@@ -119,127 +55,62 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     #[inline(always)]
-    pub(super) fn read_resident_word(&mut self) -> ResidentWordRead<G> {
+    pub(super) fn read_resident_word(&mut self) -> ResidentWordRead {
         match Self::read_resident_run(self.command, |_, _| ResidentAdmission::Boundary) {
             ControlFlow::Continue(read) => read,
             ControlFlow::Break(()) => unreachable!("single-word admission cannot stop"),
         }
     }
 
-    /// Borrows the exposed semantic frame's reader. The frame owns both its
-    /// logical position and physical cursor across nested input and rollback;
-    /// no parallel storage selector needs refresh or invalidation.
+    /// Reads the exposed token-list frame: `words[start + position]`, one
+    /// bounds check and one frame advance per word whatever owns the list.
     #[inline(always)]
     pub(super) fn read_resident_run(
         command_state: &mut CommandState<G>,
         mut admit: impl FnMut(TokenWord, OriginId) -> ResidentAdmission,
-    ) -> ControlFlow<(), ResidentWordRead<G>> {
-        let Some(resident_index) = command_state.roots.input.levels.rows.len().checked_sub(1)
-        else {
+    ) -> ControlFlow<(), ResidentWordRead> {
+        let levels = &mut command_state.roots.input.levels;
+        let Some(resident_index) = levels.rows.len().checked_sub(1) else {
             return ControlFlow::Continue(ResidentWordRead::NoResident);
         };
-        let row = match &mut command_state.roots.input.levels.rows[resident_index] {
+        let row = match &mut levels.rows[resident_index] {
             InputLevel::Source(_) => {
                 return ControlFlow::Continue(ResidentWordRead::Source { resident_index });
             }
             InputLevel::Resident(row) => row,
         };
-        #[cfg(feature = "profiling")]
-        let raw_kind = match &row.storage {
-            ResidentTokenStorage::MacroArgument(_) => crate::fuel::RawDeliveryKind::MacroArgument,
-            _ => crate::fuel::RawDeliveryKind::StoredToken,
-        };
-
-        let mut loaded = 0;
-        let current = match &mut row.storage {
-            ResidentTokenStorage::Replay { replay, cursor } => read_selected_run(
-                || {
-                    next_word_from_current_frame(&mut row.header.frame, |_position| {
-                        command_state
-                            .roots
-                            .input
-                            .replay
-                            .advance_sequential(*replay, cursor)
-                            .map(|word| (word.token_word(), word.origin()))
-                    })
-                },
-                &mut admit,
-                &mut loaded,
-            ),
-            ResidentTokenStorage::Attempt(list) => read_selected_run(
-                || {
-                    next_word_from_current_frame(&mut row.header.frame, |position| {
-                        command_state
-                            .attempt
-                            .resident_token_word(list, position as usize)
-                            .map(|word| (word.token_word(), word.origin()))
-                    })
-                },
-                &mut admit,
-                &mut loaded,
-            ),
-            ResidentTokenStorage::BackedUpWord(word) => {
-                let word = *word;
-                read_selected_run(
-                    || {
-                        next_word_from_current_frame(&mut row.header.frame, |position| {
-                            (position == 0).then(|| (word.token_word(), word.origin()))
-                        })
-                    },
-                    &mut admit,
-                    &mut loaded,
-                )
+        let words = &levels.words;
+        let frame = &mut row.header.frame;
+        let start = frame.start() as usize;
+        let word = loop {
+            let position = frame.position();
+            if position >= frame.limit() {
+                return ControlFlow::Continue(ResidentWordRead::Exhausted {
+                    resident_index,
+                    identity: InputLevelId(frame.identity()),
+                });
             }
-            ResidentTokenStorage::Durable(list) => read_selected_run(
-                || {
-                    next_word_from_current_frame(&mut row.header.frame, |position| {
-                        list.word_at(position as usize)
-                            .map(|word| (word, tex_state::token::OriginId::UNKNOWN))
-                    })
-                },
-                &mut admit,
-                &mut loaded,
-            ),
-            ResidentTokenStorage::MacroBody(body) => read_selected_run(
-                || next_macro_body_word_from_current_frame(&mut row.header.frame, body),
-                &mut admit,
-                &mut loaded,
-            ),
-            ResidentTokenStorage::MacroArgument(argument) => read_selected_run(
-                || {
-                    next_word_from_current_frame(&mut row.header.frame, |position| {
-                        argument.advance_delivery(position, &command_state.scratch)
-                    })
-                },
-                &mut admit,
-                &mut loaded,
-            ),
+            let word = words[start + position as usize];
+            frame.advance_resident();
+            match admit(word.token_word(), word.origin()) {
+                ResidentAdmission::Continue => {}
+                ResidentAdmission::Stop => return ControlFlow::Break(()),
+                ResidentAdmission::Boundary => break word,
+            }
         };
-
-        let current = match current {
-            ControlFlow::Break(()) => return ControlFlow::Break(()),
-            ControlFlow::Continue(current) => current,
-        };
-        let Some((word, origin, _position)) = current else {
-            return ControlFlow::Continue(ResidentWordRead::Exhausted {
-                resident_index,
-                identity: row.header.identity(),
-            });
-        };
-
+        let (word, origin) = (word.token_word(), word.origin());
         if let Some(slot) = word.out_parameter_slot() {
-            let arguments = match &row.storage {
-                ResidentTokenStorage::MacroBody(body) => Some(body.arguments),
-                ResidentTokenStorage::MacroArgument(_) => None,
-                ResidentTokenStorage::Replay { .. }
-                | ResidentTokenStorage::BackedUpWord(_)
-                | ResidentTokenStorage::Durable(_)
-                | ResidentTokenStorage::Attempt(_) => Some(None),
+            let span = match &row.storage {
+                ResidentTokenStorage::MacroBody(body) => {
+                    Some(body.argument_span(&levels.parameters, slot))
+                }
+                ResidentTokenStorage::MacroArgument { .. } => None,
+                ResidentTokenStorage::List(_) => Some(None),
             };
-            if let Some(arguments) = arguments {
+            if let Some(span) = span {
                 return ControlFlow::Continue(ResidentWordRead::Parameter {
                     slot,
-                    arguments,
+                    span,
                     active_source: row.header.frame.source_context(),
                 });
             }
@@ -253,7 +124,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             suppress_expandable,
             site: ReadSite::Resident,
             #[cfg(feature = "profiling")]
-            raw_kind,
+            raw_kind: match row.storage {
+                ResidentTokenStorage::MacroArgument { .. } => {
+                    crate::fuel::RawDeliveryKind::MacroArgument
+                }
+                _ => crate::fuel::RawDeliveryKind::StoredToken,
+            },
         }))
     }
 }

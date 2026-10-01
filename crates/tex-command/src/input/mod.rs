@@ -21,12 +21,11 @@ pub(crate) use history::{
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
-    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroArgumentCursor, MacroBodyCursor,
-    PackedInputFrame, PackedTokenOwnership, PackedTokenSources, PackedTokenSpanHandle,
-    PackedTokenSpanSource, ReplayInputBuilderId, ReplayLane, ReplayPayloadId, ReplayTrace,
-    ResidentReplayCursor, ResidentTokenRow, ResidentTokenStorage, RetirementBehavior, SourceLevel,
-    SourceOpenDepths, SourceRetirement, SourceSlot, StoredReplayReason, TokenBehavior,
-    TokenRowHeader, packed_token_frame,
+    ArgumentSpan, BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroBodyCursor,
+    PackedInputFrame, PackedTokenOwnership, PackedTokenSpanHandle, PackedTokenSpanSource,
+    PendingInsertion, ReplayTrace, ResidentTokenRow, ResidentTokenStorage, RetirementBehavior,
+    SourceLevel, SourceOpenDepths, SourceRetirement, SourceSlot, StoredReplayReason, TokenBehavior,
+    TokenRowHeader, TokenSources, packed_token_frame, push_untraced_words,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor, SourceOffsetMap};
 #[cfg(test)]
@@ -62,9 +61,10 @@ pub(crate) use tokenizer::{
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputState<G> {
     pub(crate) levels: InputStack<G>,
-    /// Stable coarse-segment replay storage. Input levels carry only compact
-    /// coordinates; exact LIFO retirement restores lane cursors in O(1).
-    pub(crate) replay: ReplayLane<G>,
+    /// Words of the escaping inserted lists `scan_toks` is collecting (an
+    /// `\unexpanded` or case-shifted list), in collection order. Each list
+    /// moves onto the token stack when its level is pushed.
+    pub(crate) pending_insertions: Vec<tex_state::token::TracedTokenWord>,
     /// TeX82's process-global `line`, retained after a physical source level
     /// retires while token-list input produced from that line remains live.
     ///
@@ -92,7 +92,6 @@ pub(crate) struct InputState<G> {
 /// The input state one checkpoint copies by value.
 pub(crate) struct InputCapture<G> {
     pub(crate) levels: InputStack<G>,
-    replay: ReplayLane<G>,
     retained_file_line_number: i32,
     next_level_identity: u64,
     next_source_identity: u64,
@@ -101,9 +100,7 @@ pub(crate) struct InputCapture<G> {
 
 impl<G> InputCapture<G> {
     pub(crate) fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            .saturating_add(self.levels.retained_bytes())
-            .saturating_add(self.replay.retained_bytes())
+        std::mem::size_of::<Self>().saturating_add(self.levels.retained_bytes())
     }
 }
 
@@ -148,7 +145,7 @@ impl<G> Default for InputState<G> {
     fn default() -> Self {
         Self {
             levels: InputStack::default(),
-            replay: ReplayLane::default(),
+            pending_insertions: Vec::new(),
             retained_file_line_number: 0,
             terminal_context_line: None,
             pending_sources: BTreeMap::new(),
@@ -166,7 +163,6 @@ impl<G> InputState<G> {
     pub(crate) fn checkpoint_copy(&self) -> InputCapture<G> {
         InputCapture {
             levels: self.levels.checkpoint_copy(),
-            replay: self.replay.clone(),
             retained_file_line_number: self.retained_file_line_number,
             next_level_identity: self.next_level_identity,
             next_source_identity: self.next_source_identity,
@@ -176,7 +172,7 @@ impl<G> InputState<G> {
 
     pub(crate) fn install_checkpoint(&mut self, capture: &InputCapture<G>) {
         self.levels.install_checkpoint(&capture.levels);
-        self.replay = capture.replay.clone();
+        self.pending_insertions.clear();
         self.retained_file_line_number = capture.retained_file_line_number;
         self.next_level_identity = capture.next_level_identity;
         self.next_source_identity = capture.next_source_identity;
@@ -375,7 +371,7 @@ pub(crate) fn tracked_input_projection<G>(
                     project_line(&mut line, &slot.cursor, current);
                 }
             }
-            level @ InputLevel::Resident(row) => {
+            InputLevel::Resident(row) => {
                 let cursor = &row.header;
                 stack.byte(1);
                 // Macro-activation and alignment identities need stack-relative
@@ -386,13 +382,10 @@ pub(crate) fn tracked_input_projection<G>(
                 ) {
                     return None;
                 }
-                if matches!(
-                    row.storage,
-                    ResidentTokenStorage::MacroBody(_) | ResidentTokenStorage::MacroArgument(_)
-                ) {
+                if !matches!(row.storage, ResidentTokenStorage::List(_)) {
                     return None;
                 }
-                project_token_cursor(&mut stack, level, &input.replay, state)?;
+                project_token_cursor(&mut stack, row, &input.levels, state)?;
             }
         }
     }
@@ -496,12 +489,12 @@ fn project_line(hash: &mut ProjectionHasher, cursor: &SourceCursor, line: &lines
 
 fn project_token_cursor<G>(
     hash: &mut ProjectionHasher,
-    level: &InputLevel<G>,
-    replay_lane: &ReplayLane<G>,
+    row: &ResidentTokenRow,
+    levels: &InputStack<G>,
     state: &tex_state::CommandContext<'_, G>,
 ) -> Option<()> {
-    let cursor = level.stored_common()?;
-    hash.u64(level.stored_position()? as u64);
+    let cursor = &row.header;
+    hash.u64(u64::from(cursor.frame.position()));
     hash.byte(match cursor.retirement() {
         RetirementBehavior::Pop => 0,
         RetirementBehavior::StopAtEnd => 1,
@@ -518,23 +511,8 @@ fn project_token_cursor<G>(
             return None;
         }
     });
-    match level.stored_span_cold()? {
-        PackedTokenSpanHandle::Replay { replay, len } => {
-            for index in 0..len as usize {
-                project_token(
-                    hash,
-                    replay_lane.indexed_get_cold(replay, index)?.token()?,
-                    state,
-                )?;
-            }
-        }
-        PackedTokenSpanHandle::DurableList { list, .. } => {
-            for word in state.token_list(list) {
-                project_token(hash, word.semantic_token(), state)?;
-            }
-        }
-        PackedTokenSpanHandle::AttemptList { .. } => return None,
-        PackedTokenSpanHandle::Word(word) => project_token(hash, word.semantic_token(), state)?,
+    for word in levels.row_words(row) {
+        project_token(hash, word.token()?, state)?;
     }
     Some(())
 }
@@ -597,13 +575,6 @@ impl ProjectionHasher {
     }
 }
 
-struct TokenContextStorage<'a, 'state, G> {
-    stores: &'a tex_state::CommandContext<'state, G>,
-    replay_lane: &'a ReplayLane<G>,
-    attempt: &'a crate::attempt::AttemptArena<G>,
-    scratch: &'a crate::execution_scratch::ExecutionScratch<G>,
-}
-
 impl<G> InputState<G> {
     /// tex.web §310's `show_context` display for the canonical input stack.
     ///
@@ -611,13 +582,8 @@ impl<G> InputState<G> {
     /// projects §312--§315's owned strings. [`tex_state::print::ErrorContextLevel`]
     /// then applies the shared two-line pseudoprint arithmetic (§316--§318) to
     /// each selected level.
-    pub(crate) fn output_open_context(
-        &self,
-        stores: &tex_state::CommandContext<'_, G>,
-        attempt: &crate::attempt::AttemptArena<G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> String {
-        let rendered = self.render_context_for_levels(&self.levels, None, stores, attempt, scratch);
+    pub(crate) fn output_open_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
+        let rendered = self.render_context_for_levels(&self.levels, None, stores);
         #[cfg(test)]
         DIAGNOSTIC_CONTEXT_MEASUREMENT.with(|measurement| {
             let mut measurement = measurement.get();
@@ -641,8 +607,6 @@ impl<G> InputState<G> {
     pub(crate) fn open_context_starts_with_print_ln(
         &self,
         stores: &tex_state::CommandContext<'_, G>,
-        attempt: &crate::attempt::AttemptArena<G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> bool {
         let widths = stores.error_context_widths();
         for (index, level) in self.levels.iter().enumerate().rev() {
@@ -659,45 +623,17 @@ impl<G> InputState<G> {
                         return false;
                     }
                 }
-                level @ InputLevel::Resident(row) => match &row.storage {
+                InputLevel::Resident(row) => match &row.storage {
                     ResidentTokenStorage::MacroBody(body) => {
-                        if Self::macro_body_context_level(
-                            stores,
-                            body,
-                            row.header.position(),
-                            widths,
-                        )
-                        .is_some()
+                        if Self::macro_body_context_level(stores, &self.levels, row, body, widths)
+                            .is_some()
                         {
                             return true;
                         }
                     }
-                    ResidentTokenStorage::MacroArgument(argument) => {
-                        if Self::macro_argument_context_level(
-                            stores,
-                            scratch,
-                            argument,
-                            row.header.position(),
-                            widths,
-                        )
-                        .is_some()
-                        {
-                            return true;
-                        }
-                    }
-                    _ => {
-                        if Self::token_context_level(
-                            TokenContextStorage {
-                                stores,
-                                replay_lane: &self.replay,
-                                attempt,
-                                scratch,
-                            },
-                            level,
-                            current,
-                            widths,
-                        )
-                        .is_some()
+                    ResidentTokenStorage::List(_) | ResidentTokenStorage::MacroArgument { .. } => {
+                        if Self::token_context_level(stores, &self.levels, row, current, widths)
+                            .is_some()
                         {
                             return !matches!(row.trace(), ReplayTrace::BackedUp);
                         }
@@ -714,18 +650,11 @@ impl<G> InputState<G> {
         &self,
         retiring: &SourceLevel<G>,
         stores: &tex_state::CommandContext<'_, G>,
-        attempt: &crate::attempt::AttemptArena<G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> String {
-        self.render_context_for_levels(&self.levels, Some(retiring), stores, attempt, scratch)
+        self.render_context_for_levels(&self.levels, Some(retiring), stores)
     }
 
-    pub(crate) fn output_close_context(
-        &self,
-        stores: &tex_state::CommandContext<'_, G>,
-        attempt: &crate::attempt::AttemptArena<G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> String {
+    pub(crate) fn output_close_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
         let output_index = self.levels.iter().position(|level| {
             matches!(
                 level,
@@ -736,7 +665,7 @@ impl<G> InputState<G> {
             )
         });
         let level_count = output_index.unwrap_or_else(|| self.levels.len());
-        self.render_context_for_levels(&self.levels[..level_count], None, stores, attempt, scratch)
+        self.render_context_for_levels(&self.levels[..level_count], None, stores)
     }
 
     fn render_context_for_levels(
@@ -744,8 +673,6 @@ impl<G> InputState<G> {
         input_levels: &[InputLevel<G>],
         retiring_source: Option<&SourceLevel<G>>,
         stores: &tex_state::CommandContext<'_, G>,
-        attempt: &crate::attempt::AttemptArena<G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> String {
         let widths = stores.error_context_widths();
         let error_context_lines =
@@ -774,30 +701,19 @@ impl<G> InputState<G> {
                     widths,
                 )
             }
-            level @ InputLevel::Resident(row) => match &row.storage {
+            InputLevel::Resident(row) => match &row.storage {
                 ResidentTokenStorage::MacroBody(body) => {
-                    Self::macro_body_context_level(stores, body, row.header.position(), widths)
+                    Self::macro_body_context_level(stores, &self.levels, row, body, widths)
                 }
-                ResidentTokenStorage::MacroArgument(argument) => {
-                    Self::macro_argument_context_level(
+                ResidentTokenStorage::List(_) | ResidentTokenStorage::MacroArgument { .. } => {
+                    Self::token_context_level(
                         stores,
-                        scratch,
-                        argument,
-                        row.header.position(),
+                        &self.levels,
+                        row,
+                        index + 1 == input_levels.len(),
                         widths,
                     )
                 }
-                _ => Self::token_context_level(
-                    TokenContextStorage {
-                        stores,
-                        replay_lane: &self.replay,
-                        attempt,
-                        scratch,
-                    },
-                    level,
-                    index + 1 == input_levels.len(),
-                    widths,
-                ),
             },
         };
         let mut reached_bottom_source = false;
@@ -810,9 +726,7 @@ impl<G> InputState<G> {
                         .unwrap_or(source);
                     selected.slot.cursor.line.is_some()
                 }
-                level @ InputLevel::Resident(_) => {
-                    Self::context_level_is_visible(level, None, current)
-                }
+                InputLevel::Resident(row) => Self::context_level_is_visible(row, current),
             };
             if let InputLevel::Source(source) = level {
                 let source = retiring_source
@@ -862,52 +776,27 @@ impl<G> InputState<G> {
         output
     }
 
-    fn context_level_is_visible(
-        level: &InputLevel<G>,
-        source_slot: Option<&SourceSlot<G>>,
-        current: bool,
-    ) -> bool {
-        match level {
-            InputLevel::Source(_) => source_slot
-                .expect("source visibility receives its live slot")
-                .cursor
-                .line
-                .is_some(),
-            level @ InputLevel::Resident(row) => {
-                if matches!(
-                    row.storage,
-                    ResidentTokenStorage::MacroBody(_) | ResidentTokenStorage::MacroArgument(_)
-                ) {
-                    return true;
-                }
-                if matches!(row.trace(), ReplayTrace::BackedUp)
-                    && level.stored_position().expect("stored row")
-                        >= level
-                            .stored_span_cold()
-                            .expect("stored row has span")
-                            .frame_len()
-                    && !current
-                {
-                    return false;
-                }
-                true
-            }
-        }
+    fn context_level_is_visible(row: &ResidentTokenRow, current: bool) -> bool {
+        // §312: a fully read backed-up list shows only as the current level.
+        !(matches!(row.trace(), ReplayTrace::BackedUp)
+            && row.header.frame.position() >= row.header.frame.limit()
+            && !current)
     }
 
     fn macro_body_context_level(
         stores: &tex_state::CommandContext<'_, G>,
-        body: &MacroBodyCursor<G>,
-        position: usize,
+        levels: &InputStack<G>,
+        row: &ResidentTokenRow,
+        body: &MacroBodyCursor,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
         // TeX82 §§323/319 keep a macro's token-list reference on the
         // input level and pseudoprint that same live list. The defining group
         // can already be gone here (notably after §800's two `unsave`s), so
-        // diagnostic projection must use the resident body owner rather than
-        // re-resolving its non-owning definition coordinate.
-        let count = body.body.len();
-        let split = position.min(count);
+        // the activation's own copy of its parameter text and replacement is
+        // the projection's source.
+        let replacement = levels.row_words(row);
+        let split = row.header.position().min(replacement.len());
         let render = |token: tex_state::token::Token| {
             let mut raw = String::new();
             crate::processor::expand_render::append_token_list_token_text(stores, token, &mut raw);
@@ -916,20 +805,20 @@ impl<G> InputState<G> {
             rendered
         };
         let mut before = ContextTail::new(widths.half_error_line());
-        for index in (0..split).rev() {
+        for word in replacement[..split].iter().rev() {
             if before.is_complete() {
                 break;
             }
-            before.prepend_str(&render(body.body.word(index)?.semantic_token()));
+            before.prepend_str(&render(word.semantic_token()));
         }
         if !before.is_complete() {
             before.prepend_str("->");
         }
-        for index in (0..body.body.parameter_len()).rev() {
+        for word in levels.macro_parameter_text(row).iter().rev() {
             if before.is_complete() {
                 break;
             }
-            before.prepend_str(&render(body.body.parameter_word(index)?.semantic_token()));
+            before.prepend_str(&render(word.semantic_token()));
         }
         let (before, before_chars) = before.finish();
         let label = crate::processor::expand_render::token_list_token_text(
@@ -942,11 +831,11 @@ impl<G> InputState<G> {
             .saturating_add(before_chars)
             .min(widths.half_error_line());
         let mut after = ContextHead::new(widths.error_line().saturating_sub(indent));
-        for index in split..count {
+        for word in &replacement[split..] {
             if after.is_complete() {
                 break;
             }
-            after.push_str(&render(body.body.word(index)?.semantic_token()));
+            after.push_str(&render(word.semantic_token()));
         }
         let (after, after_chars) = after.finish();
         Some(
@@ -1179,40 +1068,15 @@ impl<G> InputState<G> {
 
     /// §314's `<Print type of token list>` and §315's pseudoprint.
     fn token_context_level(
-        storage: TokenContextStorage<'_, '_, G>,
-        level: &InputLevel<G>,
+        stores: &tex_state::CommandContext<'_, G>,
+        levels: &InputStack<G>,
+        row: &ResidentTokenRow,
         current: bool,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
-        let tokens = level.stored_common()?;
-        let trace = level.trace()?;
-        let span = level.stored_span_cold()?;
-        let TokenContextStorage {
-            stores,
-            replay_lane,
-            attempt,
-            scratch,
-        } = storage;
-        fn span_len<G>(
-            _stores: &tex_state::CommandContext<'_, G>,
-            span: &PackedTokenSpanHandle<G>,
-            _scratch: &crate::execution_scratch::ExecutionScratch<G>,
-        ) -> usize {
-            span.frame_len()
-        }
-
-        fn span_token<G>(
-            _stores: &tex_state::CommandContext<'_, G>,
-            span: &PackedTokenSpanHandle<G>,
-            replay_lane: &ReplayLane<G>,
-            index: usize,
-            attempt: &crate::attempt::AttemptArena<G>,
-            _scratch: &crate::execution_scratch::ExecutionScratch<G>,
-        ) -> Option<tex_state::token::Token> {
-            PackedTokenSources::new(replay_lane, attempt)
-                .indexed_token_at_cold(span, index)
-                .map(|(word, _)| word.semantic_token())
-        }
+        let tokens = &row.header;
+        let trace = row.trace();
+        let words = levels.row_words(row);
 
         fn render_token<G>(
             stores: &tex_state::CommandContext<'_, G>,
@@ -1235,8 +1099,8 @@ impl<G> InputState<G> {
             stores.append_selector_string_text(text, rendered);
         }
 
-        let count = span_len(stores, &span, scratch);
-        let split = level.stored_position()?.min(count);
+        let count = words.len();
+        let split = tokens.position().min(count);
         let noexpand_marker = matches!(
             tokens.behavior(),
             TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
@@ -1263,14 +1127,12 @@ impl<G> InputState<G> {
         {
             before.prepend_str(sentinel);
         }
-        for index in (0..split).rev() {
+        for word in words[..split].iter().rev() {
             if before.is_complete() {
                 break;
             }
-            if let Some(token) = span_token(stores, &span, replay_lane, index, attempt, scratch) {
-                render_token(stores, token, &mut raw, &mut rendered);
-                before.prepend_str(&rendered);
-            }
+            render_token(stores, word.semantic_token(), &mut raw, &mut rendered);
+            before.prepend_str(&rendered);
         }
         if split > 0
             && !before.is_complete()
@@ -1317,14 +1179,12 @@ impl<G> InputState<G> {
             render_selector_text(stores, marker, &mut rendered);
             after.push_str(&rendered);
         }
-        for index in split..count {
+        for word in &words[split..] {
             if after.is_complete() {
                 break;
             }
-            if let Some(token) = span_token(stores, &span, replay_lane, index, attempt, scratch) {
-                render_token(stores, token, &mut raw, &mut rendered);
-                after.push_str(&rendered);
-            }
+            render_token(stores, word.semantic_token(), &mut raw, &mut rendered);
+            after.push_str(&rendered);
         }
         if !after.is_complete()
             && matches!(
@@ -1348,73 +1208,6 @@ impl<G> InputState<G> {
         } else {
             label
         };
-        Some(
-            tex_state::print::ErrorContextLevel::from_bounded_projection(
-                label,
-                before,
-                before_chars,
-                after,
-                after_chars,
-            ),
-        )
-    }
-
-    fn macro_argument_context_level(
-        stores: &tex_state::CommandContext<'_, G>,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
-        argument: &MacroArgumentCursor<G>,
-        position: usize,
-        widths: tex_state::print::ErrorContextWidths,
-    ) -> Option<tex_state::print::ErrorContextLevel> {
-        fn render_token<G>(
-            stores: &tex_state::CommandContext<'_, G>,
-            token: tex_state::token::Token,
-            raw: &mut String,
-            rendered: &mut String,
-        ) {
-            raw.clear();
-            rendered.clear();
-            crate::processor::expand_render::append_token_list_token_text(stores, token, raw);
-            stores.append_selector_string_text(raw, rendered);
-        }
-
-        let count = argument.range.len() as usize;
-        let split = position.min(count);
-        let mut raw = String::new();
-        let mut rendered = String::new();
-        let mut before = ContextTail::new(widths.half_error_line());
-        for index in (0..split).rev() {
-            if before.is_complete() {
-                break;
-            }
-            let token = scratch
-                .admitted_argument_word(argument.range, index)
-                .ok()?
-                .semantic_token();
-            render_token(stores, token, &mut raw, &mut rendered);
-            before.prepend_str(&rendered);
-        }
-        let (before, before_chars) = before.finish();
-        let label = "<argument> ".to_owned();
-        let indent =
-            if label.chars().count().saturating_add(before_chars) <= widths.half_error_line() {
-                label.chars().count().saturating_add(before_chars)
-            } else {
-                widths.half_error_line()
-            };
-        let mut after = ContextHead::new(widths.error_line().saturating_sub(indent));
-        for index in split..count {
-            if after.is_complete() {
-                break;
-            }
-            let token = scratch
-                .admitted_argument_word(argument.range, index)
-                .ok()?
-                .semantic_token();
-            render_token(stores, token, &mut raw, &mut rendered);
-            after.push_str(&rendered);
-        }
-        let (after, after_chars) = after.finish();
         Some(
             tex_state::print::ErrorContextLevel::from_bounded_projection(
                 label,

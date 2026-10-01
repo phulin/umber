@@ -3,7 +3,7 @@
 use crate::CommandState;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 
-use crate::execution_scratch::ArgumentSetId;
+use crate::execution_scratch::PendingArgumentSet;
 
 use super::{
     CompactSourceStepQueries, InputLevel, InputLevelId, PackedTokenSpanHandle, ReplayTrace,
@@ -136,7 +136,6 @@ pub(crate) enum InputRetirementError {
         expected: InputLevelId,
         actual: InputLevelId,
     },
-    AttemptRootInvariant,
     NotRetainedVTemplate,
 }
 
@@ -284,73 +283,32 @@ impl<G> CommandState<G> {
         index: usize,
         observer: &mut Option<&mut dyn crate::CommandObserver>,
         immediate_write_retirement: &mut Option<InputLevelId>,
-    ) -> Result<Option<crate::CommandReplayEpisode>, InputRetirementError> {
+    ) -> Option<crate::CommandReplayEpisode> {
         let InputLevel::Resident(row) = self.input.levels.resident_at(index) else {
             unreachable!("resident coordinate selects a resident row");
         };
-        let retirement = row.header.retirement();
-        if !matches!(
-            retirement,
-            RetirementBehavior::Pop | RetirementBehavior::AwaitingVTemplateRetirement
-        ) {
-            return Ok(None);
-        }
-        let identity = row.header.identity();
-        // The retirement reason names only the observer's record.
-        let reason = observer
-            .is_some()
-            .then(|| input_retirement_reason(&row.header.behavior(), &row.trace()));
-        let (macro_body, arguments, replay) = match &row.storage {
-            ResidentTokenStorage::MacroBody(body) => (true, body.arguments, None),
-            ResidentTokenStorage::Replay { replay, .. } => (false, None, Some(*replay)),
-            ResidentTokenStorage::BackedUpWord(_)
-            | ResidentTokenStorage::Durable(_)
-            | ResidentTokenStorage::Attempt(_)
-            | ResidentTokenStorage::MacroArgument(_) => (false, None, None),
-        };
-        let parameter_count = arguments.map_or(0, |arguments| {
-            self.scratch
-                .argument_count(arguments)
-                .expect("live macro argument set")
-        });
-        self.input.levels.pop_resident(index);
-        if macro_body {
-            self.input.levels.retire_macro_body(parameter_count);
-            if let Some(arguments) = arguments {
-                self.scratch
-                    .release_argument_set(arguments)
-                    .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
-            }
-            return Ok(self.settle_resident_retirement(
-                identity,
-                InputRetirementAction::TokenListPopped,
-                Some(InputRetirementReason::Macro),
-                observer,
-                immediate_write_retirement,
-            ));
-        }
-        if let Some(replay) = replay {
-            self.input
-                .replay
-                .release(replay)
-                .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
-        }
-        let action = match retirement {
+        let row = *row;
+        let action = match row.header.retirement() {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
             RetirementBehavior::AwaitingVTemplateRetirement => {
                 InputRetirementAction::VTemplatePopped
             }
             RetirementBehavior::StopAtEnd | RetirementBehavior::RetainExhaustedVTemplate => {
-                unreachable!("cold retirement returned before resident pop")
+                return None;
             }
         };
-        Ok(self.settle_resident_retirement(
-            identity,
+        // The retirement reason names only the observer's record.
+        let reason = observer
+            .is_some()
+            .then(|| input_retirement_reason(&row.header.behavior(), &row.trace()));
+        self.input.levels.pop_resident(index);
+        self.settle_resident_retirement(
+            row.header.identity(),
             action,
             reason,
             observer,
             immediate_write_retirement,
-        ))
+        )
     }
 
     /// TeX82 one-word nodes owned by live command input and argument buffers.
@@ -365,22 +323,18 @@ impl<G> CommandState<G> {
                 return words;
             };
             let owned = match storage {
-                // An inline backed-up word is one transient token node.
-                ResidentTokenStorage::BackedUpWord(_) => header.frame.limit() as usize,
-                ResidentTokenStorage::Replay { replay, .. }
-                    if matches!(
-                        self.input.replay.ownership(*replay),
-                        Some(
-                            super::PackedTokenOwnership::Transient
-                                | super::PackedTokenOwnership::BackedUp
-                        )
-                    ) =>
-                {
-                    header.frame.limit() as usize
+                ResidentTokenStorage::List(
+                    super::PackedTokenOwnership::Transient | super::PackedTokenOwnership::BackedUp,
+                ) => header.frame.limit(),
+                // The activation's argument copies; its parameter text and
+                // replacement stand for TeX's shared definition list.
+                ResidentTokenStorage::MacroBody(body) => {
+                    header.frame.start() - body.parameter_text_len - body.region_start
                 }
-                _ => 0,
+                ResidentTokenStorage::List(super::PackedTokenOwnership::Stored)
+                | ResidentTokenStorage::MacroArgument { .. } => 0,
             };
-            words.saturating_add(owned)
+            words.saturating_add(owned as usize)
         })
     }
 
@@ -388,54 +342,56 @@ impl<G> CommandState<G> {
         self.input.levels.last().map(input_level_identity)
     }
 
-    /// Installs one complete macro activation and its replacement-body level.
+    /// Installs one complete macro activation and its replacement-body level:
+    /// TeX82 §390's `begin_token_list(ref_count,macro)` after §400 has pushed
+    /// the matched arguments onto `param_stack`.
     ///
-    /// The canonical replacement list remains in immutable storage. Only the
-    /// already matched arguments are transient, and they have one activation
-    /// owner before this level can become visible to delivery.
+    /// The activation region holds the argument copies, the parameter text,
+    /// and the replacement, so the whole activation retires with one
+    /// truncation of the token stack.
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,
-        body: tex_state::ResidentMacroBody<G>,
-        arguments: Option<ArgumentSetId<G>>,
+        body: &tex_state::ResidentMacroBody<G>,
+        matching: Option<PendingArgumentSet<G>>,
         invocation: OriginId,
-    ) -> InputLevelId {
-        let parameter_count = arguments.map_or(0, |arguments| {
-            self.scratch
-                .argument_count(arguments)
-                .expect("live macro argument set")
-        });
-        let parameter_ptr = self
-            .input
-            .levels
-            .active_macro_parameters()
-            .saturating_add(parameter_count);
-        self.stack_usage.record_parameter_push(parameter_ptr);
-        let identity = self.allocate_input_level_identity();
+    ) -> Result<InputLevelId, crate::execution_scratch::ScratchError> {
         let source = self.input.levels.current_source_context();
+        let identity = self.allocate_input_level_identity();
+        let levels = &mut self.roots.input.levels;
+        let region_start = levels.words.len();
+        let parameter_base = levels.parameters.len();
+        if let Some(matching) = matching {
+            self.scratch.transfer_macro_match(
+                matching,
+                &mut levels.words,
+                &mut levels.parameters,
+            )?;
+            self.stack_usage
+                .record_parameter_push(levels.parameters.len());
+        }
+        super::push_untraced_words(&mut levels.words, body.definition_words());
+        let start = levels.words.len() - body.len();
         let mut frame = super::packed_token_frame(
             identity,
+            start as u32,
             body.len(),
             &TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             &ReplayTrace::MacroReplacement,
         );
         frame.set_source_context(source);
-        self.input.levels.push_macro_body(
-            InputLevel::Resident(ResidentTokenRow {
-                header: TokenRowHeader::new(
-                    TokenBehavior::Ordinary,
-                    RetirementBehavior::Pop,
-                    ReplayTrace::MacroReplacement,
-                    frame,
-                ),
-                storage: ResidentTokenStorage::MacroBody(super::MacroBodyCursor::new(
-                    body, arguments, name, invocation,
-                )),
+        self.push_input_level(InputLevel::Resident(ResidentTokenRow {
+            header: TokenRowHeader::new(frame),
+            storage: ResidentTokenStorage::MacroBody(super::MacroBodyCursor {
+                name,
+                invocation,
+                region_start: region_start as u32,
+                parameter_text_len: body.parameter_len() as u32,
+                parameter_base: parameter_base as u32,
             }),
-            parameter_count,
-        );
-        identity
+        }));
+        Ok(identity)
     }
 
     /// Accounts for TeX82's logical `begin_token_list` boundary when an empty
@@ -452,7 +408,8 @@ impl<G> CommandState<G> {
         let parameter_ptr = self
             .input
             .levels
-            .active_macro_parameters()
+            .parameters
+            .len()
             .saturating_add(parameter_count);
         self.stack_usage.record_parameter_push(parameter_ptr);
     }
@@ -464,55 +421,30 @@ impl<G> CommandState<G> {
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> InputLevelId {
-        let span = source
-            .admit(&mut self.input.replay)
-            .expect("generation replay lane admission");
+        let source_context = self.input.levels.current_source_context();
         let identity = self.allocate_input_level_identity();
+        let input = &mut self.roots.input;
+        let words = &mut input.levels.words;
+        let start = words.len();
+        let ownership = source.admit(
+            words,
+            super::TokenSources {
+                attempt: &self.attempt,
+                pending_insertions: &mut input.pending_insertions,
+            },
+        );
+        let len = words.len() - start;
         let mut frame =
-            super::packed_token_frame(identity, span.frame_len(), &behavior, retirement, &trace);
-        frame.set_source_context(self.input.levels.current_source_context());
-        let header = TokenRowHeader::new(behavior, retirement, trace, frame);
-        let level = match span {
-            PackedTokenSpanHandle::Replay { replay, .. } => {
-                let resident = self
-                    .input
-                    .replay
-                    .resident_cursor(replay)
-                    .expect("admitted replay span has a resident coordinate");
-                InputLevel::Resident(ResidentTokenRow {
-                    header,
-                    storage: ResidentTokenStorage::Replay {
-                        replay,
-                        cursor: resident,
-                    },
-                })
-            }
-            PackedTokenSpanHandle::DurableList { list, .. } => {
-                InputLevel::Resident(ResidentTokenRow {
-                    header,
-                    storage: ResidentTokenStorage::Durable(list),
-                })
-            }
-            PackedTokenSpanHandle::AttemptList { list, .. } => {
-                InputLevel::Resident(ResidentTokenRow {
-                    header,
-                    storage: ResidentTokenStorage::Attempt(list),
-                })
-            }
-            PackedTokenSpanHandle::Word(word) => InputLevel::Resident(ResidentTokenRow {
-                header,
-                storage: ResidentTokenStorage::BackedUpWord(word),
-            }),
-        };
-        self.push_input_level(level);
+            super::packed_token_frame(identity, start as u32, len, &behavior, retirement, &trace);
+        frame.set_source_context(source_context);
+        self.push_input_level(InputLevel::Resident(ResidentTokenRow {
+            header: TokenRowHeader::new(frame),
+            storage: ResidentTokenStorage::List(ownership),
+        }));
         identity
     }
 
-    /// Pushes one attempt-local list owned by its enclosing attempt scope.
-    ///
-    /// The arena's scope stack, rather than this input level, owns storage.
-    /// Exact-LIFO macro/scanner retirement therefore keeps this coordinate
-    /// live without a copied high-water mark or an input-stack census.
+    /// Pushes a copy of one attempt-local list.
     pub(crate) fn push_attempt_list_level(
         &mut self,
         list: crate::attempt::AttemptTokenListId,
@@ -576,23 +508,11 @@ impl<G> CommandState<G> {
             return Err(InputRetirementError::LevelChanged { expected, actual });
         }
         if let InputLevel::Resident(ResidentTokenRow {
-            storage: ResidentTokenStorage::MacroBody(body),
+            storage: ResidentTokenStorage::MacroBody(_),
             ..
         }) = level
         {
-            let arguments = body.arguments;
-            let parameter_count = arguments.map_or(0, |arguments| {
-                self.scratch
-                    .argument_count(arguments)
-                    .expect("live macro argument set")
-            });
             self.input.levels.pop_project(|_, _| ());
-            self.input.levels.retire_macro_body(parameter_count);
-            if let Some(arguments) = arguments {
-                self.scratch
-                    .release_argument_set(arguments)
-                    .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
-            }
             return Ok(InputRetirement {
                 identity: expected,
                 action: InputRetirementAction::TokenListPopped,
@@ -668,21 +588,7 @@ impl<G> CommandState<G> {
             });
         }
 
-        let replay = match &row.storage {
-            ResidentTokenStorage::Replay { replay, .. } => Some(*replay),
-            ResidentTokenStorage::BackedUpWord(_)
-            | ResidentTokenStorage::Durable(_)
-            | ResidentTokenStorage::Attempt(_)
-            | ResidentTokenStorage::MacroArgument(_) => None,
-            ResidentTokenStorage::MacroBody(_) => unreachable!("macro body returned above"),
-        };
         self.input.levels.pop_project(|_, _| ());
-        if let Some(replay) = replay {
-            self.input
-                .replay
-                .release(replay)
-                .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
-        }
         let action = match retirement {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
@@ -721,23 +627,11 @@ impl<G> CommandState<G> {
         let level = self.input.levels.last()?;
         if let InputLevel::Resident(ResidentTokenRow {
             header,
-            storage: ResidentTokenStorage::MacroBody(body),
+            storage: ResidentTokenStorage::MacroBody(_),
         }) = level
         {
             let identity = header.identity();
-            let arguments = body.arguments;
-            let parameter_count = arguments.map_or(0, |arguments| {
-                self.scratch
-                    .argument_count(arguments)
-                    .expect("final cleanup owns the live argument set")
-            });
             self.input.levels.pop_project(|_, _| ());
-            self.input.levels.retire_macro_body(parameter_count);
-            if let Some(arguments) = arguments {
-                self.scratch
-                    .release_argument_set(arguments)
-                    .expect("final cleanup retires the live argument set");
-            }
             return Some(InputRetirement {
                 identity,
                 action: InputRetirementAction::TokenListPopped,
@@ -773,21 +667,7 @@ impl<G> CommandState<G> {
         let identity = row.header.identity();
         let retirement = row.header.retirement();
         let reason = input_retirement_reason(&row.header.behavior(), &row.trace());
-        let replay = match &row.storage {
-            ResidentTokenStorage::Replay { replay, .. } => Some(*replay),
-            ResidentTokenStorage::BackedUpWord(_)
-            | ResidentTokenStorage::Durable(_)
-            | ResidentTokenStorage::Attempt(_)
-            | ResidentTokenStorage::MacroArgument(_) => None,
-            ResidentTokenStorage::MacroBody(_) => unreachable!("macro body returned above"),
-        };
         self.input.levels.pop_project(|_, _| ());
-        if let Some(replay) = replay {
-            self.input
-                .replay
-                .release(replay)
-                .expect("final cleanup preserves replay LIFO order");
-        }
         let action = match retirement {
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
             RetirementBehavior::Pop

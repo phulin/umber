@@ -6,8 +6,8 @@ use tex_state::token::{Catcode, Token};
 use crate::error::CommandError;
 use crate::input::SourceNameClass;
 use crate::input::{
-    InputLevel, InputLevelId, InputRetirementAction, PackedTokenSources, PackedTokenSpanHandle,
-    ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, observed_retirement_reason,
+    InputLevel, InputLevelId, InputRetirementAction, PackedTokenSpanHandle, ReplayTrace,
+    RetirementBehavior, StoredReplayReason, TokenBehavior, observed_retirement_reason,
 };
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 
@@ -216,70 +216,35 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(false);
         };
 
-        let output_has_remaining = match &self.command.input.levels[output_index] {
-            level @ InputLevel::Resident(_) => level
-                .stored_indexed_token_at_cold(
-                    PackedTokenSources::new(&self.command.input.replay, &self.command.attempt),
-                    self.state,
-                )
-                .is_some(),
-            InputLevel::Source(_) => unreachable!("output replay is a token level"),
-        };
-        let levels_above_are_depleted_backups = self.command.input.levels[output_index + 1..]
-            .iter()
-            .all(|level| {
-                matches!(
-                    level,
-                    level
-                        if matches!(
-                            level.stored_common().map(|cursor| cursor.behavior()),
-                            Some(TokenBehavior::BackedUp(_))
-                        )
-                            && level
-                                .stored_indexed_token_at_cold(PackedTokenSources::new(
-                                    &self.command.input.replay,
-                                    &self.command.attempt,
-                                ), self.state)
-                            .is_none()
-                )
-            });
+        let levels = &self.command.input.levels;
+        let output_has_remaining = levels.pending_token_word(output_index).is_some();
+        let levels_above_are_depleted_backups = (output_index + 1..levels.len()).all(|index| {
+            matches!(
+                levels[index].stored_common().map(|row| row.behavior()),
+                Some(TokenBehavior::BackedUp(_))
+            ) && levels.pending_token_word(index).is_none()
+        });
         let unbalanced = output_has_remaining || !levels_above_are_depleted_backups;
 
         if unbalanced {
+            let output_identity = levels[output_index]
+                .stored_common()
+                .ok_or_else(CommandError::input_invariant)?
+                .identity();
             let mut discarded = None;
-            while self
-                .command
-                .input
-                .levels
-                .iter()
-                .find_map(|level| match level {
-                    level
-                        if level.stored_common().is_some()
-                            && level.stored_common().expect("stored row").identity()
-                                == match &self.command.input.levels[output_index] {
-                                    output if output.stored_common().is_some() => {
-                                        output.stored_common().expect("stored row").identity()
-                                    }
-                                    InputLevel::Source(_) => unreachable!("output token level"),
-                                    _ => unreachable!("output token level remains stored"),
-                                } =>
-                    {
-                        Some(
-                            level
-                                .stored_indexed_token_at_cold(
-                                    PackedTokenSources::new(
-                                        &self.command.input.replay,
-                                        &self.command.attempt,
-                                    ),
-                                    self.state,
-                                )
-                                .is_some(),
-                        )
-                    }
-                    InputLevel::Source(_) | InputLevel::Resident(_) => None,
-                })
-                .unwrap_or(false)
-            {
+            loop {
+                let levels = &self.command.input.levels;
+                let output_has_remaining = levels
+                    .iter()
+                    .position(|level| {
+                        level
+                            .stored_common()
+                            .is_some_and(|row| row.identity() == output_identity)
+                    })
+                    .is_some_and(|index| levels.pending_token_word(index).is_some());
+                if !output_has_remaining {
+                    break;
+                }
                 match self.get_token_into(&mut discarded)? {
                     super::DeliveryStatus::End => {
                         return Err(CommandError::input_invariant());
@@ -302,29 +267,18 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// one-token backup has ended before that hand-off and must be retired
     /// without fetching whatever lies beneath it.
     pub fn retire_completed_right_brace_backup(&mut self) -> Result<(), CommandError> {
-        let Some(level @ InputLevel::Resident(row)) = self.command.input.levels.last() else {
+        let levels = &self.command.input.levels;
+        let Some(InputLevel::Resident(row)) = levels.last() else {
             return Ok(());
         };
-        if !matches!(
-            row.storage,
-            crate::input::ResidentTokenStorage::Replay { .. }
-                | crate::input::ResidentTokenStorage::BackedUpWord(_)
-        ) {
-            return Ok(());
-        }
-        let sources = PackedTokenSources::new(&self.command.input.replay, &self.command.attempt);
-        if !matches!(row.header.behavior(), TokenBehavior::BackedUp(_))
-            || level
-                .stored_indexed_token_at_cold(sources, self.state)
-                .is_some()
+        if !matches!(row.storage, crate::input::ResidentTokenStorage::List(_))
+            || !matches!(row.header.behavior(), TokenBehavior::BackedUp(_))
+            || levels.pending_token_word(levels.len() - 1).is_some()
             || !matches!(
-                level
-                    .stored_span_cold()
-                    .and_then(|span| {
-                        PackedTokenSources::new(&self.command.input.replay, &self.command.attempt)
-                            .indexed_token_at_cold(&span, 0)
-                    })
-                    .map(|(word, _)| word.semantic_token()),
+                levels
+                    .row_words(row)
+                    .first()
+                    .map(|word| word.semantic_token()),
                 Some(Token::Char {
                     cat: Catcode::EndGroup,
                     ..
@@ -562,15 +516,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             // source ancestry, file warning, or file close can apply to it.
             let retirement = if retirement == RetirementBehavior::Pop {
                 let index = self.command.input.levels.len() - 1;
-                match self
-                    .command
-                    .retire_resident_ordinary_input(
-                        index,
-                        &mut self.observer,
-                        &mut self.immediate_write_retirement,
-                    )
-                    .map_err(|_| CommandError::input_invariant())?
-                {
+                match self.command.retire_resident_ordinary_input(
+                    index,
+                    &mut self.observer,
+                    &mut self.immediate_write_retirement,
+                ) {
                     Some(episode) => RetirementHandoff::Completed(episode),
                     None => RetirementHandoff::Continue,
                 }

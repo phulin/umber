@@ -1,10 +1,12 @@
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
-    BackedUpToken, BackupTreatment, InputLevelId, PackedTokenSpanHandle, PackedTokenSpanSource,
-    ReplayLane, ReplayTrace, ResidentTokenRow, ResidentTokenStorage, RetirementBehavior,
-    StoredReplayReason, TokenBehavior, TokenRowHeader, packed_token_frame,
+    BackedUpToken, BackupTreatment, InputLevelId, PackedTokenOwnership, PackedTokenSpanHandle,
+    PackedTokenSpanSource, PendingInsertion, ReplayTrace, ResidentTokenRow, ResidentTokenStorage,
+    RetirementBehavior, StoredReplayReason, TokenBehavior, TokenRowHeader, TokenSources,
+    packed_token_frame,
 };
+use crate::attempt::AttemptArena;
 
 fn traced(ch: char) -> TracedTokenWord {
     TracedTokenWord::pack(
@@ -16,126 +18,72 @@ fn traced(ch: char) -> TracedTokenWord {
     )
 }
 
-#[test]
-fn transient_payload_is_read_through_its_replay_coordinate() {
-    let mut lane = ReplayLane::<()>::default();
-    let payload = PackedTokenSpanHandle::<()>::transient([traced('a'), traced('b')])
-        .admit(&mut lane)
-        .expect("replay admission");
-    assert_eq!(payload.frame_len(), 2);
-    let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
-        panic!("transient replay coordinate")
-    };
-    assert_eq!(lane.indexed_get_cold(replay, 0), Some(traced('a')));
-    assert_eq!(lane.indexed_get_cold(replay, 1), Some(traced('b')));
+fn admit(
+    source: impl PackedTokenSpanSource<()>,
+    words: &mut Vec<TracedTokenWord>,
+    pending: &mut Vec<TracedTokenWord>,
+) -> PackedTokenOwnership {
+    let attempt = AttemptArena::<()>::default();
+    source.admit(
+        words,
+        TokenSources {
+            attempt: &attempt,
+            pending_insertions: pending,
+        },
+    )
 }
 
 #[test]
-fn escaping_input_builder_keeps_final_ownership_across_a_snapshot() {
-    let mut lane = ReplayLane::<()>::default();
-    let builder = lane.begin_input_builder().expect("escaping input owner");
-    lane.push_input_builder_word(builder, traced('a'))
-        .expect("first final-owner word");
-    let mut snapshot = lane.clone();
-    lane.push_input_builder_word(builder, traced('b'))
-        .expect("post-snapshot final-owner word");
-
-    let payload = lane
-        .finish_input_builder(builder)
-        .expect("escaping input coordinate");
-    assert_eq!(payload.frame_len(), 2);
-    let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
-        panic!("escaping input replay coordinate")
-    };
-    assert_eq!(lane.indexed_get_cold(replay, 0), Some(traced('a')));
-    assert_eq!(lane.indexed_get_cold(replay, 1), Some(traced('b')));
-
-    let snapshot_payload = snapshot
-        .finish_input_builder(builder)
-        .expect("snapshot keeps its admitted prefix");
-    let PackedTokenSpanHandle::Replay {
-        replay: snapshot_replay,
-        ..
-    } = snapshot_payload
-    else {
-        panic!("snapshot replay coordinate")
-    };
+fn every_seed_appends_its_words_to_the_token_stack() {
+    let mut words = vec![traced('s')];
+    let mut pending = Vec::new();
     assert_eq!(
-        snapshot.indexed_get_cold(snapshot_replay, 0),
-        Some(traced('a'))
+        admit(
+            PackedTokenSpanHandle::transient([traced('a'), traced('b')]),
+            &mut words,
+            &mut pending,
+        ),
+        PackedTokenOwnership::Transient
     );
-    assert_eq!(snapshot.indexed_get_cold(snapshot_replay, 1), None);
-    assert!(
-        lane.words.active.is_empty(),
-        "escaping words are written only into their final replay entry"
-    );
-}
-
-#[test]
-fn replay_lane_retires_exactly_lifo_and_reuses_its_high_water_segment() {
-    let mut lane = ReplayLane::<()>::default();
-    let first = PackedTokenSpanHandle::<()>::transient([traced('a')])
-        .admit(&mut lane)
-        .expect("first replay admission");
-    let PackedTokenSpanHandle::Replay { replay: first, .. } = first else {
-        panic!("first replay coordinate")
-    };
-    let high_water = std::sync::Arc::as_ptr(&lane.words.active[0].storage);
-    let second = PackedTokenSpanHandle::<()>::transient([traced('b')])
-        .admit(&mut lane)
-        .expect("second replay admission");
-    let PackedTokenSpanHandle::Replay { replay: second, .. } = second else {
-        panic!("second replay coordinate")
-    };
-
-    assert!(
-        lane.release(first).is_err(),
-        "non-top replay must stay live"
-    );
-    assert_eq!(lane.indexed_get_cold(first, 0), Some(traced('a')));
-    lane.release(second).expect("top replay retires");
-    lane.release(first).expect("older replay retires after top");
-
-    let warmed = PackedTokenSpanHandle::<()>::transient([traced('c')])
-        .admit(&mut lane)
-        .expect("warmed replay admission");
     assert_eq!(
-        std::sync::Arc::as_ptr(&lane.words.active[0].storage),
-        high_water,
-        "retired segment storage is reused"
+        admit(
+            PackedTokenSpanHandle::backed_up([BackedUpToken {
+                spelling: traced('c'),
+            }]),
+            &mut words,
+            &mut pending,
+        ),
+        PackedTokenOwnership::BackedUp
     );
-    let PackedTokenSpanHandle::Replay { replay: warmed, .. } = warmed else {
-        panic!("warmed replay coordinate")
-    };
-    assert_eq!(lane.indexed_get_cold(warmed, 0), Some(traced('c')));
+    let token = traced('d').semantic_token();
+    assert_eq!(
+        admit(
+            PackedTokenSpanHandle::stored(&[token], [OriginId::UNKNOWN]),
+            &mut words,
+            &mut pending,
+        ),
+        PackedTokenOwnership::Stored
+    );
+    assert_eq!(
+        words,
+        [
+            traced('s'),
+            traced('a'),
+            traced('b'),
+            traced('c'),
+            traced('d')
+        ]
+    );
 }
 
 #[test]
-fn replay_lane_clone_preserves_prior_payload_while_current_reuses_lifo_state() {
-    let mut current = ReplayLane::<()>::default();
-    let prior_payload = PackedTokenSpanHandle::<()>::backed_up([BackedUpToken {
-        spelling: traced('p'),
-    }])
-    .admit(&mut current)
-    .expect("prior replay admission");
-    let PackedTokenSpanHandle::Replay { replay: prior, .. } = prior_payload else {
-        panic!("prior replay coordinate")
-    };
-    let snapshot = current.clone();
-
-    current.release(prior).expect("current replay retires");
-    let candidate = PackedTokenSpanHandle::<()>::transient([traced('c')])
-        .admit(&mut current)
-        .expect("candidate replay admission");
-    let PackedTokenSpanHandle::Replay {
-        replay: candidate, ..
-    } = candidate
-    else {
-        panic!("candidate replay coordinate")
-    };
-
-    assert_eq!(snapshot.indexed_get_cold(prior, 0), Some(traced('p')));
-    assert_eq!(current.indexed_get_cold(candidate, 0), Some(traced('c')));
+fn pending_insertion_moves_its_suffix_onto_the_stack() {
+    let mut words = vec![traced('s')];
+    let mut pending = vec![traced('p'), traced('x'), traced('y')];
+    let ownership = admit(PendingInsertion { start: 1 }, &mut words, &mut pending);
+    assert_eq!(ownership, PackedTokenOwnership::Transient);
+    assert_eq!(words, [traced('s'), traced('x'), traced('y')]);
+    assert_eq!(pending, [traced('p')], "the collected suffix is consumed");
 }
 
 #[test]
@@ -143,33 +91,23 @@ fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
     let behavior = TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence);
     let retirement = RetirementBehavior::StopAtEnd;
     let trace = ReplayTrace::Stored(StoredReplayReason::EveryJob);
-    let mut frame = packed_token_frame(InputLevelId(5), 1, &behavior, retirement, &trace);
+    let mut frame = packed_token_frame(InputLevelId(5), 3, 1, &behavior, retirement, &trace);
     assert_eq!(frame.position(), 0);
+    assert_eq!(frame.start(), 3);
     let _ = frame.advance();
-    let mut lane = ReplayLane::default();
-    let payload = PackedTokenSpanHandle::transient([traced('x')])
-        .admit(&mut lane)
-        .expect("replay admission");
-    let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
-        unreachable!("transient input is replay-owned")
-    };
-    let cursor: ResidentTokenRow<()> = ResidentTokenRow {
-        header: TokenRowHeader::new(behavior, retirement, trace, frame),
-        storage: ResidentTokenStorage::Replay {
-            replay,
-            cursor: lane
-                .resident_cursor(replay)
-                .expect("resident replay cursor"),
-        },
+    let row = ResidentTokenRow {
+        header: TokenRowHeader::new(frame),
+        storage: ResidentTokenStorage::List(PackedTokenOwnership::BackedUp),
     };
 
-    assert_eq!(cursor.header.frame.position(), 1);
-    assert_eq!(cursor.header.frame.identity(), 5);
-    assert_eq!(cursor.header.retirement(), RetirementBehavior::StopAtEnd);
-    assert!(matches!(
-        cursor.header.behavior(),
+    assert_eq!(row.header.position(), 1);
+    assert_eq!(row.header.frame.absolute_position(), 4);
+    assert_eq!(row.header.identity(), InputLevelId(5));
+    assert_eq!(row.header.retirement(), RetirementBehavior::StopAtEnd);
+    assert_eq!(
+        row.header.behavior(),
         TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
-    ));
+    );
 }
 
 #[test]
@@ -177,22 +115,10 @@ fn packed_omit_template_retains_its_trace_through_v_template_behavior() {
     let behavior = TokenBehavior::VTemplate;
     let retirement = RetirementBehavior::RetainExhaustedVTemplate;
     let trace = ReplayTrace::OmitTemplate;
-    let frame = packed_token_frame(InputLevelId(5), 1, &behavior, retirement, &trace);
-    let mut lane = ReplayLane::default();
-    let payload = PackedTokenSpanHandle::transient([traced('x')])
-        .admit(&mut lane)
-        .expect("omit-template replay admission");
-    let PackedTokenSpanHandle::Replay { replay, .. } = payload else {
-        unreachable!("transient input is replay-owned")
-    };
-    let row: ResidentTokenRow<()> = ResidentTokenRow {
-        header: TokenRowHeader::new(behavior, retirement, trace, frame),
-        storage: ResidentTokenStorage::Replay {
-            replay,
-            cursor: lane
-                .resident_cursor(replay)
-                .expect("resident replay cursor"),
-        },
+    let frame = packed_token_frame(InputLevelId(5), 0, 1, &behavior, retirement, &trace);
+    let row = ResidentTokenRow {
+        header: TokenRowHeader::new(frame),
+        storage: ResidentTokenStorage::List(PackedTokenOwnership::Transient),
     };
 
     assert_eq!(row.header.behavior(), TokenBehavior::VTemplate);
@@ -200,89 +126,9 @@ fn packed_omit_template_retains_its_trace_through_v_template_behavior() {
 }
 
 #[test]
-fn stored_and_transient_payloads_have_the_same_semantic_words() {
-    let token = Token::Char {
-        ch: 'q',
-        cat: Catcode::Other,
-    };
-    let mut lane = ReplayLane::<()>::default();
-    let stored = PackedTokenSpanHandle::<()>::stored(&[token], [OriginId::UNKNOWN])
-        .admit(&mut lane)
-        .expect("stored admission");
-    let transient =
-        PackedTokenSpanHandle::<()>::transient([TracedTokenWord::pack(token, OriginId::UNKNOWN)])
-            .admit(&mut lane)
-            .expect("transient admission");
-    assert_eq!(stored.frame_len(), transient.frame_len());
-    let PackedTokenSpanHandle::Replay { replay: stored, .. } = stored else {
-        panic!("stored replay payload")
-    };
-    let PackedTokenSpanHandle::Replay {
-        replay: transient, ..
-    } = transient
-    else {
-        panic!("transient replay payload")
-    };
-    assert_eq!(
-        lane.indexed_get_cold(stored, 0),
-        lane.indexed_get_cold(transient, 0)
-    );
-}
-
-#[test]
-fn replay_coordinates_keep_input_frames_compact() {
-    assert_eq!(
-        std::mem::size_of::<crate::execution_scratch::ArgumentSetId<()>>(),
-        8
-    );
-    assert_eq!(
-        std::mem::size_of::<crate::execution_scratch::MacroArgumentRange<()>>(),
-        16
-    );
-    assert_eq!(std::mem::size_of::<PackedTokenSpanHandle<()>>(), 40);
-    assert_eq!(std::mem::size_of::<TokenRowHeader<()>>(), 32);
-    assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 40);
-    assert_eq!(std::mem::size_of::<super::MacroArgumentCursor<()>>(), 24);
-    assert_eq!(std::mem::size_of::<super::ResidentTokenRow<()>>(), 80);
-    assert_eq!(std::mem::size_of::<super::InputLevel<()>>(), 88);
-    assert_eq!(std::mem::size_of::<super::SourceLevel<()>>(), 40);
-}
-
-#[test]
-fn sequential_replay_exhaustion_guard_is_present_in_every_build() {
-    let source = include_str!("../levels.rs");
-    let body = source
-        .split_once(
-            "fn advance_sequential(\n        &self,\n        cursor: &mut ResidentReplayCursor,",
-        )
-        .expect("locate segmented resident replay advance")
-        .1
-        .split_once("/// Crosses the uncommon exhausted-span")
-        .expect("locate resident replay advance boundary")
-        .0;
-    let exhaustion = body
-        .find("if cursor.remaining == 0")
-        .expect("logical-span exhaustion check");
-    let function_body = body
-        .find(") -> Option<&T> {")
-        .map(|offset| offset + ") -> Option<&T> {".len())
-        .expect("segmented resident replay function body");
-    let read = body
-        .find("let segment = self.active.get")
-        .expect("direct segment read");
-    assert!(exhaustion < read);
-    assert!(!body[function_body..exhaustion].contains("#[cfg(test)]"));
-}
-
-#[test]
-fn resident_macro_cursor_layout_stays_compact_and_wrapper_free() {
-    let body = std::mem::size_of::<super::MacroBodyCursor<()>>();
-    let resident = std::mem::size_of::<tex_state::ResidentMacroBody<()>>();
-    let argument = std::mem::size_of::<super::MacroArgumentCursor<()>>();
-    assert_eq!(
-        resident, 24,
-        "resident body is one shared span and its start"
-    );
-    assert_eq!(body, 40, "macro body wrapper adds only its call identity");
-    assert!(argument <= 56, "macro argument cursor is {argument} bytes");
+fn token_rows_stay_compact() {
+    assert_eq!(std::mem::size_of::<super::ArgumentSpan>(), 8);
+    assert_eq!(std::mem::size_of::<super::MacroBodyCursor>(), 20);
+    assert_eq!(std::mem::size_of::<TokenRowHeader>(), 32);
+    assert_eq!(std::mem::size_of::<ResidentTokenRow>(), 56);
 }

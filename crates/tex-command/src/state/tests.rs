@@ -841,30 +841,20 @@ fn warmed_parameterless_macro_rows_copy_only_compact_definition_keys() {
         let mut run = |activations: u64| {
             let retained_before = tex_state::definition_retain_count();
             for _ in 0..activations {
-                let level = state.push_macro_activation(
-                    name,
-                    context
-                        .admit_macro_body(definition)
-                        .expect("resident macro body")
-                        .2,
-                    None,
-                    OriginId::UNKNOWN,
-                );
-                let body = state
+                let body = context
+                    .admit_macro_body(definition)
+                    .expect("resident macro body")
+                    .2;
+                let level = state
+                    .push_macro_activation(name, &body, None, OriginId::UNKNOWN)
+                    .expect("macro activation");
+                let (arguments, replacement) = state
                     .input
                     .levels
-                    .last()
-                    .and_then(crate::input::InputLevel::macro_body)
+                    .innermost_macro_activation()
                     .expect("live macro body");
-                assert!(body.body.is_empty());
-                assert!(
-                    state
-                        .input
-                        .levels
-                        .last()
-                        .is_some_and(|level| level.macro_body().is_some())
-                );
-                assert_eq!(state.scratch.frame_len(), 0);
+                assert!(arguments.is_empty() && replacement.is_empty());
+                assert!(state.scratch.is_quiescent());
                 let retained_before_context = tex_state::definition_retain_count();
                 assert!(state.output_open_context(&context).contains("ownerprobe"));
                 assert_eq!(

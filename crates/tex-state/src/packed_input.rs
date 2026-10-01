@@ -107,6 +107,8 @@ impl SourceContext {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InputFrame {
     identity: u64,
+    /// First word of a token frame's list in the input token stack.
+    start: u32,
     position: u32,
     limit: u32,
     source: Option<SourceContext>,
@@ -119,6 +121,7 @@ impl InputFrame {
     pub const fn source(identity: u64, source: SourceContext) -> Self {
         Self {
             identity,
+            start: 0,
             position: 0,
             limit: u32::MAX,
             source: Some(source),
@@ -128,9 +131,16 @@ impl InputFrame {
     }
 
     #[must_use]
-    pub fn tokens(identity: u64, len: usize, kind: InputFrameKind, flags: InputFrameFlags) -> Self {
+    pub fn tokens(
+        identity: u64,
+        start: u32,
+        len: usize,
+        kind: InputFrameKind,
+        flags: InputFrameFlags,
+    ) -> Self {
         Self {
             identity,
+            start,
             position: 0,
             limit: u32::try_from(len).expect("input frame length exceeds u32"),
             source: None,
@@ -144,6 +154,24 @@ impl InputFrame {
         self.identity
     }
 
+    /// First word of a token frame's list in the input token stack.
+    #[must_use]
+    pub const fn start(self) -> u32 {
+        self.start
+    }
+
+    /// The token-stack index of the next word a token frame delivers.
+    #[must_use]
+    pub const fn absolute_position(self) -> usize {
+        self.start as usize + self.position as usize
+    }
+
+    /// The token-stack index one past a token frame's last word.
+    #[must_use]
+    pub const fn absolute_limit(self) -> usize {
+        self.start as usize + self.limit as usize
+    }
+
     #[must_use]
     pub const fn position(self) -> u32 {
         self.position
@@ -152,14 +180,6 @@ impl InputFrame {
     #[must_use]
     pub const fn limit(self) -> u32 {
         self.limit
-    }
-
-    /// Swaps only the hot delivery position with one ordered undo value.
-    ///
-    /// Input identity, source, limit, kind, and flags are immutable for a
-    /// stable source row and therefore do not belong in its lexical history.
-    pub const fn swap_position(&mut self, position: &mut u32) {
-        core::mem::swap(&mut self.position, position);
     }
 
     #[must_use]
@@ -236,15 +256,6 @@ impl InputFrame {
         let consumed = self.position;
         self.position = end;
         Some(consumed)
-    }
-
-    /// Extends a token frame after tokens are prepended before first delivery.
-    pub const fn extend_limit(&mut self, additional: u32) -> Option<()> {
-        let Some(limit) = self.limit.checked_add(additional) else {
-            return None;
-        };
-        self.limit = limit;
-        Some(())
     }
 
     pub const fn add_flags(&mut self, flags: InputFrameFlags) {

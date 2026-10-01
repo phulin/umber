@@ -14,7 +14,6 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::{CommandClass, HotCommand};
-use crate::execution_scratch::ArgumentSetId;
 use crate::input::{InputLevelId, ResidentBoundary};
 use crate::{CommandError, CurrentCommand};
 
@@ -33,7 +32,7 @@ enum ResidentColdOutcome {
     Word(ResidentWord),
 }
 
-enum InputFrameTransition<G> {
+enum InputFrameTransition {
     Boundary(ResidentBoundary),
     ResidentExhausted {
         resident_index: usize,
@@ -41,7 +40,7 @@ enum InputFrameTransition<G> {
     },
     Parameter {
         slot: u8,
-        arguments: Option<ArgumentSetId<G>>,
+        span: Option<crate::input::ArgumentSpan>,
         active_source: Option<tex_state::packed_input::SourceContext>,
     },
 }
@@ -50,14 +49,14 @@ enum InputFrameTransition<G> {
 /// the row's already-admitted coordinates beside the word so the delivery
 /// loops can either resolve it into the hot command or consume an ordinary
 /// character directly in the main-control run.
-enum ResidentWordRead<G> {
+enum ResidentWordRead {
     NoResident,
     Source {
         resident_index: usize,
     },
     Parameter {
         slot: u8,
-        arguments: Option<ArgumentSetId<G>>,
+        span: Option<crate::input::ArgumentSpan>,
         active_source: Option<tex_state::packed_input::SourceContext>,
     },
     Exhausted {
@@ -267,7 +266,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn transition_resident_word(
         &mut self,
-        selected: ResidentWordRead<G>,
+        selected: ResidentWordRead,
         create_control_sequences: bool,
     ) -> Result<ResidentColdOutcome, CommandError> {
         let transition = match selected {
@@ -277,12 +276,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             ResidentWordRead::Parameter {
                 slot,
-                arguments,
+                span,
                 active_source,
             } => {
                 self.transition_input_frame(InputFrameTransition::Parameter {
                     slot,
-                    arguments,
+                    span,
                     active_source,
                 })?;
                 return Ok(ResidentColdOutcome::Retry);
@@ -391,7 +390,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn finish_charged_raw_read(
         &mut self,
-        mut selected: ResidentWordRead<G>,
+        mut selected: ResidentWordRead,
         create_control_sequences: bool,
     ) -> Result<ResidentColdOutcome, CommandError> {
         loop {
@@ -668,7 +667,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Some(crate::input::InputLevel::Resident(row))
                     if matches!(
                         row.storage,
-                        crate::input::ResidentTokenStorage::MacroArgument(_)
+                        crate::input::ResidentTokenStorage::MacroArgument { .. }
                     ) =>
                 {
                     crate::fuel::RawDeliveryKind::MacroArgument
@@ -2245,25 +2244,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.observe_integer_value(value);
         self.push_rendered_text(&text, origin);
         Ok(())
-    }
-
-    /// Creates one invocation provenance node and atomically exposes its
-    /// activation/body ownership pair to the input stack.
-    ///
-    /// The scalar macro matcher owns argument matching and calls this only
-    /// after it has completed every range. Nested invocations use the live
-    /// activation chain, not a replay trace, as their provenance parent.
-    #[allow(dead_code)] // consumed by the ordered scalar macro matcher issue
-    pub(crate) fn push_macro_activation(
-        &mut self,
-        name: tex_state::interner::Symbol,
-        body: tex_state::ResidentMacroBody<G>,
-        call_site: OriginId,
-        arguments: Option<ArgumentSetId<G>>,
-    ) -> InputLevelId {
-        let invocation = call_site;
-        self.command
-            .push_macro_activation(name, body, arguments, invocation)
     }
 }
 

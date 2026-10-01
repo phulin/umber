@@ -541,14 +541,18 @@ impl DiagnosticSourceCursor {
 
 /// One generation-tied input stack whose live rows are authoritative.
 ///
-/// Rows cover sources, stored spans, and direct macro-argument ranges. Each
-/// source row owns its variable source state directly. Pushing appends and
-/// popping truncates; a checkpoint copies the stack instead of journaling it.
+/// Rows cover sources and token lists. Each source row owns its variable
+/// source state directly; every token-list row reads a span of `words`, and
+/// a macro activation's argument spans live in `parameters` (TeX82's
+/// `param_stack`). Pushing appends and popping truncates all three; a
+/// checkpoint copies the stack instead of journaling it.
 pub(crate) struct InputStack<G> {
     pub(crate) rows: Vec<InputLevel<G>>,
+    /// Token words of every live token-list row, in push order.
+    pub(crate) words: Vec<tex_state::token::TracedTokenWord>,
+    /// Argument spans of every live macro activation, in push order.
+    pub(crate) parameters: Vec<super::ArgumentSpan>,
     occupied_source_buffer_slots: usize,
-    active_macro_bodies: usize,
-    active_macro_parameters: usize,
     row_admissions: u64,
     source_owner_swaps: u64,
 }
@@ -557,9 +561,9 @@ impl<G> Default for InputStack<G> {
     fn default() -> Self {
         Self {
             rows: Vec::new(),
+            words: Vec::new(),
+            parameters: Vec::new(),
             occupied_source_buffer_slots: 0,
-            active_macro_bodies: 0,
-            active_macro_parameters: 0,
             row_admissions: 0,
             source_owner_swaps: 0,
         }
@@ -577,7 +581,7 @@ impl<G: core::fmt::Debug> core::fmt::Debug for InputStack<G> {
 
 impl<G: PartialEq> PartialEq for InputStack<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.rows == other.rows
+        self.rows == other.rows && self.words == other.words && self.parameters == other.parameters
     }
 }
 
@@ -586,6 +590,8 @@ impl<G: Eq> Eq for InputStack<G> {}
 impl<G: Hash> Hash for InputStack<G> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.rows.hash(state);
+        self.words.hash(state);
+        self.parameters.hash(state);
     }
 }
 
@@ -618,56 +624,16 @@ impl<'a, G> IntoIterator for &'a InputStack<G> {
 }
 
 impl<G> InputStack<G> {
-    pub(crate) const fn active_macro_parameters(&self) -> usize {
-        self.active_macro_parameters
-    }
-
-    pub(crate) const fn active_macro_bodies(&self) -> usize {
-        self.active_macro_bodies
-    }
-
-    pub(crate) fn push_macro_body(&mut self, value: InputLevel<G>, parameter_count: usize) {
-        debug_assert!(matches!(
-            value,
-            InputLevel::Resident(super::ResidentTokenRow {
-                storage: super::ResidentTokenStorage::MacroBody(_),
-                ..
-            })
-        ));
-        self.active_macro_bodies = self
-            .active_macro_bodies
-            .checked_add(1)
-            .expect("macro body stack fits usize");
-        self.active_macro_parameters = self
-            .active_macro_parameters
-            .checked_add(parameter_count)
-            .expect("macro parameter stack fits usize");
-        self.push_row(value);
-    }
-
-    pub(crate) fn retire_macro_body(&mut self, parameter_count: usize) {
-        self.active_macro_bodies = self
-            .active_macro_bodies
-            .checked_sub(1)
-            .expect("input macro body count matches live macro rows");
-        self.active_macro_parameters = self
-            .active_macro_parameters
-            .checked_sub(parameter_count)
-            .expect("input parameter count matches live macro rows");
-    }
-
     /// Copies a quiescent stack for a checkpoint capture.
     ///
-    /// Quiescence excludes macro bodies, macro arguments, and attempt-owned
-    /// token lists, so every remaining row names storage that outlives the
-    /// capture: a source owner, the replay lane, or a durable list.
+    /// Quiescence excludes macro bodies and arguments, so the argument-span
+    /// stack is empty and every token row is a plain list.
     pub(crate) fn checkpoint_copy(&self) -> Self {
-        debug_assert_eq!(self.active_macro_bodies, 0);
         Self {
             rows: self.rows.iter().map(InputLevel::checkpoint_copy).collect(),
+            words: self.words.clone(),
+            parameters: self.parameters.clone(),
             occupied_source_buffer_slots: self.occupied_source_buffer_slots,
-            active_macro_bodies: 0,
-            active_macro_parameters: 0,
             row_admissions: 0,
             source_owner_swaps: 0,
         }
@@ -680,11 +646,80 @@ impl<G> InputStack<G> {
         self.rows.clear();
         self.rows
             .extend(capture.rows.iter().map(InputLevel::checkpoint_copy));
+        self.words.clone_from(&capture.words);
+        self.parameters.clone_from(&capture.parameters);
         self.occupied_source_buffer_slots = capture.occupied_source_buffer_slots;
-        self.active_macro_bodies = 0;
-        self.active_macro_parameters = 0;
         self.row_admissions = self.row_admissions.saturating_add(1);
         self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
+    }
+
+    /// Whether any macro activation is live.
+    pub(crate) fn has_macro_activation(&self) -> bool {
+        self.rows.iter().any(|level| {
+            matches!(
+                level,
+                super::InputLevel::Resident(super::ResidentTokenRow {
+                    storage: super::ResidentTokenStorage::MacroBody(_),
+                    ..
+                })
+            )
+        })
+    }
+
+    /// The words a token-list row delivers.
+    pub(crate) fn row_words(
+        &self,
+        row: &super::ResidentTokenRow,
+    ) -> &[tex_state::token::TracedTokenWord] {
+        row.words(&self.words)
+    }
+
+    /// The innermost macro activation's argument words and replacement.
+    #[cfg(test)]
+    pub(crate) fn innermost_macro_activation(
+        &self,
+    ) -> Option<(
+        Vec<&[tex_state::token::TracedTokenWord]>,
+        &[tex_state::token::TracedTokenWord],
+    )> {
+        let (row, body) = self.rows.iter().rev().find_map(|level| match level {
+            super::InputLevel::Resident(
+                row @ super::ResidentTokenRow {
+                    storage: super::ResidentTokenStorage::MacroBody(body),
+                    ..
+                },
+            ) => Some((row, body)),
+            _ => None,
+        })?;
+        let arguments = self.parameters[body.parameter_base as usize..]
+            .iter()
+            .map(|span| &self.words[span.start as usize..(span.start + span.len) as usize])
+            .collect();
+        Some((arguments, self.row_words(row)))
+    }
+
+    /// The next undelivered word of token row `index`, or `None` when that
+    /// row is exhausted or is a source level.
+    pub(crate) fn pending_token_word(
+        &self,
+        index: usize,
+    ) -> Option<tex_state::token::TracedTokenWord> {
+        let super::InputLevel::Resident(row) = self.rows.get(index)? else {
+            return None;
+        };
+        self.row_words(row).get(row.header.position()).copied()
+    }
+
+    /// The parameter text stored below a macro activation's replacement.
+    pub(crate) fn macro_parameter_text(
+        &self,
+        row: &super::ResidentTokenRow,
+    ) -> &[tex_state::token::TracedTokenWord] {
+        let super::ResidentTokenStorage::MacroBody(body) = row.storage else {
+            return &[];
+        };
+        let start = row.header.frame.start() as usize;
+        &self.words[start - body.parameter_text_len as usize..start]
     }
 
     /// Advances the diagnostic-coordinate counters past `past`, so no
@@ -713,7 +748,7 @@ impl<G> InputStack<G> {
                     identity: row.header.identity(),
                     position: row.header.frame.position(),
                 },
-                super::ResidentTokenStorage::MacroArgument(_) => {
+                super::ResidentTokenStorage::MacroArgument { .. } => {
                     DiagnosticInputTop::MacroArgument {
                         identity: row.header.identity(),
                         position: row.header.frame.position(),
@@ -910,24 +945,25 @@ impl<G> crate::CommandState<G> {
         fuel: &mut crate::fuel::CommandFuel,
         mut admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<ResidentRun, crate::CommandError> {
-        let Some(resident_index) = self.roots.input.levels.rows.len().checked_sub(1) else {
+        let InputStack { rows, words, .. } = &mut self.roots.input.levels;
+        let Some(InputLevel::Resident(row)) = rows.last_mut() else {
             return Ok(ResidentRun::default());
         };
-        let (roots, scratch) = (&mut self.roots, &mut self.scratch);
-        let InputLevel::Resident(row) = &mut roots.input.levels.rows[resident_index] else {
-            return Ok(ResidentRun::default());
+        let body = match row.storage {
+            super::ResidentTokenStorage::MacroBody(_) => true,
+            super::ResidentTokenStorage::MacroArgument { .. } => false,
+            super::ResidentTokenStorage::List(_) => return Ok(ResidentRun::default()),
         };
-        let position = row.header.frame.position();
-        if position >= row.header.frame.limit() {
+        let frame = row.header.frame;
+        if frame.position() >= frame.limit() {
             return Ok(ResidentRun {
                 consumed: 0,
                 at_transition: true,
             });
         }
-        let frame_remaining = (row.header.frame.limit() - position) as usize;
         // A `\noexpand`-marked frame settles its control sequences through
         // ordinary delivery.
-        admission = if row.header.frame.flags().contains(
+        admission = if frame.flags().contains(
             tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
         ) {
             admission.characters_only()
@@ -939,50 +975,25 @@ impl<G> crate::CommandState<G> {
             fuel.charge()?;
             unreachable!("zero remaining fuel must fail")
         }
-        let mut parameter_next = false;
-        let (consumed, argument_source) = match &mut row.storage {
-            super::ResidentTokenStorage::MacroBody(body) => {
-                let span = body.body.replacement_from(position);
-                let bound = available.min(frame_remaining);
-                let count = span
-                    .iter()
-                    .take(bound)
-                    .take_while(|word| admission.admits(**word))
-                    .count();
-                parameter_next = count < bound
-                    && span
-                        .get(count)
-                        .is_some_and(|word| word.out_parameter_slot().is_some());
-                if count != 0 {
-                    writer
-                        .append_body_span(scratch, &span[..count])
-                        .map_err(|_| crate::CommandError::input_invariant())?;
-                }
-                (count as u32, false)
-            }
-            super::ResidentTokenStorage::MacroArgument(argument) => {
-                let consumed = writer
-                    .append_argument_span(
-                        scratch,
-                        argument.range,
-                        position,
-                        &mut argument.origin_run,
-                        available,
-                        &mut admission,
-                    )
-                    .map_err(|_| crate::CommandError::input_invariant())?;
-                (consumed, true)
-            }
-            _ => return Ok(ResidentRun::default()),
-        };
-        #[cfg(not(feature = "profiling"))]
-        let _ = argument_source;
-        if consumed == 0 {
+        let span = &words[frame.absolute_position()..frame.absolute_limit()];
+        let bound = available.min(span.len());
+        let count = span[..bound]
+            .iter()
+            .take_while(|word| admission.admits(word.token_word()))
+            .count();
+        // An out-parameter can only stand in a macro replacement.
+        let parameter_next =
+            body && count < bound && span[count].token_word().out_parameter_slot().is_some();
+        if count == 0 {
             return Ok(ResidentRun {
                 consumed: 0,
                 at_transition: parameter_next,
             });
         }
+        writer
+            .append_span(&mut self.scratch, &span[..count])
+            .map_err(|_| crate::CommandError::input_invariant())?;
+        let consumed = count as u32;
         // The span append above succeeded in full, so the authoritative cursor
         // and fuel settle as one atomic scalar run.
         row.header
@@ -999,10 +1010,10 @@ impl<G> crate::CommandState<G> {
         #[cfg(feature = "profiling")]
         fuel.record_raw_run(
             true,
-            if argument_source {
-                crate::fuel::RawDeliveryKind::MacroArgument
-            } else {
+            if body {
                 crate::fuel::RawDeliveryKind::StoredToken
+            } else {
+                crate::fuel::RawDeliveryKind::MacroArgument
             },
             consumed,
         );
@@ -1012,52 +1023,38 @@ impl<G> crate::CommandState<G> {
         })
     }
 
+    /// TeX82 §359's `out_param` case: `begin_token_list(param_stack[
+    /// param_start+cur_chr-1], parameter)`.
     #[inline(always)]
     pub(crate) fn push_resident_parameter_cursor(
         &mut self,
         slot: u8,
-        arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
+        span: Option<super::ArgumentSpan>,
         active_source: Option<tex_state::packed_input::SourceContext>,
         observer: &mut Option<&mut dyn CommandObserver>,
     ) -> Result<(), ()> {
-        if !(1..=9).contains(&slot) {
-            return Err(());
-        }
-        let owner = arguments.ok_or(())?;
-        let range = self
-            .scratch
-            .argument_range(owner, slot)
-            .map_err(|_| ())?
-            .ok_or(())?;
+        let span = span.ok_or(())?;
         let identity = super::InputLevelId(self.roots.input.next_level_identity);
         self.roots.input.next_level_identity = self.roots.input.next_level_identity.wrapping_add(1);
-        let origin_run = self
-            .scratch
-            .admitted_argument_origin_run(range)
-            .map_err(|_| ())?;
         self.stack_usage.input_stack = self
             .stack_usage
             .input_stack
             .max(self.roots.input.levels.len());
-        let behavior = super::TokenBehavior::Parameter;
-        let retirement = super::RetirementBehavior::Pop;
-        let trace = super::ReplayTrace::MacroParameter { slot };
         let mut frame = super::packed_token_frame(
             identity,
-            range.len() as usize,
-            &behavior,
-            retirement,
-            &trace,
+            span.start,
+            span.len as usize,
+            &super::TokenBehavior::Parameter,
+            super::RetirementBehavior::Pop,
+            &super::ReplayTrace::MacroParameter { slot },
         );
         frame.set_source_context(active_source);
         self.roots
             .input
             .levels
             .push(InputLevel::Resident(super::ResidentTokenRow {
-                header: super::TokenRowHeader::new(behavior, retirement, trace, frame),
-                storage: super::ResidentTokenStorage::MacroArgument(
-                    super::MacroArgumentCursor::new(range, slot, origin_run),
-                ),
+                header: super::TokenRowHeader::new(frame),
+                storage: super::ResidentTokenStorage::MacroArgument { slot },
             }));
         if let Some(sink) = observer.as_deref_mut() {
             sink.committed(CommandObservation::Input(InputRecord {
@@ -1079,14 +1076,16 @@ impl<G> crate::CommandState<G> {
         identity: super::InputLevelId,
         observer: &mut Option<&mut dyn CommandObserver>,
         immediate_write_retirement: &mut Option<super::InputLevelId>,
-    ) -> Result<Option<super::ResidentBoundary>, ()> {
-        let retirement = self
-            .retire_resident_ordinary_input(resident_index, observer, immediate_write_retirement)
-            .map_err(|_| ())?;
+    ) -> Option<super::ResidentBoundary> {
+        let retirement = self.retire_resident_ordinary_input(
+            resident_index,
+            observer,
+            immediate_write_retirement,
+        );
         if self.input.levels.len() == resident_index + 1 {
-            return Ok(Some(super::ResidentBoundary::TokenExhausted { identity }));
+            return Some(super::ResidentBoundary::TokenExhausted { identity });
         }
-        Ok(retirement.map(super::ResidentBoundary::ReplayCompleted))
+        retirement.map(super::ResidentBoundary::ReplayCompleted)
     }
 
     pub(crate) fn settle_input_retirement(
@@ -1260,22 +1259,6 @@ impl<G> InputStack<G> {
         true
     }
 
-    pub(crate) fn extend_top_token_limit(
-        &mut self,
-        additional: u32,
-        replay_cursor: super::ResidentReplayCursor,
-    ) -> Option<bool> {
-        let InputLevel::Resident(super::ResidentTokenRow {
-            header,
-            storage: super::ResidentTokenStorage::Replay { cursor, .. },
-        }) = self.rows.last_mut()?
-        else {
-            return None;
-        };
-        *cursor = replay_cursor;
-        Some(header.frame.extend_limit(additional).is_some())
-    }
-
     pub(crate) fn push(&mut self, value: InputLevel<G>) {
         assert!(
             !matches!(value, InputLevel::Source(_)),
@@ -1301,7 +1284,10 @@ impl<G> InputStack<G> {
         let retired = self.rows.pop()?;
         let source = match &retired {
             InputLevel::Source(source) => Some(&*source.slot),
-            InputLevel::Resident(_) => None,
+            InputLevel::Resident(row) => {
+                self.release_row_words(row);
+                None
+            }
         };
         let result = project(&retired, source);
         if let Some(source) = source {
@@ -1317,10 +1303,30 @@ impl<G> InputStack<G> {
     /// The caller carries `index` from the one top selection which found
     /// exhaustion, so this performs neither another top lookup nor the
     /// identity validation required by cold detached coordinates.
+    #[inline(always)]
     pub(super) fn pop_resident(&mut self, index: usize) {
         debug_assert_eq!(index.checked_add(1), Some(self.rows.len()));
-        debug_assert!(!matches!(self.rows[index], InputLevel::Source(_)));
-        self.rows.pop();
+        if let Some(InputLevel::Resident(row)) = self.rows.pop() {
+            self.release_row_words(&row);
+        } else {
+            unreachable!("resident coordinate selects a resident row");
+        }
+    }
+
+    /// Releases the stack words and argument spans a popped row owned.
+    /// Rows are LIFO, so everything above the row's own words is gone.
+    #[inline(always)]
+    fn release_row_words(&mut self, row: &super::ResidentTokenRow) {
+        match row.storage {
+            super::ResidentTokenStorage::List(_) => {
+                self.words.truncate(row.header.frame.start() as usize);
+            }
+            super::ResidentTokenStorage::MacroBody(body) => {
+                self.words.truncate(body.region_start as usize);
+                self.parameters.truncate(body.parameter_base as usize);
+            }
+            super::ResidentTokenStorage::MacroArgument { .. } => {}
+        }
     }
 
     pub(super) fn resident_at(&self, index: usize) -> &InputLevel<G> {
@@ -1386,11 +1392,22 @@ impl<G> InputStack<G> {
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>().saturating_add(
-            self.rows
-                .capacity()
-                .saturating_mul(std::mem::size_of::<InputLevel<G>>()),
-        )
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.rows
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<InputLevel<G>>()),
+            )
+            .saturating_add(
+                self.words
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<tex_state::token::TracedTokenWord>()),
+            )
+            .saturating_add(
+                self.parameters
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<super::ArgumentSpan>()),
+            )
     }
 
     fn replace_source_buffer_slots(&mut self, prior: usize, current: usize) {

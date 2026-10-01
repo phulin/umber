@@ -185,6 +185,13 @@ impl<G> ResidentMacroBody<G> {
         self.start as usize
     }
 
+    /// The whole definition: its parameter text, then its replacement.
+    #[must_use]
+    #[inline(always)]
+    pub fn definition_words(&self) -> &[TokenWord] {
+        &self.words
+    }
+
     /// Reads one parameter-text word.
     #[must_use]
     #[inline]

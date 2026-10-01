@@ -7,9 +7,7 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 use tex_state::{DefinitionRef, ResidentMacroBody};
 
 use crate::command::HotCommand;
-use crate::execution_scratch::{
-    ArgumentRunAdmission, ArgumentSetId, MacroArgumentWriter, PendingArgumentSet,
-};
+use crate::execution_scratch::{ArgumentRunAdmission, MacroArgumentWriter, PendingArgumentSet};
 use crate::processor::status::{
     ArgumentBuilderId, MatchingContext, ScannerEpisode, ScannerStatus, ScannerStatusVisibility,
     ScannerWarning,
@@ -328,26 +326,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             return self.finish_empty_matching_macro(matching, episode, parameter_count);
         }
         self.conserve_input_stack_for_descendant()?;
-        let arguments = if parameter_count == 0 {
-            if let Some(matching) = matching {
-                self.command
-                    .scratch
-                    .discard_macro_match(matching)
-                    .map_err(|_| CommandError::input_invariant())?;
-            }
-            None
-        } else {
-            let frame = self
-                .command
-                .scratch
-                .commit_macro_match(matching.ok_or_else(CommandError::input_invariant)?)
-                .map_err(|_| CommandError::input_invariant())?;
-            Some(frame)
-        };
+        let parameter_base = self.command.input.levels.parameters.len();
         let macro_name = plan.macro_name;
-        let call_origin = plan.call_origin;
-        let body = plan.body;
-        let _level = self.push_macro_activation(macro_name, body, call_origin, arguments);
+        let _level = self
+            .command
+            .push_macro_activation(macro_name, &plan.body, matching, plan.call_origin)
+            .map_err(|_| CommandError::input_invariant())?;
         observe!(
             self,
             CommandObservation::Input(InputRecord {
@@ -364,9 +348,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             CommandObservation::Macro(MacroRecord::Activation {
                 control_sequence: self.state.resolve(macro_name).to_owned(),
                 argument_count: parameter_count as u8,
-                token_count: arguments.map_or(0, |arguments| {
-                    self.argument_token_count(arguments) as u64
-                }),
+                token_count: self.command.input.levels.parameters[parameter_base..]
+                    .iter()
+                    .map(|span| u64::from(span.len))
+                    .sum(),
             }),
         );
         if let Some(episode) = episode {
@@ -502,7 +487,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<bool, CommandError> {
         if let Some(body) = body {
             self.conserve_input_stack_for_descendant()?;
-            let _ = self.push_macro_activation(macro_name, body, call_site, None);
+            self.command
+                .push_macro_activation(macro_name, &body, None, call_site)
+                .map_err(|_| CommandError::input_invariant())?;
         } else {
             self.conserve_input_stack()?;
             self.command.record_empty_macro_activation();
@@ -1246,19 +1233,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(buffer)
-    }
-
-    fn argument_token_count(&self, arguments: ArgumentSetId<G>) -> usize {
-        (1..=9)
-            .filter_map(|slot| {
-                self.command
-                    .scratch
-                    .argument_range(arguments, slot)
-                    .ok()
-                    .flatten()
-            })
-            .map(|range| range.len() as usize)
-            .sum()
     }
 }
 

@@ -21,7 +21,7 @@ use crate::processor::status::{
 use crate::{CommandError, CommandProcessor};
 use tex_state::CommandLineSource;
 
-use crate::input::PackedTokenSpanHandle;
+use crate::input::PendingInsertion;
 use crate::observation::{
     CommandObservation, DiagnosticRecord, InputReason, InputRecord, InputTransition,
     TokenListRecord,
@@ -194,12 +194,9 @@ enum ScannedToksStorage<G> {
     },
     Definition(tex_state::DefinitionRef<G>),
     AttemptDefinition(AttemptDefinitionId),
-    ReplayInputBuilder {
-        builder: crate::input::ReplayInputBuilderId<G>,
-        len: u32,
-    },
-    ReplayInput {
-        replay: crate::input::ReplayPayloadId<G>,
+    /// An escaping list collected at `start` of the pending-insertion words.
+    PendingInsertion {
+        start: u32,
         len: u32,
     },
 }
@@ -209,11 +206,7 @@ enum ScannedWords<'a, G> {
     Semantic(&'a [TokenWord]),
     DefinitionParameter(tex_state::DefinitionView<'a, G>),
     DefinitionReplacement(tex_state::DefinitionView<'a, G>),
-    ReplayBuilder {
-        lane: &'a crate::input::ReplayLane<G>,
-        builder: crate::input::ReplayInputBuilderId<G>,
-        len: u32,
-    },
+    Pending(&'a [TracedTokenWord]),
 }
 
 impl<G> ScannedWords<'_, G> {
@@ -223,7 +216,7 @@ impl<G> ScannedWords<'_, G> {
             Self::Semantic(words) => words.len(),
             Self::DefinitionParameter(definition) => definition.parameter_text().len(),
             Self::DefinitionReplacement(definition) => definition.replacement_text().len(),
-            Self::ReplayBuilder { len, .. } => *len as usize,
+            Self::Pending(words) => words.len(),
         }
     }
 
@@ -239,9 +232,7 @@ impl<G> ScannedWords<'_, G> {
                 .replacement_text()
                 .get(index)
                 .map(|word| word.semantic_token()),
-            Self::ReplayBuilder { lane, builder, .. } => lane
-                .input_builder_get(*builder, index)
-                .map(|word| word.semantic_token()),
+            Self::Pending(words) => words.get(index).map(|word| word.semantic_token()),
         }
     }
 }
@@ -441,21 +432,17 @@ impl<G> ScannedToksBuffers<G> {
         match self.storage {
             ScannedToksStorage::Definition(definition) => Some(definition),
             ScannedToksStorage::Tokens { .. }
-            | ScannedToksStorage::ReplayInputBuilder { .. }
             | ScannedToksStorage::AttemptDefinition(_)
-            | ScannedToksStorage::ReplayInput { .. } => None,
+            | ScannedToksStorage::PendingInsertion { .. } => None,
         }
     }
 
-    pub(crate) fn replay_input(self) -> Option<PackedTokenSpanHandle<G>> {
+    pub(crate) fn replay_input(self) -> Option<PendingInsertion> {
         match self.storage {
-            ScannedToksStorage::ReplayInput { replay, len } => {
-                Some(PackedTokenSpanHandle::Replay { replay, len })
-            }
+            ScannedToksStorage::PendingInsertion { start, .. } => Some(PendingInsertion { start }),
             ScannedToksStorage::Tokens { .. }
             | ScannedToksStorage::Definition(_)
-            | ScannedToksStorage::AttemptDefinition(_)
-            | ScannedToksStorage::ReplayInputBuilder { .. } => None,
+            | ScannedToksStorage::AttemptDefinition(_) => None,
         }
     }
 }
@@ -539,15 +526,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(|()| CommandError::input_invariant())?;
             }
             (ScanToksGrammar::General, ScanToksDestination::ReplayInput { transform }) => {
-                let builder = self
-                    .command
-                    .roots
-                    .input
-                    .replay
-                    .begin_input_builder()
-                    .map_err(scratch_command_error)?;
+                let start = u32::try_from(self.command.roots.input.pending_insertions.len())
+                    .map_err(|_| CommandError::input_invariant())?;
                 collector
-                    .prepare_replay_input(builder, transform, observed)
+                    .prepare_replay_input(start, transform, observed)
                     .map_err(|()| CommandError::input_invariant())?;
             }
             (ScanToksGrammar::MacroDefinition, ScanToksDestination::Definition { global }) => {
@@ -633,13 +615,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         collector: &mut TokenCollector<G>,
     ) -> Result<(), CommandError> {
         self.release_scan_toks_definition_writer(collector)?;
-        if let TokenCollectorDestination::ReplayInput { builder, .. } = collector.destination() {
+        if let TokenCollectorDestination::ReplayInput { start, .. } = collector.destination() {
             self.command
                 .roots
                 .input
-                .replay
-                .discard_input_builder(*builder)
-                .map_err(scratch_command_error)?;
+                .pending_insertions
+                .truncate(*start as usize);
         }
         if let TokenCollectorDestination::Definition { definition, .. } = collector.destination() {
             self.state.abort_definition_build(*definition);
@@ -689,9 +670,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 TokenCollectorPhase::Complete => unreachable!(),
             },
             TokenCollectorDestination::ReplayInput {
-                builder,
                 transform,
                 observed_source,
+                ..
             } => {
                 if let Some(observed_source) = observed_source {
                     observed_source.push(self.observed_token(word));
@@ -723,12 +704,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ) => token,
                 };
                 let final_word = TracedTokenWord::pack(shifted, word.origin());
-                self.command
-                    .roots
-                    .input
-                    .replay
-                    .push_input_builder_word(*builder, final_word)
-                    .map_err(scratch_command_error)?;
+                self.command.roots.input.pending_insertions.push(final_word);
                 if transform != ReplayWordTransform::Identity {
                     #[cfg(all(test, feature = "profiling"))]
                     CASE_SHIFT_PATH_COUNTERS.with(|counters| {
@@ -843,17 +819,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(attempt_command_error)?;
                 ScannedToksStorage::AttemptDefinition(*definition)
             }
-            TokenCollectorDestination::ReplayInput { builder, .. } => {
-                let len = self
-                    .command
-                    .roots
-                    .input
-                    .replay
-                    .input_builder_len(*builder)
-                    .ok_or_else(CommandError::input_invariant)?;
-                ScannedToksStorage::ReplayInputBuilder {
-                    builder: *builder,
-                    len,
+            TokenCollectorDestination::ReplayInput { start, .. } => {
+                let len = self.command.roots.input.pending_insertions.len() - *start as usize;
+                ScannedToksStorage::PendingInsertion {
+                    start: *start,
+                    len: u32::try_from(len).map_err(|_| CommandError::input_invariant())?,
                 }
             }
             _ => return Err(CommandError::input_invariant()),
@@ -885,8 +855,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .definition_parameter_words(definition)
                 .map(ScannedWords::Semantic)
                 .map_err(attempt_command_error),
-            ScannedToksStorage::ReplayInputBuilder { .. }
-            | ScannedToksStorage::ReplayInput { .. } => Err(CommandError::input_invariant()),
+            ScannedToksStorage::PendingInsertion { .. } => Err(CommandError::input_invariant()),
         }
     }
 
@@ -907,14 +876,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .definition_replacement_words(definition)
                 .map(ScannedWords::Semantic)
                 .map_err(attempt_command_error),
-            ScannedToksStorage::ReplayInputBuilder { builder, len } => {
-                Ok(ScannedWords::ReplayBuilder {
-                    lane: &self.command.roots.input.replay,
-                    builder,
-                    len,
-                })
+            ScannedToksStorage::PendingInsertion { start, len } => {
+                let start = start as usize;
+                self.command
+                    .roots
+                    .input
+                    .pending_insertions
+                    .get(start..start + len as usize)
+                    .map(ScannedWords::Pending)
+                    .ok_or_else(CommandError::input_invariant)
             }
-            ScannedToksStorage::ReplayInput { .. } => Err(CommandError::input_invariant()),
         }
     }
 
@@ -989,7 +960,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(error);
         }
         let result = self.scan_toks_inner(config, &mut collector, &episode, &mut phase);
-        let mut result = match result {
+        let result = match result {
             Ok(result) => result,
             Err(error) if error.is_resource_suspension() => {
                 // `scan_toks` is a synchronous parser.  A missing immutable
@@ -1056,30 +1027,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         );
         // The scanner's rows stay with the command, which releases them when
         // it settles.
-        if let ScannedToksStorage::ReplayInputBuilder { builder, .. } = result.storage {
-            let span = match self
-                .command
-                .roots
-                .input
-                .replay
-                .finish_input_builder(builder)
-            {
-                Ok(span) => span,
-                Err(error) => {
-                    self.command
-                        .roots
-                        .input
-                        .replay
-                        .discard_input_builder(builder)
-                        .map_err(scratch_command_error)?;
-                    return Err(scratch_command_error(error));
-                }
-            };
-            let PackedTokenSpanHandle::Replay { replay, len } = span else {
-                return Err(CommandError::input_invariant());
-            };
-            result.storage = ScannedToksStorage::ReplayInput { replay, len };
-        }
         Ok(result)
     }
 
@@ -2037,17 +1984,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         // generation-owned replay storage; publication moves that storage's
         // header into the final ordered entry and never promotes or copies an
         // attempt-local list.
-        let ScannedToksStorage::ReplayInput { replay, len } = scanned.storage else {
+        let ScannedToksStorage::PendingInsertion { start, .. } = scanned.storage else {
             return Err(CommandError::input_invariant());
         };
         let first = self
             .command
             .roots
             .input
-            .replay
-            .indexed_get_cold(replay, 0)
+            .pending_insertions
+            .get(start as usize)
             .map(|word| word.semantic_token());
-        self.insert_expansion_list(PackedTokenSpanHandle::Replay { replay, len }, first);
+        self.insert_expansion_list(PendingInsertion { start }, first);
         Ok(())
     }
 }

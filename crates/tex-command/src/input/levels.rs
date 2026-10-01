@@ -1,10 +1,17 @@
 //! Dense source and token-list input-level ownership.
+//!
+//! Every token-list level reads one contiguous span of the input stack's
+//! token words, which plays the role of TeX82's `mem` for live input: a
+//! stored list, an inserted or backed-up list, a macro activation, and a
+//! macro argument are all `words[frame.start() + frame.position()]`. Pushing a
+//! level appends its words; popping it truncates them, so the words are
+//! exactly LIFO with the rows that own them.
 
-use core::marker::PhantomData;
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use tex_state::interner::Symbol;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
-use tex_state::token::{OriginId, Token, TokenWord, TracedTokenWord};
+#[cfg(test)]
+use tex_state::token::Token;
+use tex_state::token::{OriginId, TokenWord, TracedTokenWord};
 
 use super::source::{SourceCursor, SourceNameClass};
 use crate::attempt::AttemptTokenListId;
@@ -61,9 +68,11 @@ fn packed_frame_kind(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputFram
     }
 }
 
+/// Packs a token-list frame reading `len` stack words from `start`.
 #[inline]
 pub(crate) fn packed_token_frame(
     identity: InputLevelId,
+    start: u32,
     len: usize,
     behavior: &TokenBehavior,
     retirement: RetirementBehavior,
@@ -83,7 +92,13 @@ pub(crate) fn packed_token_frame(
         }
         RetirementBehavior::Pop => InputFrameFlags::empty(),
     });
-    PackedInputFrame::tokens(identity.0, len, packed_frame_kind(behavior, trace), flags)
+    PackedInputFrame::tokens(
+        identity.0,
+        start,
+        len,
+        packed_frame_kind(behavior, trace),
+        flags,
+    )
 }
 
 /// One future-relevant input level.
@@ -94,32 +109,33 @@ pub(crate) fn packed_token_frame(
 #[repr(u8)]
 pub(crate) enum InputLevel<G> {
     Source(SourceLevel<G>),
-    Resident(ResidentTokenRow<G>),
+    Resident(ResidentTokenRow),
 }
 
-/// Specialized resident cursor over a definition arena replacement span.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct MacroBodyCursor<G> {
-    pub(crate) body: tex_state::ResidentMacroBody<G>,
-    pub(crate) arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
-    pub(crate) name: tex_state::interner::Symbol,
+/// One macro argument's span of input-stack words: TeX82's `param_stack`
+/// entry (§388), which points at the argument's token list.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub(crate) struct ArgumentSpan {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
+}
+
+/// One macro activation: TeX82 §390's `macro` token list.
+///
+/// Its stack region holds the matched argument copies, then the definition's
+/// parameter text (only §314's context display reads it), then the
+/// replacement the frame delivers, which starts at `frame.start()`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct MacroBodyCursor {
+    pub(crate) name: Symbol,
     pub(crate) invocation: OriginId,
-}
-
-impl<G> MacroBodyCursor<G> {
-    pub(crate) fn new(
-        body: tex_state::ResidentMacroBody<G>,
-        arguments: Option<crate::execution_scratch::ArgumentSetId<G>>,
-        name: tex_state::interner::Symbol,
-        invocation: OriginId,
-    ) -> Self {
-        Self {
-            body,
-            arguments,
-            name,
-            invocation,
-        }
-    }
+    /// First stack word of the activation region.
+    pub(crate) region_start: u32,
+    /// Parameter-text words stored just below the replacement.
+    pub(crate) parameter_text_len: u32,
+    /// TeX82's `param_start`: the argument-span stack length before this
+    /// activation pushed its spans.
+    pub(crate) parameter_base: u32,
 }
 
 /// One registered-source level and its exact delivery identity.
@@ -227,95 +243,51 @@ pub(crate) enum SourceRetirement {
     EndReadLine,
 }
 
+impl MacroBodyCursor {
+    /// TeX82 §359's `param_stack[param_start+cur_chr-1]`: the span of
+    /// argument `#slot`, if this activation matched that many.
+    #[inline(always)]
+    pub(crate) fn argument_span(
+        &self,
+        parameters: &[ArgumentSpan],
+        slot: u8,
+    ) -> Option<ArgumentSpan> {
+        let index =
+            (self.parameter_base as usize).checked_add(usize::from(slot).checked_sub(1)?)?;
+        parameters.get(index).copied()
+    }
+}
+
 /// One authoritative header shared by every token-backed input row.
 ///
-/// Storage ownership remains in the concrete row variant. Everything that
-/// selects delivery, rollback, retirement, provenance context, and the next
-/// semantic word position lives here exactly once.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct TokenRowHeader<G> {
+/// Everything that selects delivery, retirement, provenance context, and the
+/// next word position lives here exactly once.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct TokenRowHeader {
     pub(crate) frame: PackedInputFrame,
-    generation: PhantomData<fn() -> G>,
 }
 
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ResidentTokenRow<G> {
-    pub(crate) header: TokenRowHeader<G>,
-    pub(crate) storage: ResidentTokenStorage<G>,
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ResidentTokenRow {
+    pub(crate) header: TokenRowHeader,
+    pub(crate) storage: ResidentTokenStorage,
 }
 
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) enum ResidentTokenStorage<G> {
-    Replay {
-        replay: ReplayPayloadId<G>,
-        cursor: ResidentReplayCursor,
-    },
-    /// TeX82 §325's `back_input` of one delivered token. The single backed-up
-    /// word lives inline in its row, so pushing and retiring the level admits
-    /// and releases nothing in the replay lane.
-    BackedUpWord(TracedTokenWord),
-    Durable(tex_state::TokenListId<G>),
-    Attempt(AttemptTokenListId),
-    MacroBody(MacroBodyCursor<G>),
-    MacroArgument(MacroArgumentCursor<G>),
+/// What a token-list row owns of the input stack's words.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum ResidentTokenStorage {
+    /// Owns `[frame.start(), frame.start() + frame.limit())`.
+    List(PackedTokenOwnership),
+    /// Owns its activation region and its argument spans.
+    MacroBody(MacroBodyCursor),
+    /// Borrows one argument span of the enclosing macro activation, which
+    /// cannot retire while this row lies above it.
+    MacroArgument { slot: u8 },
 }
 
-/// First-class input cursor over one admitted absolute macro-argument range.
-///
-/// Unlike a generic packed-token cursor, delivery has no storage-domain
-/// dispatch: admission validates the owning frame and exact argument once,
-/// after which the owner-protected half-open range indexes the fixed-chunk
-/// lane directly. The same frame is the lineage inherited by child token
-/// lists.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct MacroArgumentCursor<G> {
-    pub(crate) range: crate::execution_scratch::MacroArgumentRange<G>,
-    pub(crate) slot: u8,
-    /// Index of the provenance run containing the current absolute word.
-    /// It advances only when sequential replay crosses a run boundary.
-    pub(crate) origin_run: u32,
-}
-
-impl<G> MacroArgumentCursor<G> {
-    pub(crate) fn new(
-        range: crate::execution_scratch::MacroArgumentRange<G>,
-        slot: u8,
-        origin_run: u32,
-    ) -> Self {
-        Self {
-            range,
-            slot,
-            origin_run,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn advance_delivery(
-        &mut self,
-        position: u32,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> Option<(TokenWord, OriginId)> {
-        let absolute = self.range.start().checked_add(position)?;
-        if absolute >= self.range.end() {
-            return None;
-        }
-        let (word, origin) =
-            scratch.admitted_argument_parts_at_sequential(absolute, &mut self.origin_run)?;
-        Some((word, origin))
-    }
-}
-
-impl<G> TokenRowHeader<G> {
-    pub(crate) fn new(
-        _behavior: TokenBehavior,
-        _retirement: RetirementBehavior,
-        _trace: ReplayTrace,
-        frame: PackedInputFrame,
-    ) -> Self {
-        Self {
-            frame,
-            generation: PhantomData,
-        }
+impl TokenRowHeader {
+    pub(crate) const fn new(frame: PackedInputFrame) -> Self {
+        Self { frame }
     }
 
     pub(crate) fn identity(&self) -> InputLevelId {
@@ -393,12 +365,12 @@ impl<G> TokenRowHeader<G> {
     }
 }
 
-impl<G> ResidentTokenRow<G> {
+impl ResidentTokenRow {
     pub(crate) fn trace(&self) -> ReplayTrace {
         match self.header.frame.kind() {
             InputFrameKind::Parameter => ReplayTrace::MacroParameter {
-                slot: match &self.storage {
-                    ResidentTokenStorage::MacroArgument(argument) => argument.slot,
+                slot: match self.storage {
+                    ResidentTokenStorage::MacroArgument { slot } => slot,
                     _ => 0,
                 },
             },
@@ -426,6 +398,12 @@ impl<G> ResidentTokenRow<G> {
             InputFrameKind::Source => unreachable!("resident row cannot be a source"),
         }
     }
+
+    /// The words this row delivers, in order.
+    pub(crate) fn words<'a>(&self, words: &'a [TracedTokenWord]) -> &'a [TracedTokenWord] {
+        let frame = self.header.frame;
+        &words[frame.start() as usize..frame.absolute_limit()]
+    }
 }
 
 impl<G> InputLevel<G> {
@@ -437,228 +415,45 @@ impl<G> InputLevel<G> {
     }
 
     #[cfg(test)] // Macro and input lifecycle tests inspect the resident row.
-    pub(crate) fn macro_body(&self) -> Option<&MacroBodyCursor<G>> {
+    pub(crate) fn macro_body(&self) -> Option<&MacroBodyCursor> {
         match self {
             Self::Resident(ResidentTokenRow {
                 storage: ResidentTokenStorage::MacroBody(body),
                 ..
             }) => Some(body),
-            Self::Source(_)
-            | Self::Resident(ResidentTokenRow {
-                storage:
-                    ResidentTokenStorage::Replay { .. }
-                    | ResidentTokenStorage::BackedUpWord(_)
-                    | ResidentTokenStorage::Durable(_)
-                    | ResidentTokenStorage::Attempt(_)
-                    | ResidentTokenStorage::MacroArgument(_),
-                ..
-            }) => None,
+            _ => None,
         }
     }
 
-    /// Copies one row of a quiescent stack for a checkpoint capture.
-    ///
-    /// # Panics
-    ///
-    /// Panics on a macro, argument, or attempt row. Checkpoint quiescence
-    /// excludes all three, since their storage does not outlive the operation
-    /// that admitted them.
+    /// Copies one row for a checkpoint capture. A token row is plain data
+    /// over the stack's words, which the capture copies alongside it.
     pub(super) fn checkpoint_copy(&self) -> Self {
         match self {
             Self::Source(level) => Self::Source(level.checkpoint_copy()),
-            Self::Resident(row) => Self::Resident(ResidentTokenRow {
-                header: TokenRowHeader {
-                    frame: row.header.frame,
-                    generation: PhantomData,
-                },
-                storage: match &row.storage {
-                    ResidentTokenStorage::Replay { replay, cursor } => {
-                        ResidentTokenStorage::Replay {
-                            replay: *replay,
-                            cursor: *cursor,
-                        }
-                    }
-                    ResidentTokenStorage::BackedUpWord(word) => {
-                        ResidentTokenStorage::BackedUpWord(*word)
-                    }
-                    ResidentTokenStorage::Durable(list) => {
-                        ResidentTokenStorage::Durable(list.clone())
-                    }
-                    ResidentTokenStorage::Attempt(_)
-                    | ResidentTokenStorage::MacroBody(_)
-                    | ResidentTokenStorage::MacroArgument(_) => {
-                        unreachable!("checkpoint quiescence excludes operation-owned input rows")
-                    }
-                },
-            }),
+            Self::Resident(row) => Self::Resident(*row),
         }
     }
 
-    pub(crate) fn stored_common(&self) -> Option<&TokenRowHeader<G>> {
+    pub(crate) fn stored_common(&self) -> Option<&TokenRowHeader> {
         match self {
             Self::Resident(row) => Some(&row.header),
             Self::Source(_) => None,
         }
     }
 
-    pub(crate) fn stored_common_mut(&mut self) -> Option<&mut TokenRowHeader<G>> {
+    pub(crate) fn stored_common_mut(&mut self) -> Option<&mut TokenRowHeader> {
         match self {
             Self::Resident(row) => Some(&mut row.header),
             Self::Source(_) => None,
         }
     }
 
-    pub(crate) fn stored_position(&self) -> Option<usize> {
-        self.stored_common().map(TokenRowHeader::position)
-    }
-
-    /// Tests a generic stored-token row's `loc=null` condition without
-    /// reclassifying or loading its already-admitted storage domain.
+    /// Tests a token-list row's `loc=null` condition.
     pub(crate) fn stored_is_exhausted(&self) -> Option<bool> {
         self.stored_common()
             .map(|header| header.frame.position() >= header.frame.limit())
     }
 
-    #[cold]
-    pub(crate) fn stored_span_cold(&self) -> Option<PackedTokenSpanHandle<G>> {
-        match self {
-            Self::Resident(ResidentTokenRow {
-                header,
-                storage: ResidentTokenStorage::Replay { replay, .. },
-            }) => Some(PackedTokenSpanHandle::Replay {
-                replay: *replay,
-                len: header.frame.limit(),
-            }),
-            Self::Resident(ResidentTokenRow {
-                header,
-                storage: ResidentTokenStorage::Durable(list),
-            }) => Some(PackedTokenSpanHandle::DurableList {
-                list: list.clone(),
-                len: header.frame.limit(),
-            }),
-            Self::Resident(ResidentTokenRow {
-                header,
-                storage: ResidentTokenStorage::Attempt(list),
-            }) => Some(PackedTokenSpanHandle::AttemptList {
-                list: *list,
-                len: header.frame.limit(),
-            }),
-            Self::Resident(ResidentTokenRow {
-                storage: ResidentTokenStorage::BackedUpWord(word),
-                ..
-            }) => Some(PackedTokenSpanHandle::Word(*word)),
-            Self::Source(_)
-            | Self::Resident(ResidentTokenRow {
-                storage: ResidentTokenStorage::MacroBody(_) | ResidentTokenStorage::MacroArgument(_),
-                ..
-            }) => None,
-        }
-    }
-
-    #[cold]
-    pub(crate) fn stored_indexed_token_at_cold(
-        &self,
-        sources: PackedTokenSources<'_, G>,
-        _state: &tex_state::CommandContext<'_, G>,
-    ) -> Option<PackedTokenAt> {
-        let span = self.stored_span_cold()?;
-        sources.indexed_token_at_cold(&span, self.stored_position()?)
-    }
-}
-
-/// Canonical packed word plus its storage-independent diagnostic coordinates.
-///
-/// This value-returning view is reserved for non-delivering lifecycle probes.
-/// The default command-delivery path writes into the caller's final
-/// [`crate::CurrentCommand`] instead.
-pub(crate) type PackedTokenAt = (TokenWord, OriginId);
-
-/// Typed lifetime handle for one immutable packed-token span.
-///
-/// The source domain is selected exactly once when the input level is
-/// created. Cold inspection uses indexed lookup; delivery carries a sequential
-/// replay coordinate beside the input frame. The variants are a
-/// storage-boundary lifetime distinction, not separate delivery objects.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) enum PackedTokenSpanHandle<G> {
-    /// Compact coordinate into the generation-owned replay lane.
-    Replay {
-        replay: ReplayPayloadId<G>,
-        len: u32,
-    },
-    /// One generation-durable immutable token list.
-    DurableList {
-        list: tex_state::TokenListId<G>,
-        len: u32,
-    },
-    /// One attempt-local token list, replayed literally by range.
-    AttemptList { list: AttemptTokenListId, len: u32 },
-    /// One inline backed-up word.
-    Word(TracedTokenWord),
-}
-
-impl<G> Clone for PackedTokenSpanHandle<G> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Replay { replay, len } => Self::Replay {
-                replay: *replay,
-                len: *len,
-            },
-            Self::DurableList { list, len } => Self::DurableList {
-                list: list.clone(),
-                len: *len,
-            },
-            Self::AttemptList { list, len } => Self::AttemptList {
-                list: *list,
-                len: *len,
-            },
-            Self::Word(word) => Self::Word(*word),
-        }
-    }
-}
-
-/// Borrowed storage boundary for every immutable stored-token source.
-pub(crate) struct PackedTokenSources<'a, G> {
-    replay: &'a ReplayLane<G>,
-    attempt: &'a crate::attempt::AttemptArena<G>,
-}
-
-impl<'a, G> PackedTokenSources<'a, G> {
-    pub(crate) const fn new(
-        replay: &'a ReplayLane<G>,
-        attempt: &'a crate::attempt::AttemptArena<G>,
-    ) -> Self {
-        Self { replay, attempt }
-    }
-
-    /// Peeks through an admitted span without advancing its input frame.
-    #[cold]
-    pub(crate) fn indexed_token_at_cold(
-        &self,
-        span: &PackedTokenSpanHandle<G>,
-        index: usize,
-    ) -> Option<PackedTokenAt> {
-        match span {
-            PackedTokenSpanHandle::Replay { replay, .. } => self
-                .replay
-                .indexed_get_cold(*replay, index)
-                .map(|word| (word.token_word(), word.origin())),
-            PackedTokenSpanHandle::AttemptList { list, .. } => self
-                .attempt
-                .token_word(*list, index)
-                .ok()
-                .map(|word| (word.token_word(), word.origin())),
-            PackedTokenSpanHandle::DurableList { list, .. } => {
-                list.word_at(index).map(|word| (word, OriginId::UNKNOWN))
-            }
-            PackedTokenSpanHandle::Word(word) => {
-                (index == 0).then(|| (word.token_word(), word.origin()))
-            }
-        }
-    }
-}
-
-impl<G> InputLevel<G> {
     /// External source context inherited when this semantic input row became
     /// visible. Source owners remain exclusively in `InputStack`; this is the
     /// compact execution fact delivered commands need for checkpoint origin.
@@ -680,8 +475,7 @@ impl<G> InputLevel<G> {
     }
 }
 
-/// TeX82 one-word allocator ownership carried independently of Umber's
-/// uniform packed host representation.
+/// TeX82 one-word allocator ownership of a token-list row's words.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) enum PackedTokenOwnership {
     /// Replaying an immutable token list adds only TeX's list-stack reference.
@@ -693,910 +487,92 @@ pub(crate) enum PackedTokenOwnership {
     BackedUp,
 }
 
-const REPLAY_SEGMENT_ITEMS: usize = 256;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct ReplayLaneMark {
-    segments: u32,
-    tail_used: u16,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct ReplayLaneCursor {
-    segment: u32,
-    offset: u16,
-}
-
-/// Current physical replay run and segment coordinate for one resident input
-/// row. `remaining` and `segment_end` are scalar boundary coordinates, so a
-/// warm word neither rescans the run prefix nor rereads segment length.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ResidentReplayCursor {
-    run: ResidentReplayRun,
-    segment: u32,
-    remaining: u32,
-    offset: u16,
-    segment_end: u16,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum ResidentReplayRun {
-    Empty,
-    Prefix,
-    SegmentedBody,
-    OwnedBody,
-}
-
-impl ResidentReplayCursor {
-    pub(crate) const EMPTY: Self = Self {
-        run: ResidentReplayRun::Empty,
-        segment: 0,
-        remaining: 0,
-        offset: 0,
-        segment_end: 0,
-    };
-
-    const fn empty() -> Self {
-        Self::EMPTY
-    }
-}
-
+/// One immutable list a token-list level copies onto the input stack.
 #[derive(Debug, Eq, Hash, PartialEq)]
-struct ReplaySegment<T> {
-    values: Vec<T>,
-}
-
-impl<T> ReplaySegment<T> {
-    fn new() -> Result<Self, crate::execution_scratch::ScratchError> {
-        let mut values = Vec::new();
-        values
-            .try_reserve_exact(REPLAY_SEGMENT_ITEMS)
-            .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
-        Ok(Self { values })
-    }
-}
-
-#[derive(Debug, Eq, Hash, PartialEq)]
-struct ActiveReplaySegment<T> {
-    storage: Arc<ReplaySegment<T>>,
-    used: u16,
-}
-
-impl<T> Clone for ActiveReplaySegment<T> {
-    fn clone(&self) -> Self {
-        Self {
-            storage: Arc::clone(&self.storage),
-            used: self.used,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct SegmentedReplayLane<T> {
-    active: Vec<ActiveReplaySegment<T>>,
-    spare: Vec<Arc<ReplaySegment<T>>>,
-}
-
-impl<T> Default for SegmentedReplayLane<T> {
-    fn default() -> Self {
-        Self {
-            active: Vec::new(),
-            spare: Vec::new(),
-        }
-    }
-}
-
-impl<T> Clone for SegmentedReplayLane<T> {
-    fn clone(&self) -> Self {
-        Self {
-            active: self.active.clone(),
-            spare: Vec::new(),
-        }
-    }
-}
-
-impl<T: Eq> PartialEq for SegmentedReplayLane<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.active.len() == other.active.len()
-            && self.active.iter().zip(&other.active).all(|(left, right)| {
-                left.used == right.used
-                    && left.storage.values[..usize::from(left.used)]
-                        == right.storage.values[..usize::from(right.used)]
-            })
-    }
-}
-
-impl<T: Eq> Eq for SegmentedReplayLane<T> {}
-
-impl<T: Hash> Hash for SegmentedReplayLane<T> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.active.len().hash(state);
-        for segment in &self.active {
-            segment.used.hash(state);
-            segment.storage.values[..usize::from(segment.used)].hash(state);
-        }
-    }
-}
-
-impl<T> SegmentedReplayLane<T> {
-    fn retained_bytes(&self) -> usize {
-        let segment_bytes = self
-            .active
-            .len()
-            .saturating_add(self.spare.len())
-            .saturating_mul(
-                std::mem::size_of::<ReplaySegment<T>>()
-                    .saturating_add(REPLAY_SEGMENT_ITEMS.saturating_mul(std::mem::size_of::<T>())),
-            );
-        std::mem::size_of::<Self>()
-            .saturating_add(
-                self.active
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<ActiveReplaySegment<T>>()),
-            )
-            .saturating_add(
-                self.spare
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<Arc<ReplaySegment<T>>>()),
-            )
-            .saturating_add(segment_bytes)
-    }
-
-    fn mark(&self) -> ReplayLaneMark {
-        ReplayLaneMark {
-            segments: self.active.len() as u32,
-            tail_used: self.active.last().map_or(0, |segment| segment.used),
-        }
-    }
-
-    fn push(
-        &mut self,
-        value: T,
-    ) -> Result<ReplayLaneCursor, crate::execution_scratch::ScratchError> {
-        let needs_segment = self.active.last().is_none_or(|segment| {
-            usize::from(segment.used) == REPLAY_SEGMENT_ITEMS
-                || Arc::strong_count(&segment.storage) != 1
-        });
-        if needs_segment {
-            let high_water = self
-                .active
-                .len()
-                .checked_add(self.spare.len())
-                .and_then(|len| len.checked_add(1))
-                .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
-            self.active
-                .try_reserve(high_water - self.active.len())
-                .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
-            // Retirement may transfer every active segment here at once. Grow
-            // this header vector when the segment is first admitted so the
-            // hot LIFO pop path remains allocation-free at high water.
-            self.spare
-                .try_reserve(high_water - self.spare.len())
-                .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
-            let storage = match self.spare.pop() {
-                Some(storage) if Arc::strong_count(&storage) == 1 => storage,
-                _ => Arc::new(ReplaySegment::new()?),
-            };
-            self.active.push(ActiveReplaySegment { storage, used: 0 });
-        }
-        let segment_index = self.active.len() - 1;
-        let segment = &mut self.active[segment_index];
-        let offset = segment.used;
-        let storage = Arc::get_mut(&mut segment.storage)
-            .ok_or(crate::execution_scratch::ScratchError::InvalidCoordinate)?;
-        if usize::from(offset) == storage.values.len() {
-            storage.values.push(value);
-        } else {
-            storage.values[usize::from(offset)] = value;
-        }
-        segment.used += 1;
-        Ok(ReplayLaneCursor {
-            segment: segment_index as u32,
-            offset,
-        })
-    }
-
-    fn resident_cursor(
-        &self,
-        start: ReplayLaneCursor,
+pub(crate) enum PackedTokenSpanHandle<G> {
+    /// One generation-durable immutable token list.
+    DurableList {
+        list: tex_state::TokenListId<G>,
         len: u32,
-        run: ResidentReplayRun,
-    ) -> Option<ResidentReplayCursor> {
-        if len == 0 {
-            return Some(ResidentReplayCursor::empty());
-        }
-        let segment = self.active.get(start.segment as usize)?;
-        (start.offset < segment.used).then_some(ResidentReplayCursor {
-            run,
-            segment: start.segment,
-            remaining: len,
-            offset: start.offset,
-            segment_end: segment.used,
-        })
-    }
-
-    #[inline(always)]
-    fn advance_sequential(&self, cursor: &mut ResidentReplayCursor) -> Option<&T> {
-        if cursor.remaining == 0 {
-            return None;
-        }
-        debug_assert_ne!(cursor.remaining, 0);
-        if cursor.offset == cursor.segment_end {
-            self.refresh_resident_cursor(cursor)?;
-        }
-        let segment = self.active.get(cursor.segment as usize)?;
-        let value = segment.storage.values.get(usize::from(cursor.offset))?;
-        cursor.offset = cursor.offset.checked_add(1)?;
-        cursor.remaining -= 1;
-        Some(value)
-    }
-
-    /// Crosses the uncommon exhausted-span or fixed-segment boundary.
-    #[cold]
-    #[inline(never)]
-    fn refresh_resident_cursor(&self, cursor: &mut ResidentReplayCursor) -> Option<()> {
-        debug_assert_eq!(cursor.offset, cursor.segment_end);
-        debug_assert_ne!(cursor.remaining, 0);
-        cursor.segment = cursor.segment.checked_add(1)?;
-        cursor.offset = 0;
-        let segment = self.active.get(cursor.segment as usize)?;
-        cursor.segment_end = segment.used;
-        Some(())
-    }
-
-    /// Cold indexed lookup for diagnostics, checkpoint projection, and test
-    /// inspection. Resident delivery must use `advance_sequential`.
-    #[cold]
-    fn indexed_get_cold(&self, start: ReplayLaneCursor, mut index: usize) -> Option<&T> {
-        let mut segment_index = start.segment as usize;
-        let mut offset = usize::from(start.offset);
-        loop {
-            let segment = self.active.get(segment_index)?;
-            let available = usize::from(segment.used).checked_sub(offset)?;
-            if index < available {
-                return segment.storage.values.get(offset + index);
-            }
-            index -= available;
-            segment_index += 1;
-            offset = 0;
-        }
-    }
-
-    fn restore(
-        &mut self,
-        mark: ReplayLaneMark,
-    ) -> Result<(), crate::execution_scratch::ScratchError> {
-        let segments = mark.segments as usize;
-        if segments > self.active.len()
-            || (segments == 0 && mark.tail_used != 0)
-            || (segments > 0
-                && usize::from(mark.tail_used) > self.active[segments - 1].storage.values.len())
-        {
-            return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
-        }
-        while self.active.len() > segments {
-            let segment = self.active.pop().expect("active replay segment");
-            self.spare.push(segment.storage);
-        }
-        if let Some(tail) = self.active.last_mut() {
-            tail.used = mark.tail_used;
-        }
-        Ok(())
-    }
+    },
+    /// One attempt-local token list.
+    AttemptList { list: AttemptTokenListId, len: u32 },
+    /// One backed-up word.
+    Word(TracedTokenWord),
 }
 
-#[derive(Debug)]
-pub(crate) struct ReplayPayloadId<G> {
-    entry: u32,
-    _generation: PhantomData<fn(&G) -> &G>,
+/// Appends a stored list's untraced words.
+#[inline]
+pub(crate) fn push_untraced_words(words: &mut Vec<TracedTokenWord>, list: &[TokenWord]) {
+    words.extend(
+        list.iter()
+            .map(|&word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN)),
+    );
 }
 
-impl<G> Copy for ReplayPayloadId<G> {}
-impl<G> Clone for ReplayPayloadId<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<G> PartialEq for ReplayPayloadId<G> {
-    fn eq(&self, other: &Self) -> bool {
-        self.entry == other.entry
-    }
-}
-impl<G> Eq for ReplayPayloadId<G> {}
-impl<G> Hash for ReplayPayloadId<G> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.entry.hash(state);
-    }
+/// Storage a token-list source may copy its words from.
+pub(crate) struct TokenSources<'a, G> {
+    pub(crate) attempt: &'a crate::attempt::AttemptArena<G>,
+    pub(crate) pending_insertions: &'a mut Vec<TracedTokenWord>,
 }
 
-/// Generation-branded mutable destination for one escaping inserted list.
-///
-/// The destination is allocated in the replay owner before scanning starts.
-/// Finishing moves its storage header into the ordered replay entries and
-/// publishes only the resulting coordinate; no attempt-local list or token
-/// promotion copy exists.
-#[derive(Debug)]
-pub(crate) struct ReplayInputBuilderId<G> {
-    slot: u32,
-    _generation: PhantomData<fn(&G) -> &G>,
-}
-
-impl<G> Copy for ReplayInputBuilderId<G> {}
-impl<G> Clone for ReplayInputBuilderId<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<G> PartialEq for ReplayInputBuilderId<G> {
-    fn eq(&self, other: &Self) -> bool {
-        self.slot == other.slot
-    }
-}
-impl<G> Eq for ReplayInputBuilderId<G> {}
-impl<G> Hash for ReplayInputBuilderId<G> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.slot.hash(state);
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct ReplaySpan {
-    start: ReplayLaneCursor,
-    len: u32,
-}
-
-#[derive(Debug, Eq, Hash, PartialEq)]
-struct OwnedReplayWords {
-    lane: SegmentedReplayLane<TracedTokenWord>,
-    len: u32,
-}
-
-impl Clone for OwnedReplayWords {
-    fn clone(&self) -> Self {
-        Self {
-            lane: self.lane.clone(),
-            len: self.len,
-        }
-    }
-}
-
-impl OwnedReplayWords {
-    #[cold]
-    fn indexed_get_cold(&self, index: usize) -> Option<&TracedTokenWord> {
-        self.lane.indexed_get_cold(
-            ReplayLaneCursor {
-                segment: 0,
-                offset: 0,
-            },
-            index,
-        )
-    }
-
-    fn clear(&mut self) -> Result<(), crate::execution_scratch::ScratchError> {
-        let next_reuse = self
-            .lane
-            .active
-            .len()
-            .checked_add(self.lane.spare.len())
-            .and_then(|len| len.checked_add(1))
-            .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
-        self.lane
-            .active
-            .try_reserve(next_reuse.saturating_sub(self.lane.active.len()))
-            .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
-        self.lane
-            .spare
-            .try_reserve(next_reuse.saturating_sub(self.lane.spare.len()))
-            .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
-        self.lane.restore(ReplayLaneMark {
-            segments: 0,
-            tail_used: 0,
-        })?;
-        self.len = 0;
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-enum ReplayBodyWords {
-    Segmented(ReplaySpan),
-    Owned(OwnedReplayWords),
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct ReplayEntry {
-    word_mark: ReplayLaneMark,
-    body_words: ReplayBodyWords,
-    prefix_words: Option<ReplaySpan>,
-    ownership: PackedTokenOwnership,
-    released: bool,
-}
-
-impl ReplayEntry {
-    fn len(&self) -> usize {
-        let body = match &self.body_words {
-            ReplayBodyWords::Segmented(span) => span.len,
-            ReplayBodyWords::Owned(words) => words.len,
-        };
-        self.prefix_words.map_or(0, |span| span.len as usize) + body as usize
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ReplayLane<G> {
-    entries: Vec<ReplayEntry>,
-    input_builders: Vec<OwnedReplayWords>,
-    spare_input_builders: Vec<OwnedReplayWords>,
-    input_builder_high_water: usize,
-    words: SegmentedReplayLane<TracedTokenWord>,
-    _generation: PhantomData<fn(&G) -> &G>,
-}
-
-impl<G> Default for ReplayLane<G> {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            input_builders: Vec::new(),
-            spare_input_builders: Vec::new(),
-            input_builder_high_water: 0,
-            words: SegmentedReplayLane::default(),
-            _generation: PhantomData,
-        }
-    }
-}
-
-impl<G> Clone for ReplayLane<G> {
-    fn clone(&self) -> Self {
-        let input_builder_high_water = self
-            .entries
-            .iter()
-            .filter(|entry| matches!(&entry.body_words, ReplayBodyWords::Owned(_)))
-            .count()
-            .saturating_add(self.input_builders.len());
-        Self {
-            entries: self.entries.clone(),
-            input_builders: self.input_builders.clone(),
-            spare_input_builders: Vec::with_capacity(input_builder_high_water),
-            input_builder_high_water,
-            words: self.words.clone(),
-            _generation: PhantomData,
-        }
-    }
-}
-
-impl<G> PartialEq for ReplayLane<G> {
-    fn eq(&self, other: &Self) -> bool {
-        self.entries == other.entries
-            && self.input_builders == other.input_builders
-            && self.words == other.words
-    }
-}
-impl<G> Eq for ReplayLane<G> {}
-impl<G> Hash for ReplayLane<G> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.entries.hash(state);
-        self.input_builders.hash(state);
-        self.words.hash(state);
-    }
-}
-
-impl<G> ReplayLane<G> {
-    pub(crate) fn retained_bytes(&self) -> usize {
-        let owned = self
-            .entries
-            .iter()
-            .map(|entry| match &entry.body_words {
-                ReplayBodyWords::Owned(words) => words.lane.retained_bytes(),
-                ReplayBodyWords::Segmented(_) => 0,
-            })
-            .sum::<usize>();
-        let builders = self
-            .input_builders
-            .iter()
-            .chain(self.spare_input_builders.iter())
-            .map(|words| words.lane.retained_bytes())
-            .sum::<usize>();
-        std::mem::size_of::<Self>()
-            .saturating_add(
-                self.entries
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<ReplayEntry>()),
-            )
-            .saturating_add(
-                self.input_builders
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<OwnedReplayWords>()),
-            )
-            .saturating_add(
-                self.spare_input_builders
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<OwnedReplayWords>()),
-            )
-            .saturating_add(self.words.retained_bytes())
-            .saturating_add(owned)
-            .saturating_add(builders)
-    }
-
-    fn push_words(
-        &mut self,
-        tokens: impl IntoIterator<Item = BackedUpToken>,
-        ownership: PackedTokenOwnership,
-    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
-        let word_mark = self.words.mark();
-        let mut start = None;
-        let mut len = 0_u32;
-        for token in tokens {
-            start.get_or_insert(self.words.push(token.spelling)?);
-            len = len
-                .checked_add(1)
-                .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
-        }
-        let empty = ReplayLaneCursor {
-            segment: word_mark.segments.saturating_sub(1),
-            offset: word_mark.tail_used,
-        };
-        let entry = u32::try_from(self.entries.len())
-            .map_err(|_| crate::execution_scratch::ScratchError::CapacityOverflow)?;
-        self.entries
-            .try_reserve(1)
-            .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
-        self.entries.push(ReplayEntry {
-            word_mark,
-            body_words: ReplayBodyWords::Segmented(ReplaySpan {
-                start: start.unwrap_or(empty),
-                len,
-            }),
-            prefix_words: None,
-            ownership,
-            released: false,
-        });
-        Ok(PackedTokenSpanHandle::Replay {
-            replay: ReplayPayloadId {
-                entry,
-                _generation: PhantomData,
-            },
-            len,
-        })
-    }
-
-    /// Allocates the final owner for one escaping inserted token list.
-    pub(crate) fn begin_input_builder(
-        &mut self,
-    ) -> Result<ReplayInputBuilderId<G>, crate::execution_scratch::ScratchError> {
-        let slot = u32::try_from(self.input_builders.len())
-            .map_err(|_| crate::execution_scratch::ScratchError::CapacityOverflow)?;
-        self.input_builders
-            .try_reserve(1)
-            .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
-        let words = match self.spare_input_builders.pop() {
-            Some(words) => words,
-            None => {
-                let next_high_water = self
-                    .input_builder_high_water
-                    .checked_add(1)
-                    .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
-                self.spare_input_builders
-                    .try_reserve(next_high_water.saturating_sub(self.spare_input_builders.len()))
-                    .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
-                self.input_builder_high_water = next_high_water;
-                OwnedReplayWords {
-                    lane: SegmentedReplayLane::default(),
-                    len: 0,
-                }
-            }
-        };
-        self.input_builders.push(words);
-        Ok(ReplayInputBuilderId {
-            slot,
-            _generation: PhantomData,
-        })
-    }
-
-    /// Appends directly to an escaping inserted list's final storage.
-    pub(crate) fn push_input_builder_word(
-        &mut self,
-        builder: ReplayInputBuilderId<G>,
-        word: TracedTokenWord,
-    ) -> Result<(), crate::execution_scratch::ScratchError> {
-        let words = self
-            .input_builders
-            .get_mut(builder.slot as usize)
-            .ok_or(crate::execution_scratch::ScratchError::InvalidCoordinate)?;
-        words.lane.push(word)?;
-        words.len = words
-            .len
-            .checked_add(1)
-            .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
-        Ok(())
-    }
-
-    pub(crate) fn input_builder_get(
-        &self,
-        builder: ReplayInputBuilderId<G>,
-        index: usize,
-    ) -> Option<&TracedTokenWord> {
-        self.input_builders
-            .get(builder.slot as usize)?
-            .indexed_get_cold(index)
-    }
-
-    pub(crate) fn input_builder_len(&self, builder: ReplayInputBuilderId<G>) -> Option<u32> {
-        self.input_builders
-            .get(builder.slot as usize)
-            .map(|words| words.len)
-    }
-
-    /// Publishes an escaping list without copying its words.
-    pub(crate) fn finish_input_builder(
-        &mut self,
-        builder: ReplayInputBuilderId<G>,
-    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
-        if builder.slot as usize + 1 != self.input_builders.len() {
-            return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
-        }
-        let entry = u32::try_from(self.entries.len())
-            .map_err(|_| crate::execution_scratch::ScratchError::CapacityOverflow)?;
-        self.entries
-            .try_reserve(1)
-            .map_err(|_| crate::execution_scratch::ScratchError::AllocationFailed)?;
-        let words = self
-            .input_builders
-            .pop()
-            .expect("validated escaping input builder remains live");
-        let len = words.len;
-        self.entries.push(ReplayEntry {
-            word_mark: self.words.mark(),
-            body_words: ReplayBodyWords::Owned(words),
-            prefix_words: None,
-            ownership: PackedTokenOwnership::Transient,
-            released: false,
-        });
-        Ok(PackedTokenSpanHandle::Replay {
-            replay: ReplayPayloadId {
-                entry,
-                _generation: PhantomData,
-            },
-            len,
-        })
-    }
-
-    pub(crate) fn discard_input_builder(
-        &mut self,
-        builder: ReplayInputBuilderId<G>,
-    ) -> Result<(), crate::execution_scratch::ScratchError> {
-        if builder.slot as usize + 1 != self.input_builders.len() {
-            return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
-        }
-        let mut words = self
-            .input_builders
-            .pop()
-            .expect("validated escaping input builder remains live");
-        words.clear()?;
-        self.spare_input_builders.push(words);
-        Ok(())
-    }
-
-    pub(crate) fn resident_cursor(
-        &self,
-        replay: ReplayPayloadId<G>,
-    ) -> Option<ResidentReplayCursor> {
-        let entry = self.entries.get(replay.entry as usize)?;
-        if entry.released {
-            return None;
-        }
-        if let Some(prefix) = entry.prefix_words.filter(|prefix| prefix.len != 0) {
-            return self
-                .words
-                .resident_cursor(prefix.start, prefix.len, ResidentReplayRun::Prefix);
-        }
-        self.body_resident_cursor(entry)
-    }
-
-    fn body_resident_cursor(&self, entry: &ReplayEntry) -> Option<ResidentReplayCursor> {
-        match &entry.body_words {
-            ReplayBodyWords::Segmented(words) => {
-                self.words
-                    .resident_cursor(words.start, words.len, ResidentReplayRun::SegmentedBody)
-            }
-            ReplayBodyWords::Owned(words) => words.lane.resident_cursor(
-                ReplayLaneCursor {
-                    segment: 0,
-                    offset: 0,
-                },
-                words.len,
-                ResidentReplayRun::OwnedBody,
-            ),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn advance_sequential(
-        &self,
-        replay: ReplayPayloadId<G>,
-        cursor: &mut ResidentReplayCursor,
-    ) -> Option<TracedTokenWord> {
-        if cursor.run == ResidentReplayRun::Prefix && cursor.remaining == 0 {
-            self.refresh_resident_run(replay, cursor)?;
-        }
-        match cursor.run {
-            ResidentReplayRun::Empty => None,
-            ResidentReplayRun::Prefix | ResidentReplayRun::SegmentedBody => {
-                self.words.advance_sequential(cursor).copied()
-            }
-            ResidentReplayRun::OwnedBody => {
-                self.entries
-                    .get(replay.entry as usize)
-                    .and_then(|entry| match &entry.body_words {
-                        ReplayBodyWords::Owned(words) if !entry.released => {
-                            words.lane.advance_sequential(cursor).copied()
-                        }
-                        ReplayBodyWords::Segmented(_) | ReplayBodyWords::Owned(_) => None,
-                    })
-            }
-        }
-    }
-
-    /// Crosses the uncommon prefix-to-body boundary of a resident replay.
-    #[cold]
-    #[inline(never)]
-    fn refresh_resident_run(
-        &self,
-        replay: ReplayPayloadId<G>,
-        cursor: &mut ResidentReplayCursor,
-    ) -> Option<()> {
-        let entry = self.entries.get(replay.entry as usize)?;
-        if entry.released {
-            return None;
-        }
-        *cursor = self.body_resident_cursor(entry)?;
-        Some(())
-    }
-
-    /// Cold indexed lookup for diagnostic rendering, semantic projection, and
-    /// lifecycle probes. Ordinary resident delivery has no indexed replay API.
-    #[cold]
-    pub(crate) fn indexed_get_cold(
-        &self,
-        replay: ReplayPayloadId<G>,
-        index: usize,
-    ) -> Option<TracedTokenWord> {
-        let entry = self.entries.get(replay.entry as usize)?;
-        if entry.released {
-            return None;
-        }
-        if index >= entry.len() {
-            return None;
-        }
-        let prefix_len = entry.prefix_words.map_or(0, |span| span.len as usize);
-        if index < prefix_len {
-            let words = entry.prefix_words?;
-            return self.words.indexed_get_cold(words.start, index).copied();
-        }
-        let local = index - prefix_len;
-        let spelling = match &entry.body_words {
-            ReplayBodyWords::Segmented(words) => {
-                *self.words.indexed_get_cold(words.start, local)?
-            }
-            ReplayBodyWords::Owned(words) => *words.indexed_get_cold(local)?,
-        };
-        Some(spelling)
-    }
-
-    pub(crate) fn ownership(&self, replay: ReplayPayloadId<G>) -> Option<PackedTokenOwnership> {
-        self.entries
-            .get(replay.entry as usize)
-            .filter(|entry| !entry.released)
-            .map(|entry| entry.ownership)
-    }
-
-    pub(crate) fn prepend_backed_up(
-        &mut self,
-        replay: ReplayPayloadId<G>,
-        prefix: impl IntoIterator<Item = BackedUpToken>,
-    ) -> Result<u32, crate::execution_scratch::ScratchError> {
-        let expected = self
-            .entries
-            .len()
-            .checked_sub(1)
-            .ok_or(crate::execution_scratch::ScratchError::InvalidCoordinate)?;
-        if replay.entry as usize != expected
-            || self.entries[expected].ownership != PackedTokenOwnership::BackedUp
-            || self.entries[expected].prefix_words.is_some()
-        {
-            return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
-        }
-        let mut word_start = None;
-        let mut len = 0_u32;
-        for token in prefix {
-            word_start.get_or_insert(self.words.push(token.spelling)?);
-            len = len
-                .checked_add(1)
-                .ok_or(crate::execution_scratch::ScratchError::CapacityOverflow)?;
-        }
-        if len != 0 {
-            self.entries[expected].prefix_words = word_start.map(|start| ReplaySpan { start, len });
-        }
-        Ok(len)
-    }
-
-    pub(crate) fn release(
-        &mut self,
-        replay: ReplayPayloadId<G>,
-    ) -> Result<(), crate::execution_scratch::ScratchError> {
-        let index = replay.entry as usize;
-        if index >= self.entries.len()
-            || self.entries[index].released
-            || self.entries[index + 1..]
-                .iter()
-                .any(|entry| !entry.released)
-        {
-            return Err(crate::execution_scratch::ScratchError::InvalidCoordinate);
-        }
-        self.entries[index].released = true;
-        self.reclaim_released_suffix()
-    }
-
-    fn reclaim_released_suffix(&mut self) -> Result<(), crate::execution_scratch::ScratchError> {
-        while self.entries.last().is_some_and(|entry| entry.released) {
-            let entry = self
-                .entries
-                .pop()
-                .expect("released replay suffix remains live");
-            self.words.restore(entry.word_mark)?;
-            if let ReplayBodyWords::Owned(mut words) = entry.body_words {
-                words.clear()?;
-                self.spare_input_builders.push(words);
-            }
-        }
-        Ok(())
-    }
-
-    #[cfg(all(test, feature = "profiling"))]
-    pub(crate) fn input_builder_storage_counts(&self) -> (usize, usize, usize, usize, usize) {
-        let owned_entries = self
-            .entries
-            .iter()
-            .filter(|entry| matches!(&entry.body_words, ReplayBodyWords::Owned(_)))
-            .count();
-        let active_segments = self
-            .input_builders
-            .iter()
-            .chain(self.entries.iter().filter_map(|entry| {
-                let ReplayBodyWords::Owned(words) = &entry.body_words else {
-                    return None;
-                };
-                Some(words)
-            }))
-            .map(|words| words.lane.active.len())
-            .sum();
-        let spare_segments = self
-            .spare_input_builders
-            .iter()
-            .map(|words| words.lane.spare.len())
-            .sum();
-        (
-            self.input_builders.len(),
-            owned_entries,
-            self.spare_input_builders.len(),
-            active_segments,
-            spare_segments,
-        )
-    }
-}
-
+/// A source of words for one new token-list level.
 pub(crate) trait PackedTokenSpanSource<G> {
+    /// Appends the level's words to the input stack and names who owns them.
     fn admit(
         self,
-        lane: &mut ReplayLane<G>,
-    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError>;
+        words: &mut Vec<TracedTokenWord>,
+        sources: TokenSources<'_, G>,
+    ) -> PackedTokenOwnership;
+}
+
+/// The escaping inserted list `scan_toks` collected at the end of
+/// [`super::InputState::pending_insertions`], from `start` on.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct PendingInsertion {
+    pub(crate) start: u32,
+}
+
+impl<G> PackedTokenSpanSource<G> for PendingInsertion {
+    fn admit(
+        self,
+        words: &mut Vec<TracedTokenWord>,
+        sources: TokenSources<'_, G>,
+    ) -> PackedTokenOwnership {
+        let start = self.start as usize;
+        words.extend_from_slice(&sources.pending_insertions[start..]);
+        sources.pending_insertions.truncate(start);
+        PackedTokenOwnership::Transient
+    }
 }
 
 impl<G> PackedTokenSpanSource<G> for PackedTokenSpanHandle<G> {
     fn admit(
         self,
-        _lane: &mut ReplayLane<G>,
-    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
-        Ok(self)
+        words: &mut Vec<TracedTokenWord>,
+        sources: TokenSources<'_, G>,
+    ) -> PackedTokenOwnership {
+        match self {
+            Self::DurableList { list, .. } => {
+                push_untraced_words(words, list.words());
+                PackedTokenOwnership::Stored
+            }
+            Self::AttemptList { list, .. } => {
+                words.extend(
+                    sources
+                        .attempt
+                        .token_words(list)
+                        .expect("admitted attempt list")
+                        .iter()
+                        .copied(),
+                );
+                PackedTokenOwnership::Stored
+            }
+            Self::Word(word) => {
+                words.push(word);
+                PackedTokenOwnership::BackedUp
+            }
+        }
     }
 }
 
@@ -1607,31 +583,25 @@ pub(crate) struct TracedReplaySeed<I> {
 impl<G, I: Iterator<Item = TracedTokenWord>> PackedTokenSpanSource<G> for TracedReplaySeed<I> {
     fn admit(
         self,
-        lane: &mut ReplayLane<G>,
-    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
-        lane.push_words(
-            self.tokens.map(|spelling| BackedUpToken { spelling }),
-            self.ownership,
-        )
+        words: &mut Vec<TracedTokenWord>,
+        _: TokenSources<'_, G>,
+    ) -> PackedTokenOwnership {
+        words.extend(self.tokens);
+        self.ownership
     }
 }
 
-pub(crate) struct SemanticReplaySeed<I> {
-    tokens: I,
-    origin: OriginId,
-    ownership: PackedTokenOwnership,
+pub(crate) struct SemanticReplaySeed<'a> {
+    words: &'a [TokenWord],
 }
-impl<G, I: Iterator<Item = Token>> PackedTokenSpanSource<G> for SemanticReplaySeed<I> {
+impl<G> PackedTokenSpanSource<G> for SemanticReplaySeed<'_> {
     fn admit(
         self,
-        lane: &mut ReplayLane<G>,
-    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
-        lane.push_words(
-            self.tokens.map(|token| BackedUpToken {
-                spelling: TracedTokenWord::pack(token, self.origin),
-            }),
-            self.ownership,
-        )
+        words: &mut Vec<TracedTokenWord>,
+        _: TokenSources<'_, G>,
+    ) -> PackedTokenOwnership {
+        push_untraced_words(words, self.words);
+        PackedTokenOwnership::Stored
     }
 }
 
@@ -1641,9 +611,11 @@ pub(crate) struct BackedReplaySeed<I> {
 impl<G, I: Iterator<Item = BackedUpToken>> PackedTokenSpanSource<G> for BackedReplaySeed<I> {
     fn admit(
         self,
-        lane: &mut ReplayLane<G>,
-    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
-        lane.push_words(self.tokens, PackedTokenOwnership::BackedUp)
+        words: &mut Vec<TracedTokenWord>,
+        _: TokenSources<'_, G>,
+    ) -> PackedTokenOwnership {
+        words.extend(self.tokens.map(|token| token.spelling));
+        PackedTokenOwnership::BackedUp
     }
 }
 
@@ -1656,17 +628,13 @@ pub(crate) struct StoredReplaySeed<'a, I> {
 impl<G, I: Iterator<Item = OriginId>> PackedTokenSpanSource<G> for StoredReplaySeed<'_, I> {
     fn admit(
         mut self,
-        lane: &mut ReplayLane<G>,
-    ) -> Result<PackedTokenSpanHandle<G>, crate::execution_scratch::ScratchError> {
-        lane.push_words(
-            self.tokens.iter().copied().map(|token| BackedUpToken {
-                spelling: TracedTokenWord::pack(
-                    token,
-                    self.origins.next().unwrap_or(OriginId::UNKNOWN),
-                ),
-            }),
-            PackedTokenOwnership::Stored,
-        )
+        words: &mut Vec<TracedTokenWord>,
+        _: TokenSources<'_, G>,
+    ) -> PackedTokenOwnership {
+        words.extend(self.tokens.iter().map(|&token| {
+            TracedTokenWord::pack(token, self.origins.next().unwrap_or(OriginId::UNKNOWN))
+        }));
+        PackedTokenOwnership::Stored
     }
 }
 
@@ -1682,18 +650,11 @@ impl PackedTokenSpanHandle<()> {
         }
     }
 
-    pub(crate) fn stored_semantic(
-        words: &[tex_state::token::TokenWord],
-    ) -> SemanticReplaySeed<impl Iterator<Item = Token> + '_> {
-        SemanticReplaySeed {
-            tokens: words.iter().copied().map(|word| word.semantic_token()),
-            origin: OriginId::UNKNOWN,
-            ownership: PackedTokenOwnership::Stored,
-        }
+    pub(crate) fn stored_semantic(words: &[TokenWord]) -> SemanticReplaySeed<'_> {
+        SemanticReplaySeed { words }
     }
 
-    /// Packs one bounded insertion or scanner result directly into its sole
-    /// live chunk representation.
+    /// One bounded insertion or scanner result.
     pub(crate) fn transient(
         tokens: impl IntoIterator<Item = TracedTokenWord>,
     ) -> TracedReplaySeed<impl Iterator<Item = TracedTokenWord>> {
@@ -1703,7 +664,7 @@ impl PackedTokenSpanHandle<()> {
         }
     }
 
-    /// Packs commands restored by `back_input` into the canonical chunk.
+    /// Commands restored by `back_input`.
     pub(crate) fn backed_up(
         tokens: impl IntoIterator<Item = BackedUpToken>,
     ) -> BackedReplaySeed<impl Iterator<Item = BackedUpToken>> {
@@ -1719,15 +680,6 @@ impl<G> PackedTokenSpanHandle<G> {
         Self::DurableList {
             list: words.into_id(),
             len,
-        }
-    }
-
-    pub(crate) fn frame_len(&self) -> usize {
-        match self {
-            Self::Replay { len, .. } => *len as usize,
-            Self::DurableList { len, .. } => *len as usize,
-            Self::AttemptList { len, .. } => *len as usize,
-            Self::Word(_) => 1,
         }
     }
 }

@@ -6,8 +6,8 @@ use tex_state::token::{Catcode, TracedTokenWord};
 use crate::command::{CurrentCommand, HotCommand};
 use crate::error::CommandError;
 use crate::input::{
-    BackedUpToken, BackupTreatment, InputLevel, PackedTokenSpanHandle, ReplayTrace,
-    RetirementBehavior, TokenBehavior,
+    BackedUpToken, BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
+    TokenBehavior,
 };
 use crate::observation::{
     AlignmentRecord, CommandObservation, InputReason, InputRecord, InputTransition, RecoveryKind,
@@ -261,60 +261,20 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(());
         };
         if self.profile().capabilities().supports_etex() {
-            // e-TeX links the remaining tokens onto this same backed-up
-            // list, so it must live in the replay lane.
+            // e-TeX links the remaining tokens onto the first backup's list,
+            // so the group's tokens form one backed-up level in save order.
+            let linked = tokens.len();
+            tokens.push(last);
             self.push_backed_up_token(
                 last,
-                PackedTokenSpanHandle::backed_up([BackedUpToken { spelling: last }]),
+                PackedTokenSpanHandle::backed_up(
+                    tokens.iter().map(|&spelling| BackedUpToken { spelling }),
+                ),
             )?;
-            let prepended = tokens.len();
-            for spelling in tokens.iter().rev() {
+            for spelling in tokens[..linked].iter().rev() {
                 self.command.alignment.undo_delivery(
                     AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
                 );
-            }
-            let Some(InputLevel::Resident(crate::input::ResidentTokenRow {
-                header,
-                storage: crate::input::ResidentTokenStorage::Replay { replay, .. },
-            })) = self.command.input.levels.last()
-            else {
-                unreachable!("back_input above installed a token-list level");
-            };
-            assert_eq!(
-                header.position(),
-                0,
-                "no delivery occurs while e-TeX links aftergroup tokens"
-            );
-            let replay = *replay;
-            let admitted = self
-                .command
-                .input
-                .replay
-                .prepend_backed_up(
-                    replay,
-                    tokens
-                        .into_iter()
-                        .map(|spelling| BackedUpToken { spelling }),
-                )
-                .map_err(|_| CommandError::input_invariant())?;
-            let Ok(prepended) = u32::try_from(prepended) else {
-                return Err(CommandError::input_invariant());
-            };
-            debug_assert_eq!(admitted, prepended);
-            let replay_cursor = self
-                .command
-                .input
-                .replay
-                .resident_cursor(replay)
-                .ok_or_else(CommandError::input_invariant)?;
-            let extended = self
-                .command
-                .input
-                .levels
-                .extend_top_token_limit(prepended, replay_cursor)
-                .expect("back_input above installed a token-list level");
-            if !extended {
-                return Err(CommandError::input_invariant());
             }
         } else {
             self.back_input_token(last)?;

@@ -423,7 +423,9 @@ fn main_loop_character_run_charges_resident_macro_body_once_per_character() {
             .expect("resident macro body")
             .2;
         let mut command = CommandState::default();
-        command.push_macro_activation(macro_name, body, None, OriginId::UNKNOWN);
+        command
+            .push_macro_activation(macro_name, &body, None, OriginId::UNKNOWN)
+            .expect("macro activation");
 
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::new(4).expect("macro body character-run fuel");
@@ -495,10 +497,6 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
             .scratch
             .publish_argument(writer)
             .expect("macro argument range");
-        let argument_set = command
-            .scratch
-            .commit_macro_match(matching)
-            .expect("macro argument set");
         let macro_name = universe.intern("runargument").expect("macro name").symbol();
         let body_definition = universe
             .allocate_definition(
@@ -512,7 +510,9 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
             .admit_macro_body(body_definition)
             .expect("resident macro body")
             .2;
-        command.push_macro_activation(macro_name, body, Some(argument_set), OriginId::UNKNOWN);
+        command
+            .push_macro_activation(macro_name, &body, Some(matching), OriginId::UNKNOWN)
+            .expect("macro activation");
 
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::new(3).expect("macro argument fuel");
