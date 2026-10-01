@@ -1,8 +1,12 @@
 # Minimal hot loop
 
-Status: proposed architecture. Microbenchmarks use the frozen binary from the
+Status: revised implementation target, reconciled against `eb754fc2d` on
+2026-10-01. The original measurements use the frozen binary from the
 `23548ce50` full-book profile; the source was read at `ea2b720e6`. Tracking:
-Beads `umber2-efje` (design) and `umber2-i0n5` (implementation).
+Beads `umber2-efje` (design) and `umber2-i0n5` (implementation). The
+reconciliation below controls the remaining implementation order and
+supersedes the original migration sequence and any storage detail it marks as
+measurement-dependent.
 
 This proposal replaces the input, expansion, and main-control core with a
 machine shaped like TeX's own:
@@ -20,6 +24,112 @@ It subsumes the first and third proposals in
 [Book performance refactors](book_performance_refactors.md) and absorbs the
 second. Those proposals keep today's owners and thin them. This one removes
 them.
+
+## Reconciliation after the first implementation wave
+
+This section is authoritative for the current tree. The proposal's original
+two-ended token heap, allocator, and blanket deletion list are candidate
+designs, not prerequisites. The implementation through `eb754fc2d` has
+already removed several named owners, and the next changes must follow the
+measured costs that remain. Every replacement deletes its predecessor in the
+same logical stage; no compatibility format, API shim, feature fallback, or
+second engine is retained.
+
+| Original stage                   | State at `eb754fc2d`                                       | Reconciliation                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0. Harness                       | Complete in `b5dc8429c`                                    | Keep the original case table and thresholds. Receipts are per-revision evidence.                                                                                                                                                                                                                                                                                                                                            |
+| 1. Halt and rollback             | Implementation complete; performance gates carried forward | Sticky halt and checkpoint replay replaced command rollback. The old `roll_attempt_operation` path is deleted. `settle_attempt` remains a boundary check that clears command scratch; do not schedule deletion of the already-removed scope protocol. The original `group` and `toks` measurements missed their intermediate limits and remain open performance evidence for later stages.                                  |
+| 2. Transient checkpoint state    | Partial in `0552fe902` and `270b0ef91`                     | Journals and transient snapshots were deleted and named captures moved by value. Keep the existing full-checkpoint admission rules and verify all checkpoint kinds, replay, and incremental restore. The `mbody` intermediate limit has not been met.                                                                                                                                                                       |
+| 3. Definitions and token storage | Partial in `73434d995`                                     | Definition bodies are shared immutable spans. The proposed unified two-ended `mem`, eqtb rewrite, collector, reference-count epochs, quarantine, and interval allocator are not adopted by default. First remove activation copies using the existing immutable owners; propose a storage rewrite only if a current paired profile shows a remaining bottleneck and its retention design is simpler at the system boundary. |
+| 4. Frames and delivery           | Partial in `eb754fc2d`                                     | The six-domain replay lane was replaced by one token stack. Frames and words are still larger/richer than the proposed machine, and activation copies argument and definition words. Finish direct immutable-span reads, one-pass argument construction, packed delivery, and meaning resolution as separate measured changes.                                                                                              |
+| 5. Main control                  | Not started                                                | Keep dense mode/command dispatch and direct prefixed-command execution as a later stage, after the packed delivery seam is stable.                                                                                                                                                                                                                                                                                          |
+| 6. Code layout                   | Not started                                                | Apply cold attributes, generic removal, PGO, and post-link layout only against the hot symbols and full-book profile of the then-current tree.                                                                                                                                                                                                                                                                              |
+| 7. Node memory                   | Not started                                                | Retain the existing node/checkpoint contract. Move storage to epochs only if profiling shows node allocation or page/box journals still block the full-book target.                                                                                                                                                                                                                                                         |
+
+The next implementation issue is **remove macro-body and immutable stored-list
+copies on activation**. A frame must retain the immutable span owner for its
+whole lifetime, and release it exactly once on retirement, rollback, or
+checkpoint replacement. This work must preserve the existing named-checkpoint
+admission rule: live macro activations are not eligible checkpoint contents.
+Generic capture code being able to clone a macro row does not authorize a
+checkpoint taken with one active. Do not narrow checkpoint coverage to hide a
+missing admission check. Keep checkpoint and resource replay ownership on the
+existing aggregate checkpoint path; do not add token-specific checkpoint
+history or a new allocator chronology.
+
+Next, construct macro arguments once in their final retained storage while
+matching. Do not build an argument in command scratch and copy it again into
+the input stack. Compile each definition's parameter text into an immutable
+matcher plan when the definition is sealed; delimited-argument failure tables
+belong to that plan, not to a per-call matcher. The plan must implement TeX82
+§§392--399, including leading literals, undelimited arguments, brace trimming,
+paragraph and outer checks, and delimiter recovery.
+
+Then fuse packed token reading, live meaning lookup, expansion, and delivery at
+the consumer boundary. The ordinary hot path should pass a packed token and
+meaning directly to its consumer and dispatch without constructing
+`ResidentWord`, `TokenMeaning`, and `HotCommand` in sequence or resolving the
+same meaning twice. Keep cold materialization where diagnostics, observation,
+alignment, backup, or recovery needs its facts. Port scanners and main control
+by consumer family, delete each replaced API in that stage, and move common
+main-control commands to direct mode-by-command dispatch only after delivery is
+stable. Do not add an adapter that keeps the old and new delivery chains live.
+
+Retention follows semantic owners: definitions and stored lists, active input
+frames, TeX save entries, and retained aggregate checkpoints. A definition
+replaced in a group remains available while a save entry, active frame, or
+retained checkpoint owns it; a local definition released by `unsave` is
+reclaimed after its last frame/checkpoint owner disappears. Resource replay
+continues to unwind the ordinary parser and restore a full checkpoint. No
+scanner, matcher, or Rust caller continuation crosses that boundary. Retention
+must be charged to the existing aggregate contract, with exact release on
+checkpoint drop and no append-only activation history.
+
+The direct reader must preserve provenance. Source-derived argument tokens
+retain their source locations when forwarded through nested macros; generated
+tokens retain their established derivation; diagnostics and output provenance
+must remain resolvable after the originating frame retires and across restore.
+Do not remove `TracedTokenWord`, origin records, or side metadata until the
+replacement proves the same cases and deletes the old owner in that stage.
+Halt remains sticky: fuel, cancellation, capacity, error-limit, and resource
+halts propagate to an existing bounded poll, and effect sinks remain gated.
+Polling may move to a measured reader/dispatch boundary but must retain a
+documented maximum amount of work before unwind.
+
+### Implementation children and acceptance
+
+The Beads children under `umber2-i0n5` are the execution plan; this table
+states their dependency and closure evidence. Every child records a fresh
+paired microbenchmark receipt against its parent revision, names deleted
+representations/APIs, and runs the routine suite and authoritative check gate.
+
+| Order | Focus                                                                                                    | Depends on     | Additional closure evidence                                                                                                                                                                                                                                                                           |
+| ----- | -------------------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Immutable macro and stored-list spans in input frames; remove activation copies and old copied-body path | Reconciliation | No body/list payload copy on activation; retention/release tests cover local/global definitions, active frames, checkpoint drop, and full resource replay. `mbody` and `mzero` improve against the parent receipt without regressing other cases.                                                     |
+| 2     | Definition-owned matcher plans                                                                           | 1              | No per-call plan/failure-table allocation; focused TeX82 matcher cases pass. `mone`, `mtwo`, and `mdelim` improve against the parent receipt.                                                                                                                                                         |
+| 3     | One-pass macro argument construction                                                                     | 2              | No scratch-to-input second copy; matcher output is constructed once in final frame-readable storage and provenance tests pass.                                                                                                                                                                        |
+| 4     | Packed token/meaning delivery; remove redundant rich intermediate values and duplicate lookup            | 1--3           | Hot ordinary delivery resolves meaning once and returns the packed pair; obsolete materialization chain is deleted. `relax` moves toward its unchanged 100-instruction target, with all original case budgets still reported.                                                                         |
+| 5     | Direct packed main-control dispatch and prefixed commands; remove lane/cold-episode split                | 4              | No duplicate dispatch engine or eligibility shim; exact command semantics, effect ordering, and byte-exact story gate. `base`, `group`, `advance`, and `count` are measured against unchanged targets.                                                                                                |
+| 6     | Checkpoint, halt, reclamation, and provenance closure audit across the new owners                        | 1--5           | Named admission rejects live macro state; full restore reproduces hashes and incremental state; resource replay has no surviving parser continuation; retained spans release exactly once; fuel/cancellation/resource halts unwind within the stated poll bound; forwarded origins remain resolvable. |
+| 7     | Hot-set layout and full-book performance                                                                 | 5 and 6        | Current-tree paired production receipts meet the unchanged full-book targets and cache-miss budget. PGO/post-link layout is retained only when the receipts show a gain.                                                                                                                              |
+| 8     | Node memory epochs, if still required by the profile                                                     | 5 and 6        | Node/page/box storage uses one checkpoint ownership contract, old journals are deleted in the same stage, retention gates pass, and the current full-book target improves. Close as unnecessary only with a profile showing node storage is no longer a limiting cost.                                |
+
+The microbenchmark table below remains the final per-operation acceptance
+target; intermediate-stage misses recorded by the original issues do not
+change it. For the canonical command tracer, the baseline at the reconciled
+head is an **exact total of 663 known divergences** (exit 1,
+`VERDICT: DIVERGED`), not a clean result. An unchanged count alone is not
+enough: compare the ordered divergence worklist/signatures against the parent
+receipt as well. A run is comparable only when it is exhaustive; `PARTIAL`
+totals are lower bounds. Preserve the count and ordered worklist for changes
+with no intended semantic effect. If either changes, follow
+[Canonical Divergence Working Contract](canonical_divergence_workflow.md):
+diagnose each semantic change against the pinned oracle and never treat a
+lower count or green exit as permission to weaken an acceptance target. The
+byte-exact canonical story test remains a separate required gate. Full-book
+auxiliary, text, raster, known-difference, instruction, cycle, time, and RSS
+targets below and in [Book performance refactors](book_performance_refactors.md)
+remain unchanged.
 
 ## Thesis
 
@@ -381,7 +491,13 @@ struct Machine {
 }
 ```
 
-### Token memory
+### Token memory (measurement-dependent proposal)
+
+This section describes one possible storage substrate, not a required stage.
+The reconciled implementation first reuses the immutable definition/list spans
+already present in the tree. Adopt the allocator below only if a current-tree
+profile shows that direct span delivery is insufficient and a simpler
+retention design cannot meet the unchanged acceptance targets.
 
 One `Vec<u32>` holds every stored token, as TeX's `mem` does:
 
@@ -879,11 +995,11 @@ What changes is how each component is captured.
 
 ### Quiescence
 
-Today's predicates already guarantee the following:
+Named checkpoint admission requires the following:
 
-- **Expansion and scanning:** no active expansion depth, no macro bodies on the
-  input stack, no replay completions, `ScannerStatus::Normal`, and no pending
-  diagnostics. See `validate_summary_quiescence` and
+- **Expansion and scanning:** no active expansion depth, no macro activation
+  on the input stack, no replay completions, `ScannerStatus::Normal`, and no
+  pending diagnostics. See `validate_summary_quiescence` and
   `validate_format_dump_quiescence` in
   `crates/tex-command/src/snapshot/boundary.rs`.
 - **Builders and alignment:** no token builders, attempt state, rollback roots,
@@ -1136,9 +1252,9 @@ each stage.
 ## Migration
 
 Each stage changes an owning representation and deletes its predecessor within
-the same stage. Adapters that keep old shapes alive are what held earlier work
-to about one percent per layer. A stage may keep a temporary materializing shim
-for unported consumers, but it must delete that shim before it closes.
+the same stage. No compatibility adapter, old path, or temporary materializing
+shim is permitted; port the consumers and delete the predecessor in the same
+logical stage.
 
 **Stage 0. Harness.**
 
@@ -1218,7 +1334,9 @@ for unported consumers, but it must delete that shim before it closes.
   contract.
 - Delete per-command page and box journals.
 
-The ordering is deliberate:
+The original ordering rationale is retained as design history. The current
+implementation order is the focused sequence in
+[Reconciliation after the first implementation wave](#reconciliation-after-the-first-implementation-wave):
 
 - Stages 1 and 2 remove the contracts that force journals before the storage
   they protect is replaced, so Stage 3 does not reimplement journals it is
