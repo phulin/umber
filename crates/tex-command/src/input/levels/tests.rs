@@ -22,7 +22,7 @@ fn admit(
     source: impl PackedTokenSpanSource<()>,
     words: &mut Vec<TracedTokenWord>,
     pending: &mut Vec<TracedTokenWord>,
-) -> PackedTokenOwnership {
+) -> ResidentTokenStorage<()> {
     let attempt = AttemptArena::<()>::default();
     source.admit(
         words,
@@ -43,7 +43,7 @@ fn every_seed_appends_its_words_to_the_token_stack() {
             &mut words,
             &mut pending,
         ),
-        PackedTokenOwnership::Transient
+        ResidentTokenStorage::List(PackedTokenOwnership::Transient)
     );
     assert_eq!(
         admit(
@@ -53,7 +53,7 @@ fn every_seed_appends_its_words_to_the_token_stack() {
             &mut words,
             &mut pending,
         ),
-        PackedTokenOwnership::BackedUp
+        ResidentTokenStorage::List(PackedTokenOwnership::BackedUp)
     );
     let token = traced('d').semantic_token();
     assert_eq!(
@@ -62,7 +62,7 @@ fn every_seed_appends_its_words_to_the_token_stack() {
             &mut words,
             &mut pending,
         ),
-        PackedTokenOwnership::Stored
+        ResidentTokenStorage::List(PackedTokenOwnership::Stored)
     );
     assert_eq!(
         words,
@@ -81,7 +81,10 @@ fn pending_insertion_moves_its_suffix_onto_the_stack() {
     let mut words = vec![traced('s')];
     let mut pending = vec![traced('p'), traced('x'), traced('y')];
     let ownership = admit(PendingInsertion { start: 1 }, &mut words, &mut pending);
-    assert_eq!(ownership, PackedTokenOwnership::Transient);
+    assert_eq!(
+        ownership,
+        ResidentTokenStorage::List(PackedTokenOwnership::Transient)
+    );
     assert_eq!(words, [traced('s'), traced('x'), traced('y')]);
     assert_eq!(pending, [traced('p')], "the collected suffix is consumed");
 }
@@ -95,7 +98,7 @@ fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
     assert_eq!(frame.position(), 0);
     assert_eq!(frame.start(), 3);
     let _ = frame.advance();
-    let row = ResidentTokenRow {
+    let row = ResidentTokenRow::<()> {
         header: TokenRowHeader::new(frame),
         storage: ResidentTokenStorage::List(PackedTokenOwnership::BackedUp),
     };
@@ -116,7 +119,7 @@ fn packed_omit_template_retains_its_trace_through_v_template_behavior() {
     let retirement = RetirementBehavior::RetainExhaustedVTemplate;
     let trace = ReplayTrace::OmitTemplate;
     let frame = packed_token_frame(InputLevelId(5), 0, 1, &behavior, retirement, &trace);
-    let row = ResidentTokenRow {
+    let row = ResidentTokenRow::<()> {
         header: TokenRowHeader::new(frame),
         storage: ResidentTokenStorage::List(PackedTokenOwnership::Transient),
     };
@@ -126,9 +129,9 @@ fn packed_omit_template_retains_its_trace_through_v_template_behavior() {
 }
 
 #[test]
-fn token_rows_stay_compact() {
+fn token_rows_include_their_immutable_span_owners() {
     assert_eq!(std::mem::size_of::<super::ArgumentSpan>(), 8);
-    assert_eq!(std::mem::size_of::<super::MacroBodyCursor>(), 20);
+    assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 48);
     assert_eq!(std::mem::size_of::<TokenRowHeader>(), 32);
-    assert_eq!(std::mem::size_of::<ResidentTokenRow>(), 56);
+    assert_eq!(std::mem::size_of::<ResidentTokenRow<()>>(), 88);
 }

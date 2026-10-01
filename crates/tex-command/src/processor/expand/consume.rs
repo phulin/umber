@@ -1,25 +1,15 @@
 //! Consumer-side interpretation of the shared input reader.
 
-use super::{
-    ExpandedCommandAction, ExpansionDispatch, ReadSite, ResidentColdOutcome, ResidentWord,
-    ResidentWordRead, classify_hot_command, resident::ResidentAdmission,
-};
-use crate::command::HotCommand;
+use super::{ExpandedCommandAction, ExpansionDispatch, ReadSite, classify_hot_command};
+use crate::command::{CommandWord, HotCommand};
 use crate::input::InputLevel;
 #[cfg(feature = "profiling")]
 use crate::input::ResidentTokenStorage;
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use std::ops::ControlFlow;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord};
-use tex_state::token::{PackedCommandTarget, PackedMeaningResolution};
-
-/// Only the meaning selected by one dense lookup. No spelling, delivery
-/// record, recovery geometry, or independent ownership enters this value.
-pub(super) struct TokenMeaning<G> {
-    pub(super) word: MeaningWord<G>,
-    pub(super) control_sequence: Option<Symbol>,
-}
+use tex_state::meaning::{Meaning, MeaningFlags};
+use tex_state::token::PackedMeaningResolution;
 
 /// How TeX82 §494's `pass_text` treats one word of skipped text.
 #[derive(Clone, Copy)]
@@ -49,87 +39,9 @@ pub(super) enum ExpansionCandidate {
     Finished(DeliveryStatus),
 }
 
-impl<G> TokenMeaning<G> {
-    #[inline(always)]
-    pub(super) fn empty() -> Self {
-        Self {
-            word: MeaningWord::Static(Meaning::UNDEFINED_WORD),
-            control_sequence: None,
-        }
-    }
-
-    #[inline(always)]
-    pub(super) fn is_outer(&self) -> bool {
-        match &self.word {
-            MeaningWord::Macro { flags, .. } => flags.contains(MeaningFlags::OUTER),
-            MeaningWord::Static(word) => *word == Meaning::END_TEMPLATE_WORD,
-            MeaningWord::Font(_) => false,
-        }
-    }
-
-    #[inline(always)]
-    fn install(&self, destination: &mut HotCommand<G>) {
-        destination.write_control_sequence(self.control_sequence);
-        match &self.word {
-            MeaningWord::Static(word) => destination.write_static_meaning_word(*word),
-            MeaningWord::Macro { flags, definition } => {
-                destination.write_macro_meaning(*flags, *definition)
-            }
-            MeaningWord::Font(font) => destination.write_font_meaning(*font),
-        }
-    }
-}
-
-impl<G> PackedCommandTarget<G> for TokenMeaning<G> {
-    #[inline(always)]
-    fn write_control_sequence(&mut self, control_sequence: Option<Symbol>) {
-        self.control_sequence = control_sequence;
-    }
-    #[inline(always)]
-    fn write_static_meaning_word(&mut self, word: u64) {
-        self.word = MeaningWord::Static(word);
-    }
-    #[inline(always)]
-    fn write_font_meaning(&mut self, font: tex_state::ids::FontId) {
-        self.word = MeaningWord::Font(font);
-    }
-    #[inline(always)]
-    fn write_macro_meaning(
-        &mut self,
-        flags: MeaningFlags,
-        definition: tex_state::DefinitionRef<G>,
-    ) {
-        self.word = MeaningWord::Macro { flags, definition };
-    }
-}
-
-impl ResidentWord {
-    /// Materialize only when a consumer needs a full command. This operation
-    /// is pure: diagnostic construction must not replace backup authority.
-    #[inline(always)]
-    pub(super) fn materialize<G>(&self, meaning: &TokenMeaning<G>) -> HotCommand<G> {
-        let line = match self.site {
-            ReadSite::Source(line) => line,
-            _ => None,
-        };
-        let mut command = HotCommand::delivery_storage(
-            self.word,
-            self.origin,
-            matches!(self.site, ReadSite::Source(_)),
-            line,
-            self.suppress_expandable,
-        );
-        meaning.install(&mut command);
-        command
-    }
-}
-
 impl<G> CommandProcessor<'_, '_, G> {
-    /// TeX.web §494's raw skip consumer. Literal resident characters that
-    /// cannot affect skipping share one physical-frame admission. A run that
-    /// ends at its frame's end or at a parameter reference settles that input
-    /// transition in place and keeps skipping; the first exceptional word is
-    /// returned by the same reader for normal settlement.
+    /// TeX82 §494 admits skipped words directly from the selected native
+    /// span. Its first exceptional word goes straight to raw settlement.
     pub(crate) fn get_next_skipping_into(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
@@ -141,144 +53,118 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             return self.get_next_hot_into(destination);
         }
-        loop {
-            let Some(selected) = self.skip_resident_run(nested_conditions) else {
-                return self.get_next_hot_into(destination);
-            };
-            let ControlFlow::Continue(selected) = selected else {
-                return self.get_next_hot_into(destination);
-            };
-            self.pending_diagnostic_location = None;
-            let result = (|| {
-                let outcome = if matches!(
-                    selected,
-                    ResidentWordRead::Exhausted { .. } | ResidentWordRead::Parameter { .. }
-                ) {
-                    // The transition itself is free; only a word it yields
-                    // is charged, exactly as the scalar reader charges the
-                    // word its transitions eventually select.
-                    match self
-                        .transition_resident_word(selected, self.create_source_control_sequences)?
-                    {
-                        ResidentColdOutcome::Retry => return Ok(None),
-                        outcome => {
-                            self.charge_command_action()?;
-                            outcome
-                        }
-                    }
-                } else {
-                    self.charge_command_action()?;
-                    self.finish_charged_raw_read(selected, self.create_source_control_sequences)?
+        let result = (|| {
+            loop {
+                let Some(InputLevel::Resident(row)) = self.command.roots.input.levels.rows.last()
+                else {
+                    return self.get_next_hot_into(destination);
                 };
-                match outcome {
-                    ResidentColdOutcome::Word(word) => self
-                        .finish_selected_hot_word::<false>(word, destination)
-                        .map(Some),
-                    ResidentColdOutcome::Finished(status) => {
-                        destination.take();
-                        Ok(Some(status))
-                    }
-                    ResidentColdOutcome::Retry => {
-                        unreachable!("charged raw reader settles transitions")
-                    }
+                if self.fuel.remaining() == 0 {
+                    return self.get_next_hot_into(destination);
                 }
-            })();
-            return match result {
-                Ok(None) => continue,
-                Ok(Some(status)) => match self.settle_hot_raw_step(status, destination)? {
-                    Some(status) => Ok(status),
-                    None => self.get_next_hot_into(destination),
-                },
-                Err(failure) => self.fail_hot_expanded_delivery(
-                    destination,
-                    self.command.transient.active_expansion_depth,
-                    failure,
-                ),
-            };
-        }
-    }
-
-    /// One skipped-text run over the exposed resident frame, with its brace
-    /// and fuel effects settled. `None` leaves the next word to the scalar
-    /// reader: the top is not a resident frame or no fuel remains.
-    #[inline(always)]
-    fn skip_resident_run(
-        &mut self,
-        nested_conditions: &mut u32,
-    ) -> Option<ControlFlow<(), ResidentWordRead>> {
-        let index = self.command.roots.input.levels.rows.len().checked_sub(1)?;
-        let Some(InputLevel::Resident(row)) = self.command.roots.input.levels.rows.get(index)
-        else {
-            return None;
-        };
-        #[cfg(feature = "profiling")]
-        let argument = matches!(row.storage, ResidentTokenStorage::MacroArgument { .. });
-        // A `\noexpand`-marked frame settles its control sequence through
-        // the ordinary reader; every other resident control sequence is
-        // classified by one meaning lookup below.
-        let classify_meanings = !row.header.frame.flags().contains(
-            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
-        );
-        if self.fuel.remaining() == 0 {
-            return None;
-        }
-
-        let mut consumed = 0_u32;
-        // TeX82 §347 counts every skipped brace in `align_state`. No
-        // alignment is active on this path, so the run's net brace change is
-        // settled once after it ends.
-        let mut brace_delta = 0_i32;
-        let fuel = &mut *self.fuel;
-        let state = &*self.state;
-        let selected = Self::read_resident_run(self.command, |word, _| {
-            let effect = match word.literal_catcode() {
-                Some(tex_state::token::Catcode::BeginGroup) => SkippedWord::Brace(1),
-                Some(tex_state::token::Catcode::EndGroup) => SkippedWord::Brace(-1),
-                Some(tex_state::token::Catcode::Active) if classify_meanings => {
-                    Self::skipped_command(state, word, *nested_conditions)
-                }
-                Some(tex_state::token::Catcode::Active) => SkippedWord::Boundary,
-                Some(_) => SkippedWord::Discarded,
-                // Parameters and frozen tokens keep their input transitions.
-                None if classify_meanings && word.is_control_sequence() => {
-                    Self::skipped_command(state, word, *nested_conditions)
-                }
-                None => SkippedWord::Boundary,
-            };
-            // The run stops as soon as its budget is spent, so the charge
-            // below is always funded and an over-budget word stays unread.
-            if matches!(effect, SkippedWord::Boundary) || !fuel.try_charge() {
-                return ResidentAdmission::Boundary;
-            }
-            match effect {
-                SkippedWord::Brace(delta) => brace_delta += delta,
-                SkippedWord::NestedConditional => *nested_conditions += 1,
-                SkippedWord::NestedFi => *nested_conditions -= 1,
-                SkippedWord::Discarded | SkippedWord::Boundary => {}
-            }
-            consumed += 1;
-            if fuel.remaining() == 0 || consumed == u32::MAX {
-                ResidentAdmission::Stop
-            } else {
-                ResidentAdmission::Continue
-            }
-        });
-        if brace_delta != 0 {
-            self.command.roots.alignment.align_state += brace_delta;
-        }
-        if consumed != 0 {
-            #[cfg(feature = "profiling")]
-            self.fuel.record_raw_run(
-                self.command.delivery_mode.scanner_active(),
-                if argument {
+                let classify = !row.header.frame.flags().contains(
+                    tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+                );
+                #[cfg(feature = "profiling")]
+                let kind = if matches!(row.storage, ResidentTokenStorage::MacroArgument { .. }) {
                     crate::fuel::RawDeliveryKind::MacroArgument
                 } else {
                     crate::fuel::RawDeliveryKind::StoredToken
-                },
-                consumed,
-            );
+                };
+                #[cfg(feature = "profiling")]
+                let scanner = self.command.delivery_mode.scanner_active();
+                self.pending_diagnostic_location = None;
+                let selected = self.consume_resident_input(
+                    &mut |state, fuel, _, alignment, word, _| {
+                        let effect = match word.literal_catcode() {
+                            Some(tex_state::token::Catcode::BeginGroup) => SkippedWord::Brace(1),
+                            Some(tex_state::token::Catcode::EndGroup) => SkippedWord::Brace(-1),
+                            Some(tex_state::token::Catcode::Active) if classify => {
+                                Self::skipped_command(state, word, *nested_conditions)
+                            }
+                            Some(tex_state::token::Catcode::Active) => SkippedWord::Boundary,
+                            Some(_) => SkippedWord::Discarded,
+                            None if classify && word.is_control_sequence() => {
+                                Self::skipped_command(state, word, *nested_conditions)
+                            }
+                            None => SkippedWord::Boundary,
+                        };
+                        if matches!(effect, SkippedWord::Boundary) || !fuel.try_charge() {
+                            return ControlFlow::Continue(false);
+                        }
+                        match effect {
+                            SkippedWord::Brace(delta) => alignment.align_state += delta,
+                            SkippedWord::NestedConditional => *nested_conditions += 1,
+                            SkippedWord::NestedFi => *nested_conditions -= 1,
+                            SkippedWord::Discarded | SkippedWord::Boundary => {}
+                        }
+                        #[cfg(feature = "profiling")]
+                        fuel.record_raw_run(scanner, kind, 1);
+                        if fuel.remaining() == 0 {
+                            ControlFlow::Break(None)
+                        } else {
+                            ControlFlow::Continue(true)
+                        }
+                    },
+                    &mut |processor, word, origin, suppress, site, kind| {
+                        processor.charge_command_action()?;
+                        processor
+                            .finish_delivered_word::<false>(
+                                word,
+                                origin,
+                                suppress,
+                                site,
+                                kind,
+                                destination,
+                            )
+                            .map(Some)
+                    },
+                )?;
+                let status = match selected {
+                    ControlFlow::Break(status) => status,
+                    ControlFlow::Continue(transition) => {
+                        match self.transition_input_frame(
+                            transition,
+                            self.create_source_control_sequences,
+                            &mut |processor, word, origin, suppress, site, kind| {
+                                processor.charge_command_action()?;
+                                processor
+                                    .finish_delivered_word::<false>(
+                                        word,
+                                        origin,
+                                        suppress,
+                                        site,
+                                        kind,
+                                        destination,
+                                    )
+                                    .map(Some)
+                            },
+                        )? {
+                            None => continue,
+                            Some(ControlFlow::Continue(status)) => status,
+                            Some(ControlFlow::Break(status)) => {
+                                destination.take();
+                                return Ok(status);
+                            }
+                        }
+                    }
+                };
+                let Some(status) = status else {
+                    return self.get_next_hot_into(destination);
+                };
+                if let Some(status) = self.settle_hot_raw_step(status, destination)? {
+                    return Ok(status);
+                }
+            }
+        })();
+        match result {
+            Ok(status) => Ok(status),
+            Err(failure) => self.fail_hot_expanded_delivery(
+                destination,
+                self.command.transient.active_expansion_depth,
+                failure,
+            ),
         }
-        Some(selected)
     }
 
     /// TeX82 §494 `pass_text` inspects only `cur_cmd`: a conditional
@@ -293,12 +179,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         word: tex_state::token::TokenWord,
         nested_conditions: u32,
     ) -> SkippedWord {
-        let mut meaning = TokenMeaning::empty();
+        let mut meaning = CommandWord::from_static_word(Meaning::UNDEFINED_WORD);
         state.write_packed_token_command_into(word, &mut meaning);
         if meaning.is_outer() {
             return SkippedWord::Boundary;
         }
-        let MeaningWord::Static(word) = meaning.word else {
+        let CommandWord::Static { word, .. } = meaning else {
             return SkippedWord::Discarded;
         };
         if !matches!(
@@ -341,70 +227,83 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<ExpansionCandidate, CommandError> {
-        let word = match self.read_raw_word(self.create_source_control_sequences)? {
-            ResidentColdOutcome::Word(word) => word,
-            ResidentColdOutcome::Finished(status) => {
-                return Ok(ExpansionCandidate::Finished(status));
-            }
-            ResidentColdOutcome::Retry => unreachable!("reader settles transitions"),
-        };
-        let (meaning, resolution) = self.resolve_read(&word);
-        self.record_consumed_read(&word, resolution.meaning_lookup());
-        if !OBSERVED
-            && !self
-                .command
-                .delivery_mode
-                .requires_semantic_settlement(word.suppress_expandable, meaning.is_outer())
-            && let MeaningWord::Macro { flags, definition } = &meaning.word
-            && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
-        {
-            let name = meaning
-                .control_sequence
-                .ok_or_else(CommandError::input_invariant)?;
-            let spelling = tex_state::token::TracedTokenWord::from_parts(word.word, word.origin);
-            if PREFLIGHT_FIRST {
-                // The supplied-command path activated this first macro
-                // inside expanded_next_hot's transient quiescence guard.
-                let depth = self.command.transient.active_expansion_depth;
-                let active_depth = depth
-                    .checked_add(1)
-                    .ok_or_else(CommandError::input_invariant)?;
-                self.command.transient.active_expansion_depth = active_depth;
-                let result = self.activate_read_macro(spelling, *flags, *definition, name);
-                self.command.transient.active_expansion_depth = depth;
-                result?;
-            } else {
-                self.activate_read_macro(spelling, *flags, *definition, name)?;
-            }
-            return Ok(ExpansionCandidate::ExpandedMacro);
+        match self.consume_input(
+            self.create_source_control_sequences,
+            &mut |processor, word, origin, suppress, site, kind| {
+                let (meaning, resolution) = processor.resolve_token_word(word);
+                processor.record_consumed_word(kind, resolution.meaning_lookup());
+                if !OBSERVED
+                    && !processor
+                        .command
+                        .delivery_mode
+                        .requires_semantic_settlement(suppress, meaning.is_outer())
+                    && let CommandWord::Macro { flags, definition } = meaning
+                    && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
+                {
+                    let name = resolution
+                        .control_sequence()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    if PREFLIGHT_FIRST {
+                        let depth = processor.command.transient.active_expansion_depth;
+                        processor.command.transient.active_expansion_depth =
+                            depth
+                                .checked_add(1)
+                                .ok_or_else(CommandError::input_invariant)?;
+                        let result =
+                            processor.activate_read_macro(word, origin, flags, definition, name);
+                        processor.command.transient.active_expansion_depth = depth;
+                        result?;
+                    } else {
+                        processor.activate_read_macro(word, origin, flags, definition, name)?;
+                    }
+                    return Ok(ExpansionCandidate::ExpandedMacro);
+                }
+                let line = match site {
+                    ReadSite::Source(line) => line,
+                    _ => None,
+                };
+                let command = destination.insert(HotCommand::from_delivered_parts(
+                    word,
+                    origin,
+                    matches!(site, ReadSite::Source(_)),
+                    line,
+                    suppress,
+                    meaning,
+                    resolution.control_sequence(),
+                ));
+                processor
+                    .settle_hot_delivery_in::<OBSERVED>(command, resolution.literal_catcode())?;
+                Ok(ExpansionCandidate::Command)
+            },
+        )? {
+            ControlFlow::Continue(candidate) => Ok(candidate),
+            ControlFlow::Break(status) => Ok(ExpansionCandidate::Finished(status)),
         }
-        let command = destination.insert(word.materialize(&meaning));
-        self.settle_hot_delivery_in::<OBSERVED>(command, resolution.literal_catcode())?;
-        Ok(ExpansionCandidate::Command)
     }
 
     #[inline(always)]
-    pub(super) fn resolve_read(
+    pub(super) fn resolve_token_word(
         &self,
-        word: &ResidentWord,
-    ) -> (TokenMeaning<G>, PackedMeaningResolution) {
-        let mut meaning = TokenMeaning::empty();
+        word: tex_state::token::TokenWord,
+    ) -> (CommandWord<G>, PackedMeaningResolution) {
+        let mut meaning = CommandWord::from_static_word(Meaning::UNDEFINED_WORD);
         let resolution = self
             .state
-            .write_packed_token_command_into(word.word, &mut meaning);
+            .write_packed_token_command_into(word, &mut meaning);
         (meaning, resolution)
     }
 
     #[inline(always)]
-    pub(super) fn record_consumed_read(&mut self, word: &ResidentWord, lookup: bool) {
+    pub(super) fn record_consumed_word(
+        &mut self,
+        kind: crate::fuel::RawDeliveryKind,
+        lookup: bool,
+    ) {
         #[cfg(feature = "profiling")]
-        self.fuel.record_raw_delivery(
-            self.command.delivery_mode.scanner_active(),
-            lookup,
-            word.raw_kind,
-        );
+        self.fuel
+            .record_raw_delivery(self.command.delivery_mode.scanner_active(), lookup, kind);
         #[cfg(not(feature = "profiling"))]
-        let _ = (word, lookup);
+        let _ = (kind, lookup);
     }
 
     /// The ordinary expansion consumer owns one read/interpret back edge.
@@ -494,14 +393,20 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn activate_read_macro(
         &mut self,
-        spelling: tex_state::token::TracedTokenWord,
+        word: tex_state::token::TokenWord,
+        origin: tex_state::token::OriginId,
         flags: MeaningFlags,
         definition: tex_state::DefinitionRef<G>,
         name: Symbol,
     ) -> Result<(), CommandError> {
         self.record_macro_expansion();
-        match self.macro_call_parts(flags, definition, name, spelling.origin(), |processor| {
-            processor.report_unobserved_macro_prefix_mismatch(spelling, flags, definition, name);
+        match self.macro_call_parts(flags, definition, name, origin, |processor| {
+            processor.report_unobserved_macro_prefix_mismatch(
+                tex_state::token::TracedTokenWord::from_parts(word, origin),
+                flags,
+                definition,
+                name,
+            );
         }) {
             Ok(_)
             | Err(CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument) => {

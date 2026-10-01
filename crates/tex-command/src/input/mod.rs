@@ -25,7 +25,7 @@ pub(crate) use levels::{
     PackedInputFrame, PackedTokenOwnership, PackedTokenSpanHandle, PackedTokenSpanSource,
     PendingInsertion, ReplayTrace, ResidentTokenRow, ResidentTokenStorage, RetirementBehavior,
     SourceLevel, SourceOpenDepths, SourceRetirement, SourceSlot, StoredReplayReason, TokenBehavior,
-    TokenRowHeader, TokenSources, packed_token_frame, push_untraced_words,
+    TokenRowHeader, TokenSources, packed_token_frame,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor, SourceOffsetMap};
 #[cfg(test)]
@@ -382,7 +382,10 @@ pub(crate) fn tracked_input_projection<G>(
                 ) {
                     return None;
                 }
-                if !matches!(row.storage, ResidentTokenStorage::List(_)) {
+                if !matches!(
+                    row.storage,
+                    ResidentTokenStorage::List(_) | ResidentTokenStorage::StoredList(_)
+                ) {
                     return None;
                 }
                 project_token_cursor(&mut stack, row, &input.levels, state)?;
@@ -489,7 +492,7 @@ fn project_line(hash: &mut ProjectionHasher, cursor: &SourceCursor, line: &lines
 
 fn project_token_cursor<G>(
     hash: &mut ProjectionHasher,
-    row: &ResidentTokenRow,
+    row: &ResidentTokenRow<G>,
     levels: &InputStack<G>,
     state: &tex_state::CommandContext<'_, G>,
 ) -> Option<()> {
@@ -631,7 +634,9 @@ impl<G> InputState<G> {
                             return true;
                         }
                     }
-                    ResidentTokenStorage::List(_) | ResidentTokenStorage::MacroArgument { .. } => {
+                    ResidentTokenStorage::List(_)
+                    | ResidentTokenStorage::StoredList(_)
+                    | ResidentTokenStorage::MacroArgument { .. } => {
                         if Self::token_context_level(stores, &self.levels, row, current, widths)
                             .is_some()
                         {
@@ -705,15 +710,15 @@ impl<G> InputState<G> {
                 ResidentTokenStorage::MacroBody(body) => {
                     Self::macro_body_context_level(stores, &self.levels, row, body, widths)
                 }
-                ResidentTokenStorage::List(_) | ResidentTokenStorage::MacroArgument { .. } => {
-                    Self::token_context_level(
-                        stores,
-                        &self.levels,
-                        row,
-                        index + 1 == input_levels.len(),
-                        widths,
-                    )
-                }
+                ResidentTokenStorage::List(_)
+                | ResidentTokenStorage::StoredList(_)
+                | ResidentTokenStorage::MacroArgument { .. } => Self::token_context_level(
+                    stores,
+                    &self.levels,
+                    row,
+                    index + 1 == input_levels.len(),
+                    widths,
+                ),
             },
         };
         let mut reached_bottom_source = false;
@@ -776,7 +781,7 @@ impl<G> InputState<G> {
         output
     }
 
-    fn context_level_is_visible(row: &ResidentTokenRow, current: bool) -> bool {
+    fn context_level_is_visible(row: &ResidentTokenRow<G>, current: bool) -> bool {
         // §312: a fully read backed-up list shows only as the current level.
         !(matches!(row.trace(), ReplayTrace::BackedUp)
             && row.header.frame.position() >= row.header.frame.limit()
@@ -786,14 +791,14 @@ impl<G> InputState<G> {
     fn macro_body_context_level(
         stores: &tex_state::CommandContext<'_, G>,
         levels: &InputStack<G>,
-        row: &ResidentTokenRow,
-        body: &MacroBodyCursor,
+        row: &ResidentTokenRow<G>,
+        body: &MacroBodyCursor<G>,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
         // TeX82 §§323/319 keep a macro's token-list reference on the
         // input level and pseudoprint that same live list. The defining group
         // can already be gone here (notably after §800's two `unsave`s), so
-        // the activation's own copy of its parameter text and replacement is
+        // the activation's retained immutable parameter text and replacement is
         // the projection's source.
         let replacement = levels.row_words(row);
         let split = row.header.position().min(replacement.len());
@@ -805,7 +810,7 @@ impl<G> InputState<G> {
             rendered
         };
         let mut before = ContextTail::new(widths.half_error_line());
-        for word in replacement[..split].iter().rev() {
+        for word in replacement.clone().take(split).rev() {
             if before.is_complete() {
                 break;
             }
@@ -814,7 +819,7 @@ impl<G> InputState<G> {
         if !before.is_complete() {
             before.prepend_str("->");
         }
-        for word in levels.macro_parameter_text(row).iter().rev() {
+        for word in levels.macro_parameter_text(row).rev() {
             if before.is_complete() {
                 break;
             }
@@ -831,7 +836,7 @@ impl<G> InputState<G> {
             .saturating_add(before_chars)
             .min(widths.half_error_line());
         let mut after = ContextHead::new(widths.error_line().saturating_sub(indent));
-        for word in &replacement[split..] {
+        for word in replacement.skip(split) {
             if after.is_complete() {
                 break;
             }
@@ -1070,7 +1075,7 @@ impl<G> InputState<G> {
     fn token_context_level(
         stores: &tex_state::CommandContext<'_, G>,
         levels: &InputStack<G>,
-        row: &ResidentTokenRow,
+        row: &ResidentTokenRow<G>,
         current: bool,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
@@ -1127,7 +1132,7 @@ impl<G> InputState<G> {
         {
             before.prepend_str(sentinel);
         }
-        for word in words[..split].iter().rev() {
+        for word in words.clone().take(split).rev() {
             if before.is_complete() {
                 break;
             }
@@ -1179,7 +1184,7 @@ impl<G> InputState<G> {
             render_selector_text(stores, marker, &mut rendered);
             after.push_str(&rendered);
         }
-        for word in &words[split..] {
+        for word in words.skip(split) {
             if after.is_complete() {
                 break;
             }

@@ -48,7 +48,13 @@ argument, and stored input expose a packed word and frame-local delivery facts;
 reading does not resolve a meaning or construct a command. Input transitions
 retry under the same fuel charge. Source and synthetic words use that same
 consumer boundary, while line acquisition, retirement, and recovery remain cold.
-The read facts are synchronous borrow-local values, never a second input owner.
+The read facts are synchronous scalar arguments, never a token/result carrier
+or a second input owner. A statically selected callback consumes them before
+any new input is selected. Immutable stored lists and macro bodies are owned
+by their row; transient insertions, backups, and matched arguments share the
+input stack's traced-word suffix. Retirement drops the immutable owner and
+truncates the owned suffix; aggregate checkpoint replacement releases displaced
+rows. Named checkpoints reject active macros.
 
 The consumer is selected at entry. Ordinary text is admitted directly by its
 character consumer. Unexpanded definition bodies append packed words to the
@@ -57,13 +63,17 @@ sequences still resolve live meanings for outer validity; literal characters
 need no meaning lookup. Expanded delivery resolves each interpreted meaning
 once. A macro supplies only its name, origin, flags, and definition to activation
 and argument scanning; successful ordinary activation constructs no command.
-Main-control preflight uses this same resolved-read candidate for its first
+Main-control preflight uses this same final meaning for its first
 token. An ordinary unobserved macro can activate directly there and continue
 through the existing expansion loop; source, recovery, observation, and other
 commands still pass through ordinary raw settlement. Preflight retains the
 canonical `end_template` insertion and its fuel charge. Direct first-macro
 activation retains the expanded episode's transient quiescence guard while
 matching arguments; the continuation enters the ordinary guarded expansion loop.
+
+Meaning resolution writes the final native `CommandWord` enum: validated static
+word, macro key/flags, or font capability. There is no operand adapter, temporary
+`TokenMeaning`, or parallel font column.
 
 A full hot command is materialized when a caller actually needs command delivery,
 or when observation, suppression, alignment, or outer recovery requires the
@@ -79,8 +89,8 @@ implementation. Expansion chains stay iterative. EOF, replay completion, and
 errors clear outward destinations; every recursive expansion depth is restored
 on error. No runtime consumer selector, boxed callback, parked continuation,
 parallel reader cache, or alternate recovery engine is introduced.
-Conditional skipped-text delivery uses the compact raw slot and classifies its
-static meaning there; it materializes no rich command for discarded tokens.
+Conditional skipped-text delivery classifies into the final native meaning;
+it constructs no command for discarded tokens.
 When observation, command tracing, and alignment interception are absent,
 `pass_text` can consume a contiguous resident run of literal non-active,
 non-brace characters under one borrow of the existing input reader. Each word
@@ -158,7 +168,7 @@ their TeX82 loops inspect only a few facts of each token.
   `fi_or_else` delimiter, or §336's outer class. The skip run resolves each
   control sequence or active character with one dense meaning lookup, keeps the
   nesting count of skipped conditionals inside the run, and settles §347's
-  `align_state` for skipped braces once from the run's net change. Only the
+  `align_state` for each admitted brace. Only the
   delimiter that ends the skip at nesting zero, outer commands, parameters,
   frozen tokens, and words from `\noexpand`-marked frames are delivered.
 - §§392--399's macro argument matcher reads spelling, braces, `\par`, and

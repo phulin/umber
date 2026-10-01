@@ -9,7 +9,7 @@ use super::{CommandClass, CommandWord, CurrentCommand, HotCommand};
 
 #[test]
 fn command_delivery_layout_stays_compact() {
-    assert_eq!(std::mem::size_of::<CommandWord<()>>(), 16);
+    assert_eq!(std::mem::size_of::<CommandWord<()>>(), 24);
     assert!(std::mem::size_of::<ResolvedMeaning<()>>() <= 32);
     assert_eq!(std::mem::size_of::<Option<crate::SourceProvenance>>(), 32);
     // Decoded source geometry lives behind the packed origin coordinate, not
@@ -55,7 +55,7 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
 
 #[test]
 fn packed_main_loop_character_class_excludes_structural_catcodes() {
-    let word = |meaning| CommandWord::<()>::from_meaning(ResolvedMeaning::Static(meaning)).0;
+    let word = |meaning| CommandWord::<()>::from_meaning(ResolvedMeaning::Static(meaning));
 
     assert!(word(Meaning::CharGiven('x')).is_main_loop_character());
     assert!(
@@ -93,17 +93,15 @@ fn compact_character_projections_distinguish_tokens_from_chardef_values() {
     let literal = CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::CharToken {
         ch: 'x',
         cat: Catcode::Letter,
-    }))
-    .0;
+    }));
     assert_eq!(literal.character_token(), Some('x'));
     assert_eq!(literal.character_value(), Some('x'));
 
-    let defined =
-        CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::CharGiven('A'))).0;
+    let defined = CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::CharGiven('A')));
     assert_eq!(defined.character_token(), None);
     assert_eq!(defined.character_value(), Some('A'));
 
-    let relax = CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::Relax)).0;
+    let relax = CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::Relax));
     assert_eq!(relax.character_token(), None);
     assert_eq!(relax.character_value(), None);
 }

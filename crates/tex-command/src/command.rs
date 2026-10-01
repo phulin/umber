@@ -5,8 +5,8 @@ use tex_state::DefinitionRef;
 use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{
-    CommandOperandWord, ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning,
-    StaticCommandClass, UnexpandablePrimitive,
+    ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning, StaticCommandClass,
+    UnexpandablePrimitive,
 };
 use tex_state::token::{Catcode, OriginId, PackedCommandTarget, Token, TokenWord, TracedTokenWord};
 
@@ -70,17 +70,22 @@ pub(crate) enum CommandClass {
     Value,
 }
 
-/// The fixed-width `cur_chr` payload retained by [`CommandWord`].
-/// Fixed-width command equivalent to TeX's `cur_cmd`/`cur_chr`.
+/// Native final meaning equivalent to TeX's `cur_cmd`/`cur_chr`.
 ///
 /// Static meanings retain their validated packed word. In particular, dense
 /// meaning resolution does not first decode a [`ResolvedMeaning`] and then
 /// rematch it to discover the expansion branch.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct CommandWord<G> {
-    code: CommandClass,
-    flags: MeaningFlags,
-    operand: CommandOperandWord<G>,
+#[derive(Debug)]
+pub(crate) enum CommandWord<G> {
+    Static {
+        class: CommandClass,
+        word: u64,
+    },
+    Macro {
+        flags: MeaningFlags,
+        definition: DefinitionRef<G>,
+    },
+    Font(FontId),
 }
 
 impl<G> Clone for CommandWord<G> {
@@ -88,12 +93,47 @@ impl<G> Clone for CommandWord<G> {
         *self
     }
 }
-
 impl<G> Copy for CommandWord<G> {}
 
+impl<G> PartialEq for CommandWord<G> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Static { class: a, word: x }, Self::Static { class: b, word: y }) => {
+                a == b && x == y
+            }
+            (
+                Self::Macro {
+                    flags: a,
+                    definition: x,
+                },
+                Self::Macro {
+                    flags: b,
+                    definition: y,
+                },
+            ) => a == b && x == y,
+            (Self::Font(a), Self::Font(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+impl<G> Eq for CommandWord<G> {}
+impl<G> core::hash::Hash for CommandWord<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.class().hash(state);
+        match self {
+            Self::Static { word, .. } => word.hash(state),
+            Self::Macro { flags, definition } => {
+                flags.hash(state);
+                definition.hash(state);
+            }
+            Self::Font(font) => font.hash(state),
+        }
+    }
+}
+
 impl<G> CommandWord<G> {
-    fn from_static_word(word: u64) -> Self {
-        let code = match Meaning::runtime_word_class(word) {
+    pub(crate) fn from_static_word(word: u64) -> Self {
+        let class = match Meaning::runtime_word_class(word) {
             StaticCommandClass::Undefined => CommandClass::Undefined,
             StaticCommandClass::Relax => CommandClass::Relax,
             StaticCommandClass::Character => CommandClass::Character,
@@ -102,57 +142,45 @@ impl<G> CommandWord<G> {
             StaticCommandClass::Unexpandable => CommandClass::Unexpandable,
             StaticCommandClass::Value => CommandClass::Value,
         };
-        Self {
-            code,
-            flags: MeaningFlags::EMPTY,
-            operand: CommandOperandWord::scalar(word),
-        }
+        Self::Static { class, word }
     }
 
-    fn from_meaning(meaning: ResolvedMeaning<G>) -> (Self, Option<FontId>) {
+    fn from_meaning(meaning: ResolvedMeaning<G>) -> Self {
         match meaning {
-            ResolvedMeaning::Static(Meaning::Font(font)) => (
-                Self {
-                    code: CommandClass::Font,
-                    flags: MeaningFlags::EMPTY,
-                    operand: CommandOperandWord::scalar(0),
-                },
-                Some(font),
-            ),
-            ResolvedMeaning::Static(meaning) => (Self::from_static_word(meaning.encode()), None),
-            ResolvedMeaning::Macro { flags, definition } => (
-                Self {
-                    code: CommandClass::Macro,
-                    flags,
-                    operand: CommandOperandWord::definition(definition),
-                },
-                None,
-            ),
+            ResolvedMeaning::Static(Meaning::Font(font)) => Self::Font(font),
+            ResolvedMeaning::Static(meaning) => Self::from_static_word(meaning.encode()),
+            ResolvedMeaning::Macro { flags, definition } => Self::Macro { flags, definition },
         }
     }
 
     pub(crate) const fn class(self) -> CommandClass {
-        self.code
+        match self {
+            Self::Static { class, .. } => class,
+            Self::Macro { .. } => CommandClass::Macro,
+            Self::Font(_) => CommandClass::Font,
+        }
     }
 
     pub(crate) const fn flags(self) -> MeaningFlags {
-        self.flags
+        match self {
+            Self::Macro { flags, .. } => flags,
+            _ => MeaningFlags::EMPTY,
+        }
     }
 
     pub(crate) const fn expandable_primitive(self) -> Option<ExpandablePrimitive> {
-        if !matches!(self.code, CommandClass::Expandable) {
-            return None;
+        match self {
+            Self::Static {
+                class: CommandClass::Expandable,
+                word,
+            } => ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word)),
+            _ => None,
         }
-        let word = self.operand.scalar_value();
-        ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
     }
 
     pub(crate) fn character_catcode(self) -> Option<Catcode> {
-        if !matches!(self.code, CommandClass::Character) {
-            return None;
-        }
-        match Meaning::from_runtime_word(self.operand.scalar_value()) {
-            Meaning::CharToken { cat, .. } => Some(cat),
+        match self.static_meaning() {
+            Some(Meaning::CharToken { cat, .. }) => Some(cat),
             _ => None,
         }
     }
@@ -166,10 +194,10 @@ impl<G> CommandWord<G> {
     /// value defined by a control sequence.
     #[cfg(test)]
     pub(crate) fn character_value(self) -> Option<char> {
-        if !matches!(self.code, CommandClass::Character) {
+        if !matches!(self.class(), CommandClass::Character) {
             return None;
         }
-        match Meaning::from_runtime_word(self.operand.scalar_value()) {
+        match Meaning::from_runtime_word(self.static_word()) {
             Meaning::CharGiven(ch) | Meaning::CharToken { ch, .. } => Some(ch),
             _ => None,
         }
@@ -177,10 +205,10 @@ impl<G> CommandWord<G> {
 
     /// Returns only a literal character token, never a `\chardef` value.
     pub(crate) fn character_token(self) -> Option<char> {
-        if !matches!(self.code, CommandClass::Character) {
+        if !matches!(self.class(), CommandClass::Character) {
             return None;
         }
-        match Meaning::from_runtime_word(self.operand.scalar_value()) {
+        match Meaning::from_runtime_word(self.static_word()) {
             Meaning::CharToken { ch, .. } => Some(ch),
             _ => None,
         }
@@ -188,11 +216,11 @@ impl<G> CommandWord<G> {
 
     /// Whether TeX82 section 1038 can continue its main-loop character run.
     pub(crate) fn is_main_loop_character(self) -> bool {
-        if !matches!(self.code, CommandClass::Character) {
+        if !matches!(self.class(), CommandClass::Character) {
             return false;
         }
         matches!(
-            Meaning::from_runtime_word(self.operand.scalar_value()),
+            Meaning::from_runtime_word(self.static_word()),
             Meaning::CharGiven(_)
                 | Meaning::CharToken {
                     cat: Catcode::Letter | Catcode::Other,
@@ -202,24 +230,36 @@ impl<G> CommandWord<G> {
     }
 
     pub(crate) const fn unexpandable_primitive(self) -> Option<UnexpandablePrimitive> {
-        if !matches!(self.code, CommandClass::Unexpandable) {
+        if !matches!(self.class(), CommandClass::Unexpandable) {
             return None;
         }
-        UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(
-            self.operand.scalar_value(),
-        ))
+        UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(self.static_word()))
     }
 
-    pub(crate) fn resolved_meaning(&self, font: Option<FontId>) -> ResolvedMeaning<G> {
-        match self.code {
-            CommandClass::Macro => ResolvedMeaning::Macro {
-                flags: self.flags,
-                definition: self.operand.definition_value(),
-            },
-            CommandClass::Font => ResolvedMeaning::Static(Meaning::Font(
-                font.expect("font command retains its opaque admitted identity"),
-            )),
-            _ => ResolvedMeaning::Static(Meaning::from_runtime_word(self.operand.scalar_value())),
+    pub(crate) fn resolved_meaning(&self) -> ResolvedMeaning<G> {
+        match *self {
+            Self::Macro { flags, definition } => ResolvedMeaning::Macro { flags, definition },
+            Self::Font(font) => ResolvedMeaning::Static(Meaning::Font(font)),
+            Self::Static { word, .. } => ResolvedMeaning::Static(Meaning::from_runtime_word(word)),
+        }
+    }
+
+    pub(crate) const fn macro_definition(self) -> Option<(MeaningFlags, DefinitionRef<G>)> {
+        match self {
+            Self::Macro { flags, definition } => Some((flags, definition)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_outer(self) -> bool {
+        self.flags().contains(MeaningFlags::OUTER)
+            || self.expandable_primitive() == Some(ExpandablePrimitive::EndTemplate)
+    }
+
+    const fn static_word(self) -> u64 {
+        match self {
+            Self::Static { word, .. } => word,
+            _ => 0,
         }
     }
 
@@ -230,14 +270,14 @@ impl<G> CommandWord<G> {
     /// words. Scanners that only classify a terminal command therefore use
     /// this projection instead of materializing `CurrentCommand`.
     pub(crate) fn static_meaning(self) -> Option<Meaning> {
-        match self.code {
+        match self.class() {
             CommandClass::Macro | CommandClass::Font => None,
-            _ => Some(Meaning::from_runtime_word(self.operand.scalar_value())),
+            _ => Some(Meaning::from_runtime_word(self.static_word())),
         }
     }
 }
 
-const _: () = assert!(core::mem::size_of::<CommandWord<()>>() == 16);
+const _: () = assert!(core::mem::size_of::<CommandWord<()>>() == 24);
 
 /// Compact coordinates and one-delivery policy attached to a hot token.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -261,19 +301,11 @@ pub(crate) struct HotToken {
 pub(crate) struct HotCommand<G> {
     token: HotToken,
     command: CommandWord<G>,
-    /// Font identities carry a runtime namespace and generation that cannot
-    /// be reconstructed from their dense slot. Keep that opaque capability
-    /// beside the fixed-width command word only for the font command class.
-    font: Option<FontId>,
 }
 
 impl<G> PartialEq for HotCommand<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.token == other.token
-            && self.command.class() == other.command.class()
-            && self.command.flags() == other.command.flags()
-            && self.command.operand.scalar_value() == other.command.operand.scalar_value()
-            && self.font == other.font
+        self.token == other.token && self.command == other.command
     }
 }
 
@@ -282,10 +314,7 @@ impl<G> Eq for HotCommand<G> {}
 impl<G> core::hash::Hash for HotCommand<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.token.hash(state);
-        self.command.class().hash(state);
-        self.command.flags().hash(state);
-        self.command.operand.scalar_value().hash(state);
-        self.font.hash(state);
+        self.command.hash(state);
     }
 }
 
@@ -534,36 +563,18 @@ impl CommandIdentity {
     }
 }
 
-impl<G> PackedCommandTarget<G> for HotCommand<G> {
-    #[inline(always)]
-    fn write_control_sequence(&mut self, control_sequence: Option<Symbol>) {
-        self.token.site.control_sequence = control_sequence;
-    }
-
+impl<G> PackedCommandTarget<G> for CommandWord<G> {
     #[inline(always)]
     fn write_static_meaning_word(&mut self, word: u64) {
-        self.command = CommandWord::from_static_word(word);
-        self.font = None;
+        *self = Self::from_static_word(word);
     }
-
     #[inline(always)]
     fn write_font_meaning(&mut self, font: FontId) {
-        self.command = CommandWord {
-            code: CommandClass::Font,
-            flags: MeaningFlags::EMPTY,
-            operand: CommandOperandWord::scalar(0),
-        };
-        self.font = Some(font);
+        *self = Self::Font(font);
     }
-
     #[inline(always)]
     fn write_macro_meaning(&mut self, flags: MeaningFlags, definition: DefinitionRef<G>) {
-        self.command = CommandWord {
-            code: CommandClass::Macro,
-            flags,
-            operand: CommandOperandWord::definition(definition),
-        };
-        self.font = None;
+        *self = Self::Macro { flags, definition };
     }
 }
 
@@ -619,25 +630,32 @@ impl<G> HotCommand<G> {
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
     ) -> (Self, tex_state::token::PackedMeaningResolution) {
-        let mut command = Self::delivery_storage(
-            word,
-            origin,
-            direct_source,
-            direct_source_line,
-            suppress_expandable,
-        );
-        let resolution = state.write_packed_token_command_into(word, &mut command);
-        (command, resolution)
+        let mut meaning = CommandWord::from_static_word(Meaning::UNDEFINED_WORD);
+        let resolution = state.write_packed_token_command_into(word, &mut meaning);
+        (
+            Self::from_delivered_parts(
+                word,
+                origin,
+                direct_source,
+                direct_source_line,
+                suppress_expandable,
+                meaning,
+                resolution.control_sequence(),
+            ),
+            resolution,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
-    pub(crate) fn delivery_storage(
+    pub(crate) fn from_delivered_parts(
         word: TokenWord,
         origin: OriginId,
         direct_source: bool,
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
+        meaning: CommandWord<G>,
+        control_sequence: Option<Symbol>,
     ) -> Self {
         #[cfg(test)]
         update_command_ownership_counters(|counters| {
@@ -648,7 +666,7 @@ impl<G> HotCommand<G> {
                 word,
                 origin,
                 site: DeliverySite {
-                    control_sequence: None,
+                    control_sequence,
                     direct_source_line: direct_source_line.unwrap_or(0),
                     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
                     delivery_flags: CommandDeliveryFlags::delivery(
@@ -658,8 +676,7 @@ impl<G> HotCommand<G> {
                     ),
                 },
             },
-            command: CommandWord::from_static_word(Meaning::UNDEFINED_WORD),
-            font: None,
+            command: meaning,
         }
     }
 
@@ -680,7 +697,6 @@ impl<G> HotCommand<G> {
                 },
             },
             command: CommandWord::from_static_word(Meaning::UNDEFINED_WORD),
-            font: None,
         }
     }
 
@@ -713,7 +729,9 @@ impl<G> HotCommand<G> {
                 ),
             },
         };
-        state.write_packed_token_command_into(word, self)
+        let resolution = state.write_packed_token_command_into(word, &mut self.command);
+        self.token.site.control_sequence = resolution.control_sequence();
+        resolution
     }
 
     #[inline(always)]
@@ -747,7 +765,7 @@ impl<G> HotCommand<G> {
 
     #[allow(dead_code)] // profiling-only direct-delivery harness
     pub(crate) fn resolved_meaning(&self) -> ResolvedMeaning<G> {
-        self.command.resolved_meaning(self.font)
+        self.command.resolved_meaning()
     }
 
     pub(crate) const fn spelling_word(&self) -> TokenWord {
@@ -858,7 +876,6 @@ impl<G> HotCommand<G> {
             )
         {
             self.command = CommandWord::from_static_word(Meaning::RELAX_WORD);
-            self.font = None;
             self.token
                 .site
                 .delivery_flags
@@ -879,7 +896,10 @@ impl<G> HotCommand<G> {
         matches!(self.command.class(), CommandClass::Macro).then(|| {
             (
                 self.command.flags(),
-                self.command.operand.definition_value(),
+                self.command
+                    .macro_definition()
+                    .expect("macro command definition")
+                    .1,
             )
         })
     }
@@ -887,14 +907,12 @@ impl<G> HotCommand<G> {
     pub(crate) fn convert_end_template_to_endv(&mut self, frozen_endv: Token) {
         self.token.word = TokenWord::pack(frozen_endv);
         self.command = CommandWord::from_static_word(Meaning::END_V_WORD);
-        self.font = None;
         self.token.site.control_sequence = None;
         self.token.site.alignment_adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
     }
 
     pub(crate) fn convert_to_end_template(&mut self) {
         self.command = CommandWord::from_static_word(Meaning::END_TEMPLATE_WORD);
-        self.font = None;
         self.token.site.control_sequence = None;
     }
 
@@ -903,7 +921,7 @@ impl<G> HotCommand<G> {
         update_command_ownership_counters(|counters| {
             counters.rich_materializations = counters.rich_materializations.saturating_add(1);
         });
-        let meaning = self.command.resolved_meaning(self.font);
+        let meaning = self.command.resolved_meaning();
         CurrentCommand {
             spelling: TracedTokenWord::from_parts(self.token.word, self.token.origin),
             identity: if self
@@ -934,7 +952,7 @@ impl<G> HotCommand<G> {
         update_command_ownership_counters(|counters| {
             counters.hot_reconstructions = counters.hot_reconstructions.saturating_add(1);
         });
-        let (command_word, font) = CommandWord::from_meaning(command.meaning);
+        let command_word = CommandWord::from_meaning(command.meaning);
         Self {
             token: HotToken {
                 word: command.spelling.token_word(),
@@ -947,7 +965,6 @@ impl<G> HotCommand<G> {
                 },
             },
             command: command_word,
-            font,
         }
     }
 
@@ -956,7 +973,7 @@ impl<G> HotCommand<G> {
         update_command_ownership_counters(|counters| {
             counters.hot_reconstructions = counters.hot_reconstructions.saturating_add(1);
         });
-        let (command_word, font) = CommandWord::from_meaning(command.meaning);
+        let command_word = CommandWord::from_meaning(command.meaning);
         Self {
             token: HotToken {
                 word: command.spelling.token_word(),
@@ -969,7 +986,6 @@ impl<G> HotCommand<G> {
                 },
             },
             command: command_word,
-            font,
         }
     }
 }

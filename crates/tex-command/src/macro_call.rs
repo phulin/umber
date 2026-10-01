@@ -330,7 +330,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let macro_name = plan.macro_name;
         let _level = self
             .command
-            .push_macro_activation(macro_name, &plan.body, matching, plan.call_origin)
+            .push_macro_activation(macro_name, plan.body, matching, plan.call_origin)
             .map_err(|_| CommandError::input_invariant())?;
         observe!(
             self,
@@ -488,7 +488,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Some(body) = body {
             self.conserve_input_stack_for_descendant()?;
             self.command
-                .push_macro_activation(macro_name, &body, None, call_site)
+                .push_macro_activation(macro_name, body, None, call_site)
                 .map_err(|_| CommandError::input_invariant())?;
         } else {
             self.conserve_input_stack()?;

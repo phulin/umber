@@ -26,13 +26,10 @@ use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
 };
 
-enum ResidentColdOutcome {
-    Retry,
-    Finished(DeliveryStatus),
-    Word(ResidentWord),
-}
-
 enum InputFrameTransition {
+    Source {
+        resident_index: usize,
+    },
     Boundary(ResidentBoundary),
     ResidentExhausted {
         resident_index: usize,
@@ -43,39 +40,6 @@ enum InputFrameTransition {
         span: Option<crate::input::ArgumentSpan>,
         active_source: Option<tex_state::packed_input::SourceContext>,
     },
-}
-
-/// One packed word selected from a resident token row. The selection keeps
-/// the row's already-admitted coordinates beside the word so the delivery
-/// loops can either resolve it into the hot command or consume an ordinary
-/// character directly in the main-control run.
-enum ResidentWordRead {
-    NoResident,
-    Source {
-        resident_index: usize,
-    },
-    Parameter {
-        slot: u8,
-        span: Option<crate::input::ArgumentSpan>,
-        active_source: Option<tex_state::packed_input::SourceContext>,
-    },
-    Exhausted {
-        resident_index: usize,
-        identity: InputLevelId,
-    },
-    Word(ResidentWord),
-}
-
-/// Successfully loaded token and its frame-local delivery facts. The writer
-/// accepts only this occupied read, so resolution has no input-status branch.
-#[derive(Clone, Copy)]
-struct ResidentWord {
-    word: TokenWord,
-    origin: OriginId,
-    suppress_expandable: bool,
-    site: ReadSite,
-    #[cfg(feature = "profiling")]
-    raw_kind: crate::fuel::RawDeliveryKind,
 }
 
 #[derive(Clone, Copy)]
@@ -161,20 +125,17 @@ fn hot_is_space<G>(command: &HotCommand<G>) -> bool {
 
 impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
-    fn write_resident_word(
+    #[allow(clippy::too_many_arguments)]
+    fn write_delivered_word(
         &mut self,
-        selected: ResidentWord,
+        word: TokenWord,
+        origin: OriginId,
+        suppress: bool,
+        site: ReadSite,
+        kind: crate::fuel::RawDeliveryKind,
         destination: &mut Option<HotCommand<G>>,
     ) -> Option<Catcode> {
-        let ResidentWord {
-            word,
-            origin,
-            suppress_expandable,
-            site,
-            #[cfg(feature = "profiling")]
-            raw_kind,
-        } = selected;
-        let direct_source_line = match site {
+        let line = match site {
             ReadSite::Source(line) => line,
             _ => None,
         };
@@ -183,16 +144,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             word,
             origin,
             matches!(site, ReadSite::Source(_)),
-            direct_source_line,
-            suppress_expandable,
+            line,
+            suppress,
             self.state,
         );
-        #[cfg(feature = "profiling")]
-        self.fuel.record_raw_delivery(
-            self.command.delivery_mode.scanner_active(),
-            resolution.meaning_lookup(),
-            raw_kind,
-        );
+        self.record_consumed_word(kind, resolution.meaning_lookup());
         resolution.literal_catcode()
     }
 
@@ -263,44 +219,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         settlement
     }
 
-    #[inline(always)]
-    fn transition_resident_word(
-        &mut self,
-        selected: ResidentWordRead,
-        create_control_sequences: bool,
-    ) -> Result<ResidentColdOutcome, CommandError> {
-        let transition = match selected {
-            ResidentWordRead::NoResident => InputFrameTransition::Boundary(ResidentBoundary::Empty),
-            ResidentWordRead::Source { resident_index } => {
-                return self.advance_source_token(resident_index, create_control_sequences);
-            }
-            ResidentWordRead::Parameter {
-                slot,
-                span,
-                active_source,
-            } => {
-                self.transition_input_frame(InputFrameTransition::Parameter {
-                    slot,
-                    span,
-                    active_source,
-                })?;
-                return Ok(ResidentColdOutcome::Retry);
-            }
-            ResidentWordRead::Exhausted {
-                resident_index,
-                identity,
-            } => InputFrameTransition::ResidentExhausted {
-                resident_index,
-                identity,
-            },
-            ResidentWordRead::Word(_) => {
-                return Err(CommandError::input_invariant());
-            }
-        };
-        let outcome = self.transition_input_frame(transition)?;
-        Ok(outcome)
-    }
-
     /// The concrete TeX82 §341 raw-token loop. It owns one fuel charge for
     /// each semantic raw token and retries only through cold input transitions.
     #[inline(always)]
@@ -341,65 +259,80 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let selected = match self.read_raw_word(self.create_source_control_sequences)? {
-            ResidentColdOutcome::Word(word) => word,
-            ResidentColdOutcome::Finished(status) => {
+        match self.consume_input(
+            self.create_source_control_sequences,
+            &mut |processor, word, origin, suppress, site, kind| {
+                processor.finish_delivered_word::<OBSERVED>(
+                    word,
+                    origin,
+                    suppress,
+                    site,
+                    kind,
+                    destination,
+                )
+            },
+        )? {
+            std::ops::ControlFlow::Continue(status) => Ok(status),
+            std::ops::ControlFlow::Break(status) => {
                 destination.take();
-                return Ok(status);
+                Ok(status)
             }
-            ResidentColdOutcome::Retry => unreachable!("raw reading settles input transitions"),
-        };
-        self.finish_selected_hot_word::<OBSERVED>(selected, destination)
+        }
     }
 
-    /// Settles a word already advanced by the shared resident reader. The
-    /// skipped-text run returns its first boundary word in exactly this form;
-    /// raw delivery uses the same finish so neither repeats a meaning lookup
-    /// nor backs the boundary word into a second input level.
     #[inline(always)]
-    fn finish_selected_hot_word<const OBSERVED: bool>(
+    #[allow(clippy::too_many_arguments)]
+    fn finish_delivered_word<const OBSERVED: bool>(
         &mut self,
-        selected: ResidentWord,
+        word: TokenWord,
+        origin: OriginId,
+        suppress: bool,
+        site: ReadSite,
+        kind: crate::fuel::RawDeliveryKind,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let literal_catcode = self.write_resident_word(selected, destination);
+        let literal = self.write_delivered_word(word, origin, suppress, site, kind, destination);
         self.settle_hot_delivery_in::<OBSERVED>(
             destination.as_mut().expect("initialized delivery"),
-            literal_catcode,
+            literal,
         )?;
         Ok(DeliveryStatus::Command)
     }
 
-    /// Reads one semantic raw token. All consumers share this charge and
-    /// retry boundary; reading alone never constructs or resolves a command.
+    /// Charges one semantic raw token, selects each exposed native span once,
+    /// and invokes the actual consumer with word scalars. Cold transitions
+    /// retry under that same charge; no token result is constructed between
+    /// storage, resolution and consumption.
     #[inline(always)]
-    fn read_raw_word(
+    fn consume_input<R>(
         &mut self,
         create_control_sequences: bool,
-    ) -> Result<ResidentColdOutcome, CommandError> {
+        finish: &mut impl FnMut(
+            &mut Self,
+            TokenWord,
+            OriginId,
+            bool,
+            ReadSite,
+            crate::fuel::RawDeliveryKind,
+        ) -> Result<R, CommandError>,
+    ) -> Result<std::ops::ControlFlow<DeliveryStatus, R>, CommandError> {
         self.pending_diagnostic_location = None;
         self.charge_command_action()?;
-        let selected = self.read_resident_word();
-        self.finish_charged_raw_read(selected, create_control_sequences)
-    }
-
-    /// Continues the one already-charged canonical read from a word or input
-    /// transition selected by the shared resident reader. A batch consumer
-    /// can hand back its advanced boundary without dropping a parameter or
-    /// charging a substituted token twice.
-    #[inline(always)]
-    fn finish_charged_raw_read(
-        &mut self,
-        mut selected: ResidentWordRead,
-        create_control_sequences: bool,
-    ) -> Result<ResidentColdOutcome, CommandError> {
         loop {
-            if let ResidentWordRead::Word(word) = selected {
-                return Ok(ResidentColdOutcome::Word(word));
-            }
-            match self.transition_resident_word(selected, create_control_sequences)? {
-                ResidentColdOutcome::Retry => selected = self.read_resident_word(),
-                outcome => return Ok(outcome),
+            match self.consume_resident_input(
+                &mut |_, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
+                finish,
+            )? {
+                std::ops::ControlFlow::Break(result) => {
+                    return Ok(std::ops::ControlFlow::Continue(result));
+                }
+                std::ops::ControlFlow::Continue(transition) => {
+                    if let Some(result) =
+                        self.transition_input_frame(transition, create_control_sequences, finish)?
+                    {
+                        return Ok(result);
+                    }
+                }
             }
         }
     }
@@ -598,46 +531,28 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// Completes a source or synthetic `endv` command after the main-loop
-    /// reader has crossed a cold input boundary. Such a command still needs
-    /// the ordinary delivery settlement, but it never belongs to the warm
-    /// character-run body.
-    #[cold]
-    #[inline(never)]
-    fn finish_main_loop_synthetic(
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn finish_character_boundary(
         &mut self,
-        command: &mut Option<HotCommand<G>>,
-        literal_catcode: Option<Catcode>,
+        word: TokenWord,
+        origin: OriginId,
+        suppress: bool,
+        site: ReadSite,
+        kind: crate::fuel::RawDeliveryKind,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.fuel.charge()?;
-        let mut command = command.take().ok_or_else(CommandError::input_invariant)?;
-        self.settle_hot_delivery(&mut command, literal_catcode)?;
+        let mut command = None;
+        let literal = self.write_delivered_word(word, origin, suppress, site, kind, &mut command);
+        let mut command = command.take().expect("boundary word initializes command");
+        self.settle_hot_delivery(&mut command, literal)?;
         *destination = Some(command.materialize());
         Ok(DeliveryStatus::CharacterRunBoundary)
     }
 
-    #[cold]
-    #[inline(never)]
-    fn finish_main_cold_transition(
-        &mut self,
-        cold: ResidentColdOutcome,
-        command: &mut Option<HotCommand<G>>,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<Option<DeliveryStatus>, CommandError> {
-        match cold {
-            ResidentColdOutcome::Retry => Ok(None),
-            ResidentColdOutcome::Finished(status) => Ok(Some(status)),
-            ResidentColdOutcome::Word(word) => {
-                let literal_catcode = self.write_resident_word(word, command);
-                self.finish_main_loop_synthetic(command, literal_catcode, destination)
-                    .map(Some)
-            }
-        }
-    }
-
-    /// Consumes the direct ordinary-character prefix owned by main control.
-    /// The consumer is mandatory here; no other delivery loop carries it.
+    /// Admits ordinary characters within one selected native span. The first
+    /// boundary token is consumed directly into its final execution command.
     #[inline(always)]
     pub(super) fn main_character_run(
         &mut self,
@@ -645,25 +560,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         consume: &mut impl MainCharacterConsumer<G>,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
-        let mut command = None;
-
         let mut consumed_characters = false;
-        #[cfg(feature = "profiling")]
-        let mut character_run_count = 0_u32;
-        #[cfg(feature = "profiling")]
-        let mut character_run_kind = None;
-
         loop {
             let allows_characters = self.command.delivery_mode.allows_character_run();
             #[cfg(feature = "profiling")]
-            let raw_kind = match self
-                .command
-                .roots
-                .input
-                .levels
-                .rows
-                .get(self.command.roots.input.levels.rows.len().wrapping_sub(1))
-            {
+            let kind = match self.command.roots.input.levels.rows.last() {
                 Some(crate::input::InputLevel::Resident(row))
                     if matches!(
                         row.storage,
@@ -674,126 +575,83 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 _ => crate::fuel::RawDeliveryKind::StoredToken,
             };
-            let selected = Self::read_resident_run(self.command, |word, origin| {
-                use resident::ResidentAdmission;
-                let Token::Char {
-                    ch,
-                    cat: Catcode::Letter | Catcode::Other,
-                } = word.semantic_token()
-                else {
-                    return ResidentAdmission::Boundary;
-                };
-                if !allows_characters {
-                    return ResidentAdmission::Boundary;
-                }
-                if !self.fuel.try_charge() {
-                    // The boundary's own delivery charge reports exhaustion.
-                    return ResidentAdmission::Boundary;
-                }
-                consumed_characters = true;
-                #[cfg(feature = "profiling")]
-                {
-                    character_run_kind = Some(raw_kind);
-                    character_run_count = character_run_count.saturating_add(1);
-                }
-                let admission = consume.admit(
-                    self.state,
-                    self.fuel,
-                    self.diagnostic_effects,
-                    MainCharacterInput::Scalar { ch, origin },
-                );
-                if admission.continue_run() {
-                    ResidentAdmission::Continue
-                } else {
-                    ResidentAdmission::Stop
-                }
-            });
-            let selected = match selected {
-                std::ops::ControlFlow::Continue(selected) => selected,
-                std::ops::ControlFlow::Break(()) => {
-                    #[cfg(feature = "profiling")]
-                    if let Some(kind) = character_run_kind.take() {
-                        self.fuel.record_raw_run(false, kind, character_run_count);
+            let selected = self.consume_resident_input(
+                &mut |state, fuel, effects, _, word, origin| {
+                    let Token::Char {
+                        ch,
+                        cat: Catcode::Letter | Catcode::Other,
+                    } = word.semantic_token()
+                    else {
+                        return std::ops::ControlFlow::Continue(false);
+                    };
+                    if !allows_characters || !fuel.try_charge() {
+                        return std::ops::ControlFlow::Continue(false);
                     }
-                    return Ok(DeliveryStatus::CharacterRun);
-                }
+                    consumed_characters = true;
+                    #[cfg(feature = "profiling")]
+                    fuel.record_raw_run(false, kind, 1);
+                    let admission = consume.admit(
+                        state,
+                        fuel,
+                        effects,
+                        MainCharacterInput::Scalar { ch, origin },
+                    );
+                    if admission.continue_run() {
+                        std::ops::ControlFlow::Continue(true)
+                    } else {
+                        std::ops::ControlFlow::Break(DeliveryStatus::CharacterRun)
+                    }
+                },
+                &mut |processor, word, origin, suppress, site, kind| {
+                    processor.finish_character_boundary(
+                        word,
+                        origin,
+                        suppress,
+                        site,
+                        kind,
+                        destination,
+                    )
+                },
+            )?;
+            let transition = match selected {
+                std::ops::ControlFlow::Break(status) => return Ok(status),
+                std::ops::ControlFlow::Continue(transition) => transition,
             };
-            if matches!(selected, ResidentWordRead::NoResident) {
-                if consumed_characters {
-                    #[cfg(feature = "profiling")]
-                    if let Some(kind) = character_run_kind.take() {
-                        self.fuel.record_raw_run(false, kind, character_run_count);
-                    }
-                    return Ok(DeliveryStatus::CharacterRun);
-                }
-                let cold = self.transition_resident_word(
-                    ResidentWordRead::NoResident,
-                    self.create_source_control_sequences,
-                )?;
-                if let Some(status) =
-                    self.finish_main_cold_transition(cold, &mut command, destination)?
-                {
-                    return Ok(status);
-                }
-
-                continue;
+            if consumed_characters
+                && matches!(
+                    transition,
+                    InputFrameTransition::Boundary(ResidentBoundary::Empty)
+                        | InputFrameTransition::ResidentExhausted { .. }
+                )
+            {
+                return Ok(DeliveryStatus::CharacterRun);
             }
-
-            if let ResidentWordRead::Source { resident_index } = selected {
-                if self
+            if let InputFrameTransition::Source { resident_index } = transition
+                && self
                     .advance_source_character_step(resident_index, consume)?
                     .is_some()
-                {
-                    // The source cursor and its provenance moved in place;
-                    // no resident command can retain the previous
-                    // freshness proof across this direct admission.
-                    return Ok(DeliveryStatus::CharacterRun);
-                }
-                let cold = self.transition_resident_word(
-                    ResidentWordRead::Source { resident_index },
-                    self.create_source_control_sequences,
-                )?;
-                if let Some(status) =
-                    self.finish_main_cold_transition(cold, &mut command, destination)?
-                {
-                    return Ok(status);
-                }
-
-                continue;
+            {
+                return Ok(DeliveryStatus::CharacterRun);
             }
-            if !matches!(selected, ResidentWordRead::Word(_)) {
-                if consumed_characters && matches!(selected, ResidentWordRead::Exhausted { .. }) {
-                    #[cfg(feature = "profiling")]
-                    if let Some(kind) = character_run_kind.take() {
-                        self.fuel.record_raw_run(false, kind, character_run_count);
-                    }
-                    return Ok(DeliveryStatus::CharacterRun);
-                }
-                let cold =
-                    self.transition_resident_word(selected, self.create_source_control_sequences)?;
-                if let Some(status) =
-                    self.finish_main_cold_transition(cold, &mut command, destination)?
-                {
-                    return Ok(status);
-                }
-
-                continue;
+            if let Some(result) = self.transition_input_frame(
+                transition,
+                self.create_source_control_sequences,
+                &mut |processor, word, origin, suppress, site, kind| {
+                    processor.finish_character_boundary(
+                        word,
+                        origin,
+                        suppress,
+                        site,
+                        kind,
+                        destination,
+                    )
+                },
+            )? {
+                return Ok(match result {
+                    std::ops::ControlFlow::Break(status)
+                    | std::ops::ControlFlow::Continue(status) => status,
+                });
             }
-            let ResidentWordRead::Word(selected) = selected else {
-                unreachable!("input transitions were handled above")
-            };
-            self.fuel.charge()?;
-            #[cfg(feature = "profiling")]
-            if let Some(kind) = character_run_kind.take() {
-                self.fuel.record_raw_run(false, kind, character_run_count);
-            }
-            let literal_catcode = self.write_resident_word(selected, &mut command);
-            let mut command = command
-                .take()
-                .expect("boundary word initialized its command");
-            self.settle_hot_delivery(&mut command, literal_catcode)?;
-            *destination = Some(command.materialize());
-            return Ok(DeliveryStatus::CharacterRunBoundary);
         }
     }
 

@@ -78,7 +78,6 @@ struct CommandWorkDetail {
     raw_delivery_kinds: [u64; 4],
 }
 
-#[cfg(feature = "profiling")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub(crate) enum RawDeliveryKind {

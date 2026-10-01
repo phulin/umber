@@ -310,7 +310,7 @@ row's replay explanation. It neither clears nor reconstructs the caller-owned
 
 Control-sequence resolution performs one direct probe of the already-admitted
 dense meaning row through the live `CommandContext`. The packed-token resolver
-accepts the actual hot command as its in-place target; the canonical row writes
+accepts the final native meaning value as its in-place target; the canonical row writes
 the validated static meaning word, font id, or one generation-branded
 macro-definition coordinate directly into `CommandWord<G>`. It constructs no
 projection carrier, intermediate `ResolvedMeaning`, whole-row copy, or second
@@ -2117,170 +2117,45 @@ enum RetirementBehavior {
 }
 ```
 
-`PackedInputFrame` is the sole semantic cursor for every resident row.
-`MacroBodyCursor` retains activation metadata while its store-minted
-`ResidentMacroBody` retains the definition-region lifetime, current immutable
-chunk handle, and physical chunk scalars; delivery still indexes it with the
-common frame position.
-`MacroArgumentCursor` retains only its admitted range, slot, and current
-provenance run; delivery derives the absolute scratch coordinate from the same
-common position. Rollback journals the logical position once; a macro-body
-physical cursor is rebuilt from that position, while the argument provenance
-run is journaled only where required.
-On the supported 64-bit host the body row is the macro call. Eqtb stores the
-eight-byte non-owning
-`DefinitionRef`; admission resolves it once into `ResidentMacroBody`, which
-owns the exact format, revision-global, or local-group semantic region plus an
-opaque replacement span. Only parameterized macros store
-an `ArgumentSetId`; parameterless macros push only the body row. An ordinary
-unobserved empty replacement records the same logical stack maximum without
-acquiring a region owner or installing an immediately exhausted row.
+`PackedInputFrame` is the sole semantic cursor for each resident row.
+A `StoredList` owns its immutable token-list handle; `MacroBodyCursor` owns
+its immutable definition span, name, invocation origin, transient argument
+region, and argument base/count. Its frame starts at the native definition
+parameter boundary. Macro arguments index their activation's traced-word
+suffix. Insertions, backups and attempt-list admissions append to the same
+transient stack. Retirement drops immutable row owners and truncates exactly
+the owned transient suffix. No copied macro body or stored list is installed.
 
-The argument cursor locates its opening provenance run once at admission and
-then advances that run index only when sequential replay crosses a provenance
-boundary. It does not binary-search the run table, repeat the already-proved
-run-start/range-lower checks, or reify a combined traced word for every token.
-The derived absolute coordinate does not change the provenance, source, or
-relative delivery stamp visible outside the resident row. The input
-stack also maintains the live macro-parameter total on body push, body pop, and
-checkpoint restore; macro activation reads that scalar instead of walking all
-active input rows.
+The input stack is the logical macro stack. An ordinary unobserved empty macro
+records the stack maximum but publishes no immediately exhausted row. A live
+row retains its immutable body even after the defining group retires, so cold
+context reads parameter and replacement spans from that owner. Argument
+matching currently writes scratch and transfers completed argument words into
+the input stack; the separate one-pass argument stage removes that copy.
 
-Every ordinary token-list source is adapted once at level creation into a
-`PackedTokenSpanHandle` plus the packed frame's scalar offset. Macro admission
-instead borrows a `DefinitionView` synchronously, records its compact
-`DefinitionRef` in eqtb and admits one store-minted region-owned replacement cursor,
-then pushes the specialized body row. Resident selection indexes the admitted
-current chunk, reads one packed word, and increments the logical and physical
-cursors; a physical crossing calls one cold next-chunk transition. Exact
-per-word structural counters exist only in test builds; profiling fixtures
-derive known sequential reads and chunk crossings at their boundary. It tests `Token::Param` before the
-final `CurrentCommand` write; a parameter pushes its already-admitted argument
-cursor and continues in the same loop. Otherwise the sole packed resolver
-writes the reusable destination with at most one dense control-sequence
-lookup. Admission clones the exact semantic-region owner once; subsequent body
-words are direct stable chunk loads with no definition decode, region/header
-lookup, `RefCell` borrow, owner operation, allocation, or token copy. Parameter
-replay uses its sealed fixed-block range. The semantic lane stores four-byte
-`TokenWord` values; exact provenance occupies coordinate-change runs alongside
-the lane, not a twelve-byte value for every captured token.
+`consume_resident_input` selects the frame/storage once per run and advances
+its common position. It invokes a statically selected consumer with packed
+word/origin scalars; outparameters instead open their argument before meaning
+resolution. Source tokenization invokes the same consumer. Only source,
+parameter, exhaustion, and retirement facts return as cold input transitions.
+Transitions retry under one semantic delivery charge. No token/result carrier,
+cached reader, or second cursor enters command roots.
 
-The exposed-row journal stores a macro body's logical frame position. Rollback
-rebuilds its current chunk, slot, and remaining count from that position; only
-cold frame mutations retain a full frame inverse. No checkpoint carries a body
-word copy or a per-token physical coordinate.
+The final meaning target is native `CommandWord`: static word, macro key/flags,
+or font capability. Each interpreted token resolves once. Ordinary unobserved
+macro activation uses that final value directly; actual scanner, execution,
+observation, backup, recovery, alignment or suppression boundaries construct a
+command. There is no temporary `TokenMeaning`, operand adapter, or second font
+column. Resident main-control characters and collector literals avoid meaning
+resolution entirely. All consumers preserve provenance and original fuel,
+brace, suppression, outer-validity and alignment order.
 
-A replay-backed token row also admits one sequential resident coordinate: its
-logical word position, current prefix/body run, physical segment, in-segment
-offset, cached segment end, and remaining words in that run. Its common packed
-frame retains immutable identity, source, and delivery flags but owns no second
-warm position. An ordinary replay word performs one packed load and advances
-the resident coordinate once. Only an actual segment boundary
-inspects the next segment header, and only the e-TeX prepended-prefix boundary
-selects the body run. Cold diagnostic and semantic-projection consumers retain
-an explicitly indexed lookup; command delivery cannot call it. The input
-exposed-row journal swaps this one resident coordinate, so rollback, retry,
-rejection, and acceptance resume the identical logical and physical word
-without a prefix rescan or a second frame-position mutation.
-
-`CommandState::push_input_level` is the single live source/token frame
-transition. It updates TeX82's `max_in_stack` scalar on the singular live
-session owner and then makes the frame visible; it takes no lock and belongs to
-neither snapshot roots nor portable identity. `push_token_level` first admits
-the token storage and then delegates to that transition. Transient insertions,
-backup/noexpand levels, alignment templates, stored every-hooks, output replay,
-and other source-adjacent replay stream their words and optional source
-provenance directly into one generation-owned `ReplayLane`.
-The input level retains only a typed entry coordinate and length. The lane uses
-coarse stable word/provenance segments: exact LIFO retirement returns whole
-segments to reusable high-water storage, while a snapshot shares immutable
-active segments and the current root opens a fresh tail before mutation. There
-is no per-level allocation, live-row relocation, compaction, forwarding, root
-search, or third generation. e-TeX aftergroup prefix linking appends a second
-span to the top entry and delivers that span before its body without shifting
-either span.
-
-Macro replacement, argument-range, durable-list, and attempt-list spans remain
-direct coordinates into their existing owners. A macro-replacement span keeps
-its logical length beside the admitted body cursor's current chunk handle; the
-adjacent `MacroBody` behavior carries the authoritative activation identity,
-whose definition owner supplies replacement words. These spans do not enter the
-replay lane, acquire a shared token buffer, or copy their packed words at
-admission.
-
-The generation-tied `InputStack` separates each stable row payload from its
-mutable execution phase. Every token row owns one common packed frame and one
-tagged lifetime-specific storage coordinate. Source
-rows point to one stable, checked `SourceSlot`, which is the sole owner of
-backing, current-line, `everyeof`, reduced-spelling, and nesting payloads. An
-authoritative slot receives a monotonic runtime incarnation which is never
-rolled back with semantic `InputLevelId`; compact and owner inverses validate
-that incarnation before changing the row. A source exposure capture copies
-only its packed frame, 24-byte lexer cursor,
-and two registration bits into the reusable source-state slab. Physical-line,
-replacement-backing, read-line-backing, and `everyeof` transitions move their
-old owners into typed source inverses. Both lanes publish records in the same
-ordered `InputUndo` journal as row replacement, retirement, candidate
-settlement, and prefix release, so direct restore and candidate reject/redo
-cannot settle source state separately from its input row. No
-`SourceCursor`, `SourceLineState`, or `SourceOpenDepths` implements `Clone`.
-Each authoritative `InputLevel` directly owns one eight-byte rollback marker
-which packs its capture epoch with an admitted, inline-captured, or cold-
-captured state. An epoch mismatch directly means the row predates the current
-capture. The marker selects checkpoint/exposure capture, rare cold capture, and
-safe pop/push reuse in constant time at lifecycle transitions; no row-aligned side
-lane or former parallel touched, partial, and cold epoch vectors exist. Stored
-span length, position, identity, source context, behavior, and retirement
-remain encoded once in the common frame; the resident storage tag performs the
-single direct lifetime-specific read.
-The first mutation or owner transition of one row visible at a legal checkpoint
-or operation mark records the old state; later cursor and owner advances
-coalesce into that record and the live row holds the final state. Rollback
-therefore swaps in the interval's initial owner, while candidate redo obtains
-the final owner from that same inverse instead of retaining intermediate
-physical lines. A row first
-pushed after the newest mark is not observable rollback state. Pop/push at that
-depth therefore overwrites the same physical row directly only while its current
-occupant has no compact or stored inverse. If that occupant was partially
-captured, reuse first moves it into one generation-checked replacement slot so
-the ordered journal restores the right incarnation before applying its inverse.
-Pop/push replacement of a row that _was_ visible at the mark uses the same
-mechanism; later uncaptured replacements in the interval coalesce. No input history entry clones `InputLevel`, a
-token span, macro definition, source ancestry, or command frame, and retained
-memory is independent of unmarked push/pop count after the live-depth high
-water is warm.
-
-Resource misses do not create detached continuations. A diagnostic or other
-portable value that must outlive a dropped candidate is detached into a
-handle-free DTO, while parser input, backup coordinates, scanner locals, and
-source cursors are discarded with the unwound attempt. The host restores a
-full checkpoint and re-enters ordinary source delivery after registration;
-runtime frame coordinates never become wire identity.
-
-The implemented ownership model has no macro activation chain. A specialized
-`MacroBody` input row is the complete live-call record: an 8-byte non-owning
-definition coordinate, optional `ArgumentSetId`, name, invocation origin, and
-the 24-byte shared replacement span. Parameterless macros
-publish only this row when their replacement is nonempty or exceptional
-observation, tracing, recovery, or replay-completion semantics require its
-lifecycle. An ordinary unobserved empty replacement publishes no row.
-`InputLevelId` is typed separately from source identity and is present on
-source, stored-token, macro-body, and argument rows.
-
-An executing macro borrows its `DefinitionView` synchronously, completes any
-argument matching, and clones the immutable span `Rc` once. That clone keeps a
-local definition's words alive after its group exit drops the row. Diagnostic
-context reads the parameter and replacement spans through the already-admitted
-resident span; it does not re-resolve the non-owning coordinate after a
-defining group may have exited. No separate macro object is reified.
-
-The centralized transient and backed-up constructors avoid caller-side rich
-staging for fixed insertions and stream directly into the replay lane. e-TeX's
-optimized `\aftergroup` prepend adds a prefix span to the same replay entry
-while preserving save order and its compact frame identity. Snapshot
-normalization, durable continuation remapping, origin adoption, and
-edited-source rehoming project the lane entry as the canonical semantic
-payload.
+The input aggregate is captured by value at quiescence: frame coordinates,
+source state, transient words, argument ranges, and retained immutable owners.
+Restore releases displaced rows and installs the captured aggregate. Named
+checkpoint admission rejects live macros and scanners. There is no input
+inverse journal, exposed-row marker, token-specific checkpoint history, or
+parser continuation across host resource replay.
 
 `EveryPar`, `EveryHBox`, `EveryVBox`, `EveryJob`, `EveryCr`, `Mark`,
 `OutputRoutine`, and similar explanations belong in `ReplayTrace` unless they

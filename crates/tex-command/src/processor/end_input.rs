@@ -271,13 +271,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         let Some(InputLevel::Resident(row)) = levels.last() else {
             return Ok(());
         };
-        if !matches!(row.storage, crate::input::ResidentTokenStorage::List(_))
-            || !matches!(row.header.behavior(), TokenBehavior::BackedUp(_))
+        if !matches!(
+            row.storage,
+            crate::input::ResidentTokenStorage::List(_)
+                | crate::input::ResidentTokenStorage::StoredList(_)
+        ) || !matches!(row.header.behavior(), TokenBehavior::BackedUp(_))
             || levels.pending_token_word(levels.len() - 1).is_some()
             || !matches!(
                 levels
                     .row_words(row)
-                    .first()
+                    .next()
                     .map(|word| word.semantic_token()),
                 Some(Token::Char {
                     cat: Catcode::EndGroup,

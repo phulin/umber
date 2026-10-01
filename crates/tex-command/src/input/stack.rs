@@ -287,7 +287,6 @@ impl<G> CommandState<G> {
         let InputLevel::Resident(row) = self.input.levels.resident_at(index) else {
             unreachable!("resident coordinate selects a resident row");
         };
-        let row = *row;
         let action = match row.header.retirement() {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
             RetirementBehavior::AwaitingVTemplateRetirement => {
@@ -301,9 +300,10 @@ impl<G> CommandState<G> {
         let reason = observer
             .is_some()
             .then(|| input_retirement_reason(&row.header.behavior(), &row.trace()));
+        let identity = row.header.identity();
         self.input.levels.pop_resident(index);
         self.settle_resident_retirement(
-            row.header.identity(),
+            identity,
             action,
             reason,
             observer,
@@ -328,9 +328,19 @@ impl<G> CommandState<G> {
                 ) => header.frame.limit(),
                 // The activation's argument copies; its parameter text and
                 // replacement stand for TeX's shared definition list.
-                ResidentTokenStorage::MacroBody(body) => {
-                    header.frame.start() - body.parameter_text_len - body.region_start
-                }
+                ResidentTokenStorage::MacroBody(body) => self
+                    .input
+                    .levels
+                    .parameters
+                    .get(
+                        body.parameter_base as usize
+                            ..body.parameter_base as usize + usize::from(body.argument_count),
+                    )
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|span| span.len as usize)
+                    .sum::<usize>() as u32,
+                ResidentTokenStorage::StoredList(_) => 0,
                 ResidentTokenStorage::List(super::PackedTokenOwnership::Stored)
                 | ResidentTokenStorage::MacroArgument { .. } => 0,
             };
@@ -346,13 +356,13 @@ impl<G> CommandState<G> {
     /// TeX82 §390's `begin_token_list(ref_count,macro)` after §400 has pushed
     /// the matched arguments onto `param_stack`.
     ///
-    /// The activation region holds the argument copies, the parameter text,
-    /// and the replacement, so the whole activation retires with one
-    /// truncation of the token stack.
+    /// Matched arguments occupy the transient word stack, while the packed
+    /// body row owns the immutable definition span directly. Retirement drops
+    /// that owner and truncates the activation's transient argument suffix.
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,
-        body: &tex_state::ResidentMacroBody<G>,
+        body: tex_state::ResidentMacroBody<G>,
         matching: Option<PendingArgumentSet<G>>,
         invocation: OriginId,
     ) -> Result<InputLevelId, crate::execution_scratch::ScratchError> {
@@ -361,6 +371,8 @@ impl<G> CommandState<G> {
         let levels = &mut self.roots.input.levels;
         let region_start = levels.words.len();
         let parameter_base = levels.parameters.len();
+        let body_len = body.len();
+        let replacement_start = body.parameter_len() as u32;
         if let Some(matching) = matching {
             self.scratch.transfer_macro_match(
                 matching,
@@ -370,25 +382,26 @@ impl<G> CommandState<G> {
             self.stack_usage
                 .record_parameter_push(levels.parameters.len());
         }
-        super::push_untraced_words(&mut levels.words, body.definition_words());
-        let start = levels.words.len() - body.len();
         let mut frame = super::packed_token_frame(
             identity,
-            start as u32,
-            body.len(),
+            replacement_start,
+            body_len,
             &TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             &ReplayTrace::MacroReplacement,
         );
         frame.set_source_context(source);
+        let argument_count = levels.parameters.len() - parameter_base;
         self.push_input_level(InputLevel::Resident(ResidentTokenRow {
             header: TokenRowHeader::new(frame),
             storage: ResidentTokenStorage::MacroBody(super::MacroBodyCursor {
                 name,
                 invocation,
                 region_start: region_start as u32,
-                parameter_text_len: body.parameter_len() as u32,
                 parameter_base: parameter_base as u32,
+                argument_count: u8::try_from(argument_count)
+                    .expect("TeX macro parameter count fits u8"),
+                body,
             }),
         }));
         Ok(identity)
@@ -426,20 +439,28 @@ impl<G> CommandState<G> {
         let input = &mut self.roots.input;
         let words = &mut input.levels.words;
         let start = words.len();
-        let ownership = source.admit(
+        let storage = source.admit(
             words,
             super::TokenSources {
                 attempt: &self.attempt,
                 pending_insertions: &mut input.pending_insertions,
             },
         );
-        let len = words.len() - start;
+        let len = match &storage {
+            ResidentTokenStorage::StoredList(list) => list.words().len(),
+            _ => words.len() - start,
+        };
+        let frame_start = if matches!(storage, ResidentTokenStorage::StoredList(_)) {
+            0
+        } else {
+            start as u32
+        };
         let mut frame =
-            super::packed_token_frame(identity, start as u32, len, &behavior, retirement, &trace);
+            super::packed_token_frame(identity, frame_start, len, &behavior, retirement, &trace);
         frame.set_source_context(source_context);
         self.push_input_level(InputLevel::Resident(ResidentTokenRow {
             header: TokenRowHeader::new(frame),
-            storage: ResidentTokenStorage::List(ownership),
+            storage,
         }));
         identity
     }
@@ -688,6 +709,7 @@ impl<G> CommandState<G> {
     }
 
     /// Commits the one canonical input-frame push transition.
+    #[inline(always)]
     pub(crate) fn push_input_level(&mut self, level: InputLevel<G>) {
         // TeX82 §321 checks `input_ptr` before `push_input` increments it.
         self.stack_usage.input_stack = self.stack_usage.input_stack.max(self.input.levels.len());

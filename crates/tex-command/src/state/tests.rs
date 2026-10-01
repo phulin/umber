@@ -846,7 +846,7 @@ fn warmed_parameterless_macro_rows_copy_only_compact_definition_keys() {
                     .expect("resident macro body")
                     .2;
                 let level = state
-                    .push_macro_activation(name, &body, None, OriginId::UNKNOWN)
+                    .push_macro_activation(name, body, None, OriginId::UNKNOWN)
                     .expect("macro activation");
                 let (arguments, replacement) = state
                     .input

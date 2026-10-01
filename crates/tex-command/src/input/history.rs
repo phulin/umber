@@ -542,10 +542,11 @@ impl DiagnosticSourceCursor {
 /// One generation-tied input stack whose live rows are authoritative.
 ///
 /// Rows cover sources and token lists. Each source row owns its variable
-/// source state directly; every token-list row reads a span of `words`, and
-/// a macro activation's argument spans live in `parameters` (TeX82's
-/// `param_stack`). Pushing appends and popping truncates all three; a
-/// checkpoint copies the stack instead of journaling it.
+/// source state directly; transient token rows read `words`, while immutable
+/// definitions and durable lists retain their immutable owner in the row. A macro activation's
+/// argument spans live in `parameters` (TeX82's `param_stack`). Pushing
+/// appends and popping truncates the corresponding LIFO owner; a checkpoint
+/// copies the stack instead of journaling it.
 pub(crate) struct InputStack<G> {
     pub(crate) rows: Vec<InputLevel<G>>,
     /// Token words of every live token-list row, in push order.
@@ -667,11 +668,45 @@ impl<G> InputStack<G> {
     }
 
     /// The words a token-list row delivers.
-    pub(crate) fn row_words(
+    pub(crate) fn row_words<'a>(
+        &'a self,
+        row: &'a super::ResidentTokenRow<G>,
+    ) -> impl DoubleEndedIterator<Item = tex_state::token::TracedTokenWord>
+    + ExactSizeIterator
+    + Clone
+    + 'a {
+        let frame = row.header.frame;
+        (0..frame.limit()).map(|index| {
+            self.row_word_at(row, index)
+                .expect("resident row span is valid")
+        })
+    }
+
+    /// Reads one word from a resident row, preserving traced words and
+    /// synthesizing the same unknown origin used by immutable-list admission.
+    #[inline(always)]
+    pub(crate) fn row_word_at(
         &self,
-        row: &super::ResidentTokenRow,
-    ) -> &[tex_state::token::TracedTokenWord] {
-        row.words(&self.words)
+        row: &super::ResidentTokenRow<G>,
+        index: u32,
+    ) -> Option<tex_state::token::TracedTokenWord> {
+        if index >= row.header.frame.limit() {
+            return None;
+        }
+        let word = match &row.storage {
+            super::ResidentTokenStorage::StoredList(list) => list.word_at(index as usize)?,
+            super::ResidentTokenStorage::MacroBody(body) => body.body.word(index as usize)?,
+            _ => {
+                let absolute = row.header.frame.start().checked_add(index)? as usize;
+                self.words.get(absolute)?.token_word()
+            }
+        };
+        let origin = match &row.storage {
+            super::ResidentTokenStorage::StoredList(_)
+            | super::ResidentTokenStorage::MacroBody(_) => tex_state::token::OriginId::UNKNOWN,
+            _ => self.words[row.header.frame.start() as usize + index as usize].origin(),
+        };
+        Some(tex_state::token::TracedTokenWord::from_parts(word, origin))
     }
 
     /// The innermost macro activation's argument words and replacement.
@@ -679,8 +714,8 @@ impl<G> InputStack<G> {
     pub(crate) fn innermost_macro_activation(
         &self,
     ) -> Option<(
-        Vec<&[tex_state::token::TracedTokenWord]>,
-        &[tex_state::token::TracedTokenWord],
+        Vec<Vec<tex_state::token::TracedTokenWord>>,
+        Vec<tex_state::token::TracedTokenWord>,
     )> {
         let (row, body) = self.rows.iter().rev().find_map(|level| match level {
             super::InputLevel::Resident(
@@ -693,9 +728,9 @@ impl<G> InputStack<G> {
         })?;
         let arguments = self.parameters[body.parameter_base as usize..]
             .iter()
-            .map(|span| &self.words[span.start as usize..(span.start + span.len) as usize])
+            .map(|span| self.words[span.start as usize..(span.start + span.len) as usize].to_vec())
             .collect();
-        Some((arguments, self.row_words(row)))
+        Some((arguments, self.row_words(row).collect()))
     }
 
     /// The next undelivered word of token row `index`, or `None` when that
@@ -707,19 +742,25 @@ impl<G> InputStack<G> {
         let super::InputLevel::Resident(row) = self.rows.get(index)? else {
             return None;
         };
-        self.row_words(row).get(row.header.position()).copied()
+        self.row_word_at(row, row.header.frame.position())
     }
 
     /// The parameter text stored below a macro activation's replacement.
-    pub(crate) fn macro_parameter_text(
-        &self,
-        row: &super::ResidentTokenRow,
-    ) -> &[tex_state::token::TracedTokenWord] {
-        let super::ResidentTokenStorage::MacroBody(body) = row.storage else {
-            return &[];
+    pub(crate) fn macro_parameter_text<'a>(
+        &'a self,
+        row: &'a super::ResidentTokenRow<G>,
+    ) -> impl DoubleEndedIterator<Item = tex_state::token::TracedTokenWord> + 'a {
+        let body = match &row.storage {
+            super::ResidentTokenStorage::MacroBody(body) => Some(&body.body),
+            _ => None,
         };
-        let start = row.header.frame.start() as usize;
-        &self.words[start - body.parameter_text_len as usize..start]
+        (0..body.map_or(0, tex_state::ResidentMacroBody::parameter_len)).map(move |index| {
+            let word = body
+                .expect("macro parameter range has a body")
+                .parameter_word(index)
+                .expect("macro parameter text span is valid");
+            tex_state::token::TracedTokenWord::from_parts(word, tex_state::token::OriginId::UNKNOWN)
+        })
     }
 
     /// Advances the diagnostic-coordinate counters past `past`, so no
@@ -949,10 +990,12 @@ impl<G> crate::CommandState<G> {
         let Some(InputLevel::Resident(row)) = rows.last_mut() else {
             return Ok(ResidentRun::default());
         };
-        let body = match row.storage {
+        let body = match &row.storage {
             super::ResidentTokenStorage::MacroBody(_) => true,
             super::ResidentTokenStorage::MacroArgument { .. } => false,
-            super::ResidentTokenStorage::List(_) => return Ok(ResidentRun::default()),
+            super::ResidentTokenStorage::List(_) | super::ResidentTokenStorage::StoredList(_) => {
+                return Ok(ResidentRun::default());
+            }
         };
         let frame = row.header.frame;
         if frame.position() >= frame.limit() {
@@ -975,24 +1018,62 @@ impl<G> crate::CommandState<G> {
             fuel.charge()?;
             unreachable!("zero remaining fuel must fail")
         }
-        let span = &words[frame.absolute_position()..frame.absolute_limit()];
-        let bound = available.min(span.len());
-        let count = span[..bound]
-            .iter()
-            .take_while(|word| admission.admits(word.token_word()))
-            .count();
+        let direct_span = match &row.storage {
+            super::ResidentTokenStorage::MacroBody(body) => {
+                Some(body.body.replacement_from(frame.position()))
+            }
+            _ => None,
+        };
+        let traced_span = direct_span
+            .is_none()
+            .then(|| &words[frame.absolute_position()..frame.absolute_limit()]);
+        let available_bound = |len: usize| available.min(len);
+        let bound = if let Some(span) = direct_span {
+            available_bound(span.len())
+        } else {
+            available_bound(traced_span.expect("traced span").len())
+        };
+        let count = if let Some(span) = direct_span {
+            span[..bound]
+                .iter()
+                .take_while(|&&word| admission.admits(word))
+                .count()
+        } else {
+            traced_span
+                .expect("traced span")
+                .get(..bound)
+                .expect("bounded input span")
+                .iter()
+                .take_while(|word| admission.admits(word.token_word()))
+                .count()
+        };
         // An out-parameter can only stand in a macro replacement.
-        let parameter_next =
-            body && count < bound && span[count].token_word().out_parameter_slot().is_some();
+        let parameter_next = body
+            && count < bound
+            && direct_span
+                .map(|span| span[count].out_parameter_slot().is_some())
+                .or_else(|| {
+                    traced_span.map(|span| span[count].token_word().out_parameter_slot().is_some())
+                })
+                .unwrap_or(false);
         if count == 0 {
             return Ok(ResidentRun {
                 consumed: 0,
                 at_transition: parameter_next,
             });
         }
-        writer
-            .append_span(&mut self.scratch, &span[..count])
-            .map_err(|_| crate::CommandError::input_invariant())?;
+        if let Some(span) = direct_span {
+            writer
+                .append_token_span(&mut self.scratch, &span[..count])
+                .map_err(|_| crate::CommandError::input_invariant())?;
+        } else {
+            writer
+                .append_span(
+                    &mut self.scratch,
+                    &traced_span.expect("traced span")[..count],
+                )
+                .map_err(|_| crate::CommandError::input_invariant())?;
+        }
         let consumed = count as u32;
         // The span append above succeeded in full, so the authoritative cursor
         // and fuel settle as one atomic scalar run.
@@ -1259,6 +1340,7 @@ impl<G> InputStack<G> {
         true
     }
 
+    #[inline(always)]
     pub(crate) fn push(&mut self, value: InputLevel<G>) {
         assert!(
             !matches!(value, InputLevel::Source(_)),
@@ -1267,6 +1349,7 @@ impl<G> InputStack<G> {
         self.push_row(value);
     }
 
+    #[inline(always)]
     fn push_row(&mut self, value: InputLevel<G>) {
         self.row_admissions = self.row_admissions.saturating_add(1);
         if let InputLevel::Source(source) = &value {
@@ -1316,11 +1399,12 @@ impl<G> InputStack<G> {
     /// Releases the stack words and argument spans a popped row owned.
     /// Rows are LIFO, so everything above the row's own words is gone.
     #[inline(always)]
-    fn release_row_words(&mut self, row: &super::ResidentTokenRow) {
-        match row.storage {
+    fn release_row_words(&mut self, row: &super::ResidentTokenRow<G>) {
+        match &row.storage {
             super::ResidentTokenStorage::List(_) => {
                 self.words.truncate(row.header.frame.start() as usize);
             }
+            super::ResidentTokenStorage::StoredList(_) => {}
             super::ResidentTokenStorage::MacroBody(body) => {
                 self.words.truncate(body.region_start as usize);
                 self.parameters.truncate(body.parameter_base as usize);

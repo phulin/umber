@@ -424,7 +424,7 @@ fn main_loop_character_run_charges_resident_macro_body_once_per_character() {
             .2;
         let mut command = CommandState::default();
         command
-            .push_macro_activation(macro_name, &body, None, OriginId::UNKNOWN)
+            .push_macro_activation(macro_name, body, None, OriginId::UNKNOWN)
             .expect("macro activation");
 
         let mut capabilities = CommandHostCapabilities::default();
@@ -511,7 +511,7 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
             .expect("resident macro body")
             .2;
         command
-            .push_macro_activation(macro_name, &body, Some(matching), OriginId::UNKNOWN)
+            .push_macro_activation(macro_name, body, Some(matching), OriginId::UNKNOWN)
             .expect("macro activation");
 
         let mut capabilities = CommandHostCapabilities::default();

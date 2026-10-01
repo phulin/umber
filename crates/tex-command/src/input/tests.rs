@@ -52,20 +52,100 @@ fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
                 .expect("resident macro body")
                 .2
         };
+        let probe = body.clone();
         let mut command = CommandState::default();
         command
-            .push_macro_activation(name.symbol(), &body, None, OriginId::UNKNOWN)
+            .push_macro_activation(name.symbol(), body, None, OriginId::UNKNOWN)
             .expect("macro activation");
+        assert!(command.input.levels.words.is_empty());
+        assert_eq!(probe.profile_region_owner_count(), 3);
 
         universe
             .end_group(tex_state::GroupKind::Simple)
             .expect("defining group retires");
+        assert_eq!(probe.profile_region_owner_count(), 2);
+        assert!(matches!(
+            command.publish_summary(universe),
+            Err(crate::CommandSummaryError::ExpansionActive)
+        ));
         let stores = universe.command_context().expect("diagnostic context");
         let rendered = command.output_open_context(&stores);
+        drop(stores);
 
         assert!(rendered.contains("residentcontext"), "{rendered:?}");
         assert!(rendered.contains("#1->"), "{rendered:?}");
         assert!(rendered.contains("x#1"), "{rendered:?}");
+        command.input.levels.pop_project(|_, _| ());
+        assert!(command.input.levels.is_empty());
+        assert_eq!(probe.profile_region_owner_count(), 1);
+        let summary = command
+            .publish_summary(universe)
+            .expect("quiescent checkpoint");
+        command
+            .push_macro_activation(name.symbol(), probe.clone(), None, OriginId::UNKNOWN)
+            .expect("retained body activation");
+        command
+            .restore_summary(&summary, universe)
+            .expect("aggregate restore releases active body");
+        assert!(command.input.levels.is_empty());
+        assert_eq!(probe.profile_region_owner_count(), 1);
+    });
+}
+
+#[test]
+fn durable_token_list_reads_its_retained_span_without_stack_copy() {
+    crate::test_harness::with_universe(|universe| {
+        let token = Token::Char {
+            ch: 's',
+            cat: Catcode::Letter,
+        };
+        let list = universe
+            .command_context()
+            .expect("command context")
+            .allocate_token_list(&[TokenWord::pack(token)])
+            .expect("durable list");
+        let mut command = CommandState::default();
+        {
+            let stores = universe.command_context().expect("command context");
+            command.push_token_level(
+                super::PackedTokenSpanHandle::durable(stores.token_list(list)),
+                super::TokenBehavior::Ordinary,
+                super::RetirementBehavior::Pop,
+                super::ReplayTrace::Stored(super::StoredReplayReason::EveryPar),
+            );
+        }
+        assert!(command.input.levels.words.is_empty());
+        assert_eq!(
+            command
+                .input
+                .levels
+                .pending_token_word(0)
+                .expect("pending immutable token")
+                .semantic_token(),
+            token
+        );
+        let summary = command
+            .publish_summary(universe)
+            .expect("stored-list checkpoint");
+        command.input.levels.pop_project(|_, _| ());
+        assert!(command.input.levels.is_empty());
+        command
+            .restore_summary(&summary, universe)
+            .expect("restore retired stored-list input");
+        command
+            .release_checkpoint_summary(&summary)
+            .expect("release checkpoint owner while restored input remains live");
+        assert_eq!(
+            command
+                .input
+                .levels
+                .pending_token_word(0)
+                .expect("restored immutable token")
+                .semantic_token(),
+            token
+        );
+        command.input.levels.pop_project(|_, _| ());
+        assert!(command.input.levels.is_empty());
     });
 }
 

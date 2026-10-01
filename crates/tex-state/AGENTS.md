@@ -481,8 +481,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   generation-typed checkpoint replay.
 - `src/token.rs`: Token and catcode value definitions, constructors,
   classification helpers, destination-directed packed command resolution
-  which writes the actual caller-owned slot and returns its already-decoded
-  literal catcode for command-side delivery interception, and inline-small
+  which writes the consumer's final native meaning target and returns its
+  control-sequence identity, lookup fact, and already-decoded literal catcode, and inline-small
   rooted traced-token buffers with
   sparse provenance ownership and spillover storage. Generated runs sharing
   one origin pack every word against its id and move that structural root into

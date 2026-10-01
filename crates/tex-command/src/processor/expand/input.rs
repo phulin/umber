@@ -1,6 +1,6 @@
 //! Source reading and cold transitions of the shared semantic input stack.
 
-use super::{InputFrameTransition, ReadSite, ResidentColdOutcome, ResidentWord};
+use super::{InputFrameTransition, ReadSite};
 use crate::input::{
     InputLevel, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
     ResidentSourceTop, SourceNameClass,
@@ -9,6 +9,7 @@ use crate::observation::{CommandObservation, InputReason, InputRecord, InputTran
 use crate::processor::end_input::{RetirementHandoff, SourceExhaustionStatus};
 use crate::processor::{MainCharacterConsumer, MainCharacterInput};
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
+use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
 
 /// TeX82 §345's invalid source-character report.
@@ -18,11 +19,19 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Reads a token from the live source frame; only refill, EOF and recovery
     /// leave through the cold input-transition handler.
     #[inline(always)]
-    pub(super) fn advance_source_token(
+    pub(super) fn advance_source_token<R>(
         &mut self,
         resident_index: usize,
         create_control_sequences: bool,
-    ) -> Result<ResidentColdOutcome, CommandError> {
+        finish: &mut impl FnMut(
+            &mut Self,
+            TokenWord,
+            OriginId,
+            bool,
+            ReadSite,
+            crate::fuel::RawDeliveryKind,
+        ) -> Result<R, CommandError>,
+    ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
         let command_state = &mut *self.command;
         let state = &mut *self.state;
         let profile = command_state.roots.profile;
@@ -47,23 +56,30 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .as_ref()
                     .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
                 self.pending_diagnostic_location = top.diagnostic_location(location);
-                Ok(ResidentColdOutcome::Word(ResidentWord {
+                finish(
+                    self,
                     word,
                     origin,
-                    suppress_expandable: false,
-                    site: ReadSite::Source(direct_source_line),
-                    #[cfg(feature = "profiling")]
-                    raw_kind: crate::fuel::RawDeliveryKind::Source,
-                }))
+                    false,
+                    ReadSite::Source(direct_source_line),
+                    crate::fuel::RawDeliveryKind::Source,
+                )
+                .map(|result| Some(ControlFlow::Continue(result)))
             }
             ResidentSourceAdvance::InvalidCharacter => self.transition_input_frame(
                 InputFrameTransition::Boundary(ResidentBoundary::InvalidCharacter),
+                create_control_sequences,
+                finish,
             ),
             ResidentSourceAdvance::NeedLine(identity) => self.transition_input_frame(
                 InputFrameTransition::Boundary(ResidentBoundary::NeedLine(identity)),
+                create_control_sequences,
+                finish,
             ),
             ResidentSourceAdvance::Exhausted(identity) => self.transition_input_frame(
                 InputFrameTransition::Boundary(ResidentBoundary::SourceExhausted(identity)),
+                create_control_sequences,
+                finish,
             ),
         }
     }
@@ -209,21 +225,35 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[cold]
     #[inline(never)]
-    pub(super) fn finish_resident_eof(&mut self) -> Result<ResidentColdOutcome, CommandError> {
+    pub(super) fn finish_resident_eof<R>(
+        &mut self,
+    ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
         match self.raw_end_restarts() {
-            Ok(true) => Ok(ResidentColdOutcome::Retry),
-            Ok(false) => Ok(ResidentColdOutcome::Finished(DeliveryStatus::End)),
+            Ok(true) => Ok(None),
+            Ok(false) => Ok(Some(ControlFlow::Break(DeliveryStatus::End))),
             Err(failure) => Err(failure),
         }
     }
 
     #[cold]
     #[inline(never)]
-    pub(super) fn transition_input_frame(
+    pub(super) fn transition_input_frame<R>(
         &mut self,
         transition: InputFrameTransition,
-    ) -> Result<ResidentColdOutcome, CommandError> {
+        create_control_sequences: bool,
+        finish: &mut impl FnMut(
+            &mut Self,
+            TokenWord,
+            OriginId,
+            bool,
+            ReadSite,
+            crate::fuel::RawDeliveryKind,
+        ) -> Result<R, CommandError>,
+    ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
         let cold = match transition {
+            InputFrameTransition::Source { resident_index } => {
+                return self.advance_source_token(resident_index, create_control_sequences, finish);
+            }
             InputFrameTransition::Boundary(boundary) => boundary,
             InputFrameTransition::ResidentExhausted {
                 resident_index,
@@ -236,7 +266,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     &mut self.immediate_write_retirement,
                 );
                 let Some(retirement) = retirement else {
-                    return Ok(ResidentColdOutcome::Retry);
+                    return Ok(None);
                 };
                 retirement
             }
@@ -248,7 +278,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.command
                     .push_resident_parameter_cursor(slot, span, active_source, &mut self.observer)
                     .map_err(|()| CommandError::input_invariant())?;
-                return Ok(ResidentColdOutcome::Retry);
+                return Ok(None);
             }
         };
         match cold {
@@ -275,19 +305,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                         "Continue, and I'll forget that it ever happened.",
                     ],
                 );
-                Ok(ResidentColdOutcome::Retry)
+                Ok(None)
             }
             ResidentBoundary::NeedLine(identity) => {
                 let line = self.acquire_source_line(true)?;
                 if line.is_some() {
-                    Ok(ResidentColdOutcome::Retry)
+                    Ok(None)
                 } else if matches!(
                     self.finish_exhausted_source(identity)?,
                     SourceExhaustionStatus::End
                 ) {
                     self.finish_resident_eof()
                 } else {
-                    Ok(ResidentColdOutcome::Retry)
+                    Ok(None)
                 }
             }
             ResidentBoundary::SourceExhausted(identity) => {
@@ -297,7 +327,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ) {
                     self.finish_resident_eof()
                 } else {
-                    Ok(ResidentColdOutcome::Retry)
+                    Ok(None)
                 }
             }
             ResidentBoundary::TokenExhausted { identity, .. } => {
@@ -314,27 +344,28 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let handoff = self.retire_input_top(identity)?;
                 match handoff {
                     RetirementHandoff::Stop => match self.raw_end_restarts() {
-                        Ok(true) => Ok(ResidentColdOutcome::Retry),
-                        Ok(false) => Ok(ResidentColdOutcome::Finished(DeliveryStatus::End)),
+                        Ok(true) => Ok(None),
+                        Ok(false) => Ok(Some(ControlFlow::Break(DeliveryStatus::End))),
                         Err(failure) => Err(failure),
                     },
-                    RetirementHandoff::Continue => Ok(ResidentColdOutcome::Retry),
-                    RetirementHandoff::Completed(episode) => Ok(ResidentColdOutcome::Finished(
+                    RetirementHandoff::Continue => Ok(None),
+                    RetirementHandoff::Completed(episode) => Ok(Some(ControlFlow::Break(
                         DeliveryStatus::ReplayCompleted(episode),
-                    )),
-                    RetirementHandoff::EndV => Ok(ResidentColdOutcome::Word(ResidentWord {
-                        word: TokenWord::pack(self.state.frozen_end_template_token()),
-                        origin: OriginId::UNKNOWN,
-                        suppress_expandable: false,
-                        site: ReadSite::Synthetic,
-                        #[cfg(feature = "profiling")]
-                        raw_kind: crate::fuel::RawDeliveryKind::SyntheticEndV,
-                    })),
+                    ))),
+                    RetirementHandoff::EndV => finish(
+                        self,
+                        TokenWord::pack(self.state.frozen_end_template_token()),
+                        OriginId::UNKNOWN,
+                        false,
+                        ReadSite::Synthetic,
+                        crate::fuel::RawDeliveryKind::SyntheticEndV,
+                    )
+                    .map(|result| Some(ControlFlow::Continue(result))),
                 }
             }
-            ResidentBoundary::ReplayCompleted(episode) => Ok(ResidentColdOutcome::Finished(
+            ResidentBoundary::ReplayCompleted(episode) => Ok(Some(ControlFlow::Break(
                 DeliveryStatus::ReplayCompleted(episode),
-            )),
+            ))),
         }
     }
 }

@@ -1,10 +1,11 @@
 //! Direct unexpanded collection from the shared semantic input reader.
 
-use super::{ResidentColdOutcome, consume::TokenMeaning};
+use super::ReadSite;
 use crate::command::HotCommand;
 use crate::execution_scratch::{ArgumentRunAdmission, DefinitionReplacementSink};
 use crate::token_collector::{ClassifiedToken, TokenCollector};
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
+use std::ops::ControlFlow;
 use tex_state::interner::Symbol;
 use tex_state::token::{Catcode, TracedTokenWord};
 
@@ -68,82 +69,116 @@ impl<G> CommandProcessor<'_, '_, G> {
                     && self.settle_resident_run_boundary()?
                 {}
             }
-            // Source creation is the reader's policy for this consumer. No
-            // mutable processor flag needs setting and clearing per body word.
-            let word = match self.read_raw_word(true)? {
-                ResidentColdOutcome::Word(word) => word,
-                ResidentColdOutcome::Finished(DeliveryStatus::ReplayCompleted(_)) => continue,
-                ResidentColdOutcome::Finished(_) => return Err(CommandError::input_invariant()),
-                ResidentColdOutcome::Retry => unreachable!("reader settles transitions"),
-            };
-            let literal = word.word.literal_catcode();
-            // Literal spelling already supplies all collection facts. Active
-            // characters and control sequences still need live outer validity.
-            let mut meaning = None;
-            let mut lookup = false;
-            let outer = if literal.is_some_and(|cat| cat != Catcode::Active) && !OBSERVED {
-                false
-            } else {
-                let (resolved, resolution) = self.resolve_read(&word);
-                lookup = resolution.meaning_lookup();
-                let outer = resolved.is_outer();
-                meaning = Some(resolved);
-                outer
-            };
-            self.record_consumed_read(&word, lookup);
-            let exceptional = OBSERVED
-                || self
-                    .command
-                    .delivery_mode
-                    .requires_semantic_settlement(word.suppress_expandable, outer);
-            if exceptional {
-                let meaning = meaning.unwrap_or_else(|| self.resolve_read(&word).0);
-                let mut command = word.materialize(&meaning);
-                self.settle_hot_delivery_in::<OBSERVED>(&mut command, literal)?;
-                if matches!(
-                    command.alignment_adjustment(),
-                    super::super::AlignmentDeliveryAdjustment::Delimiter(_)
-                ) {
-                    self.begin_scalar_alignment_v_template_hot(&command)?;
-                    continue;
-                }
-                if command.is_outer_recovery_space() {
-                    continue;
-                }
-                let token = self.classify_collector_hot_token(&command, None);
-                if self.accept_replacement_word(parameters, collector, token, |processor| {
-                    processor.back_input_hot(command)
-                })? {
-                    return Ok(());
-                }
-                continue;
-            }
-            let adjustment = self
-                .command
-                .roots
-                .alignment
-                .account_literal_catcode(literal);
-            let token = ClassifiedToken::from_word(
-                TracedTokenWord::from_parts(word.word, word.origin),
-                None,
-            );
-            #[cfg(test)]
-            {
-                self.command
-                    .token_collector_path_counters
-                    .raw_classifications += 1;
-            }
-            if self.accept_replacement_word(parameters, collector, token, |processor| {
-                // Only illegal parameter recovery needs a backed-up command.
-                // A control-sequence meaning is retained from its single lookup;
-                // a literal's meaning is decoded lazily on this error branch.
-                let meaning: TokenMeaning<G> =
-                    meaning.unwrap_or_else(|| processor.resolve_read(&word).0);
-                let mut command: HotCommand<G> = word.materialize(&meaning);
-                command.set_alignment_adjustment(adjustment);
-                processor.back_input_hot(command)
-            })? {
-                return Ok(());
+            let selected = self.consume_input(
+                true,
+                &mut |processor, word, origin, suppress, site, kind| {
+                    let literal = word.literal_catcode();
+                    // Literal spelling already supplies all collection facts. Active
+                    // characters and control sequences still need live outer validity.
+                    let mut meaning = None;
+                    let mut lookup = false;
+                    let outer = if literal.is_some_and(|cat| cat != Catcode::Active) && !OBSERVED {
+                        false
+                    } else {
+                        let (resolved, resolution) = processor.resolve_token_word(word);
+                        lookup = resolution.meaning_lookup();
+                        let outer = resolved.is_outer();
+                        meaning = Some((resolved, resolution));
+                        outer
+                    };
+                    processor.record_consumed_word(kind, lookup);
+                    let exceptional = OBSERVED
+                        || processor
+                            .command
+                            .delivery_mode
+                            .requires_semantic_settlement(suppress, outer);
+                    if exceptional {
+                        let (meaning, resolution) =
+                            meaning.unwrap_or_else(|| processor.resolve_token_word(word));
+                        let mut command = HotCommand::from_delivered_parts(
+                            word,
+                            origin,
+                            matches!(site, ReadSite::Source(_)),
+                            match site {
+                                ReadSite::Source(line) => line,
+                                _ => None,
+                            },
+                            suppress,
+                            meaning,
+                            resolution.control_sequence(),
+                        );
+                        processor.settle_hot_delivery_in::<OBSERVED>(&mut command, literal)?;
+                        if matches!(
+                            command.alignment_adjustment(),
+                            super::super::AlignmentDeliveryAdjustment::Delimiter(_)
+                        ) {
+                            processor.begin_scalar_alignment_v_template_hot(&command)?;
+                            return Ok(false);
+                        }
+                        if command.is_outer_recovery_space() {
+                            return Ok(false);
+                        }
+                        let token = processor.classify_collector_hot_token(&command, None);
+                        if processor.accept_replacement_word(
+                            parameters,
+                            collector,
+                            token,
+                            |processor| processor.back_input_hot(command),
+                        )? {
+                            return Ok(true);
+                        }
+                        return Ok(false);
+                    }
+                    let adjustment = processor
+                        .command
+                        .roots
+                        .alignment
+                        .account_literal_catcode(literal);
+                    let token =
+                        ClassifiedToken::from_word(TracedTokenWord::from_parts(word, origin), None);
+                    #[cfg(test)]
+                    {
+                        processor
+                            .command
+                            .token_collector_path_counters
+                            .raw_classifications += 1;
+                    }
+                    if processor.accept_replacement_word(
+                        parameters,
+                        collector,
+                        token,
+                        |processor| {
+                            // Only illegal parameter recovery needs a backed-up command.
+                            // A control-sequence meaning is retained from its single lookup;
+                            // a literal's meaning is decoded lazily on this error branch.
+                            let (meaning, resolution) =
+                                meaning.unwrap_or_else(|| processor.resolve_token_word(word));
+                            let mut command: HotCommand<G> = HotCommand::from_delivered_parts(
+                                word,
+                                origin,
+                                matches!(site, ReadSite::Source(_)),
+                                match site {
+                                    ReadSite::Source(line) => line,
+                                    _ => None,
+                                },
+                                suppress,
+                                meaning,
+                                resolution.control_sequence(),
+                            );
+                            command.set_alignment_adjustment(adjustment);
+                            processor.back_input_hot(command)
+                        },
+                    )? {
+                        return Ok(true);
+                    }
+                    Ok(false)
+                },
+            )?;
+            match selected {
+                ControlFlow::Continue(true) => return Ok(()),
+                ControlFlow::Continue(false)
+                | ControlFlow::Break(DeliveryStatus::ReplayCompleted(_)) => {}
+                ControlFlow::Break(_) => return Err(CommandError::input_invariant()),
             }
         }
     }

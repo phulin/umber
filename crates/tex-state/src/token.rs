@@ -186,6 +186,7 @@ pub struct TokenWord(u32);
 pub struct PackedMeaningResolution {
     meaning_lookup: bool,
     literal_catcode: Option<Catcode>,
+    control_sequence: Option<Symbol>,
 }
 
 /// In-place destination for one packed-token command resolution.
@@ -196,7 +197,6 @@ pub struct PackedMeaningResolution {
 /// exact control-sequence identity selected by the raw spelling.
 #[doc(hidden)]
 pub trait PackedCommandTarget<G> {
-    fn write_control_sequence(&mut self, control_sequence: Option<Symbol>);
     fn write_static_meaning_word(&mut self, word: u64);
     fn write_font_meaning(&mut self, font: crate::ids::FontId);
     fn write_macro_meaning(
@@ -207,6 +207,10 @@ pub trait PackedCommandTarget<G> {
 }
 
 impl PackedMeaningResolution {
+    #[must_use]
+    pub const fn control_sequence(self) -> Option<Symbol> {
+        self.control_sequence
+    }
     #[must_use]
     pub const fn meaning_lookup(self) -> bool {
         self.meaning_lookup
@@ -392,10 +396,11 @@ impl<G> crate::CommandContext<'_, G> {
                 let ch = char::from_u32(payload >> TokenWord::CATCODE_BITS)
                     .expect("packed token scalar is valid");
                 let cat = ALL_CATCODES[raw_cat];
+                let control_sequence = (cat == Catcode::Active)
+                    .then(|| self.active_character_symbol(ch))
+                    .flatten();
                 let meaning_lookup = if cat == Catcode::Active {
-                    let symbol = self.active_character_symbol(ch);
-                    target.write_control_sequence(symbol);
-                    if let Some(symbol) = symbol {
+                    if let Some(symbol) = control_sequence {
                         self.compact_control_sequence_meaning_word(symbol)
                             .write_command_into(target);
                     } else {
@@ -403,36 +408,35 @@ impl<G> crate::CommandContext<'_, G> {
                     }
                     true
                 } else {
-                    target.write_control_sequence(None);
                     target.write_static_meaning_word(Meaning::char_token_word(ch, cat));
                     false
                 };
                 PackedMeaningResolution {
                     meaning_lookup,
                     literal_catcode: Some(cat),
+                    control_sequence,
                 }
             }
             TokenWord::KIND_CS => {
                 let symbol = Symbol::from_packed_slot(payload);
-                target.write_control_sequence(Some(symbol));
                 self.compact_control_sequence_meaning_word(symbol)
                     .write_command_into(target);
                 PackedMeaningResolution {
                     meaning_lookup: true,
                     literal_catcode: None,
+                    control_sequence: Some(symbol),
                 }
             }
             TokenWord::KIND_PARAM => {
-                target.write_control_sequence(None);
                 target.write_static_meaning_word(Meaning::UNDEFINED_WORD);
                 PackedMeaningResolution {
                     meaning_lookup: false,
                     literal_catcode: None,
+                    control_sequence: None,
                 }
             }
             TokenWord::KIND_FROZEN => {
                 let frozen = FrozenToken::from_raw(payload as u16);
-                target.write_control_sequence(None);
                 if frozen == FrozenToken::UNDEFINED_CONTROL_SEQUENCE {
                     target.write_static_meaning_word(Meaning::UNDEFINED_WORD);
                 } else if frozen == FrozenToken::END_TEMPLATE {
@@ -455,6 +459,7 @@ impl<G> crate::CommandContext<'_, G> {
                 PackedMeaningResolution {
                     meaning_lookup: false,
                     literal_catcode: None,
+                    control_sequence: None,
                 }
             }
             _ => unreachable!("two-bit packed-token kind"),

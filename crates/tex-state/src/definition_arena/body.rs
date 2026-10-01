@@ -59,17 +59,6 @@ impl<G> core::fmt::Debug for DefinitionRef<G> {
 }
 
 impl<G> DefinitionRef<G> {
-    pub(crate) const fn runtime_word(self) -> NonZeroU64 {
-        self.packed
-    }
-
-    pub(crate) const fn from_runtime_word(packed: NonZeroU64) -> Self {
-        Self {
-            packed,
-            _brand: PhantomData,
-        }
-    }
-
     pub(super) fn new(region: u32, row: usize) -> Self {
         let row = u32::try_from(row + 1).expect("definition rows fit u32");
         let row = NonZeroU32::new(row).expect("definition row is nonzero");

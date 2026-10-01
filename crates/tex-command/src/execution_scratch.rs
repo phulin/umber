@@ -294,6 +294,26 @@ impl<G> ExecutionScratch<G> {
         Ok(())
     }
 
+    pub(crate) fn append_plain_argument_tokens(
+        &mut self,
+        writer: &mut MacroArgumentWriter<G>,
+        words: &[TokenWord],
+    ) -> Result<(), ScratchError> {
+        if writer.holdback_len != 0 {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.macro_words.extend(
+            words.iter().map(|&word| {
+                TracedTokenWord::from_parts(word, tex_state::token::OriginId::UNKNOWN)
+            }),
+        );
+        for &word in words {
+            writer.cursor.settle_argument_word(word, false);
+        }
+        writer.visible_end = self.tail();
+        Ok(())
+    }
+
     /// Appends an unpublished delimiter candidate after the visible argument
     /// prefix. Its scanner facts stay untouched until a mismatch reveals it.
     #[inline(always)]
@@ -493,6 +513,11 @@ pub(crate) trait PlainRunSink<G> {
         scratch: &mut ExecutionScratch<G>,
         words: &[TracedTokenWord],
     ) -> Result<(), ScratchError>;
+    fn append_token_span(
+        &mut self,
+        scratch: &mut ExecutionScratch<G>,
+        words: &[TokenWord],
+    ) -> Result<(), ScratchError>;
 }
 
 impl<G> PlainRunSink<G> for MacroArgumentWriter<G> {
@@ -502,6 +527,14 @@ impl<G> PlainRunSink<G> for MacroArgumentWriter<G> {
         words: &[TracedTokenWord],
     ) -> Result<(), ScratchError> {
         scratch.append_plain_argument_span(self, words)
+    }
+
+    fn append_token_span(
+        &mut self,
+        scratch: &mut ExecutionScratch<G>,
+        words: &[TokenWord],
+    ) -> Result<(), ScratchError> {
+        scratch.append_plain_argument_tokens(self, words)
     }
 }
 
@@ -535,6 +568,17 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
             .try_for_each(|&word| self.push(word.token_word()))
             .map_err(|_| ScratchError::InvalidCoordinate)
     }
+
+    fn append_token_span(
+        &mut self,
+        _: &mut ExecutionScratch<G>,
+        words: &[TokenWord],
+    ) -> Result<(), ScratchError> {
+        words
+            .iter()
+            .try_for_each(|&word| self.push(word))
+            .map_err(|_| ScratchError::InvalidCoordinate)
+    }
 }
 
 /// Appends a plain run of literal characters to a `\\csname` name.
@@ -560,6 +604,14 @@ impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
         words
             .iter()
             .try_for_each(|&word| self.push(word.token_word()))
+    }
+
+    fn append_token_span(
+        &mut self,
+        _: &mut ExecutionScratch<G>,
+        words: &[TokenWord],
+    ) -> Result<(), ScratchError> {
+        words.iter().try_for_each(|&word| self.push(word))
     }
 }
 
@@ -706,9 +758,6 @@ struct OuterMeaningProbe {
 }
 
 impl<G> tex_state::token::PackedCommandTarget<G> for OuterMeaningProbe {
-    #[inline(always)]
-    fn write_control_sequence(&mut self, _: Option<tex_state::interner::Symbol>) {}
-
     #[inline(always)]
     fn write_static_meaning_word(&mut self, word: u64) {
         self.outer = word == tex_state::meaning::Meaning::END_TEMPLATE_WORD;

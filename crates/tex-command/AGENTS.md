@@ -93,8 +93,8 @@ collector (see `src/conditionals.rs`).
   crosses that boundary. The live `CommandState` also owns TeX82's three
   scalar stack maxima directly; they are operational session evidence outside
   snapshot roots and survive restore without shared synchronization.
-- `src/command.rs`: compact internal `HotToken { word, origin, site }`, fixed
-  16-byte `CommandWord<G>`, and public opaque, ephemeral `CurrentCommand`.
+- `src/command.rs`: compact internal `HotToken { word, origin, site }`, native
+  24-byte `CommandWord<G>` (static meaning, macro key/flags, or font capability), and public opaque, ephemeral `CurrentCommand`.
   Command-sensitive boundaries materialize this pair from the reader's facts
   and already-resolved meaning. Ordinary macro activation and unexpanded body
   collection construct no command record; rich commands remain local to actual
@@ -120,7 +120,7 @@ collector (see `src/conditionals.rs`).
 - `src/processor/expand/tests/resident_runs.rs`: consumer-stop resumption,
   exact fuel-failure prefixes, and one reader selection per resident run.
 - `src/processor/expand/resident.rs`: runs scalar character admission inside one
-  storage selection, returning only boundary words to settlement. Raw delivery
+  storage selection, calling the selected scalar consumer at a boundary. Raw delivery
   uses the same reader with single-word admission. Directly borrows the exposed semantic
   input frame and advances its existing physical reader. Input frames own
   reader state across nesting and rollback; delivery has no parallel cached
@@ -136,8 +136,8 @@ collector (see `src/conditionals.rs`).
   which is main-control preflight that leaves an ordinary command compact in
   a `LaneCommandSlot` and materializes it only for the admitted run.
 - `src/processor/expand/input.rs`: source reads, borrowed source-character
-  admission, and cold line/retirement/recovery transitions. Reads return token
-  facts without constructing commands or publishing backup authority. Source
+  admission, and cold line/retirement/recovery transitions. Reads invoke the scalar consumer
+  without constructing commands or publishing backup authority. Source
   reads stage a file diagnostic coordinate; settled raw delivery publishes it
   only when §342 reaches a command exit.
 - `src/processor/expand/consume.rs`: one dense meaning resolution, ordinary
@@ -242,78 +242,30 @@ collector (see `src/conditionals.rs`).
   tests. A cursor with no loaded line returns `NeedLine`; physical acquisition
   belongs to the singular input-top owner and never receives a backing registry
   through the ordinary token path.
-- `src/input/levels.rs`, `src/input/levels/tests.rs`: input rows and the
-  token stack's admission seeds. `InputLevel` is a source row or a
-  `ResidentTokenRow`, whose packed frame header holds identity, source
-  context, start, position, limit, kind, and delivery/retirement flags. Every
-  token row reads `words[frame.start() + frame.position()]` from the
-  `InputStack`'s one token stack, TeX82's `mem` for live input.
-  `ResidentTokenStorage` only tags the row: a `List` with its stored,
-  transient, or backed-up ownership; a `MacroBody` whose activation region
-  holds the argument copies, the parameter text, and the replacement; or a
-  `MacroArgument` delivering one argument span. `PackedTokenSpanSource` seeds
-  append a list's words at admission (durable and attempt lists, transient
-  and backed-up tokens, and `PendingInsertion` suffixes collected by
-  escaping `scan_toks`). A source row contains its common frame and a key
-  into the `InputStack`'s reusable source-slot pages; the slot owns backing,
-  replacement, `everyeof`, ancestry, classification, and retirement state.
-  A source
-  slot's optional `open_depths` owner isA source
-  slot's optional `open_depths` owner is
-  `\tracingnesting`'s own record. Nested source
-  opening installs it before the frame becomes visible; retirement borrows it
-  before pop and carries only copy-small boundary facts afterward. See
-  `src/tracing_nesting.rs`.
+- `src/input/levels.rs`, `src/input/levels/tests.rs`: input rows and admission
+  seeds. The common packed frame owns identity, source context, start, position,
+  limit, kind, and delivery/retirement flags. `StoredList` owns its immutable
+  `TokenListId`; `MacroBody` owns its `ResidentMacroBody`, invocation facts, and
+  transient argument coordinates. Both read retained spans without activation
+  copies. Insertions, backups, attempt lists, and matched arguments use the
+  input stack's traced-word suffix. A source row owns one boxed `SourceSlot`
+  with backing, line cursor, `everyeof`, ancestry, and retirement state.
+  `open_depths` is `\tracingnesting`'s record, borrowed before retirement.
 - `src/input/history.rs` and `src/input/history/tests.rs`: the authoritative generation-tied `InputStack`.
   The live stack is the only mutable copy; a checkpoint copies it by value at
   quiescence, so rows carry no rollback marker and no transition records an
   inverse. Source-owner changes release displaced owners directly.
-  Typed cold source operations and one `CommandState`-owned resident front
-  are the only mutable access. That front reads the semantic top index once
-  and matches the authoritative `InputLevel` row directly; it does not first
-  encode the row as a universal resident-top carrier and redispatch it. Source
-  lexing remains its own state machine. The resident front is always inlined
-  into the canonical processor loop, including its final meaning resolution,
-  suppression, fuel, and alignment settlement; no per-word result or
-  settlement helper separates cursor advancement from expansion
-  classification. Every token-list, macro-body, and macro-argument arm enters
-  one
-  compile-time-inlined resident-token transition for parameter
-  handling, exhaustion, and final delivery. Each arm keeps only its concrete
-  lifetime-specific word read and cursor update. The storage tag is selected
-  exactly once before that arm drives authoritative
-  shared-header advance, parameter interception, and accounting; none of
-  those tails rematches the row. No runtime storage-handle match, stored-top
-  wrapper, advance result, or redispatch survives selection.
-  The three stored variants embed the same resident header. Every arm
-  ends its storage borrow with only the word, origin, position, and source
-  scalars required by one branch-independent final-command write and common
-  post-borrow settlement, while preserving its distinct cursor owner. Source,
-  token-list, macro-body, and macro-argument cursors therefore share a single
-  top access, direct final-command write,
-  fuel/alignment/parameter settlement,
-  restartable exhaustion pop, retirement observation/alignment/replay settlement,
-  without a callback, returned exhaustion result, or diagnostic invalidation
-  write. A cold diagnostic boundary instead captures the exposed packed frame;
-  TeX82 §1038's unobserved horizontal character lookahead may lend consecutive
-  letter/other tokens from that same resident front directly to the executor's
-  admitted list builder. It advances the already-captured authoritative cursor,
-  charges the run in place, preserves each packed origin, and resolves only the
-  first non-character tail into `CurrentCommand`. Source-line, resident-row,
-  active-alignment, observation, tracked-region, missing-character, and fuel
-  boundaries return to the scalar owner; no borrowed run survives the processor
-  episode.
-  source tops add their stable slot and exact line/cursor owner coordinate.
-  The resident transition continues immediately from the new top after an
-  ordinary token or macro-argument pop, including a v-template that has
-  crossed its retained `do_endv` boundary. The
-  resident packed frame is read through only the required scalar fields and is
-  never copied as a whole. No raw mutable top or mutable index survives.
-  Focused gates prove exact coalescing and zero-allocation hot mutation. A resident source row
-  structurally proves its source slot remains occupied, so ordinary source
-  delivery borrows that slot by physical index without repeating the ABA
-  generation check. Cold and detached coordinates continue to validate the
-  complete slot key.
+  Capture retains immutable row owners and copies transient words and frame
+  coordinates as one aggregate. Named admission rejects live macro activations.
+  Retirement drops the row owner and truncates its transient suffix exactly
+  once; restore releases displaced rows. Diagnostics borrow the retained
+  parameter/replacement span even after its defining group retires.
+  `processor/expand/resident.rs` selects a row and its storage once per run,
+  advances the owning frame, and calls a statically selected consumer with word
+  and origin scalars. Parameter substitution, exhaustion, and source acquisition
+  return only genuine cold transition facts. No token/result carrier or cached
+  reader enters command state.
+
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement.
   Ordinary exhausted token, macro-body, and macro-argument rows truncate the
   already-selected resident coordinate directly, release their one storage
