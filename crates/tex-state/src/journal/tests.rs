@@ -105,7 +105,8 @@ fn packed_cells_round_trip_every_coordinate_family_at_accepted_bounds() {
 
 #[test]
 fn cursor_is_an_exact_position_in_ordered_history() {
-    let mut journal = SaveJournal::<TestGeneration>::new();
+    let mut journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     let start = journal.checkpoint_cursor(0).expect("root checkpoint");
     journal.record_assignment(StateCell::Count(7), StateWord::Integer(1), 1, 0, None);
     let end = journal.checkpoint_cursor(0).expect("root checkpoint");
@@ -118,14 +119,17 @@ fn cursor_is_an_exact_position_in_ordered_history() {
 
 #[test]
 fn cursor_from_another_state_is_rejected_even_with_the_same_brand() {
-    let mut first = SaveJournal::<TestGeneration>::new();
-    let second = SaveJournal::<TestGeneration>::new();
+    let mut first =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
+    let second =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     assert!(!second.validate_cursor(first.checkpoint_cursor(0).expect("root checkpoint")));
 }
 
 #[test]
 fn exhausted_epoch_capture_leaves_the_retained_root_unchanged() {
-    let mut journal = SaveJournal::<TestGeneration>::new();
+    let mut journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     let root = journal.checkpoint_cursor(0).expect("root");
     journal.host_epoch = u64::MAX;
     assert_eq!(
@@ -142,7 +146,8 @@ fn exhausted_epoch_capture_leaves_the_retained_root_unchanged() {
 
 #[test]
 fn candidate_capture_keeps_the_epoch_required_for_settlement() {
-    let mut journal = SaveJournal::<TestGeneration>::new();
+    let mut journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     let root = journal.checkpoint_cursor(0).expect("root");
     journal.host_epoch = u64::MAX - 2;
     let accepted = journal
@@ -159,7 +164,8 @@ fn candidate_capture_keeps_the_epoch_required_for_settlement() {
 
 #[test]
 fn released_dense_prefix_invalidates_older_roots_and_preserves_selected_values() {
-    let mut journal = SaveJournal::<TestGeneration>::new();
+    let mut journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     let root = journal.checkpoint_cursor(0).expect("root");
     for index in 0..512 {
         journal.record_assignment(
@@ -187,7 +193,8 @@ fn released_dense_prefix_invalidates_older_roots_and_preserves_selected_values()
 
 #[test]
 fn checkpoint_intervals_deduplicate_the_first_prior_value() {
-    let mut journal = SaveJournal::<TestGeneration>::new();
+    let mut journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     let _start = journal.checkpoint_cursor(0).expect("root checkpoint");
     let interval_serial = journal.host_epoch();
     for (before, before_host_epoch) in [(1, 0), (2, interval_serial)] {
@@ -224,7 +231,8 @@ fn checkpoint_intervals_deduplicate_the_first_prior_value() {
 
 #[test]
 fn exact_capacity_accounting_covers_group_reuse_and_checkpoint_settlement() {
-    let mut journal = SaveJournal::<TestGeneration>::new();
+    let mut journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     assert_exact_capacity_accounting(&journal);
 
     let outer = enter_group(&mut journal, 1);
@@ -261,7 +269,8 @@ fn exact_capacity_accounting_covers_group_reuse_and_checkpoint_settlement() {
 
 #[test]
 fn exact_capacity_accounting_covers_checkpoint_fork_accept_reject_and_release() {
-    let mut root_journal = SaveJournal::<TestGeneration>::new();
+    let mut root_journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     let root = root_journal.checkpoint_cursor(0).expect("root checkpoint");
     root_journal.record_assignment(StateCell::Count(0), StateWord::Integer(0), 1, 0, None);
     let tail = root_journal
@@ -271,7 +280,8 @@ fn exact_capacity_accounting_covers_checkpoint_fork_accept_reject_and_release() 
     root_journal.reject_checkpoint_candidate(tail);
     assert_exact_capacity_accounting(&root_journal);
 
-    let mut journal = SaveJournal::<TestGeneration>::new();
+    let mut journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     let root = journal.checkpoint_cursor(0).expect("root checkpoint");
     journal.record_assignment(StateCell::Count(0), StateWord::Integer(0), 1, 0, None);
     let _tail = journal
@@ -303,11 +313,13 @@ fn exact_capacity_accounting_covers_checkpoint_fork_accept_reject_and_release() 
 
 #[test]
 fn retained_byte_projection_has_fixed_work_with_many_group_segments() {
-    let mut shallow = SaveJournal::<TestGeneration>::new();
+    let mut shallow =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     let _ = enter_group(&mut shallow, 1);
     record_saved_count(&mut shallow, 0, 0);
 
-    let mut deep = SaveJournal::<TestGeneration>::new();
+    let mut deep =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     for lineage in 1..=4_096 {
         let _ = enter_group(&mut deep, lineage);
         record_saved_count(

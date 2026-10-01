@@ -96,13 +96,9 @@ pub(crate) enum ScanToksMode {
     CaseShift { uppercase: bool },
     /// Collect a macro parameter text followed by its replacement text.
     #[cfg(test)] // Direct collector tests; production uses MacroDefinitionFor.
-    MacroDefinition { expanded: bool, global: bool },
+    MacroDefinition { expanded: bool },
     /// Production macro definition scan, carrying §479's `warning_index`.
-    MacroDefinitionFor {
-        expanded: bool,
-        target: Symbol,
-        global: bool,
-    },
+    MacroDefinitionFor { expanded: bool, target: Symbol },
 }
 
 /// Parsed grammar of one canonical token-list collection.
@@ -116,7 +112,7 @@ enum ScanToksGrammar {
 enum ScanToksDestination {
     Attempt,
     ReplayInput { transform: ReplayWordTransform },
-    Definition { global: bool },
+    Definition,
 }
 
 /// How the collector reaches the opening delimiter of its body.
@@ -186,13 +182,13 @@ struct ScanToksConfig {
     status_visibility: ScannerStatusVisibility,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 enum ScannedToksStorage<G> {
     Tokens {
         parameter: AttemptTokenListId,
         replacement: AttemptTokenListId,
     },
-    Definition(tex_state::DefinitionRef<G>),
+    Definition(tex_state::PublishedDefinition<G>),
     AttemptDefinition(AttemptDefinitionId),
     /// An escaping list collected at `start` of the pending-insertion words.
     PendingInsertion {
@@ -204,8 +200,8 @@ enum ScannedToksStorage<G> {
 enum ScannedWords<'a, G> {
     Traced(crate::attempt::AttemptTokenListView<'a>),
     Semantic(&'a [TokenWord]),
-    DefinitionParameter(tex_state::DefinitionView<'a, G>),
-    DefinitionReplacement(tex_state::DefinitionView<'a, G>),
+    DefinitionParameter(tex_state::DefinitionView<G>),
+    DefinitionReplacement(tex_state::DefinitionView<G>),
     Pending(&'a [TracedTokenWord]),
 }
 
@@ -365,22 +361,18 @@ impl ScanToksConfig {
                 status_visibility: ScannerStatusVisibility::Observed,
             },
             #[cfg(test)]
-            ScanToksMode::MacroDefinition { expanded, global } => Self {
+            ScanToksMode::MacroDefinition { expanded } => Self {
                 grammar: ScanToksGrammar::MacroDefinition,
-                destination: ScanToksDestination::Definition { global },
+                destination: ScanToksDestination::Definition,
                 opening: ScanToksOpening::AfterParameterText,
                 expansion: expansion(expanded),
                 owner: ScanToksOwner::Definition(None),
                 purpose: ScanToksPurpose::MacroReplacement,
                 status_visibility: ScannerStatusVisibility::Observed,
             },
-            ScanToksMode::MacroDefinitionFor {
-                expanded,
-                target,
-                global,
-            } => Self {
+            ScanToksMode::MacroDefinitionFor { expanded, target } => Self {
                 grammar: ScanToksGrammar::MacroDefinition,
-                destination: ScanToksDestination::Definition { global },
+                destination: ScanToksDestination::Definition,
                 opening: ScanToksOpening::AfterParameterText,
                 expansion: expansion(expanded),
                 owner: ScanToksOwner::Definition(Some(target)),
@@ -420,7 +412,7 @@ pub(crate) struct ScannedToks {
 }
 
 /// Scanner-completed buffers before an owning publication policy is chosen.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct ScannedToksBuffers<G> {
     storage: ScannedToksStorage<G>,
     pub(crate) primary: OriginId,
@@ -428,7 +420,7 @@ pub(crate) struct ScannedToksBuffers<G> {
 }
 
 impl<G> ScannedToksBuffers<G> {
-    pub(crate) fn definition(self) -> Option<tex_state::DefinitionRef<G>> {
+    pub(crate) fn definition(self) -> Option<tex_state::PublishedDefinition<G>> {
         match self.storage {
             ScannedToksStorage::Definition(definition) => Some(definition),
             ScannedToksStorage::Tokens { .. }
@@ -532,17 +524,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .prepare_replay_input(start, transform, observed)
                     .map_err(|()| CommandError::input_invariant())?;
             }
-            (ScanToksGrammar::MacroDefinition, ScanToksDestination::Definition { global }) => {
+            (ScanToksGrammar::MacroDefinition, ScanToksDestination::Definition) => {
                 let definition = self
                     .state
-                    .begin_definition_build(global, OriginId::UNKNOWN)
+                    .begin_definition_build(OriginId::UNKNOWN)
                     .map_err(definition_allocation_command_error)?;
                 collector
                     .prepare_definition(definition)
                     .map_err(|()| CommandError::input_invariant())?;
             }
             (ScanToksGrammar::MacroDefinition, ScanToksDestination::ReplayInput { .. })
-            | (ScanToksGrammar::General, ScanToksDestination::Definition { .. }) => {
+            | (ScanToksGrammar::General, ScanToksDestination::Definition) => {
                 return Err(CommandError::input_invariant());
             }
         };
@@ -843,16 +835,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         scanned: &ScannedToksBuffers<G>,
     ) -> Result<ScannedWords<'_, G>, CommandError> {
         let arena = &self.command.attempt;
-        match scanned.storage {
+        match &scanned.storage {
             ScannedToksStorage::Tokens { parameter, .. } => arena
-                .token_words(parameter)
+                .token_words(*parameter)
                 .map(ScannedWords::Traced)
                 .map_err(attempt_command_error),
             ScannedToksStorage::Definition(definition) => Ok(ScannedWords::DefinitionParameter(
-                self.state.definition(definition),
+                self.state.definition(definition.reference()),
             )),
             ScannedToksStorage::AttemptDefinition(definition) => arena
-                .definition_parameter_words(definition)
+                .definition_parameter_words(*definition)
                 .map(ScannedWords::Semantic)
                 .map_err(attempt_command_error),
             ScannedToksStorage::PendingInsertion { .. } => Err(CommandError::input_invariant()),
@@ -864,25 +856,25 @@ impl<G> CommandProcessor<'_, '_, G> {
         scanned: &ScannedToksBuffers<G>,
     ) -> Result<ScannedWords<'_, G>, CommandError> {
         let arena = &self.command.attempt;
-        match scanned.storage {
+        match &scanned.storage {
             ScannedToksStorage::Tokens { replacement, .. } => arena
-                .token_words(replacement)
+                .token_words(*replacement)
                 .map(ScannedWords::Traced)
                 .map_err(attempt_command_error),
             ScannedToksStorage::Definition(definition) => Ok(ScannedWords::DefinitionReplacement(
-                self.state.definition(definition),
+                self.state.definition(definition.reference()),
             )),
             ScannedToksStorage::AttemptDefinition(definition) => arena
-                .definition_replacement_words(definition)
+                .definition_replacement_words(*definition)
                 .map(ScannedWords::Semantic)
                 .map_err(attempt_command_error),
             ScannedToksStorage::PendingInsertion { start, len } => {
-                let start = start as usize;
+                let start = *start as usize;
                 self.command
                     .roots
                     .input
                     .pending_insertions
-                    .get(start..start + len as usize)
+                    .get(start..start + *len as usize)
                     .map(ScannedWords::Pending)
                     .ok_or_else(CommandError::input_invariant)
             }

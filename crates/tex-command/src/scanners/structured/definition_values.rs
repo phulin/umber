@@ -54,14 +54,14 @@ pub struct ExpandedWriteText {
 }
 
 /// One checked attempt-local macro-definition builder.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct ScannedMacroDefinition<G> {
     /// The raw control-sequence (or active-character) target accepted by
     /// TeX82's `prefixed_command`.  Target delivery is command-owned so the
     /// executor never has to reopen raw input between the primitive and its
     /// single-builder parameter/replacement scan.
     pub target: Symbol,
-    pub definition: tex_state::DefinitionRef<G>,
+    pub definition: tex_state::PublishedDefinition<G>,
     pub provenance: StructuredProvenance,
 }
 

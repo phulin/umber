@@ -12,6 +12,8 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
         let definition = universe
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("m").expect("macro name");
         universe
             .assign_meaning(
@@ -159,6 +161,8 @@ fn active_character_empty_macro_retires_replay_before_settling_next_command() {
         let definition = universe
             .allocate_definition(&[], &[])
             .expect("empty active macro definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         universe
             .assign_meaning(
                 active,
@@ -217,6 +221,8 @@ fn one_hundred_macros_materialize_only_the_final_command() {
         let definition = universe
             .allocate_definition(&[], &[])
             .expect("empty definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("hotchain").expect("macro name");
         universe
             .assign_meaning(

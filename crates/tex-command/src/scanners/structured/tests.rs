@@ -128,6 +128,8 @@ fn math_delimiter_consumes_one_expanded_command_before_adjacent_source() {
         let definition = universe
             .allocate_definition(&[], &replacement)
             .expect("delimiter macro definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("delimarg").expect("delimiter macro");
         universe
             .assign_meaning(
@@ -270,7 +272,7 @@ fn fresh_active_character_is_a_definition_target_without_recovery() {
         );
 
         let scanned = processor
-            .scan_macro_definition(false, false)
+            .scan_macro_definition(false)
             .expect("active-character definition");
         assert!(processor.take_semantic_diagnostics().is_empty());
         let target = scanned.target;
@@ -454,6 +456,8 @@ fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
                 &[tex_state::token::TokenWord::pack(Token::frozen_relax())],
             )
             .expect("source definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         universe
             .assign_meaning(
                 source_id,
@@ -484,7 +488,7 @@ fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
         assert!(matches!(warm, tex_state::ResolvedMeaning::Macro { .. }));
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-        let retain_before = tex_state::definition_retain_count();
+
         let (_, measured) = {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
             processor
@@ -496,7 +500,6 @@ fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
         assert!(matches!(measured, tex_state::ResolvedMeaning::Macro { .. }));
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-        assert_eq!(tex_state::definition_retain_count(), retain_before);
     });
 }
 

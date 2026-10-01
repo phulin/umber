@@ -105,6 +105,8 @@ fn macro_meanings_carry_only_generation_typed_definition_ids() {
             .definitions_mut()
             .allocate(&[], &[])
             .expect("test fixture is valid");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let flags = MeaningFlags::LONG
             | MeaningFlags::OUTER
             | MeaningFlags::PROTECTED

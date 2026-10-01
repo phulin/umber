@@ -374,7 +374,7 @@ fn attempt_promotion_preflights_then_writes_the_resident_destination_once() {
         .find(".publish_prevalidated(batch.next_definition_mut())")
         .expect("infallible checked builder transfer");
     assert!(validation < publication);
-    assert!(destination.contains("reserve_batch(definition_count, definition_words)?"));
+    assert!(destination.contains("reserve_batch(definition_count)?"));
     assert!(destination.contains(".allocate_from_iter(batch.next_token_list_words())"));
     assert!(destination.contains("batch.settle_next_definition(definition)"));
     assert!(destination.contains("batch.settle_next_token_list(tokens)"));

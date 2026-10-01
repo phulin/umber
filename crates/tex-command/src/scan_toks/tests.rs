@@ -386,10 +386,7 @@ fn eof_recovery_streams_macro_parameter_and_replacement_slices_once() {
         );
 
         processor
-            .scan_toks_buffers(ScanToksMode::MacroDefinition {
-                expanded: false,
-                global: false,
-            })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
             .expect("EOF recovery closes the definition");
         assert_eq!(
             runaway_partial(&processor.command.semantic_diagnostics),
@@ -408,6 +405,8 @@ fn outer_recovery_renders_only_the_collected_balanced_prefix() {
         let definition = universe
             .allocate_definition(&[], &[])
             .expect("outer macro definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let outer = universe.intern("outermacro").expect("outer macro name");
         universe
             .assign_meaning(
@@ -549,10 +548,7 @@ fn run_mixed_scan_workload<G>(
             .scan_toks(ScanToksMode::General { expanded: true })
             .expect("expanded general scan");
         processor
-            .scan_toks_buffers(ScanToksMode::MacroDefinition {
-                expanded: false,
-                global: false,
-            })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
             .expect("definition scan");
         processor
             .scan_toks(ScanToksMode::GeneralFor {
@@ -593,7 +589,7 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
             universe
                 .command_context()
                 .expect("definition arena reserve context")
-                .profile_reserve_definition_arena(rounds, 4 * rounds)
+                .profile_reserve_definition_arena(rounds)
                 .expect("warm definition arena capacity");
             let delivery_owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
             let scratch_owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
@@ -653,6 +649,8 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
         let definition = universe
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("macro definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("scanmacro").expect("macro name");
         universe
             .assign_meaning(
@@ -743,6 +741,8 @@ fn expanded_scan_adopts_unexpanded_child_tokens_without_recursive_expansion() {
         let definition = universe
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("nested macro definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let nested = universe.intern("unexpandedpayload").expect("nested macro");
         universe
             .assign_meaning(
@@ -832,14 +832,11 @@ fn macro_definition_scan_shares_one_checked_builder_coordinate() {
             &mut diagnostic_effects,
         );
         let scanned = processor
-            .scan_toks_buffers(ScanToksMode::MacroDefinition {
-                expanded: false,
-                global: false,
-            })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
             .expect("definition scan");
         assert!(!scanned.malformed_parameter);
         let definition = scanned.definition().expect("definition builder result");
-        let definition = processor.state.definition(definition);
+        let definition = processor.state.definition(definition.reference());
         assert!(!definition.parameter_text().is_empty());
         assert_eq!(
             definition
@@ -878,13 +875,10 @@ fn macro_definition_hash_brace_shares_one_checked_builder_boundary() {
         );
 
         let scanned = processor
-            .scan_toks_buffers(ScanToksMode::MacroDefinition {
-                expanded: false,
-                global: false,
-            })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
             .expect("hash-brace definition scan");
         let definition = scanned.definition().expect("definition builder result");
-        let definition = processor.state.definition(definition);
+        let definition = processor.state.definition(definition.reference());
         assert_eq!(
             definition
                 .parameter_text()
@@ -911,6 +905,8 @@ fn expanded_macro_definition_keeps_its_builder_across_nested_macro_retirement() 
         let nested_definition = universe
             .allocate_definition(&[], &[TokenWord::pack(expansion)])
             .expect("nested macro definition");
+        let nested_definition_publication = nested_definition;
+        let nested_definition = nested_definition_publication.reference();
         let nested = universe.intern("nesteddefscan").expect("nested macro name");
         universe
             .assign_meaning(
@@ -941,13 +937,10 @@ fn expanded_macro_definition_keeps_its_builder_across_nested_macro_retirement() 
         );
 
         let scanned = processor
-            .scan_toks_buffers(ScanToksMode::MacroDefinition {
-                expanded: true,
-                global: false,
-            })
+            .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: true })
             .expect("expanded definition scan");
         let definition = scanned.definition().expect("definition builder result");
-        let definition = processor.state.definition(definition);
+        let definition = processor.state.definition(definition.reference());
         assert!(definition.parameter_text().is_empty());
         assert_eq!(definition.replacement_text(), [TokenWord::pack(expansion)]);
     });
@@ -982,15 +975,12 @@ fn ordinary_definition_body_constructs_no_per_token_command() {
             );
             let before = crate::command::command_ownership_counters();
             let scanned = processor
-                .scan_toks_buffers(ScanToksMode::MacroDefinition {
-                    expanded: false,
-                    global: false,
-                })
+                .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
                 .expect("definition");
             let after = crate::command::command_ownership_counters();
             let definition = processor
                 .state
-                .definition(scanned.definition().expect("definition"));
+                .definition(scanned.definition().expect("definition").reference());
             assert_eq!(definition.replacement_text().len(), length);
             assert_eq!(
                 after.resolved_writes - before.resolved_writes,
@@ -1047,15 +1037,13 @@ fn direct_definition_collection_matches_observed_recovery_at_every_fuel_cut() {
             } else {
                 processor
             };
-            let result = processor.scan_toks_buffers(ScanToksMode::MacroDefinition {
-                expanded: false,
-                global: false,
-            });
+            let result =
+                processor.scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false });
             let body = match result {
                 Ok(scanned) => Some(
                     processor
                         .state
-                        .definition(scanned.definition().expect("definition"))
+                        .definition(scanned.definition().expect("definition").reference())
                         .replacement_text()
                         .iter()
                         .map(|word| word.semantic_token())
@@ -1121,6 +1109,8 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
         let definition = universe
             .allocate_definition(&pack(parameters), &pack(replacement))
             .expect("macro definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern(name).expect("macro name");
         universe
             .assign_meaning(
@@ -1195,15 +1185,13 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
                 Err(crate::CommandError::FuelExhausted { .. }) => return None,
                 Err(error) => panic!("unexpected expansion failure: {error:?}"),
             }
-            let result = processor.scan_toks_buffers(ScanToksMode::MacroDefinition {
-                expanded: false,
-                global: false,
-            });
+            let result =
+                processor.scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false });
             let body = match result {
                 Ok(scanned) => Some(
                     processor
                         .state
-                        .definition(scanned.definition().expect("definition"))
+                        .definition(scanned.definition().expect("definition").reference())
                         .replacement_text()
                         .iter()
                         .map(|word| word.semantic_token())

@@ -57,6 +57,8 @@ fn definition_words_and_durable_lists_have_separate_storage() {
             .definitions_mut()
             .allocate(&[], &[word])
             .expect("test fixture is valid");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let list = generation
             .token_lists_mut()
             .allocate(&[word])

@@ -61,24 +61,28 @@ expose substores or introduce another arena.
 - `src/diagnostic/tests.rs`: Destination-selection, admitted forced-online
   routing without eqtb assignment, `print_nl` line-break, and scalar-formatting
   tests for the diagnostic channel.
-- `src/definition_arena.rs`: 8-byte compact generation-branded definition
-  keys over three row stores: the immutable format rows, the checkpointed
-  global rows, and one LIFO local stack truncated at each group exit. Each row
-  retains one shared immutable payload containing packed words, compiled
-  matcher, and origin; executing bodies keep that payload alive after group exit. Checkpoint candidates
-  detach and restore only the format and global suffixes; restore truncates
-  rows and discards open groups. Exceptional local-to-global `let` promotion
-  shares the span once and memoizes the mapped global row until its local row
-  is dropped.
-- `src/definition_arena/body.rs`: Opaque definition references, immutable
-  definition payloads, borrowed definition views, and the eight-byte resident
-  macro owner whose reads index the retained words at the packed frame position.
+- `src/definition_arena.rs`: Compact nonowning generation-branded keys over
+  pinned immutable format rows and one monotone dynamic slot bank. Indexed
+  non-atomic roots count current meanings, independent native group/checkpoint
+  preimages, accepted alternates, primitive-registry meanings and real cold
+  publication owners. Zero roots tombstone the slot without reusing its key.
+  Scope is the meaning level; there is no local allocation namespace,
+  promotion memo, group frontier or definition checkpoint tail.
+- `src/definition_arena/body.rs`: Full immutable words/matcher/origin payloads,
+  owned cold views and resident macro bodies. Canonical payload accounting is
+  charged once at publication and released at the final actual shared drop.
+  Stable slot capacity is charged separately in retained-byte reporting.
 - `src/definition_arena/build_lane.rs`: The one live definition build and its
-  direct scan-episode writer, which seals into one exactly sized span.
-- `src/definition_arena/builder.rs`: Build phases, build errors, and the
-  detached cold-path builder for memo replay and import batches.
-- `src/definition_arena/tests.rs`: Row lifetime, group truncation, promotion,
-  checkpoint candidate, restore, builder, identity, and accounting tests.
+  direct scan-episode writer, sealing a move-only `PublishedDefinition` root.
+- `src/definition_arena/builder.rs`: Build phases, validation/errors, and the
+  detached cold builder used directly by memo/import publication batches.
+- `src/definition_arena/tests.rs`: Builder, parameter validation, content,
+  writer, empty/simple/matching classification and publication tests.
+- `src/definition_arena/ownership_tests.rs`: Actual current/history/alias root
+  transitions, repeated checkpoint restore, candidate settlement/pruning,
+  stale publication failure, full frame/matcher/origin survival and exactly-once
+  final payload charge release. These ownership proofs follow the selected
+  aggregate contract, rather than preserving predecessor layout or counts.
 - `src/durable_arena.rs`: Private generation-branded non-atomic shared stored
   token-list owners, reusable publication builders, retained immutable rows
   addressed by compact node token coordinates, allocation-free owning
@@ -254,10 +258,10 @@ expose substores or introduce another arena.
 - `src/journal.rs`: Separate compact TeX group saves, indexed host-epoch
   first-touch and owning named-checkpoint deltas holding one
   reversible alternate per written cell, fixed save-stack projections, exact
-  capacity-change accounting for constant-time budget reads, synchronous unsave observation, and
+  capacity-change accounting for constant-time budget reads, synchronous unsave observation with its actual popped preimage owner, and
   prefix-independent accepted/current suffix settlement. Host stamps never
   enter group or checkpoint preimages.
-- `src/journal/groups.rs`: One contiguous native TeX save stack containing scalar boundaries, actual scalar/box before-values, aftergroup words, and lazy sparse marker/links. Borrowed group-frame views read these boundaries without another group topology. The real local-definition frontier remains here until counted definitions replace it.
+- `src/journal/groups.rs`: One contiguous native TeX save stack containing scalar boundaries, actual scalar/box before-values, aftergroup words, and lazy sparse marker/links. Borrowed group-frame views read these boundaries without another group topology. Definition preimages are actual counted roots; boundaries contain no definition frontier.
 - `src/journal/checkpoints.rs`: Plain cold owning dense undo tails, unique
   branch-valid checkpoint cuts, repeated restoration, accepted/candidate
   settlement, prefix release and final-root disarm. Dense undo owns no node

@@ -16,7 +16,7 @@ use crate::fork_arena::ForkArenaError;
 use crate::glue::GlueSpec;
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::interner::{ControlSequenceKind, InternerAccessError, Symbol, SymbolId};
-use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
+use crate::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
 use crate::page::PageBuilderState;
 use crate::page_node_arena::PageListId;
 use crate::page_node_arena::PageMaterialArena;
@@ -786,6 +786,26 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.assign_meaning(symbol, word, scope)
     }
 
+    /// Consumes a real publication after the destination acquires its semantic root.
+    pub fn assign_published_definition(
+        &mut self,
+        symbol: Symbol,
+        definition: crate::PublishedDefinition<G>,
+        flags: MeaningFlags,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign_resolved_meaning(
+            symbol,
+            ResolvedMeaning::Macro {
+                flags,
+                definition: definition.reference(),
+            },
+            scope,
+        )?;
+        drop(definition);
+        Ok(())
+    }
+
     fn validate_font_root(&self, font: crate::ids::FontId) -> Result<(), StateError> {
         self.resident
             .fonts
@@ -918,7 +938,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[inline(always)]
-    pub fn definition(&self, id: DefinitionRef<G>) -> DefinitionView<'_, G> {
+    pub fn definition(&self, id: DefinitionRef<G>) -> DefinitionView<G> {
         self.admitted.definition(id)
     }
 
@@ -949,15 +969,9 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn begin_definition_build(
         &mut self,
-        global: bool,
         origin: crate::token::OriginId,
     ) -> Result<crate::DefinitionBuildKey<G>, crate::DefinitionAllocationError> {
-        let destination = if global || self.admitted.state_ref().current_level() == 1 {
-            crate::DefinitionDestination::Global
-        } else {
-            crate::DefinitionDestination::Local
-        };
-        self.admitted.begin_definition_build(destination, origin)
+        self.admitted.begin_definition_build(origin)
     }
 
     /// Admits one direct definition writer for the current synchronous scan
@@ -1014,7 +1028,7 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn seal_definition_build(
         &mut self,
         build: crate::DefinitionBuildKey<G>,
-    ) -> Result<DefinitionRef<G>, crate::DefinitionBuildError> {
+    ) -> Result<crate::PublishedDefinition<G>, crate::DefinitionBuildError> {
         self.admitted.seal_definition_build(build)
     }
 
@@ -1022,21 +1036,13 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.abort_definition_build(build);
     }
 
-    pub fn promote_definition_global(
-        &mut self,
-        definition: DefinitionRef<G>,
-    ) -> Result<DefinitionRef<G>, crate::DefinitionAllocationError> {
-        self.admitted.promote_definition_global(definition)
-    }
-
     #[cfg(any(test, feature = "profiling"))]
     #[doc(hidden)]
     pub fn profile_reserve_definition_arena(
         &mut self,
         rows: usize,
-        words: usize,
     ) -> Result<(), crate::DefinitionAllocationError> {
-        self.admitted.reserve_definition_arena(rows, words)
+        self.admitted.reserve_definition_arena(rows)
     }
 
     #[cfg(any(test, feature = "profiling"))]
@@ -2072,14 +2078,7 @@ impl<'a, G> CommandContext<'a, G> {
         kind: crate::GroupKind,
         entered_line: u32,
     ) -> Result<crate::GroupFrame, StateError> {
-        let frontier = self
-            .admitted
-            .definition_local_frontier()
-            .map_err(|_| StateError::GroupDepthExhausted)?;
         let frame = self.admitted.state().begin_group(kind, entered_line)?;
-        self.admitted
-            .state()
-            .set_group_definition_frontier(frontier);
         Ok(frame)
     }
 
@@ -2092,7 +2091,6 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<crate::GroupFrame, StateError> {
         use crate::journal::JournalEntry;
         let frame = self.admitted.state_ref().closing_group(kind)?;
-        let frontier = self.admitted.state_ref().journal().definition_frontier();
         let mut cursor = self.admitted.state_ref().journal().len();
         let mut sparse = None;
         self.admitted.state().journal_mut().begin_unsave();
@@ -2103,7 +2101,11 @@ impl<'a, G> CommandContext<'a, G> {
         {
             match entry {
                 JournalEntry::Mutation(saved) => {
-                    let entry = self.admitted.state().restore_group_mutation(&saved)?;
+                    let mut saved = self.admitted.state_ref().own_saved_mutation(saved);
+                    let entry = self
+                        .admitted
+                        .state()
+                        .restore_group_mutation(&mut saved.saved)?;
                     observe(self, crate::GroupUnsaveEvent::Restoration(&entry));
                 }
                 JournalEntry::Box { mut saved, .. } => {
@@ -2129,7 +2131,6 @@ impl<'a, G> CommandContext<'a, G> {
             .state()
             .journal_mut()
             .record_group_exit_with_records(frame);
-        self.admitted.retire_definition_local_suffix(frontier);
         self.resident
             .dependencies
             .poison(TrackedRegionBarrier::EnvironmentTimelineChange);

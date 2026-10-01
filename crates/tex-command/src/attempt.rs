@@ -13,8 +13,8 @@ use tex_state::glue::GlueSpec;
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{TokenWord, TracedTokenWord};
 use tex_state::{
-    DefinitionBuildError, DefinitionBuilder, DefinitionRef, GlueId, PromotionError, ProvenanceId,
-    TokenListId, Universe,
+    DefinitionBuildError, DefinitionBuilder, GlueId, PromotionError, ProvenanceId, TokenListId,
+    Universe,
 };
 
 mod token_lane;
@@ -145,7 +145,11 @@ pub trait AttemptPromotionDestination<G> {
     fn definition_root_count(&self) -> usize;
     fn definition_root(&self, index: usize) -> AttemptDefinitionId;
     fn next_definition_root(&self) -> AttemptDefinitionId;
-    fn settle_definition_root(&mut self, source: AttemptDefinitionId, definition: DefinitionRef<G>);
+    fn settle_definition_root(
+        &mut self,
+        source: AttemptDefinitionId,
+        definition: tex_state::PublishedDefinition<G>,
+    );
 
     fn provenance_root_count(&self) -> usize;
     fn provenance_root(&self, index: usize) -> AttemptProvenanceId;
@@ -1292,7 +1296,7 @@ impl<G> AttemptArena<G> {
         &mut self,
         universe: &mut Universe<G>,
         id: AttemptDefinitionId,
-    ) -> Result<DefinitionRef<G>, AttemptError> {
+    ) -> Result<tex_state::PublishedDefinition<G>, AttemptError> {
         self.validate_key(id.key)?;
         let definition = self
             .definitions
@@ -1359,7 +1363,7 @@ where
             .expect("the next preflighted definition source remains resident")
     }
 
-    fn settle_next_definition(&mut self, definition: DefinitionRef<G>) {
+    fn settle_next_definition(&mut self, definition: tex_state::PublishedDefinition<G>) {
         let source = self.destination.next_definition_root();
         self.destination.settle_definition_root(source, definition);
         let builder = self

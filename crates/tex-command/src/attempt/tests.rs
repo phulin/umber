@@ -41,7 +41,7 @@ enum TestRoot<Attempt, Durable> {
 struct TestPromotionDestination<G> {
     token_lists: Vec<TestRoot<AttemptTokenListId, TokenListId<G>>>,
     glue: Vec<TestRoot<AttemptGlueId, GlueId<G>>>,
-    definitions: Vec<TestRoot<AttemptDefinitionId, DefinitionRef<G>>>,
+    definitions: Vec<TestRoot<AttemptDefinitionId, tex_state::PublishedDefinition<G>>>,
     provenance: Vec<TestRoot<AttemptProvenanceId, ProvenanceId<G>>>,
 }
 
@@ -74,9 +74,9 @@ impl<G> TestPromotionDestination<G> {
         }
     }
 
-    fn definition(&self, index: usize) -> &DefinitionRef<G> {
+    fn definition(&self, index: usize) -> DefinitionRef<G> {
         match &self.definitions[index] {
-            TestRoot::Durable(definition) => definition,
+            TestRoot::Durable(definition) => definition.reference(),
             TestRoot::Attempt(_) => panic!("definition root was not settled"),
         }
     }
@@ -178,16 +178,20 @@ impl<G> AttemptPromotionDestination<G> for TestPromotionDestination<G> {
     fn settle_definition_root(
         &mut self,
         source: AttemptDefinitionId,
-        definition: DefinitionRef<G>,
+        definition: tex_state::PublishedDefinition<G>,
     ) {
-        let mut matched = 0;
-        for root in &mut self.definitions {
-            if matches!(root, TestRoot::Attempt(candidate) if *candidate == source) {
-                *root = TestRoot::Durable(definition);
-                matched += 1;
-            }
+        let mut destinations = self
+            .definitions
+            .iter_mut()
+            .filter(|root| matches!(root, TestRoot::Attempt(candidate) if *candidate == source));
+        let first = destinations.next().expect("actual definition destination");
+        *first = TestRoot::Durable(definition);
+        let TestRoot::Durable(owner) = first else {
+            unreachable!()
+        };
+        for root in destinations {
+            *root = TestRoot::Durable(owner.retain());
         }
-        assert_ne!(matched, 0);
     }
 
     fn provenance_root_count(&self) -> usize {
@@ -349,7 +353,7 @@ fn promotion_follows_only_declared_roots_and_owned_definition_builders() {
             universe
                 .command_context()
                 .expect("test fixture is valid")
-                .definition(*destination.definition(0))
+                .definition(destination.definition(0))
                 .replacement_text(),
             &[word('x').token_word()]
         );
@@ -376,7 +380,7 @@ fn generic_cold_promotion_preserves_checked_definition_content() {
             .promote_into(universe, &mut destination)
             .expect("definition promotion");
         let context = universe.command_context().expect("admission");
-        let promoted_view = context.definition(*destination.definition(0));
+        let promoted_view = context.definition(destination.definition(0));
         assert_eq!(promoted_view.replacement_text().len(), 32);
         assert!(attempt.definition_builder(definition).is_err());
         let recycled = attempt
@@ -417,7 +421,7 @@ fn warmed_generic_single_definition_promotion_uses_no_semantic_apply_allocations
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
 
         let context = universe.command_context().expect("definition context");
-        let promoted = context.definition(*destination.definition(0));
+        let promoted = context.definition(destination.definition(0));
         assert_eq!(promoted.replacement_text(), [word('x').token_word()]);
     })
     .expect("test fixture is valid");

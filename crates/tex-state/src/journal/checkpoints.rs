@@ -20,16 +20,18 @@ struct AcceptedTail<G> {
 
 pub(super) struct CheckpointUndoLog<G> {
     entries: VecDeque<CheckpointDelta<G>>,
+    pub(super) roots: crate::definition_arena::DefinitionRoots,
     base: usize,
     cuts: Vec<CheckpointCut>,
     next_identity: u64,
     accepted: Option<AcceptedTail<G>>,
 }
 
-impl<G> Default for CheckpointUndoLog<G> {
-    fn default() -> Self {
+impl<G> CheckpointUndoLog<G> {
+    pub(super) fn new(roots: crate::definition_arena::DefinitionRoots) -> Self {
         Self {
             entries: VecDeque::new(),
+            roots,
             base: 0,
             cuts: Vec::new(),
             next_identity: 1,
@@ -39,6 +41,12 @@ impl<G> Default for CheckpointUndoLog<G> {
 }
 
 impl<G> CheckpointUndoLog<G> {
+    fn truncate_entries(&mut self, len: usize) {
+        for delta in self.entries.drain(len..) {
+            self.roots.release_word(&delta.alternate);
+        }
+    }
+
     pub(super) fn capture(&mut self) -> Result<CheckpointCut, StateError> {
         let identity = self.next_identity;
         let next = identity
@@ -96,6 +104,7 @@ impl<G> CheckpointUndoLog<G> {
     }
 
     pub(super) fn push(&mut self, delta: CheckpointDelta<G>) {
+        self.roots.acquire_word(&delta.alternate);
         self.entries.push_back(delta);
     }
 
@@ -135,7 +144,7 @@ impl<G> CheckpointUndoLog<G> {
 
     pub(super) fn restore(&mut self, cut: CheckpointCut) {
         assert!(self.validates(cut));
-        self.entries.truncate(cut.position - self.base);
+        self.truncate_entries(cut.position - self.base);
         self.cuts.truncate(
             self.cuts
                 .binary_search_by_key(&cut.identity, |cut| cut.identity)
@@ -203,7 +212,7 @@ impl<G> CheckpointUndoLog<G> {
 
     pub(super) fn reject(&mut self) {
         let tail = self.accepted.take().expect("one accepted tail");
-        self.entries.truncate(tail.start - self.base);
+        self.truncate_entries(tail.start - self.base);
         self.cuts
             .retain(|cut| cut.identity < tail.first_candidate_identity);
         self.entries.extend(tail.entries);
@@ -211,7 +220,10 @@ impl<G> CheckpointUndoLog<G> {
     }
 
     pub(super) fn accept(&mut self) -> Result<(), StateError> {
-        self.accepted.take().ok_or(StateError::InvalidCursor)?;
+        let mut tail = self.accepted.take().ok_or(StateError::InvalidCursor)?;
+        for delta in tail.entries.drain(..) {
+            self.roots.release_word(&delta.alternate);
+        }
         Ok(())
     }
 
@@ -220,7 +232,9 @@ impl<G> CheckpointUndoLog<G> {
             return Err(StateError::InvalidCursor);
         }
         let released = cut.position - self.base;
-        self.entries.drain(..released);
+        for delta in self.entries.drain(..released) {
+            self.roots.release_word(&delta.alternate);
+        }
         self.base = cut.position;
         self.cuts.retain(|root| root.identity >= cut.identity);
         self.entries.shrink_to_fit();
@@ -244,7 +258,7 @@ impl<G> CheckpointUndoLog<G> {
             self.cuts.retain(|cut| cut.identity != released.identity);
         } else {
             self.base = self.end();
-            self.entries.clear();
+            self.truncate_entries(0);
             self.cuts.clear();
             self.entries.shrink_to_fit();
             self.cuts.shrink_to_fit();
@@ -256,8 +270,19 @@ impl<G> CheckpointUndoLog<G> {
         self.cuts.retain(|cut| *cut != released);
         if self.cuts.is_empty() && !self.is_candidate() {
             self.base = self.end();
-            self.entries.clear();
+            self.truncate_entries(0);
             self.entries.shrink_to_fit();
+        }
+    }
+}
+
+impl<G> Drop for CheckpointUndoLog<G> {
+    fn drop(&mut self) {
+        self.truncate_entries(0);
+        if let Some(mut tail) = self.accepted.take() {
+            for delta in tail.entries.drain(..) {
+                self.roots.release_word(&delta.alternate);
+            }
         }
     }
 }

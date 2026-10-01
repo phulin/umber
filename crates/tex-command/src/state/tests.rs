@@ -20,7 +20,7 @@ enum ResidentRoot<Attempt, Durable> {
 struct ResidentPromotion<G> {
     tokens: Vec<ResidentRoot<AttemptTokenListId, TokenListId<G>>>,
     glue: Vec<ResidentRoot<AttemptGlueId, GlueId<G>>>,
-    definitions: Vec<ResidentRoot<AttemptDefinitionId, DefinitionRef<G>>>,
+    definitions: Vec<ResidentRoot<AttemptDefinitionId, tex_state::PublishedDefinition<G>>>,
     provenance: Vec<ResidentRoot<AttemptProvenanceId, ProvenanceId<G>>>,
 }
 
@@ -61,9 +61,9 @@ impl<G> ResidentPromotion<G> {
         }
     }
 
-    fn definition(&self, index: usize) -> &DefinitionRef<G> {
+    fn definition(&self, index: usize) -> DefinitionRef<G> {
         match &self.definitions[index] {
-            ResidentRoot::Durable(definition) => definition,
+            ResidentRoot::Durable(definition) => definition.reference(),
             ResidentRoot::Attempt(_) => panic!("definition root was not settled"),
         }
     }
@@ -165,16 +165,19 @@ impl<G> AttemptPromotionDestination<G> for ResidentPromotion<G> {
     fn settle_definition_root(
         &mut self,
         source: AttemptDefinitionId,
-        definition: DefinitionRef<G>,
+        definition: tex_state::PublishedDefinition<G>,
     ) {
-        let mut matched = 0;
-        for root in &mut self.definitions {
-            if matches!(root, ResidentRoot::Attempt(candidate) if *candidate == source) {
-                *root = ResidentRoot::Durable(definition);
-                matched += 1;
-            }
+        let mut destinations = self.definitions.iter_mut().filter(
+            |root| matches!(root, ResidentRoot::Attempt(candidate) if *candidate == source),
+        );
+        let first = destinations.next().expect("actual definition destination");
+        *first = ResidentRoot::Durable(definition);
+        let ResidentRoot::Durable(owner) = first else {
+            unreachable!()
+        };
+        for root in destinations {
+            *root = ResidentRoot::Durable(owner.retain());
         }
-        assert_ne!(matched, 0);
     }
 
     fn provenance_root_count(&self) -> usize {
@@ -555,7 +558,7 @@ fn attempt_promotion_returns_mixed_roots_in_declared_order() {
         assert_eq!(admitted.glue(destination.glue(0)), glue(42));
         assert_eq!(
             admitted
-                .definition(*destination.definition(0))
+                .definition(destination.definition(0))
                 .replacement_text(),
             &[word('x').token_word()]
         );
@@ -654,7 +657,7 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
                 universe
                     .command_context()
                     .expect("definition arena reserve context")
-                    .profile_reserve_definition_arena(repetitions, repetitions)
+                    .profile_reserve_definition_arena(repetitions)
                     .expect("pre-reserve definition arena capacity");
             }
 
@@ -715,7 +718,7 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
             let admitted = universe.command_context().expect("definition context");
             let mut checksum = 0_u64;
             for index in 0..repetitions {
-                let definition = admitted.definition(*destination.definition(index));
+                let definition = admitted.definition(destination.definition(index));
                 assert_eq!(definition.replacement_text(), [word('x').token_word()]);
                 checksum ^= u64::from(
                     definition
@@ -814,6 +817,8 @@ fn successful_scope_commit_reclaims_promoted_operation_rows() {
         let durable = state
             .promote_attempt_definition(universe, definition)
             .expect("successful operation publishes its durable root");
+        let durable_publication = durable;
+        let durable = durable_publication.reference();
 
         state.settle_attempt();
         assert!(state.attempt.is_clear());
@@ -834,12 +839,13 @@ fn warmed_parameterless_macro_rows_copy_only_compact_definition_keys() {
         let definition = universe
             .allocate_definition(&[], &[])
             .expect("empty macro definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let name = universe.intern("ownerprobe").expect("macro name").symbol();
         let context = universe.command_context().expect("command context");
         let mut state = CommandState::default();
 
         let mut run = |activations: u64| {
-            let retained_before = tex_state::definition_retain_count();
             for _ in 0..activations {
                 let body = context
                     .admit_macro_body(definition)
@@ -854,23 +860,13 @@ fn warmed_parameterless_macro_rows_copy_only_compact_definition_keys() {
                     .expect("live macro body");
                 assert!(arguments.is_empty() && replacement.is_empty());
                 assert!(state.scratch.is_quiescent());
-                let retained_before_context = tex_state::definition_retain_count();
+
                 assert!(state.output_open_context(&context).contains("ownerprobe"));
-                assert_eq!(
-                    tex_state::definition_retain_count(),
-                    retained_before_context,
-                    "context projection borrows the activation definition"
-                );
+
                 state
                     .retire_exhausted_input(level)
                     .expect("empty macro body retirement");
-                assert_eq!(definition.semantic_owner_count(), 0);
             }
-            assert_eq!(
-                tex_state::definition_retain_count() - retained_before,
-                0,
-                "compact definition keys do not retain per-definition owners"
-            );
         };
 
         // Warm every reusable activation/input/scratch lane before measuring.

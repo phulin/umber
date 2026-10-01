@@ -243,9 +243,12 @@ fn borrowed_meaning_row_copies_only_the_compact_definition_key() {
             .definitions_mut()
             .allocate(&[], &[TokenWord::pack(Token::frozen_relax())])
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let mut names = interner();
         let selector = names.intern("borrowed").expect("selector");
         let mut state = DenseState::new().expect("state allocation");
+        state.attach_definition_roots(generation.definitions().roots());
         state
             .admit_symbol(selector.symbol())
             .expect("admit selector");
@@ -256,22 +259,12 @@ fn borrowed_meaning_row_copies_only_the_compact_definition_key() {
                 AssignmentScope::Global,
             )
             .expect("assign macro");
-        assert_eq!(definition.semantic_owner_count(), 0);
 
         let word = state.meaning_word(selector.symbol()).expect("borrow row");
-        assert_eq!(
-            definition.semantic_owner_count(),
-            0,
-            "borrowing the dense row performs no region retain"
-        );
+
         let resolved = word.resolve();
-        assert_eq!(
-            definition.semantic_owner_count(),
-            0,
-            "delivery copies only the compact definition key"
-        );
+
         let _ = resolved;
-        assert_eq!(definition.semantic_owner_count(), 0);
     });
 }
 
@@ -310,6 +303,8 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
             .definitions_mut()
             .allocate(&[], &[TokenWord::pack(Token::frozen_relax())])
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let tokens = generation
             .token_lists_mut()
             .allocate(&[TokenWord::pack(Token::frozen_relax())])
@@ -317,6 +312,7 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
         let mut names = interner();
         let selector = names.intern("owned").expect("selector");
         let mut state = DenseState::new().expect("state allocation");
+        state.attach_definition_roots(generation.definitions().roots());
         state
             .admit_symbol(selector.symbol())
             .expect("admit selector");
@@ -332,11 +328,11 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
         state
             .assign_token_register(0, Some(tokens.clone()), AssignmentScope::Global)
             .expect("assign token list");
-        assert_eq!(definition.semantic_owner_count(), 0);
+
         assert_eq!(tokens.semantic_owner_count(), 3);
 
         state.restore(before).expect("rollback");
-        assert_eq!(definition.semantic_owner_count(), 0);
+
         assert_eq!(tokens.semantic_owner_count(), 2);
     });
 }

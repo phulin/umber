@@ -174,12 +174,10 @@ pub use command_context::{
     BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, EngineUsageStatistics,
     FontIdentifier, ParagraphShapeLine, PenaltyArrayKind, PrepareMagDiagnostic,
 };
-#[cfg(any(test, feature = "profiling", feature = "testing"))]
-pub use definition_arena::definition_retain_count;
 pub use definition_arena::{
     AdmittedMacroDefinition, DefinitionAllocationError, DefinitionBuildError, DefinitionBuildKey,
-    DefinitionBuildPhase, DefinitionBuildWriter, DefinitionBuilder, DefinitionDestination,
-    DefinitionRef, DefinitionView, DefinitionWords, ResidentMacroBody,
+    DefinitionBuildPhase, DefinitionBuildWriter, DefinitionBuilder, DefinitionRef, DefinitionView,
+    DefinitionWords, PublishedDefinition, ResidentMacroBody,
 };
 pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
@@ -238,12 +236,12 @@ pub use source_fragments::{
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use universe::{
-    DefinitionPromotion, EngineBoundaryHasher, InteractionMode, NodePromotionError,
-    PreparedRuntimeCheckpointReplay, PromotionError, PromotionReceipt, ResidentPromotionBatch,
-    RuntimeCheckpoint, RuntimeCheckpointFontScanCounters, RuntimeCheckpointIdentityRoots,
-    RuntimeCheckpointRetention, ShipoutTransaction, StateCheckpoint, StateCheckpointMark,
-    TokenListPromotion, Universe, UniverseError, UniverseRetirement, with_universe,
-    with_universe_for_profile, with_universe_in_epoch,
+    EngineBoundaryHasher, InteractionMode, NodePromotionError, PreparedRuntimeCheckpointReplay,
+    PromotionError, PromotionReceipt, ResidentPromotionBatch, RuntimeCheckpoint,
+    RuntimeCheckpointFontScanCounters, RuntimeCheckpointIdentityRoots, RuntimeCheckpointRetention,
+    ShipoutTransaction, StateCheckpoint, StateCheckpointMark, TokenListPromotion, Universe,
+    UniverseError, UniverseRetirement, with_universe, with_universe_for_profile,
+    with_universe_in_epoch,
 };
 #[cfg(feature = "profiling")]
 pub use universe::{SourceFontCheckpointHarness, SourceFontCheckpointMark};

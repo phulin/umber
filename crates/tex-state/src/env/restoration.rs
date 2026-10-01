@@ -30,7 +30,8 @@ impl<G> DenseState<G> {
         self.journal_mut().begin_unsave();
         while let Some(entry) = self.next_group_restore(frame, &mut cursor, &mut sparse) {
             if let JournalEntry::Mutation(saved) = entry {
-                entries.push(self.restore_group_mutation(&saved)?);
+                let mut saved = self.own_saved_mutation(saved);
+                entries.push(self.restore_group_mutation(&mut saved.saved)?);
             }
         }
         self.journal_mut().record_group_exit_with_records(frame);

@@ -23,31 +23,6 @@ use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 #[path = "stores/tests.rs"]
 mod tests;
 
-trait DefinitionBatchItem {
-    fn builder(&self) -> &crate::DefinitionBuilder;
-    fn builder_mut(&mut self) -> &mut crate::DefinitionBuilder;
-}
-
-impl DefinitionBatchItem for crate::DefinitionBuilder {
-    fn builder(&self) -> &crate::DefinitionBuilder {
-        self
-    }
-
-    fn builder_mut(&mut self) -> &mut crate::DefinitionBuilder {
-        self
-    }
-}
-
-impl DefinitionBatchItem for crate::universe::DefinitionPromotion {
-    fn builder(&self) -> &crate::DefinitionBuilder {
-        self.builder()
-    }
-
-    fn builder_mut(&mut self) -> &mut crate::DefinitionBuilder {
-        self.builder_mut()
-    }
-}
-
 /// Every mutable and immutable state owner for one revision generation.
 pub(crate) struct StateCore<G> {
     generation: GenerationOwner<G>,
@@ -56,7 +31,7 @@ pub(crate) struct StateCore<G> {
 
 pub(crate) struct AcceptedStateCoreTail<G> {
     dense: AcceptedDenseStateTail<G>,
-    generation: AcceptedGenerationTail<G>,
+    generation: AcceptedGenerationTail,
 }
 
 type CapturedFormatValues<G> = (
@@ -82,7 +57,6 @@ impl<G> StateCore<G> {
         &self,
         restart: crate::journal::JournalCursor<G>,
         prior: crate::journal::JournalCursor<G>,
-        accepted: &AcceptedStateCoreTail<G>,
     ) -> bool {
         self.state.definition_meanings_match_accepted_checkpoint(
             restart,
@@ -90,11 +64,8 @@ impl<G> StateCore<G> {
             |current, prior| {
                 self.generation
                     .generation()
-                    .current_and_accepted_definition_contents_equal(
-                        &accepted.generation,
-                        current,
-                        prior,
-                    )
+                    .definitions()
+                    .contents_equal(current, prior)
             },
         )
     }
@@ -134,6 +105,13 @@ impl<G> StateCore<G> {
                     .saturating_mul(std::mem::size_of::<usize>()),
             )
             .saturating_add(self.state.journal_retained_bytes())
+            .saturating_add(
+                self.generation
+                    .generation()
+                    .definitions()
+                    .roots()
+                    .retained_bytes(),
+            )
     }
 
     #[must_use]
@@ -197,9 +175,13 @@ impl<G> StateCore<G> {
         generation: Generation<G>,
         meaning_capacity: usize,
     ) -> Result<Self, StateError> {
+        let state = DenseState::new_with_meaning_capacity(
+            meaning_capacity,
+            generation.definitions().roots(),
+        )?;
         Ok(Self {
             generation: GenerationOwner::new(generation),
-            state: DenseState::new_with_meaning_capacity(meaning_capacity)?,
+            state,
         })
     }
 
@@ -208,10 +190,19 @@ impl<G> StateCore<G> {
         meaning_slots: usize,
         meaning_capacity: usize,
     ) -> Result<Self, StateError> {
+        let state = DenseState::new_format_with_meaning_capacity(
+            meaning_slots,
+            meaning_capacity,
+            generation.definitions().roots(),
+        )?;
         Ok(Self {
             generation: GenerationOwner::new(generation),
-            state: DenseState::new_format_with_meaning_capacity(meaning_slots, meaning_capacity)?,
+            state,
         })
+    }
+
+    pub(crate) fn definition_roots(&self) -> crate::definition_arena::DefinitionRoots {
+        self.generation.generation().definitions().roots()
     }
 
     #[must_use]
@@ -342,7 +333,7 @@ impl<'a, G> AdmittedState<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn definition(&self, id: DefinitionRef<G>) -> DefinitionView<'_, G> {
+    pub(crate) fn definition(&self, id: DefinitionRef<G>) -> DefinitionView<G> {
         self.generation.definitions().get(id)
     }
 
@@ -396,7 +387,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn definition(&self, id: DefinitionRef<G>) -> DefinitionView<'_, G> {
+    pub(crate) fn definition(&self, id: DefinitionRef<G>) -> DefinitionView<G> {
         self.generation.definitions().get(id)
     }
 
@@ -451,7 +442,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         &mut self,
         parameter_text: &[TokenWord],
         replacement_text: &[TokenWord],
-    ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
+    ) -> Result<crate::PublishedDefinition<G>, DefinitionAllocationError> {
         self.generation
             .definitions_mut()
             .allocate(parameter_text, replacement_text)
@@ -461,7 +452,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         &mut self,
         parameter_text: Parameters,
         replacement_text: Replacement,
-    ) -> Result<DefinitionRef<G>, DefinitionAllocationError>
+    ) -> Result<crate::PublishedDefinition<G>, DefinitionAllocationError>
     where
         Parameters: ExactSizeIterator<Item = TokenWord>,
         Replacement: ExactSizeIterator<Item = TokenWord>,
@@ -474,18 +465,15 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     pub(crate) fn publish_definition_builder(
         &mut self,
         builder: &mut crate::DefinitionBuilder,
-    ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
+    ) -> Result<crate::PublishedDefinition<G>, DefinitionAllocationError> {
         self.generation.definitions_mut().publish(builder)
     }
 
     pub(crate) fn begin_definition_build(
         &mut self,
-        destination: crate::DefinitionDestination,
         origin: crate::token::OriginId,
     ) -> Result<crate::DefinitionBuildKey<G>, DefinitionAllocationError> {
-        self.generation
-            .definitions_mut()
-            .begin_build(destination, origin)
+        self.generation.definitions_mut().begin_build(origin)
     }
 
     pub(crate) fn admit_definition_build_writer(
@@ -547,7 +535,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     pub(crate) fn seal_definition_build(
         &mut self,
         build: crate::DefinitionBuildKey<G>,
-    ) -> Result<DefinitionRef<G>, crate::DefinitionBuildError> {
+    ) -> Result<crate::PublishedDefinition<G>, crate::DefinitionBuildError> {
         self.generation.definitions_mut().seal_build(build)
     }
 
@@ -555,30 +543,12 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.definitions_mut().abort_build(build);
     }
 
-    pub(crate) fn promote_definition_global(
-        &mut self,
-        definition: DefinitionRef<G>,
-    ) -> Result<DefinitionRef<G>, DefinitionAllocationError> {
-        self.generation.definitions_mut().promote_global(definition)
-    }
-
     #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn reserve_definition_arena(
         &mut self,
         rows: usize,
-        words: usize,
     ) -> Result<(), DefinitionAllocationError> {
-        self.generation.definitions_mut().reserve_batch(rows, words)
-    }
-
-    pub(crate) fn definition_local_frontier(&self) -> Result<u32, DefinitionAllocationError> {
-        self.generation.definitions().local_frontier()
-    }
-
-    pub(crate) fn retire_definition_local_suffix(&mut self, frontier: u32) {
-        self.generation
-            .definitions_mut()
-            .retire_local_suffix(frontier);
+        self.generation.definitions_mut().reserve_batch(rows)
     }
 
     pub(crate) fn allocate_token_list(
@@ -668,7 +638,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     /// prevents any consumer from observing partial destination state.
     pub(crate) fn promote_values(
         &mut self,
-        definitions: &mut [crate::universe::DefinitionPromotion],
+        definitions: &mut [crate::DefinitionBuilder],
         token_lists: &[crate::universe::TokenListPromotion<'_>],
         glue_values: &[GlueSpec],
         provenance: &[OriginRecord],
@@ -703,11 +673,6 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         for index in 0..definition_source_count {
             definitions_arena.validate_builder(batch.definition(index))?;
         }
-        let definition_words = (0..definition_source_count)
-            .try_fold(0usize, |total, index| {
-                total.checked_add(batch.definition(index).words().len())
-            })
-            .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
         let token_words = (0..token_list_source_count)
             .try_fold(0usize, |total, index| {
                 total.checked_add(batch.token_list_len(index))
@@ -718,7 +683,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         // Publication and field settlement below are then infallible.
         self.generation
             .definitions_mut()
-            .reserve_batch(definition_count, definition_words)?;
+            .reserve_batch(definition_count)?;
         self.generation
             .token_lists_mut()
             .reserve_batch(token_list_count, token_words)?;
@@ -767,15 +732,14 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         Ok(())
     }
 
-    fn promote_value_streams_from<Definition, TokenLists, Words, Glue, Provenance>(
+    fn promote_value_streams_from<TokenLists, Words, Glue, Provenance>(
         &mut self,
-        definitions: &mut [Definition],
+        definitions: &mut [crate::DefinitionBuilder],
         token_lists: TokenLists,
         glue_values: Glue,
         provenance: Provenance,
     ) -> Result<crate::universe::PromotionReceipt<G>, crate::universe::PromotionError>
     where
-        Definition: DefinitionBatchItem,
         TokenLists: Clone + Iterator<Item = Words>,
         Words: ExactSizeIterator<Item = TokenWord>,
         Glue: Clone + Iterator<Item = GlueSpec>,
@@ -783,19 +747,13 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     {
         let definitions_arena = self.generation.definitions();
         for definition in definitions.iter() {
-            definitions_arena.validate_builder(definition.builder())?;
+            definitions_arena.validate_builder(definition)?;
         }
 
         let definition_count = definitions.len();
         let token_list_count = token_lists.clone().count();
         let glue_count = glue_values.clone().count();
         let provenance_count = provenance.clone().count();
-        let definition_words = definitions
-            .iter()
-            .try_fold(0usize, |total, definition| {
-                total.checked_add(definition.builder().words().len())
-            })
-            .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
         let token_words = token_lists
             .clone()
             .try_fold(0usize, |total, words| total.checked_add(words.len()))
@@ -806,7 +764,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         // allocate or fail for this validated batch.
         self.generation
             .definitions_mut()
-            .reserve_batch(definition_count, definition_words)?;
+            .reserve_batch(definition_count)?;
         self.generation
             .token_lists_mut()
             .reserve_batch(token_list_count, token_words)?;
@@ -815,7 +773,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .provenance_mut()
             .reserve_batch(provenance_count)?;
 
-        let mut promoted_definitions = SmallVec::<[DefinitionRef<G>; 4]>::new();
+        let mut promoted_definitions = SmallVec::<[crate::PublishedDefinition<G>; 4]>::new();
         let mut promoted_token_lists = SmallVec::<[TokenListId<G>; 4]>::new();
         let mut promoted_glue = SmallVec::<[GlueId<G>; 4]>::new();
         let mut promoted_provenance = SmallVec::<[ProvenanceId<G>; 4]>::new();
@@ -836,7 +794,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             promoted_definitions.push(
                 self.generation
                     .definitions_mut()
-                    .publish_prevalidated(definition.builder_mut()),
+                    .publish_prevalidated(definition),
             );
         }
         for words in token_lists {
@@ -888,19 +846,9 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             return Err(crate::universe::PromotionError::CapacityOverflow);
         }
         let definition_rows = live_definitions.iter().filter(|&&live| live).count();
-        let definition_words = definitions
-            .iter()
-            .zip(&live_definitions)
-            .filter(|(_, live)| **live)
-            .try_fold(0usize, |total, (definition, _)| {
-                total
-                    .checked_add(definition.parameter_text.len())
-                    .and_then(|total| total.checked_add(definition.replacement_text.len()))
-            })
-            .ok_or(crate::universe::PromotionError::CapacityOverflow)?;
         self.generation
             .definitions_mut()
-            .reserve_format_batch(definition_rows, definition_words)?;
+            .reserve_format_batch(definition_rows)?;
         self.generation
             .glue_mut()
             .reserve_batch(glue_values.len())?;

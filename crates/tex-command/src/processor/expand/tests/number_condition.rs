@@ -41,6 +41,8 @@ fn number_accepts_repeated_signs_spaces_and_macro_boundaries() {
                 &[TokenWord::pack(other('-')), TokenWord::pack(other('1'))],
             )
             .expect("minus-one definition");
+        let minusone_definition_publication = minusone_definition;
+        let minusone_definition = minusone_definition_publication.reference();
         let minusone = universe.intern("minusone").expect("minus-one macro");
         universe
             .assign_meaning(

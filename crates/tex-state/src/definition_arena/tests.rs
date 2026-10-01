@@ -1,18 +1,17 @@
 use super::{
     AdmittedMacroDefinition, DefinitionAllocationError, DefinitionBuildError, DefinitionBuildPhase,
-    DefinitionBuilder, DefinitionDestination,
+    DefinitionBuilder,
 };
 use crate::generation::with_generation;
 use crate::token::{Catcode, Token, TokenWord};
 
 fn direct_definition<G>(
     arena: &mut super::DefinitionArena<G>,
-    destination: DefinitionDestination,
     parameter: &[TokenWord],
     replacement: &[TokenWord],
-) -> super::DefinitionRef<G> {
+) -> super::PublishedDefinition<G> {
     let build = arena
-        .begin_build(destination, crate::token::OriginId::UNKNOWN)
+        .begin_build(crate::token::OriginId::UNKNOWN)
         .expect("definition transaction");
     for &word in parameter {
         arena.push_parameter(build, word).expect("parameter word");
@@ -50,20 +49,11 @@ fn letter(ch: char) -> TokenWord {
 }
 
 #[test]
-fn definition_handles_stay_compact() {
-    assert_eq!(std::mem::size_of::<super::DefinitionRef<()>>(), 8);
-    assert_eq!(std::mem::size_of::<super::ResidentMacroBody<()>>(), 8);
-}
-
-#[test]
 fn admitted_writer_round_trips_the_build_lane_without_copying() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
         let build = arena
-            .begin_build(
-                DefinitionDestination::Global,
-                crate::token::OriginId::UNKNOWN,
-            )
+            .begin_build(crate::token::OriginId::UNKNOWN)
             .expect("definition transaction");
         let mut writer = arena
             .admit_build_writer(build, DefinitionBuildPhase::OpenParameters)
@@ -73,8 +63,8 @@ fn admitted_writer_round_trips_the_build_lane_without_copying() {
             .expect("parameter");
         writer.finish_parameters().expect("parameter boundary");
         assert_eq!(
-            arena.seal_build(build),
-            Err(DefinitionBuildError::InvalidPhase),
+            arena.seal_build(build).err(),
+            Some(DefinitionBuildError::InvalidPhase),
             "an admitted writer owns the build"
         );
         let build = arena.release_build_writer(writer).expect("writer release");
@@ -87,6 +77,8 @@ fn admitted_writer_round_trips_the_build_lane_without_copying() {
             .expect("replacement reference");
         let build = arena.release_build_writer(writer).expect("writer release");
         let definition = arena.seal_build(build).expect("sealed definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let view = arena.get(definition);
         assert_eq!(view.parameter_text(), [TokenWord::pack(Token::param(1))]);
         assert_eq!(
@@ -102,118 +94,18 @@ fn aborted_build_publishes_nothing_and_releases_its_lane() {
         let baseline = generation.memory_accounting().words(false);
         let arena = generation.definitions_mut();
         let build = arena
-            .begin_build(
-                DefinitionDestination::Global,
-                crate::token::OriginId::UNKNOWN,
-            )
+            .begin_build(crate::token::OriginId::UNKNOWN)
             .expect("definition transaction");
         arena.finish_parameters(build).expect("parameter boundary");
         arena.push_replacement(build, letter('x')).expect("word");
         arena.abort_build(build);
         assert!(arena.is_empty());
-        let next = direct_definition(arena, DefinitionDestination::Global, &[], &[letter('y')]);
+        let next = direct_definition(arena, &[], &[letter('y')]);
+        let next_publication = next;
+        let next = next_publication.reference();
         assert_eq!(arena.get(next).replacement_text(), [letter('y')]);
-        arena.restore_cursor(super::DefinitionArenaCursor {
-            format_rows: 0,
-            global_rows: 0,
-        });
+        drop(next_publication);
         assert_eq!(generation.memory_accounting().words(false), baseline);
-    });
-}
-
-#[test]
-fn local_frontier_capture_rejects_an_active_build() {
-    with_generation(|mut generation| {
-        let arena = generation.definitions_mut();
-        let frontier_1 = arena.local_frontier().expect("group");
-        let build = arena
-            .begin_build(
-                DefinitionDestination::Local,
-                crate::token::OriginId::UNKNOWN,
-            )
-            .expect("local build");
-        assert_eq!(
-            arena.local_frontier(),
-            Err(DefinitionAllocationError::InvalidDefinition),
-            "a group cannot open across an active build"
-        );
-        arena.finish_parameters(build).expect("parameter boundary");
-        let local = arena.seal_build(build).expect("sealed local");
-        assert!(arena.get(local).replacement_text().is_empty());
-        arena.retire_local_suffix(frontier_1);
-        assert!(arena.is_empty());
-    });
-}
-
-#[test]
-fn group_exit_drops_only_its_own_local_rows() {
-    with_generation(|mut generation| {
-        let baseline = generation.memory_accounting().words(false);
-        let arena = generation.definitions_mut();
-        let frontier_2 = arena.local_frontier().expect("outer group");
-        let outer = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('o')]);
-        let frontier_3 = arena.local_frontier().expect("empty group");
-        arena.retire_local_suffix(frontier_3);
-        let frontier_4 = arena.local_frontier().expect("inner group");
-        let inner = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('i')]);
-        let global = direct_definition(arena, DefinitionDestination::Global, &[], &[letter('g')]);
-        assert_eq!(arena.len(), 3);
-        arena.retire_local_suffix(frontier_4);
-        assert_eq!(arena.len(), 2);
-        assert_eq!(arena.get(outer).replacement_text(), [letter('o')]);
-        assert_eq!(arena.get(global).replacement_text(), [letter('g')]);
-        assert!(arena.entry(inner).is_none());
-        arena.retire_local_suffix(frontier_2);
-        assert_eq!(arena.len(), 1);
-        arena.restore_cursor(super::DefinitionArenaCursor {
-            format_rows: 0,
-            global_rows: 0,
-        });
-        assert_eq!(generation.memory_accounting().words(false), baseline);
-    });
-}
-
-#[test]
-fn executing_local_body_outlives_its_group() {
-    with_generation(|mut generation| {
-        let arena = generation.definitions_mut();
-        let frontier_5 = arena.local_frontier().expect("local definition group");
-        let parameters = [
-            TokenWord::pack(Token::Char {
-                ch: '#',
-                cat: Catcode::Parameter,
-            }),
-            TokenWord::pack(Token::param(1)),
-        ];
-        let words = [
-            TokenWord::from_raw(17),
-            TokenWord::from_raw(23),
-            TokenWord::from_raw(29),
-        ];
-        let definition =
-            direct_definition(arena, DefinitionDestination::Local, &parameters, &words);
-        let body = arena
-            .admit_macro_body(definition)
-            .expect("resident local body");
-        assert_eq!(body.profile_region_owner_count(), 2);
-
-        arena.retire_local_suffix(frontier_5);
-
-        assert!(arena.entry(definition).is_none());
-        assert_eq!(body.profile_region_owner_count(), 1);
-        assert_eq!(body.parameter_len(), parameters.len());
-        assert_eq!(body.parameter_word(0), Some(parameters[0]));
-        assert_eq!(body.parameter_word(1), Some(parameters[1]));
-        assert_eq!(body.parameter_word(2), None);
-        assert_eq!(body.len(), words.len());
-        for (position, expected) in words.iter().copied().enumerate() {
-            assert_eq!(body.word(position), Some(expected));
-            assert_eq!(body.word_at(position as u32), Some(expected));
-        }
-        assert_eq!(body.word(3), None);
-        assert_eq!(body.word_at(3), None);
-        assert_eq!(body.replacement_from(1), &words[1..]);
-        assert!(body.replacement_from(4).is_empty());
     });
 }
 
@@ -221,14 +113,19 @@ fn executing_local_body_outlives_its_group() {
 fn admitted_macro_definition_classifies_simple_matching_and_empty() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
-        let empty = direct_definition(arena, DefinitionDestination::Global, &[], &[]);
-        let simple = direct_definition(arena, DefinitionDestination::Global, &[], &[letter('x')]);
+        let empty = direct_definition(arena, &[], &[]);
+        let empty_publication = empty;
+        let empty = empty_publication.reference();
+        let simple = direct_definition(arena, &[], &[letter('x')]);
+        let simple_publication = simple;
+        let simple = simple_publication.reference();
         let matching = direct_definition(
             arena,
-            DefinitionDestination::Global,
             &[TokenWord::pack(Token::param(1))],
             &[TokenWord::pack(Token::param(1))],
         );
+        let matching_publication = matching;
+        let matching = matching_publication.reference();
         assert!(matches!(
             arena.admit_macro_definition(empty),
             Some(AdmittedMacroDefinition::SimpleMacro { body: None, .. })
@@ -241,100 +138,6 @@ fn admitted_macro_definition_classifies_simple_matching_and_empty() {
             arena.admit_macro_definition(matching),
             Some(AdmittedMacroDefinition::MatchingMacro { body }) if body.parameter_len() == 1
         ));
-    });
-}
-
-#[test]
-fn local_promotion_copies_once_and_forgets_dropped_rows() {
-    with_generation(|mut generation| {
-        let arena = generation.definitions_mut();
-        let frontier_6 = arena.local_frontier().expect("outer group");
-        let outer = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('o')]);
-        let frontier_7 = arena.local_frontier().expect("inner group");
-        let inner = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('i')]);
-        let promoted_outer = arena.promote_global(outer).expect("outer promotion");
-        let promoted_inner = arena.promote_global(inner).expect("inner promotion");
-        assert_eq!(arena.promote_global(outer), Ok(promoted_outer));
-        assert_eq!(arena.promote_global(promoted_outer), Ok(promoted_outer));
-        arena.retire_local_suffix(frontier_7);
-
-        let replacement =
-            direct_definition(arena, DefinitionDestination::Local, &[], &[letter('r')]);
-        assert_eq!(replacement, inner, "the dropped local row is reused");
-        let promoted_replacement = arena.promote_global(replacement).expect("promotion");
-        assert_ne!(promoted_replacement, promoted_inner);
-        assert_eq!(arena.promote_global(outer), Ok(promoted_outer));
-        arena.retire_local_suffix(frontier_6);
-
-        assert_eq!(arena.get(promoted_outer).replacement_text(), [letter('o')]);
-        assert_eq!(arena.get(promoted_inner).replacement_text(), [letter('i')]);
-        assert_eq!(
-            arena.get(promoted_replacement).replacement_text(),
-            [letter('r')]
-        );
-    });
-}
-
-#[test]
-fn checkpoint_rejection_restores_detached_rows_at_their_numbers() {
-    with_generation(|mut generation| {
-        let arena = generation.definitions_mut();
-        let root = direct_definition(arena, DefinitionDestination::Global, &[], &[letter('r')]);
-        let checkpoint = arena.cursor();
-        let accepted = direct_definition(arena, DefinitionDestination::Global, &[], &[letter('a')]);
-        let tail = arena.begin_checkpoint_candidate(checkpoint);
-        let candidate = direct_definition(arena, DefinitionDestination::Global, &[], &[]);
-        assert_eq!(candidate, accepted, "the candidate reuses the detached row");
-        assert!(
-            !arena.current_and_accepted_contents_equal(&tail, candidate, accepted),
-            "a reused row number compares against the detached accepted row"
-        );
-        let equal = direct_definition(arena, DefinitionDestination::Global, &[], &[letter('a')]);
-        assert!(arena.current_and_accepted_contents_equal(&tail, equal, accepted));
-        assert!(arena.current_and_accepted_contents_equal(&tail, root, root));
-        arena.reject_checkpoint_candidate(checkpoint, tail);
-        assert_eq!(arena.get(root).replacement_text(), [letter('r')]);
-        assert_eq!(arena.get(accepted).replacement_text(), [letter('a')]);
-        assert_eq!(arena.len(), 2);
-    });
-}
-
-#[test]
-fn checkpoint_acceptance_releases_the_detached_rows() {
-    with_generation(|mut generation| {
-        let checkpoint = generation.definitions().cursor();
-        let baseline = generation.memory_accounting().words(false);
-        let arena = generation.definitions_mut();
-        let _accepted =
-            direct_definition(arena, DefinitionDestination::Global, &[], &[letter('a')]);
-        let tail = arena.begin_checkpoint_candidate(checkpoint);
-        arena.accept_checkpoint_candidate(tail);
-        assert!(arena.is_empty());
-        assert_eq!(generation.memory_accounting().words(false), baseline);
-    });
-}
-
-#[test]
-fn restore_discards_local_rows_and_an_active_build() {
-    with_generation(|mut generation| {
-        let arena = generation.definitions_mut();
-        let checkpoint = arena.cursor();
-        let local = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('l')]);
-        let body = arena.admit_macro_body(local).expect("body");
-        let build = arena
-            .begin_build(
-                DefinitionDestination::Local,
-                crate::token::OriginId::UNKNOWN,
-            )
-            .expect("build");
-        arena.restore_cursor(checkpoint);
-        assert!(arena.is_empty());
-        assert_eq!(
-            arena.finish_parameters(build),
-            Err(DefinitionBuildError::InvalidPhase)
-        );
-
-        assert_eq!(body.word(0), Some(letter('l')));
     });
 }
 
@@ -357,51 +160,14 @@ fn complete_rows_resolve_by_direct_id() {
             .definitions_mut()
             .allocate(&parameter, &replacement)
             .expect("test fixture is valid");
+        let id_publication = id;
+        let id = id_publication.reference();
 
         let view = generation.definitions().get(id);
         assert_eq!(view.parameter_text(), parameter);
         assert_eq!(view.replacement_text(), replacement);
         assert_eq!(view.parameter_pattern().parameter_count(), 1);
         assert_eq!(view.parameter_pattern().marker_index(0), Some(0));
-    });
-}
-
-#[test]
-fn content_identity_survives_allocation_order_and_local_promotion() {
-    with_generation(|mut generation| {
-        assert!(generation.enable_semantic_identity());
-        let arena = generation.definitions_mut();
-        let body = [TokenWord::pack(Token::frozen_relax())];
-        let local = direct_definition(arena, super::DefinitionDestination::Local, &[], &body);
-        let local_identity = arena
-            .get(local)
-            .semantic_identity()
-            .expect("semantic identity enabled");
-
-        let _unrelated = direct_definition(
-            arena,
-            super::DefinitionDestination::Global,
-            &[],
-            &[TokenWord::pack(Token::Char {
-                ch: 'x',
-                cat: Catcode::Letter,
-            })],
-        );
-        let equivalent = direct_definition(arena, super::DefinitionDestination::Global, &[], &body);
-        let promoted = arena.promote_global(local).expect("local promotion");
-
-        assert_eq!(
-            arena.get(equivalent).semantic_identity(),
-            Some(local_identity)
-        );
-        assert_eq!(
-            arena.get(promoted).semantic_identity(),
-            Some(local_identity)
-        );
-        assert_ne!(
-            local, promoted,
-            "promotion still changes storage coordinate"
-        );
     });
 }
 
@@ -413,10 +179,14 @@ fn equal_definitions_receive_distinct_ids() {
             .definitions_mut()
             .allocate(&[], &text)
             .expect("test fixture is valid");
+        let first_publication = first;
+        let first = first_publication.reference();
         let second = generation
             .definitions_mut()
             .allocate(&[], &text)
             .expect("test fixture is valid");
+        let second_publication = second;
+        let second = second_publication.reference();
 
         assert_ne!(first, second);
         assert_eq!(generation.definitions().len(), 2);
@@ -429,88 +199,29 @@ fn equal_definitions_receive_distinct_ids() {
 }
 
 #[test]
-fn definition_region_truncation_releases_complete_suffix() {
+fn sealed_builder_moves_between_generations_before_owning_publication() {
+    let parameter = [TokenWord::pack(Token::param(1)), letter('x')];
+    let replacement = [TokenWord::pack(Token::param(1)), letter('y')];
+    let builder = with_generation(|_| checked_builder(&parameter, &replacement));
     with_generation(|mut generation| {
-        let baseline = generation.memory_accounting().words(false);
-        let cursor = generation.definitions().cursor();
-        let id = generation
-            .definitions_mut()
-            .allocate(&[], &[TokenWord::pack(Token::frozen_relax())])
-            .expect("published definition");
-        assert_eq!(
-            generation.definitions().get(id).replacement_text(),
-            [TokenWord::pack(Token::frozen_relax())]
-        );
-        generation.definitions_mut().restore_cursor(cursor);
-        assert_eq!(generation.memory_accounting().words(false), baseline);
-    });
-}
-
-#[test]
-fn one_way_builder_transfer_prevents_cross_generation_aliasing() {
-    let word = TokenWord::pack(Token::frozen_relax());
-    let mut builder = checked_builder(&[], &[word]);
-    with_generation(|mut first_generation| {
-        let first_baseline = first_generation.memory_accounting().words(false);
-        let first_cursor = first_generation.definitions().cursor();
-        let first = first_generation
+        let mut builder = builder;
+        let publication = generation
             .definitions_mut()
             .publish(&mut builder)
-            .expect("first publication transfers the builder allocation");
-        assert_ne!(
-            first_generation.memory_accounting().words(false),
-            first_baseline
+            .expect("publication in receiving generation");
+        let reference = publication.reference();
+        let view = generation.definitions().get(reference);
+        assert_eq!(view.parameter_text(), parameter);
+        assert_eq!(view.replacement_text(), replacement);
+        assert_eq!(builder.phase(), DefinitionBuildPhase::Published);
+        drop(publication);
+        assert!(
+            generation
+                .definitions()
+                .admit_macro_body(reference)
+                .is_none()
         );
-
-        with_generation(|mut second_generation| {
-            let second_baseline = second_generation.memory_accounting().words(false);
-            let empty_second_cursor = second_generation.definitions().cursor();
-            let second_cursor = second_generation.definitions().cursor();
-            assert_eq!(
-                second_generation.definitions_mut().publish(&mut builder),
-                Err(DefinitionAllocationError::InvalidDefinition),
-                "the transferred allocation cannot be republished in another generation"
-            );
-            assert_eq!(second_generation.definitions().cursor(), second_cursor);
-            assert_eq!(
-                second_generation.memory_accounting().words(false),
-                second_baseline
-            );
-
-            builder.reset();
-            builder.finish_parameters().expect("empty parameter text");
-            builder.seal().expect("empty replacement text");
-            let second = second_generation
-                .definitions_mut()
-                .publish(&mut builder)
-                .expect("reset builder owns a new allocation for the second generation");
-            assert!(
-                second_generation
-                    .definitions()
-                    .get(second)
-                    .replacement_text()
-                    .is_empty()
-            );
-            second_generation
-                .definitions_mut()
-                .restore_cursor(empty_second_cursor);
-            assert_eq!(
-                second_generation.memory_accounting().words(false),
-                second_baseline
-            );
-        });
-
-        assert_eq!(
-            first_generation.definitions().get(first).replacement_text(),
-            [word]
-        );
-        first_generation
-            .definitions_mut()
-            .restore_cursor(first_cursor);
-        assert_eq!(
-            first_generation.memory_accounting().words(false),
-            first_baseline
-        );
+        assert_eq!(view.replacement_text(), replacement);
     });
 }
 
@@ -520,24 +231,28 @@ fn invalid_parameter_program_does_not_publish_a_partial_row() {
         let too_many = std::array::from_fn::<_, 10, _>(|index| {
             TokenWord::pack(Token::param((index + 1).min(9) as u8))
         });
-        let cursor = generation.definitions().cursor();
+        let cursor = generation.definitions().len();
         let accounting = generation.memory_accounting().words(false);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             generation.definitions_mut().allocate(&too_many, &[])
         }));
 
         assert_eq!(
-            result.expect("malformed definition is an ordinary error"),
-            Err(DefinitionAllocationError::InvalidDefinition)
+            result
+                .expect("malformed definition is an ordinary error")
+                .err(),
+            Some(DefinitionAllocationError::InvalidDefinition)
         );
         assert!(generation.definitions().is_empty());
-        assert_eq!(generation.definitions().cursor(), cursor);
+        assert_eq!(generation.definitions().len(), cursor);
         assert_eq!(generation.memory_accounting().words(false), accounting);
 
         let valid = generation
             .definitions_mut()
             .allocate(&[], &[])
             .expect("test fixture is valid");
+        let valid_publication = valid;
+        let valid = valid_publication.reference();
         assert!(
             generation
                 .definitions()
@@ -565,6 +280,8 @@ fn checked_builder_accepts_custom_markers_and_all_nine_parameters() {
             .definitions_mut()
             .publish(&mut builder)
             .expect("publish checked program");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let view = generation.definitions().get(definition);
         let reference = crate::macro_definition::MacroParameterPattern::from_words(&parameters)
             .expect("independent one-shot parameter program");
@@ -656,10 +373,14 @@ fn injected_reserve_failure_preserves_validated_contents_and_reusable_capacity()
             .definitions_mut()
             .publish(&mut builder)
             .expect("row after reserve failure");
+        let after_failure_publication = after_failure;
+        let after_failure = after_failure_publication.reference();
         let reference = generation
             .definitions_mut()
             .publish(&mut reference)
             .expect("reference row");
+        let reference_publication = reference;
+        let reference = reference_publication.reference();
         assert!(
             generation
                 .definitions()
@@ -687,6 +408,8 @@ fn distinct_refs_compare_validated_contents_and_boundaries_lazily() {
             .definitions_mut()
             .allocate(&[a], &[b])
             .expect("ordinary allocation");
+        let ordinary_publication = ordinary;
+        let ordinary = ordinary_publication.reference();
 
         let mut streamed = DefinitionBuilder::new();
         streamed.push_parameter(a).expect("parameter");
@@ -697,6 +420,8 @@ fn distinct_refs_compare_validated_contents_and_boundaries_lazily() {
             .definitions_mut()
             .publish(&mut streamed)
             .expect("streamed publication");
+        let streamed_publication = streamed;
+        let streamed = streamed_publication.reference();
         assert_ne!(ordinary, streamed);
         assert!(generation.definitions().contents_equal(ordinary, ordinary));
         assert!(generation.definitions().contents_equal(ordinary, streamed));
@@ -705,6 +430,8 @@ fn distinct_refs_compare_validated_contents_and_boundaries_lazily() {
             .definitions_mut()
             .allocate(&[a, b], &[])
             .expect("different framing");
+        let differently_framed_publication = differently_framed;
+        let differently_framed = differently_framed_publication.reference();
         assert!(
             !generation
                 .definitions()
@@ -715,60 +442,12 @@ fn distinct_refs_compare_validated_contents_and_boundaries_lazily() {
             .definitions_mut()
             .allocate(&[a], &[a])
             .expect("different replacement");
+        let different_replacement_publication = different_replacement;
+        let different_replacement = different_replacement_publication.reference();
         assert!(
             !generation
                 .definitions()
                 .contents_equal(ordinary, different_replacement)
         );
-    });
-}
-
-#[test]
-fn sealed_matcher_survives_promotion_group_exit_and_format_materialization() {
-    with_generation(|mut generation| {
-        let arena = generation.definitions_mut();
-        let parameters = [
-            letter('p'),
-            TokenWord::pack(Token::param(1)),
-            letter('a'),
-            letter('b'),
-            letter('a'),
-            letter('b'),
-        ];
-        let frontier_10 = arena.local_frontier().expect("group");
-        let local = direct_definition(
-            arena,
-            DefinitionDestination::Local,
-            &parameters,
-            &[TokenWord::pack(Token::param(1))],
-        );
-        let resident = arena.admit_macro_body(local).expect("resident definition");
-        let promoted = arena.promote_global(local).expect("promotion");
-        let wire = arena.get(promoted).capture_format();
-        let imported = arena
-            .publish_format_row(&wire)
-            .expect("format materialization");
-        let allocated = arena
-            .allocate(&parameters, &[TokenWord::pack(Token::param(1))])
-            .expect("detached builder publication");
-        arena.retire_local_suffix(frontier_10);
-        assert_eq!(
-            resident.parameter_pattern(),
-            arena.get(promoted).parameter_pattern()
-        );
-        assert_eq!(
-            resident.parameter_pattern(),
-            arena.get(imported).parameter_pattern()
-        );
-        assert_eq!(
-            resident.parameter_pattern(),
-            arena.get(allocated).parameter_pattern()
-        );
-        let delimiter = resident
-            .parameter_pattern()
-            .delimiter(0, resident.parameter_words());
-        assert_eq!(delimiter.words(), &parameters[2..]);
-        assert_eq!(delimiter.overlap(3, letter('b')), 3);
-        assert_eq!(delimiter.overlap(3, letter('a')), 1);
     });
 }

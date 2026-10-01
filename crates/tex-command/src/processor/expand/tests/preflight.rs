@@ -37,6 +37,8 @@ fn expandable_preflight_delivery_uses_one_caller_owned_command_slot() {
         let definition = universe
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("m").expect("macro name");
         universe
             .assign_meaning(
@@ -97,6 +99,8 @@ fn source_macro_preflight_materializes_only_when_observed() {
         let definition = universe
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("m").expect("macro name");
         universe
             .assign_meaning(
@@ -219,6 +223,8 @@ fn preflight_end_template_inserts_and_reads_frozen_endv() {
 fn empty_macro_preflight_reaches_end_without_an_expanded_command() {
     crate::test_harness::with_universe(|universe| {
         let definition = universe.allocate_definition(&[], &[]).expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("empty").expect("macro name");
         universe
             .assign_meaning(

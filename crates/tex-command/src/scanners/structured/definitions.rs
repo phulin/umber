@@ -103,14 +103,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_macro_definition(
         &mut self,
         expanded: bool,
-        global: bool,
     ) -> Result<ScannedMacroDefinition<G>, CommandError> {
         let target = self.scan_definition_target()?;
-        let scanned = self.scan_toks_buffers(ScanToksMode::MacroDefinitionFor {
-            expanded,
-            target,
-            global,
-        })?;
+        let scanned =
+            self.scan_toks_buffers(ScanToksMode::MacroDefinitionFor { expanded, target })?;
         let provenance = StructuredProvenance {
             primary: scanned.primary,
         };

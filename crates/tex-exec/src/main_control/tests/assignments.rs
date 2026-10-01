@@ -581,6 +581,8 @@ fn meaning_mutation_value_projects_protected_macro_storage_marker() {
         let definition = stores
             .allocate_definition(&[], &[])
             .expect("empty protected macro definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
 
         let value = admitted!(stores, |context| meaning_mutation_value(
             tex_state::ResolvedMeaning::Macro {

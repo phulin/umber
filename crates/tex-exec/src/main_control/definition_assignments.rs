@@ -8,13 +8,15 @@ use super::*;
 
 pub(super) fn apply_macro_definition<G>(
     target: Symbol,
-    definition: tex_state::DefinitionRef<G>,
+    definition: tex_state::PublishedDefinition<G>,
     flags: MeaningFlags,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let observed_definition = command.observes_mutations().then_some(definition);
+    let observed_definition = command
+        .observes_mutations()
+        .then_some(definition.reference());
     commit_macro_definition(
         target,
         definition,
@@ -64,7 +66,7 @@ pub(super) fn apply_macro_definition<G>(
 /// Commits §1218's macro definition and its §1211 assignment trace.
 pub(super) fn commit_macro_definition<G>(
     target: Symbol,
-    definition: tex_state::DefinitionRef<G>,
+    definition: tex_state::PublishedDefinition<G>,
     flags: MeaningFlags,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
@@ -78,11 +80,7 @@ pub(super) fn commit_macro_definition<G>(
         global,
         |stores| {
             stores
-                .assign_resolved_meaning(
-                    target,
-                    tex_state::meaning::ResolvedMeaning::Macro { flags, definition },
-                    assignment_scope(global),
-                )
+                .assign_published_definition(target, definition, flags, assignment_scope(global))
                 .expect("macro target belongs to the admitted generation");
         },
     );
@@ -117,18 +115,11 @@ pub(super) fn apply_let<G>(
 /// definition.
 pub(super) fn commit_let<G>(
     target: Symbol,
-    mut meaning: tex_state::meaning::ResolvedMeaning<G>,
+    meaning: tex_state::meaning::ResolvedMeaning<G>,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<Option<tex_state::meaning::ResolvedMeaning<G>>, ExecError> {
-    if global && let tex_state::meaning::ResolvedMeaning::Macro { definition, .. } = &mut meaning {
-        *definition = stores.promote_definition_global(*definition).map_err(|_| {
-            ExecError::Command(tex_command::CommandError::Fatal(
-                tex_command::FatalError::overflow("definition arena", i32::MAX),
-            ))
-        })?;
-    }
     // TeX82 §§277/1221 always route `\let` through `eq_define`. e-TeX change
     // [19.277] (retained by pdftex.web §277) alone suppresses an identical
     // local definition while extended mode is active.

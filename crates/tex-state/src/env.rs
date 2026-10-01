@@ -414,6 +414,8 @@ pub enum StateError {
     Bank(BankError),
     ForeignSession,
     InvalidCursor,
+    /// A nonowning macro key no longer has a live semantic owner.
+    InvalidDefinition,
     CellKindMismatch,
     /// A checkpoint was requested while TeX grouping or a state transaction
     /// still owns save records. Checkpoints are admitted only at level zero.
@@ -439,6 +441,7 @@ pub(crate) struct DenseState<G> {
     /// assignment level and checkpoint serials live in MeaningBank's cold
     /// parallel arrays and are never read by ordinary command resolution.
     meanings: MeaningBank<MeaningWord<G>>,
+    definition_roots: crate::definition_arena::DefinitionRoots,
     counts: RegisterBank<i32>,
     dimensions: RegisterBank<Scaled>,
     token_registers: RegisterBank<Option<TokenListId<G>>>,
@@ -765,8 +768,7 @@ impl<G> DenseState<G> {
                                 .ok_or("format macro reference is not live")?,
                         },
                     };
-                    self.meanings
-                        .write(index, meaning, LEVEL_ONE, 0)
+                    self.replace_meaning(index, meaning, LEVEL_ONE, 0)
                         .map_err(|_| "format meaning index is out of range")?;
                 }
                 FormatCell::Count(index, value) => self
@@ -891,19 +893,33 @@ impl<G> DenseState<G> {
     }
     #[cfg(test)]
     pub(crate) fn new() -> Result<Self, StateError> {
-        Self::new_with_meaning_capacity(DEFAULT_MEANING_CAPACITY)
+        Self::new_with_meaning_capacity(
+            DEFAULT_MEANING_CAPACITY,
+            crate::definition_arena::DefinitionRoots::default(),
+        )
     }
 
     /// Constructs a fresh state with once-reserved Symbol-indexed meaning
     /// storage. Production callers pass the physical session interner
     /// capacity; the small default exists for crate-local state fixtures.
-    pub(crate) fn new_with_meaning_capacity(meaning_capacity: usize) -> Result<Self, StateError> {
-        Self::new_with_meanings(MeaningBank::new(meaning_capacity, MeaningWord::UNDEFINED)?)
+    pub(crate) fn new_with_meaning_capacity(
+        meaning_capacity: usize,
+        roots: crate::definition_arena::DefinitionRoots,
+    ) -> Result<Self, StateError> {
+        Self::new_with_meanings(
+            MeaningBank::new(meaning_capacity, MeaningWord::UNDEFINED)?,
+            roots,
+        )
     }
 
-    fn new_with_meanings(meanings: MeaningBank<MeaningWord<G>>) -> Result<Self, StateError> {
+    fn new_with_meanings(
+        meanings: MeaningBank<MeaningWord<G>>,
+        definition_roots: crate::definition_arena::DefinitionRoots,
+    ) -> Result<Self, StateError> {
+        let journal = SaveJournal::new(definition_roots.clone());
         Ok(Self {
             meanings,
+            definition_roots,
             counts: RegisterBank::new(zero_i32)?,
             dimensions: RegisterBank::new(zero_scaled)?,
             token_registers: RegisterBank::new(no_token_list::<G>)?,
@@ -927,7 +943,7 @@ impl<G> DenseState<G> {
             delcodes: PagedDenseBank::new(UNICODE_SCALAR_COUNT, delcode_default, LEVEL_ONE)?,
             font_runtime: FontRuntimeBank::new(),
             fresh_parameter_profiles: 0,
-            journal: Some(SaveJournal::new()),
+            journal: Some(journal),
             next_group_lineage: 1,
             reachable_state_identity_enabled: false,
         })
@@ -938,12 +954,12 @@ impl<G> DenseState<G> {
     pub(crate) fn new_format_with_meaning_capacity(
         meaning_slots: usize,
         meaning_capacity: usize,
+        roots: crate::definition_arena::DefinitionRoots,
     ) -> Result<Self, StateError> {
-        Self::new_with_meanings(MeaningBank::format_prefix(
-            meaning_slots,
-            meaning_capacity,
-            MeaningWord::UNDEFINED,
-        )?)
+        Self::new_with_meanings(
+            MeaningBank::format_prefix(meaning_slots, meaning_capacity, MeaningWord::UNDEFINED)?,
+            roots,
+        )
     }
 
     pub(crate) fn enable_reachable_state_identity(&mut self) -> bool {
@@ -1184,12 +1200,45 @@ impl<G> DenseState<G> {
         Ok(self.meanings.get_ref(symbol.raw())?)
     }
 
+    #[cfg(test)]
+    pub(crate) fn attach_definition_roots(
+        &mut self,
+        roots: crate::definition_arena::DefinitionRoots,
+    ) {
+        self.journal_mut().attach_definition_roots(roots.clone());
+        self.definition_roots = roots;
+    }
+
+    fn replace_meaning(
+        &mut self,
+        index: u32,
+        value: MeaningWord<G>,
+        level: u32,
+        epoch: u64,
+    ) -> Result<(), StateError> {
+        let before = *self.meanings.get_ref(index)?;
+        self.definition_roots.acquire_meaning(value);
+        self.meanings.write(index, value, level, epoch)?;
+        self.definition_roots.release_meaning(before);
+        Ok(())
+    }
+
+    pub(crate) fn own_saved_mutation(&self, saved: Mutation<G>) -> OwnedMutation<G> {
+        OwnedMutation {
+            saved,
+            roots: self.definition_roots.clone(),
+        }
+    }
+
     pub(crate) fn assign_meaning(
         &mut self,
         symbol: Symbol,
         value: MeaningWord<G>,
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
+        if !self.definition_roots.validates_meaning(value) {
+            return Err(StateError::InvalidDefinition);
+        }
         let index = symbol.raw();
         let (before_value, before_level, before_host_epoch) = self.meanings.row(index)?;
         let current_level = self.current_level();
@@ -1212,7 +1261,7 @@ impl<G> DenseState<G> {
                 saved_at,
             );
         }
-        self.meanings.write(index, value, after_level, host_epoch)?;
+        self.replace_meaning(index, value, after_level, host_epoch)?;
         Ok(())
     }
 
@@ -1663,10 +1712,6 @@ impl<G> DenseState<G> {
             .saturating_sub(latest.map_or(0, |(_, words)| words))
     }
 
-    pub(crate) fn set_group_definition_frontier(&mut self, frontier: u32) {
-        self.journal_mut().set_definition_frontier(frontier);
-    }
-
     pub(crate) fn begin_group(
         &mut self,
         kind: GroupKind,
@@ -1694,35 +1739,46 @@ impl<G> DenseState<G> {
             save_stack_words_before,
             latest_save_push_before,
         );
-        self.journal_mut()
-            .record_group_enter_with_frontier(frame, 0);
+        self.journal_mut().record_group_enter(frame);
         Ok(frame)
     }
 
     pub(crate) fn restore_group_mutation(
         &mut self,
-        saved: &Mutation<G>,
+        saved: &mut Mutation<G>,
     ) -> Result<GroupRestorationEntry<G>, StateError> {
         let cell = saved.cell();
+        let before = saved.before.clone();
         let current = self.read_cell(cell)?;
         // A global definition made after this save suppresses it exactly
         // as TeX's `level_one` check in `unsave` does.
         let (live, outcome) = if current.level == LEVEL_ONE {
             (current.value, GroupRestorationOutcome::Retained)
         } else {
-            self.write_cell(
-                cell,
-                BankCell::new(
-                    saved.before.clone(),
-                    saved.before_level,
+            if let (StateCell::Meaning(index), StateWord::Meaning(value)) =
+                (cell, &mut saved.before)
+            {
+                self.meanings.swap(
+                    index,
+                    value,
+                    &mut saved.before_level,
                     self.journal().host_epoch(),
-                ),
-            )?;
-            (saved.before.clone(), GroupRestorationOutcome::Restored)
+                )?;
+            } else {
+                self.write_cell(
+                    cell,
+                    BankCell::new(
+                        saved.before.clone(),
+                        saved.before_level,
+                        self.journal().host_epoch(),
+                    ),
+                )?;
+            }
+            (before.clone(), GroupRestorationOutcome::Restored)
         };
         Ok(GroupRestorationEntry {
             cell: restoration_cell(cell),
-            saved: restoration_value(saved.before.clone()),
+            saved: restoration_value(before),
             live: restoration_value(live),
             outcome,
             trace: self.group_restoration_trace_state()?,
@@ -1987,7 +2043,7 @@ impl<G> DenseState<G> {
         } = value;
         match (cell, value) {
             (StateCell::Meaning(index), StateWord::Meaning(word)) => {
-                self.meanings.write(index, word, level, host_epoch)?
+                self.replace_meaning(index, word, level, host_epoch)?
             }
             (StateCell::Count(index), StateWord::Integer(word)) => self
                 .counts
@@ -2549,4 +2605,22 @@ fn no_token_list<G>(_: u32) -> Option<TokenListId<G>> {
 
 fn no_glue<G>(_: u32) -> Option<GlueId<G>> {
     None
+}
+
+/// The actual popped preimage owner during synchronous unsave observation.
+pub(crate) struct OwnedMutation<G> {
+    pub(crate) saved: Mutation<G>,
+    roots: crate::definition_arena::DefinitionRoots,
+}
+impl<G> Drop for OwnedMutation<G> {
+    fn drop(&mut self) {
+        self.roots.release_word(&self.saved.before);
+    }
+}
+impl<G> Drop for DenseState<G> {
+    fn drop(&mut self) {
+        for value in self.meanings.values() {
+            self.definition_roots.release_meaning(value);
+        }
+    }
 }

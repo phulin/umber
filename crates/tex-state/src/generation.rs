@@ -3,7 +3,7 @@
 use core::marker::PhantomData;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::definition_arena::{AcceptedDefinitionTail, DefinitionArena, DefinitionArenaCursor};
+use crate::definition_arena::DefinitionArena;
 use crate::durable_arena::{AcceptedTokenListTail, GlueArena, ProvenanceArena, TokenListArena};
 use crate::memory_accounting::MemoryAccounting;
 use crate::provenance::OriginRecord;
@@ -56,14 +56,12 @@ pub(crate) struct Generation<G> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct GenerationCursor {
-    definitions: DefinitionArenaCursor,
     token_lists: u32,
     glue: usize,
     provenance: usize,
 }
 
-pub(crate) struct AcceptedGenerationTail<G> {
-    definitions: AcceptedDefinitionTail<G>,
+pub(crate) struct AcceptedGenerationTail {
     token_lists: AcceptedTokenListTail,
     glue: Vec<crate::glue::GlueSpec>,
     provenance: Vec<OriginRecord>,
@@ -208,16 +206,6 @@ pub(crate) struct GenerationRetirement {
 }
 
 impl<G> Generation<G> {
-    pub(crate) fn current_and_accepted_definition_contents_equal(
-        &self,
-        accepted: &AcceptedGenerationTail<G>,
-        current: crate::DefinitionRef<G>,
-        prior: crate::DefinitionRef<G>,
-    ) -> bool {
-        self.definitions
-            .current_and_accepted_contents_equal(&accepted.definitions, current, prior)
-    }
-
     pub(crate) fn new() -> Self {
         let accounting = MemoryAccounting::default();
         Self {
@@ -231,7 +219,6 @@ impl<G> Generation<G> {
 
     pub(crate) fn cursor(&self) -> GenerationCursor {
         GenerationCursor {
-            definitions: self.definitions.cursor(),
             token_lists: self.token_lists.cursor(),
             glue: self.glue.len(),
             provenance: self.provenance.len(),
@@ -239,15 +226,14 @@ impl<G> Generation<G> {
     }
 
     pub(crate) fn validates_cursor(&self, cursor: GenerationCursor) -> bool {
-        self.definitions.validates_cursor(cursor.definitions)
-            && cursor.token_lists <= self.token_lists.cursor()
+        cursor.token_lists <= self.token_lists.cursor()
             && cursor.glue <= self.glue.len()
             && cursor.provenance <= self.provenance.len()
     }
 
     pub(crate) fn restore_cursor(&mut self, cursor: GenerationCursor) {
         assert!(self.validates_cursor(cursor));
-        self.definitions.restore_cursor(cursor.definitions);
+        self.definitions.abort_interrupted_build();
         self.token_lists.restore_cursor(cursor.token_lists);
         self.glue.truncate(cursor.glue);
         self.provenance.truncate(cursor.provenance);
@@ -265,18 +251,14 @@ impl<G> Generation<G> {
     pub(crate) fn begin_checkpoint_candidate(
         &mut self,
         cursor: GenerationCursor,
-    ) -> AcceptedGenerationTail<G> {
+    ) -> AcceptedGenerationTail {
         assert!(self.validates_cursor(cursor));
-        let definitions = self
-            .definitions
-            .begin_checkpoint_candidate(cursor.definitions);
         let glue = self.glue.split_off(cursor.glue);
         let provenance = self.provenance.split_off(cursor.provenance);
         let token_lists = self
             .token_lists
             .begin_checkpoint_candidate(cursor.token_lists);
         AcceptedGenerationTail {
-            definitions,
             token_lists,
             glue,
             provenance,
@@ -286,7 +268,7 @@ impl<G> Generation<G> {
     pub(crate) fn reject_checkpoint_candidate(
         &mut self,
         cursor: GenerationCursor,
-        mut tail: AcceptedGenerationTail<G>,
+        mut tail: AcceptedGenerationTail,
     ) {
         // Candidate-local publisher coordinates are disposable. They can be
         // lower than the rooted coordinate when initialization abandoned an
@@ -298,15 +280,12 @@ impl<G> Generation<G> {
         self.provenance.truncate(cursor.provenance);
         self.glue.append_rows(&mut tail.glue);
         self.provenance.append_rows(&mut tail.provenance);
-        self.definitions
-            .reject_checkpoint_candidate(cursor.definitions, tail.definitions);
+        self.definitions.abort_interrupted_build();
         self.token_lists
             .reject_checkpoint_candidate(cursor.token_lists, tail.token_lists);
     }
 
-    pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedGenerationTail<G>) {
-        self.definitions
-            .accept_checkpoint_candidate(tail.definitions);
+    pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedGenerationTail) {
         self.token_lists
             .accept_checkpoint_candidate(tail.token_lists);
     }

@@ -23,6 +23,8 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
     crate::test_harness::with_universe(|universe| {
         let symbol = universe.intern("hotmacro").expect("intern");
         let definition = universe.allocate_definition(&[], &[]).expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         universe
             .assign_meaning(
                 symbol,
@@ -273,6 +275,8 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
         let definition = universe
             .allocate_definition(&[], &[replacement])
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("macro").expect("intern");
         universe
             .assign_meaning(
@@ -316,7 +320,7 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
 }
 
 #[test]
-fn packed_input_resolution_copies_only_the_definition_key() {
+fn packed_input_resolution_replaces_the_destination_with_the_new_meaning() {
     crate::test_harness::with_universe(|universe| {
         let definition = universe
             .allocate_definition(
@@ -327,6 +331,8 @@ fn packed_input_resolution_copies_only_the_definition_key() {
                 })],
             )
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("ownedmacro").expect("intern");
         universe
             .assign_meaning(
@@ -335,7 +341,7 @@ fn packed_input_resolution_copies_only_the_definition_key() {
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
-        let baseline = definition.semantic_owner_count();
+
         let mut command = HotCommand::empty();
 
         let context = universe.command_context().expect("command context");
@@ -347,7 +353,6 @@ fn packed_input_resolution_copies_only_the_definition_key() {
             false,
             &context,
         );
-        assert_eq!(definition.semantic_owner_count(), baseline);
 
         let _ = command.write_resolved_delivery(
             TokenWord::pack(Token::Char {
@@ -360,9 +365,10 @@ fn packed_input_resolution_copies_only_the_definition_key() {
             false,
             &context,
         );
-        // The next destination-directed write replaces the sole prior owner;
-        // no intermediate resolved carrier acquires another one.
-        assert_eq!(definition.semantic_owner_count(), baseline);
+        assert!(matches!(
+            command.static_meaning(),
+            Some(Meaning::CharToken { ch: 'x', .. })
+        ));
     });
 }
 
@@ -494,6 +500,8 @@ fn direct_delivery_preserves_table_meaning_families_and_active_namespace() {
                 })],
             )
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         for (symbol, meaning) in [
             (
                 primitive,

@@ -982,8 +982,11 @@ impl BoxFixture {
     fn new() -> Self {
         Self {
             boxes: DurableBoxState::new(),
-            dense_state: crate::env::DenseState::new_with_meaning_capacity(1)
-                .expect("native group fixture"),
+            dense_state: crate::env::DenseState::new_with_meaning_capacity(
+                1,
+                crate::definition_arena::DefinitionRoots::default(),
+            )
+            .expect("native group fixture"),
         }
     }
     fn begin_group(&mut self, level: u32) {

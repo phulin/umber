@@ -234,8 +234,17 @@ struct SaveJournalProfile {
 }
 
 impl<G> SaveJournal<G> {
+    #[cfg(test)]
+    pub(crate) fn attach_definition_roots(
+        &mut self,
+        roots: crate::definition_arena::DefinitionRoots,
+    ) {
+        self.active_sequence.roots = roots.clone();
+        self.checkpoint_undo.roots = roots;
+    }
+
     #[must_use]
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(roots: crate::definition_arena::DefinitionRoots) -> Self {
         let owner = NEXT_JOURNAL_OWNER
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
@@ -244,8 +253,8 @@ impl<G> SaveJournal<G> {
 
         Self {
             owner,
-            active_sequence: GroupSaveStack::default(),
-            checkpoint_undo: CheckpointUndoLog::default(),
+            active_sequence: GroupSaveStack::new(roots.clone()),
+            checkpoint_undo: CheckpointUndoLog::new(roots),
             checkpoint_entries: 0,
             // Before the first named checkpoint there is no earlier state to
             // retain. Cells and the journal therefore begin in the same
@@ -403,23 +412,13 @@ impl<G> SaveJournal<G> {
         self.first_touch_cell_visits
     }
 
-    #[cfg(test)]
     pub(crate) fn record_group_enter(&mut self, frame: GroupFrame) {
-        self.record_group_enter_with_frontier(frame, 0);
-    }
-
-    pub(crate) fn record_group_enter_with_frontier(
-        &mut self,
-        frame: GroupFrame,
-        definition_frontier: u32,
-    ) {
         #[cfg(feature = "profiling")]
         self.record_profile_group_enter();
         let boundary = GroupBoundary {
             frame,
             previous: self.active_sequence.top.map(SaveIndex::new),
             sparse_marker: None,
-            definition_frontier,
         };
         self.append_group_entry(JournalEntry::GroupEnter(boundary), false);
         self.active_sequence.top = Some(self.active_sequence.entries.len() - 1);
@@ -537,17 +536,6 @@ impl<G> SaveJournal<G> {
 
     pub(crate) fn group_frames(&self) -> GroupFrames<'_, G> {
         self.active_sequence.frames()
-    }
-
-    pub(crate) fn set_definition_frontier(&mut self, frontier: u32) {
-        let index = self.active_sequence.top.expect("group boundary exists");
-        self.active_sequence.boundary_mut(index).definition_frontier = frontier;
-    }
-
-    pub(crate) fn definition_frontier(&self) -> u32 {
-        self.active_sequence
-            .boundary(self.active_sequence.top.expect("closing boundary"))
-            .definition_frontier
     }
 
     pub(crate) fn sparse_head(&self, marker: usize) -> Option<usize> {
@@ -983,11 +971,5 @@ fn is_extended_register_cell(cell: StateCell) -> bool {
         | StateCell::BoxRegister(index)
         | StateCell::MuGlueRegister(index) => index > u8::MAX.into(),
         _ => false,
-    }
-}
-
-impl<G> Default for SaveJournal<G> {
-    fn default() -> Self {
-        Self::new()
     }
 }

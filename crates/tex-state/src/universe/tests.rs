@@ -166,6 +166,8 @@ fn runtime_checkpoint_fork_moves_the_checkpoint_bank_without_new_payload_owners(
         let definition = universe
             .allocate_definition(&[], &words)
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let tokens = universe.allocate_token_list(&words).expect("token list");
         universe
             .assign_meaning(
@@ -178,17 +180,16 @@ fn runtime_checkpoint_fork_moves_the_checkpoint_bank_without_new_payload_owners(
             .assign_token_register(0, Some(tokens.clone()), AssignmentScope::Global)
             .expect("assign token register");
         let checkpoint = universe.runtime_checkpoint().expect("checkpoint");
-        let definition_owners = definition.semantic_owner_count();
+
         let token_owners = tokens.semantic_owner_count();
 
         let mut fork = universe
             .fork_runtime_checkpoint(&checkpoint)
             .expect("checkpoint fork");
-        assert_eq!(definition.semantic_owner_count(), definition_owners);
+
         assert_eq!(tokens.semantic_owner_count(), token_owners);
         universe.reject_checkpoint_candidate(&mut fork);
 
-        assert_eq!(definition.semantic_owner_count(), definition_owners);
         assert_eq!(tokens.semantic_owner_count(), token_owners);
     })
     .expect("universe allocation");
@@ -376,6 +377,8 @@ fn equivalent_macro_definitions_keep_the_same_core_identity() {
         let first = universe
             .allocate_definition(&[], &body)
             .expect("first definition");
+        let first_publication = first;
+        let first = first_publication.reference();
         universe
             .assign_meaning(
                 symbol,
@@ -398,9 +401,13 @@ fn equivalent_macro_definitions_keep_the_same_core_identity() {
                 })],
             )
             .expect("unrelated definition");
+        let _unrelated_publication = _unrelated;
+        let _unrelated = _unrelated_publication.reference();
         let equivalent = universe
             .allocate_definition(&[], &body)
             .expect("equivalent definition");
+        let equivalent_publication = equivalent;
+        let equivalent = equivalent_publication.reference();
         universe
             .assign_meaning(
                 symbol,

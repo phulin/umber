@@ -82,7 +82,10 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   episode or enters a host resource-replay request.
 - `src/main_control/definition_assignments.rs`: direct macro, let, catcode,
   and ordinary-group mutation helpers. Macro bodies are sealed once into their
-  actual definition owner. Let uses the scanned compact meaning. Provisional
+  actual move-only publication owner. The macro arm keeps it across reporting
+  and character-flush errors; assignment consumes it after acquiring the
+  installed cell. Native read publication moves the same owner into its actual
+  assignment arm. Let aliases the scanned key with no namespace promotion. Provisional
   shorthand tracing renders the old meaning before replacement releases it.
 - `src/main_control/cold/`: genuine native alignment, PDF, grouping, and
   recovery helpers shared by the direct engine. `groups.rs` owns live group

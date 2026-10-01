@@ -31,7 +31,6 @@ pub(crate) struct GroupBoundary {
     pub(super) frame: GroupFrame,
     pub(super) previous: Option<SaveIndex>,
     pub(super) sparse_marker: Option<SaveIndex>,
-    pub(super) definition_frontier: u32,
 }
 
 pub(crate) enum JournalEntry<G> {
@@ -67,15 +66,17 @@ impl<G> JournalEntry<G> {
 
 pub(super) struct GroupSaveStack<G> {
     pub(super) entries: Vec<JournalEntry<G>>,
+    pub(super) roots: crate::definition_arena::DefinitionRoots,
     pub(super) top: Option<usize>,
     pub(super) depth: usize,
     pub(super) unsaving: bool,
 }
 
-impl<G> Default for GroupSaveStack<G> {
-    fn default() -> Self {
+impl<G> GroupSaveStack<G> {
+    pub(super) fn new(roots: crate::definition_arena::DefinitionRoots) -> Self {
         Self {
             entries: Vec::new(),
+            roots,
             top: None,
             depth: 0,
             unsaving: false,
@@ -87,10 +88,17 @@ impl<G> GroupSaveStack<G> {
         self.depth == 0
     }
     pub(super) fn append(&mut self, entry: JournalEntry<G>) {
+        if let JournalEntry::Mutation(saved) = &entry {
+            self.roots.acquire_word(&saved.before);
+        }
         self.entries.push(entry);
     }
     pub(super) fn truncate(&mut self, len: usize) {
-        self.entries.truncate(len);
+        for entry in self.entries.drain(len..) {
+            if let JournalEntry::Mutation(saved) = entry {
+                self.roots.release_word(&saved.before);
+            }
+        }
     }
     pub(super) fn entry(&self, index: usize) -> Option<&JournalEntry<G>> {
         self.entries.get(index)
@@ -188,5 +196,11 @@ impl<'a, G> IntoIterator for GroupFrames<'a, G> {
         GroupFramesIter {
             entries: self.stack.entries.iter(),
         }
+    }
+}
+
+impl<G> Drop for GroupSaveStack<G> {
+    fn drop(&mut self) {
+        self.truncate(0);
     }
 }

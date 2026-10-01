@@ -218,6 +218,8 @@ fn sequential_macro_delivery_does_not_consume_recursive_expansion_capacity() {
         let definition = universe
             .allocate_definition(&[], &[tex_state::token::TokenWord::pack(letter('A'))])
             .expect("macro definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("lettermacro").expect("macro symbol");
         universe
             .assign_meaning(

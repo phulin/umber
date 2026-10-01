@@ -2400,6 +2400,8 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
             let definition = stores
                 .allocate_definition(&[], &replacement)
                 .expect("fixture macro definition");
+            let definition_publication = definition;
+            let definition = definition_publication.reference();
             let name = stores.intern("n").expect("symbol interning");
             admitted!(stores, |context| context
                 .assign_resolved_meaning(

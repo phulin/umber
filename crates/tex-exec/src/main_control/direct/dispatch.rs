@@ -862,13 +862,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                         };
                         {
                             let definition = (processor
-                                .scan_macro_definition(
-                                    matches!(
-                                        primitive,
-                                        UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
-                                    ),
-                                    global,
-                                )
+                                .scan_macro_definition(matches!(
+                                    primitive,
+                                    UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
+                                ))
                                 .map_err(command_error))
                             .map_err(|error| scan_error(error, scan_origin))?;
                             return {

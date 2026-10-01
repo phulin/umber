@@ -11,17 +11,17 @@ resource retry protocol.
 
 ## Current source and target differences
 
-| Area                  | Current owner/path                                                                                                                                     | Required lifetime and remaining work                                                                                                                                                                                                                                        |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Meaning delivery      | `tex-state` packed dense row writes final `CommandWord`; `tex-command` selects expansion/return/primitive.                                             | Token and meaning reads acquire no checkpoint or definition owner. A temporary key is valid only while its semantic owner remains, or after full payload admission.                                                                                                         |
-| Definitions/matcher   | `definition_arena{,/body,/build_lane}.rs`: format/global/local rows share one immutable payload with words, sealed `MacroParameterPattern` and origin. | `.5` removes invocation matcher-plan/failure allocation. `.13` still must replace append-only global and LIFO local payload retention with counted stable dynamic slots.                                                                                                    |
-| Macro frames          | Input rows retain `ResidentMacroBody` with full payload `Rc`; position is in the packed frame.                                                         | One admission retain, direct slices thereafter. Payload survives row retirement; target slot tombstoning does not invalidate it.                                                                                                                                            |
-| Arguments             | `input/arguments.rs` final pooled regions; call-local ranges/cursor in `macro_call.rs`.                                                                | Matching writes once into invocation-owned pooled `ArgumentArena` vectors; body owns the region and parameter frames borrow it. No per-argument allocation/copy/lease; free capacity is an engine allocator cache, not snapshot state. Preserve origins and brace trimming. |
-| Stored lists/backup   | Input rows own shared immutable list handles or actual transient words.                                                                                | Activation reads immutable storage directly; retirement drops the actual owner once. Backup is semantic input, distinct from host replay.                                                                                                                                   |
-| Scanner/build scratch | Call-local scanner episodes and nested marks, reusable unpublished lanes.                                                                              | Failed calls unwind/truncate; no parked scanner or caller crosses a host boundary. Genuine scanner requests transfer their token/definition fields directly into native owners; immediate-consumption operation and phase carriers are deleted.                             |
-| Groups                | One native `GroupSaveStack` in `tex-state/src/journal/groups.rs`; synchronous context/processor unsave and executor renderer.                          | `.6` removes duplicate topology and restoration/token-result vectors. Scalar/box restores and aftergroup words share chronology; sparse saves restore at a lazy marker. The real local-row frontier remains in the sole boundary until `.13`.                               |
-| Named capture         | `CommandCapture`/`InputCapture` in command snapshot code copy actual cold rows and transient words.                                                    | Ordinary delivery produces no input undo entries. Actual vectors are charged; capture is not uniformly O(1). Active macros/groups remain forbidden.                                                                                                                         |
-| Host need             | Typed resource request plus full checkpoint and matched host transaction prefix.                                                                       | Unwind, restore aggregate, admit verified outcome, parse again; no command/matcher/scanner continuation.                                                                                                                                                                    |
+| Area                  | Current owner/path                                                                                                                               | Required lifetime and remaining work                                                                                                                                                                                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Meaning delivery      | `tex-state` packed dense row writes final `CommandWord`; `tex-command` selects expansion/return/primitive.                                       | Token and meaning reads acquire no checkpoint or definition owner. A temporary key is valid only while its semantic owner remains, or after full payload admission.                                                                                                                      |
+| Definitions/matcher   | `definition_arena{,/body,/build_lane}.rs`: pinned format rows and stable counted dynamic slots share one immutable words/matcher/origin payload. | Current meanings, independent histories, primitive registry and actual publication owners count roots. Zero roots tombstone a slot; allocation indices never rewind.                                                                                                                     |
+| Macro frames          | Input rows retain `ResidentMacroBody` with full payload `Rc`; position is in the packed frame.                                                   | One admission retain, direct slices thereafter. Payload survives row retirement; target slot tombstoning does not invalidate it.                                                                                                                                                         |
+| Arguments             | `input/arguments.rs` final pooled regions; call-local ranges/cursor in `macro_call.rs`.                                                          | Matching writes once into invocation-owned pooled `ArgumentArena` vectors; body owns the region and parameter frames borrow it. No per-argument allocation/copy/lease; free capacity is an engine allocator cache, not snapshot state. Preserve origins and brace trimming.              |
+| Stored lists/backup   | Input rows own shared immutable list handles or actual transient words.                                                                          | Activation reads immutable storage directly; retirement drops the actual owner once. Backup is semantic input, distinct from host replay.                                                                                                                                                |
+| Scanner/build scratch | Call-local scanner episodes and nested marks, reusable unpublished lanes.                                                                        | Failed calls unwind/truncate; no parked scanner or caller crosses a host boundary. Genuine scanner requests transfer their token/definition fields directly into native owners; immediate-consumption operation and phase carriers are deleted.                                          |
+| Groups                | One native `GroupSaveStack` in `tex-state/src/journal/groups.rs`; synchronous context/processor unsave and executor renderer.                    | `.6` removes duplicate topology and restoration/token-result vectors. Scalar/box restores and aftergroup words share chronology; sparse saves restore at a lazy marker. The sole boundary has no definition frontier; popped meaning owners survive synchronous restoration observation. |
+| Named capture         | `CommandCapture`/`InputCapture` in command snapshot code copy actual cold rows and transient words.                                              | Ordinary delivery produces no input undo entries. Actual vectors are charged; capture is not uniformly O(1). Active macros/groups remain forbidden.                                                                                                                                      |
+| Host need             | Typed resource request plus full checkpoint and matched host transaction prefix.                                                                 | Unwind, restore aggregate, admit verified outcome, parse again; no command/matcher/scanner continuation.                                                                                                                                                                                 |
 
 The removed `ResidentWord`/`TokenMeaning` chain and duplicated font column must
 not return as adapters. One interpreted token resolves once into the final
@@ -39,21 +39,24 @@ Overlap links select the reusable literal prefix while the argument writer
 continues to own held origins, brace depth, paragraph/outer checks and recovery
 under TeX82 §§392--399. No parallel plan store exists.
 
-The target uses pinned format rows and one monotone dynamic bank. Meaning
-cells and independent group/checkpoint/candidate preimages use direct indexed
-slot roots. Local/global aliasing uses the same key; no definition promotion
+Definitions use pinned format rows and one monotone dynamic bank. Meaning
+cells, frozen primitive meanings and independent group/checkpoint/candidate
+preimages use direct indexed slot roots. Local/global aliasing uses the same key; no definition promotion
 copy, local stack mark, promotion memo or per-token counter is needed.
 Zero-root slots tombstone without reusing coordinates. Active frames own the
 full payload independently, so release follows its final actual owner.
-Current row-based memory accounting must migrate to final-payload release;
-counting an arena row alone can undercount a still-active body.
+Payload accounting is charged at publication and released on its final actual
+shared-owner drop. Slot capacity is reported separately; aliases share one
+physical charge and an active frame remains charged after tombstoning.
 
-Cold `CurrentCommand`, read placeholders, saved restorations and pending
-requests must be audited for arena dereference after an owner mutation.
-Immediate-consumption restoration/dispatch carriers should disappear. A real
-retained consumer instead owns its payload or semantic root explicitly;
-copying a `DefinitionRef` is never enough. The authoritative contract names
-every owner insertion/drop/swap and the candidate tail migration.
+Macro admission retains the full payload before argument scanning. Delivered
+`CurrentCommand` keys remain call-local; backup stores spelling and resolves
+meaning again on delivery. Provisional shorthand tracing renders the old value
+before assignment. Unsave owns its popped preimage through the synchronous
+observer. Sealing and attempt/read publication return `PublishedDefinition`;
+scanner results and native read operands move this actual owner through
+reporting, flushing and assignment. Failure drops it. No read placeholder,
+namespace promotion or separate accepted definition tail remains.
 
 ## Input and source retirement
 
@@ -88,11 +91,9 @@ settlement as ordinary execution.
 
 ## Scanner cleanup and direct construction
 
-Ordinary `def`/`gdef`/`edef`/`xdef` know the assignment destination before
-publication. The build lane appends once, validates parameter structure, and
+Ordinary `def`/`gdef`/`edef`/`xdef` publish independently of assignment scope. The build lane appends once, validates parameter structure, and
 seals one immutable payload. Failure clears unpublished words. Already
-detached format/import data may use a cold builder. Dynamic definition scope
-will move entirely to the assignment level when `.13` removes namespaces.
+detached format/import data may use a cold builder. Dynamic definition scope belongs entirely to the assignment level.
 
 Numeric/expression scanners, `read_toks`, alignment-preamble collection,
 expanded-definition recursion and multi-child primitives use ordinary

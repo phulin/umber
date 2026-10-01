@@ -63,6 +63,8 @@ fn macro_materialization_stages_then_publishes_one_definition() {
         let id = source
             .allocate_definition(&parameters, &replacement)
             .expect("test fixture is valid");
+        let id_publication = id;
+        let id = id_publication.reference();
         source
             .detach_macro_meaning(MeaningFlags::LONG | MeaningFlags::PROTECTED, id)
             .expect("test fixture is valid")
@@ -73,10 +75,10 @@ fn macro_materialization_stages_then_publishes_one_definition() {
         .expect("test fixture is valid");
 
     with_universe(budget(), |destination| {
-        let meaning = destination
+        let (meaning, _publication) = destination
             .publish_memo_macro(staged)
-            .expect("test fixture is valid")
-            .resolve();
+            .expect("test fixture is valid");
+        let meaning = meaning.resolve();
         let crate::meaning::ResolvedMeaning::Macro { flags, definition } = meaning else {
             panic!("macro meaning")
         };
@@ -125,8 +127,8 @@ fn malformed_macro_program_rejects_without_publishing_or_panicking() {
             destination.publish_memo_macro(staged)
         }));
         assert_eq!(
-            result.expect("malformed memo macro must not panic"),
-            Err(MemoValueError::Publication(
+            result.expect("malformed memo macro must not panic").err(),
+            Some(MemoValueError::Publication(
                 PromotionError::InvalidDefinition
             ))
         );
@@ -145,6 +147,8 @@ fn memo_publication_uses_destination_definition_identity_policy() {
         let definition = source
             .allocate_definition(&parameter, &replacement)
             .expect("source definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         source
             .detach_macro_meaning(MeaningFlags::EMPTY, definition)
             .expect("detached macro")
@@ -158,10 +162,12 @@ fn memo_publication_uses_destination_definition_identity_policy() {
         let direct = destination
             .allocate_definition(&parameter, &replacement)
             .expect("direct definition");
-        let imported = destination
+        let direct_publication = direct;
+        let direct = direct_publication.reference();
+        let (imported, _publication) = destination
             .import_memo_macro_meaning(&detached, MemoValueLimits::default())
-            .expect("imported macro")
-            .resolve();
+            .expect("imported macro");
+        let imported = imported.resolve();
         let crate::meaning::ResolvedMeaning::Macro {
             definition: imported,
             ..

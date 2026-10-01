@@ -4,7 +4,7 @@ use super::super::*;
 pub(in crate::main_control) fn execute_input_stream<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
-    request: tex_command::InputStreamRequest<tex_state::DefinitionRef<G>>,
+    request: tex_command::InputStreamRequest<tex_state::PublishedDefinition<G>>,
 ) -> Result<ReplayStep, ExecError> {
     let mut linear_stores = LinearCommandContext::new(stores);
     let stores = &mut linear_stores;
@@ -32,7 +32,10 @@ pub(in crate::main_control) fn execute_input_stream<G>(
                 let record = command.observes_mutations().then(|| MutationRecord {
                     target: MutationTarget::Meaning,
                     key: ObservationValue::Name(stores.resolve(target).to_owned()),
-                    value: ObservationValue::Tokens(observed_read_body(&definition, stores)),
+                    value: ObservationValue::Tokens(observed_read_body(
+                        &definition.reference(),
+                        stores,
+                    )),
                     global,
                 });
                 let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
@@ -45,12 +48,10 @@ pub(in crate::main_control) fn execute_input_stream<G>(
                             global,
                             |stores| {
                                 stores
-                                    .assign_resolved_meaning(
+                                    .assign_published_definition(
                                         target,
-                                        tex_state::meaning::ResolvedMeaning::Macro {
-                                            flags: MeaningFlags::EMPTY,
-                                            definition,
-                                        },
+                                        definition,
+                                        MeaningFlags::EMPTY,
                                         assignment_scope(global),
                                     )
                                     .expect("prepared read definition belongs to admitted state")

@@ -196,6 +196,8 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
         let definition = universe
             .allocate_definition(&[], &[])
             .expect("empty definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("m").expect("macro name");
         universe
             .assign_meaning(

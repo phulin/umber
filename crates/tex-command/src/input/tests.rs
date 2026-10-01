@@ -25,7 +25,7 @@ fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
         let body = {
             let mut stores = universe.command_context().expect("command context");
             let build = stores
-                .begin_definition_build(false, OriginId::UNKNOWN)
+                .begin_definition_build(OriginId::UNKNOWN)
                 .expect("local definition build");
             stores
                 .push_definition_parameter(build, TokenWord::pack(Token::param(1)))
@@ -47,6 +47,18 @@ fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
             let definition = stores
                 .seal_definition_build(build)
                 .expect("local definition");
+            let definition_publication = definition;
+            let definition = definition_publication.reference();
+            stores
+                .assign_resolved_meaning(
+                    name.symbol(),
+                    tex_state::ResolvedMeaning::Macro {
+                        flags: tex_state::meaning::MeaningFlags::EMPTY,
+                        definition,
+                    },
+                    AssignmentScope::Local,
+                )
+                .expect("local meaning owns definition");
             stores
                 .admit_macro_body(definition)
                 .expect("resident macro body")

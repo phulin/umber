@@ -474,10 +474,10 @@ collector (see `src/conditionals.rs`).
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses
-  the scanner word/builder lanes. Ordinary `\def`/`\gdef` select their local or
-  global destination before scanning and write semantic words into the arena's
-  one build lane; failure clears it and sealing publishes one exactly sized
-  span with its final provenance. The collector's
+  the scanner word/builder lanes. Ordinary `\def`/`\gdef` write semantic words into the arena's one build
+  lane; failure clears it and sealing publishes one exactly sized span with
+  its final provenance. `ScannedMacroDefinition` moves the actual publication
+  owner to assignment; allocation has no local/global destination. The collector's
   phase tag is the one authority for parameter versus replacement writes; no
   destination-local phase mirror or published-header provenance edit exists.
   Raw definition scanning is entirely call-local.

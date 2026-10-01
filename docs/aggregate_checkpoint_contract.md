@@ -298,6 +298,25 @@ acquire the needed payload first. Cold read/input placeholders must be removed
 with direct dispatch, or become explicit counted owners while they remain.
 There is no second matcher-plan store.
 
+The definition bank is shared only by the arena publisher, dense state and its
+two owning histories, the frozen primitive registry, and actual unpublished definition owners. These coarse
+owners admit the indexed bank on root insertion or retirement; packed meaning
+and scalar history records contain no shared-bank owner. History truncation,
+pruning, candidate settlement and destruction retire the roots of precisely
+the records they discard. Swapping current and alternate meanings preserves
+both owning positions. Native unsave keeps its popped preimage alive through
+the synchronous observer, then retires it. No ordinary lookup acquires a
+semantic root. A cold view may retain the immutable payload to end bank
+admission before publication ownership is consumed or dropped.
+
+`PublishedDefinition` is a move-only temporary root returned by both direct
+definition sealing and attempt publication. Scanner results and the native
+read request move this owner through diagnostic reporting, character flushing
+and assignment. Assignment first acquires the installed meaning's root, then
+consumes the publication owner. Failure drops that same temporary owner.
+Formats publish directly into their pinned bank; dynamic scanning has no scope
+destination, and alias assignment keeps the original key.
+
 Canonical definition memory is charged once per immutable payload and released
 on its final real payload-owner drop, including an active frame after slot
 retirement. Slot root counts are not payload `Rc` counts: aliases need not
@@ -339,13 +358,13 @@ bookkeeping on mutations and cold boundaries without inventing ratios.
 
 ## Source deletions and implementation order
 
-| Tracked work                         | Source now                                                                                                                                                                                                                                                                                          | Required replacement and deletion                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.10` arguments                      | `tex-command/src/macro_call.rs` and input argument activation still move collected argument words into frame storage.                                                                                                                                                                               | Construct each argument once in final retained storage; preserve origins and matcher semantics. Checkpoint design adds no argument history.                                                                                                                                                                                                                                                        |
-| `.6` groups/mutations                | `tex-state/src/journal/groups.rs` owns the native contiguous boundary/scalar/box/aftergroup stack and sparse chain. `journal/checkpoints.rs` owns plain dense undo tails. Specialized box checkpoint/dimension owners remain cold; definition local-row frontier lives only in the native boundary. | Implemented: value/level-only preimages, current-epoch unsave, direct indexed stamps, last-root disarm and branch-valid cuts. Deleted chunk save sequence, duplicate dense/box/command group topology, box epoch maps, definition group hooks, scalar/box merge scratch, retained box group ancestry and restoration/token-result vectors. `.13` replaces the remaining actual local-row frontier. |
-| `.15` dispatch/aggregate integration | `tex-exec/src/main_control{,/direct,/semantic,/resources,/settlement}.rs`; `Universe`/retained-generation two-slot admission.                                                                                                                                                                       | Implemented: one packed mode/command/prefix loop with concrete scanners and native semantic owners; deleted eligibility split, operation unions, phase requests, prepare/apply handoffs and eager multi-owner captures. Preserve existing sole-core move/alternate-tail lifecycle and genuine coarse slot/brand ownership; simplify only real redundant adapters.                                  |
-| `.13` definitions                    | `definition_arena.rs` format/global/local vectors, `AcceptedDefinitionTail`, local marks, promotion memo and row-based memory release.                                                                                                                                                              | Pinned format plus stable counted dynamic slots; tombstones, payload accounting, centralized root transitions. Delete append-only payload retention and local/global promotion. Accepted alternates own roots rather than accidental row tails.                                                                                                                                                    |
-| `.12` closure                        | `tex-exec/src/checkpoint.rs`, `Universe` aggregate restore, command snapshot/capture, `tex-incr` history/resource drivers.                                                                                                                                                                          | Prove complete inventory, repeatable roots, validate-all/root-before-drop, candidate reject/accept, JobStart, pruning, replay, monotone fuel/high water and forwarded provenance; delete obsolete adapters remaining across the seams.                                                                                                                                                             |
+| Tracked work                         | Source now                                                                                                                                                                                                                                                                                      | Required replacement and deletion                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.10` arguments                      | `tex-command/src/macro_call.rs` and input argument activation still move collected argument words into frame storage.                                                                                                                                                                           | Construct each argument once in final retained storage; preserve origins and matcher semantics. Checkpoint design adds no argument history.                                                                                                                                                                                                                                                         |
+| `.6` groups/mutations                | `tex-state/src/journal/groups.rs` owns the native contiguous boundary/scalar/box/aftergroup stack and sparse chain. `journal/checkpoints.rs` owns plain dense undo tails. Specialized box checkpoint/dimension owners remain cold; native boundaries contain no definition allocation frontier. | Implemented: value/level-only preimages, current-epoch unsave, direct indexed stamps, last-root disarm and branch-valid cuts. Deleted chunk save sequence, duplicate dense/box/command group topology, box epoch maps, definition group hooks, scalar/box merge scratch, retained box group ancestry and restoration/token-result vectors. Counted definitions removed the last local-row frontier. |
+| `.15` dispatch/aggregate integration | `tex-exec/src/main_control{,/direct,/semantic,/resources,/settlement}.rs`; `Universe`/retained-generation two-slot admission.                                                                                                                                                                   | Implemented: one packed mode/command/prefix loop with concrete scanners and native semantic owners; deleted eligibility split, operation unions, phase requests, prepare/apply handoffs and eager multi-owner captures. Preserve existing sole-core move/alternate-tail lifecycle and genuine coarse slot/brand ownership; simplify only real redundant adapters.                                   |
+| `.13` definitions                    | `definition_arena.rs` pinned format and monotone dynamic slot bank, actual indexed semantic roots and move-only publication; full payload accounting in `body.rs`.                                                                                                                              | Implemented: zero-root tombstones, final payload accounting and central current/group/checkpoint/registry/publication roots. Deleted local/global allocation/promotion, group frontiers, definition cursor truncation and accepted row tails; ordinary undo alternates own roots.                                                                                                                   |
+| `.12` closure                        | `tex-exec/src/checkpoint.rs`, `Universe` aggregate restore, command snapshot/capture, `tex-incr` history/resource drivers.                                                                                                                                                                      | Prove complete inventory, repeatable roots, validate-all/root-before-drop, candidate reject/accept, JobStart, pruning, replay, monotone fuel/high water and forwarded provenance; delete obsolete adapters remaining across the seams.                                                                                                                                                              |
 
 `.14` settles the design only. `.10` completes arguments, then `.6` replaces
 save ownership in reviewable logical chunks, `.15` replaces the direct dispatch engine, `.13` installs counted
@@ -374,16 +393,14 @@ executor-owned builders.
 Shorthand scanners render a replaced meaning before their provisional `Relax`
 write releases its cell owner. Final assignment needs no delayed nonowning old
 meaning. Definition publication remains owned until assignment consumes it;
-`.13` replaces arena ownership at that lifetime boundary. Save capacity and its
+Assignment consumes its move-only `PublishedDefinition` at that lifetime boundary. Save capacity and its
 monotone high-water projection use native stack metadata plus box-spec words
 maintained at box push/pop transitions, without per-command collection walks.
 
-The `.6` implementation moves the real local-definition retirement frontier
-into the sole scalar group boundary. Until `.13` replaces the definition
-namespace, popping that boundary still truncates the actual local rows after
-restoration observers have finished. There is no separate definition group
-stack or empty compatibility hook. `.13` removes this frontier together with
-local/global allocation and promotion.
+Counted definitions remove the last allocation frontier from the scalar native
+group boundary. Local/global scope is solely the meaning and save level;
+group exit retires its actual preimages and displaced meanings. No definition
+row stack, truncation hook, promotion or frontier capture remains.
 
 Group close consumes native typed entries one at a time. The admitted state
 context restores a scalar or box binding, invokes the synchronous restoration
@@ -394,8 +411,6 @@ vector or second token vector. `CommandProcessor::end_group` is the execution
 seam: its renderer callback observes one native restoration. e-TeX links later
 popped words into the final backed-up input row and reverses that row once at
 close; TeX82 pushes each word separately. There is no collected token result.
-The native boundary temporarily carries the actual local definition row
-frontier until `.13`; its read is scalar and captures no owner or mutable bank.
 Named command captures prove the native stack empty and contain no group fields. Sparse entries use a lazy marker and a nullable packed `u32` stack-index
 chain; their chain traversal remains distinct from ordinary reverse popping.
 

@@ -24,12 +24,6 @@ pub struct DefinitionRef<G> {
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
-#[cfg(any(test, feature = "profiling", feature = "testing"))]
-#[must_use]
-pub fn definition_retain_count() -> u64 {
-    0
-}
-
 impl<G> Clone for DefinitionRef<G> {
     fn clone(&self) -> Self {
         *self
@@ -78,12 +72,6 @@ impl<G> DefinitionRef<G> {
     pub(super) const fn region(self) -> u32 {
         (self.packed.get() >> 32) as u32
     }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[doc(hidden)]
-    pub const fn semantic_owner_count(&self) -> usize {
-        0
-    }
 }
 
 /// One row owner of an immutable definition payload.
@@ -96,6 +84,8 @@ pub(super) struct DefinitionPayload {
     pub(super) parameter_len: u32,
     pub(super) origin: crate::token::OriginId,
     pub(super) pattern: MacroParameterPattern,
+    accounting: crate::memory_accounting::MemoryAccounting,
+    memory_words: usize,
 }
 
 impl core::ops::Deref for DefinitionEntry {
@@ -112,13 +102,23 @@ impl DefinitionEntry {
         parameter_len: u32,
         origin: crate::token::OriginId,
         pattern: MacroParameterPatternBuilder,
+        accounting: crate::memory_accounting::MemoryAccounting,
     ) -> Self {
         let pattern = pattern.finish(&words[..parameter_len as usize]);
+        let header = (core::mem::size_of::<DefinitionPayload>()
+            + 2 * core::mem::size_of::<usize>())
+        .div_ceil(core::mem::size_of::<usize>());
+        let memory_words = header
+            + ((words.len() + pattern.failure_len()) * core::mem::size_of::<TokenWord>())
+                .div_ceil(core::mem::size_of::<usize>());
+        accounting.allocate_shared_dynamic(memory_words);
         Self(Rc::new(DefinitionPayload {
             words,
             parameter_len,
             origin,
             pattern,
+            accounting,
+            memory_words,
         }))
     }
 
@@ -146,7 +146,7 @@ impl DefinitionPayload {
 /// owns the sole logical position, and every read is one slice index; there
 /// is no physical cursor to advance, rebuild, or restore.
 pub struct ResidentMacroBody<G> {
-    payload: Rc<DefinitionPayload>,
+    pub(super) payload: Rc<DefinitionPayload>,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -286,8 +286,8 @@ impl<G> core::hash::Hash for ResidentMacroBody<G> {
     }
 }
 
-pub struct DefinitionView<'a, G> {
-    pub(super) entry: &'a DefinitionEntry,
+pub struct DefinitionView<G> {
+    pub(super) entry: DefinitionEntry,
     pub(super) _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -380,7 +380,7 @@ impl Iterator for DefinitionWordIter<'_> {
 
 impl ExactSizeIterator for DefinitionWordIter<'_> {}
 
-impl<G> DefinitionView<'_, G> {
+impl<G> DefinitionView<G> {
     #[must_use]
     pub fn parameter_pattern(&self) -> &MacroParameterPattern {
         &self.entry.pattern
@@ -446,5 +446,11 @@ impl<G> DefinitionView<'_, G> {
                 .map(|word| word.raw())
                 .collect(),
         }
+    }
+}
+
+impl Drop for DefinitionPayload {
+    fn drop(&mut self) {
+        self.accounting.release_shared_dynamic(self.memory_words);
     }
 }

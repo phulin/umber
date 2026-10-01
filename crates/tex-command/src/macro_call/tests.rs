@@ -54,6 +54,8 @@ fn install_macro_with_flags<G>(
             &[TokenWord::pack(Token::Param(1))],
         )
         .expect("macro definition");
+    let definition_publication = definition;
+    let definition = definition_publication.reference();
     let symbol = universe.intern(name).expect("macro name");
     universe
         .assign_meaning(
@@ -92,6 +94,8 @@ fn install_replacement_macro<G>(
                 .collect::<Vec<_>>(),
         )
         .expect("macro definition");
+    let definition_publication = definition;
+    let definition = definition_publication.reference();
     let symbol = universe.intern(name).expect("macro name");
     universe
         .assign_meaning(
@@ -412,7 +416,7 @@ fn undelimited_argument_keeps_brace_alias_as_one_control_sequence_token() {
 }
 
 #[test]
-fn successful_macro_calls_admit_one_nonowning_replacement_row() {
+fn successful_macro_calls_admit_resident_replacement_and_argument_regions() {
     crate::test_harness::with_universe(|universe| {
         let parameterless =
             install_replacement_macro(universe, "parameterlessowner", &[letter('p')]);
@@ -440,19 +444,9 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 DeliveryStatus::Command
             );
             let mut call = destination.take().expect("macro command");
-            let owners_before = match &call.meaning() {
-                tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
-                    definition.semantic_owner_count()
-                }
-                _ => panic!("macro meaning"),
-            };
-            let retains_before = tex_state::definition_retain_count();
+
             assert_eq!(processor.macro_call(&mut call), Ok(true));
-            assert_eq!(
-                tex_state::definition_retain_count(),
-                retains_before,
-                "successful matching and activation borrow then move the resident owner"
-            );
+
             let (arguments, replacement) = processor
                 .command
                 .input
@@ -466,11 +460,10 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 arguments.len()
             );
             assert!(processor.command.scratch.is_quiescent());
-            let tex_state::meaning::ResolvedMeaning::Macro { definition, .. } = &call.meaning()
-            else {
+            let tex_state::meaning::ResolvedMeaning::Macro { .. } = &call.meaning() else {
                 panic!("macro meaning");
             };
-            assert_eq!(definition.semantic_owner_count(), owners_before);
+
             assert!(matches!(
                 &call.meaning(),
                 tex_state::meaning::ResolvedMeaning::Macro { .. }
@@ -496,6 +489,8 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
                 &[TokenWord::pack(letter('p'))],
             )
             .expect("literal-prefix definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("literalprefix").expect("macro name");
         universe
             .assign_meaning(
@@ -557,18 +552,10 @@ fn failed_macro_call_keeps_the_resident_definition_owner() {
             &mut diagnostic_effects,
         );
         let mut call = crate::test_harness::expect_raw_command(&mut processor);
-        let owners_before = match &call.meaning() {
-            tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
-                definition.semantic_owner_count()
-            }
-            _ => panic!("macro meaning"),
-        };
 
         assert_eq!(processor.macro_call(&mut call), Ok(false));
         match &call.meaning() {
-            tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
-                assert_eq!(definition.semantic_owner_count(), owners_before);
-            }
+            tex_state::meaning::ResolvedMeaning::Macro { .. } => {}
             _ => panic!("failed call retains macro meaning"),
         }
         assert!(
@@ -742,6 +729,8 @@ fn nested_macro_argument_reader_counts_loaded_words_not_exhaustion() {
                 &[TokenWord::pack(inner), TokenWord::pack(Token::Param(1))],
             )
             .expect("outer definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("outer_argument_span").expect("outer name");
         universe
             .assign_meaning(
@@ -867,6 +856,8 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
                 ],
             )
             .expect("repeated-parameter definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("repeatarg").expect("macro name");
         universe
             .assign_meaning(
@@ -1122,6 +1113,8 @@ fn parameter_escape_distinguishes_substitution_from_a_literal_hash() {
                 ],
             )
             .expect("parameter escape definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("parameterescape").expect("macro name");
         universe
             .assign_meaning(
@@ -1635,6 +1628,8 @@ fn overlapping_delimiter_preserves_source_origins_through_forwarded_arguments() 
                 &[TokenWord::pack(inner), TokenWord::pack(Token::param(1))],
             )
             .expect("forwarding definition");
+        let outer_definition_publication = outer_definition;
+        let outer_definition = outer_definition_publication.reference();
         let outer = universe.intern("outer").expect("macro name");
         universe
             .assign_meaning(
@@ -1730,6 +1725,8 @@ fn parameterized_tail_chain_reuses_two_final_regions_and_preserves_forwarded_wor
                     .map(TokenWord::pack),
                 )
                 .expect("tail definition");
+            let definition_publication = definition;
+            let definition = definition_publication.reference();
             let symbol = universe
                 .intern(&format!("tailarg{index}"))
                 .expect("tail symbol");

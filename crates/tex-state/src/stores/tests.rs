@@ -16,17 +16,19 @@ fn admitted_view_resolves_every_generation_typed_value_directly() {
     with_generation(|generation| {
         let mut core = StateCore::new(generation).expect("state core");
         let replacement = [TokenWord::pack(Token::frozen_relax())];
-        let (definition, tokens, glue) = {
+        let (definition_publication, tokens, glue) = {
             let mut admitted = core.admit_mut().expect("unique generation");
             let definition = admitted
                 .allocate_definition(&[], &replacement)
                 .expect("definition");
+            let definition_publication = definition;
             let tokens = admitted
                 .allocate_token_list(&replacement)
                 .expect("token list");
             let glue = admitted.allocate_glue(GlueSpec::ZERO).expect("glue");
-            (definition, tokens, glue)
+            (definition_publication, tokens, glue)
         };
+        let definition = definition_publication.reference();
 
         let admitted = core.admit();
         assert_eq!(
@@ -54,6 +56,8 @@ fn generation_ids_install_in_dense_state_without_per_value_owners() {
                 .admit_symbol(symbol.symbol())
                 .expect("symbol admission");
             let definition = admitted.allocate_definition(&[], &[]).expect("definition");
+            let definition_publication = definition;
+            let definition = definition_publication.reference();
             admitted
                 .state()
                 .assign_meaning(
@@ -84,7 +88,7 @@ fn retirement_releases_one_complete_generation_bundle() {
         let mut core = StateCore::new(generation).expect("state core");
         {
             let mut admitted = core.admit_mut().expect("unique generation");
-            admitted.allocate_definition(&[], &[]).expect("definition");
+            drop(admitted.allocate_definition(&[], &[]).expect("definition"));
             admitted.allocate_token_list(&[]).expect("token list");
             admitted.allocate_glue(GlueSpec::ZERO).expect("glue");
             admitted

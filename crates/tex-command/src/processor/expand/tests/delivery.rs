@@ -43,6 +43,8 @@ fn sequential_macro_body_reads_advance_once_in_optimized_delivery() {
                     .collect::<Vec<_>>(),
             )
             .expect("macro body definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let macro_name = universe
             .intern("sequentialbody")
             .expect("macro name")

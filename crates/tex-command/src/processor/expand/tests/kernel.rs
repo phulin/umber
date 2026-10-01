@@ -13,6 +13,8 @@ fn install_identity<G>(universe: &mut tex_state::Universe<G>, name: &str, body: 
                 .collect::<Vec<_>>(),
         )
         .expect("definition");
+    let definition_publication = definition;
+    let definition = definition_publication.reference();
     let symbol = universe.intern(name).expect("macro name");
     universe
         .assign_meaning(
@@ -185,6 +187,8 @@ fn resumed_replacement_reads_the_live_meaning_after_backup() {
         let definition = universe
             .allocate_definition(&[], &[TokenWord::pack(variable), TokenWord::pack(variable)])
             .expect("replacement");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let name = universe.intern("twice").expect("macro name");
         universe
             .assign_meaning(

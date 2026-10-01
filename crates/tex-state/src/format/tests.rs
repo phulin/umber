@@ -895,6 +895,8 @@ fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
         let definition = universe
             .allocate_definition(&[], &replacement)
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let meaning = MeaningWord::macro_definition(MeaningFlags::LONG, definition);
         universe
             .assign_meaning(alpha, meaning, AssignmentScope::Global)
@@ -1016,9 +1018,11 @@ fn loaded_format_materializes_only_environment_owned_definitions() {
             ch: 'x',
             cat: Catcode::Other,
         })];
-        universe
-            .allocate_definition(&[], &stale)
-            .expect("unreferenced definition");
+        drop(
+            universe
+                .allocate_definition(&[], &stale)
+                .expect("unreferenced definition"),
+        );
         let retained = [TokenWord::pack(Token::Char {
             ch: 'y',
             cat: Catcode::Other,
@@ -1026,6 +1030,8 @@ fn loaded_format_materializes_only_environment_owned_definitions() {
         let definition = universe
             .allocate_definition(&[], &retained)
             .expect("retained definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         universe
             .assign_meaning(
                 command,
@@ -1084,6 +1090,8 @@ fn format_materialization_rebuilds_definition_contents_and_state_identity() {
         let definition = universe
             .allocate_definition(&parameter, &replacement)
             .expect("source definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         universe
             .assign_meaning(
                 command,

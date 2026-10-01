@@ -415,6 +415,8 @@ fn main_loop_character_run_charges_resident_macro_body_once_per_character() {
         let definition = universe
             .allocate_definition(&[], &words)
             .expect("macro body definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let macro_name = universe.intern("runbody").expect("macro name").symbol();
         let body = universe
             .command_context()
@@ -509,6 +511,8 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
                 &[TokenWord::pack(Token::Param(1))],
             )
             .expect("macro body definition");
+        let body_definition_publication = body_definition;
+        let body_definition = body_definition_publication.reference();
         let body = universe
             .command_context()
             .expect("macro body context")
@@ -612,6 +616,8 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
         let definition = universe
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let symbol = universe.intern("m").expect("macro name");
         universe
             .assign_meaning(

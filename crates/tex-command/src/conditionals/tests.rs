@@ -213,6 +213,8 @@ fn skipped_macro_body_parameter_enters_its_argument() {
                 ],
             )
             .expect("macro definition");
+        let definition_publication = definition;
+        let definition = definition_publication.reference();
         let macro_name = universe.intern("skipmacro").expect("macro name");
         universe
             .assign_meaning(
@@ -314,6 +316,8 @@ fn skipped_macro_parameter_preserves_empty_and_forwarded_arguments() {
             let definition = universe
                 .allocate_definition(&[TokenWord::pack(Token::Param(1))], &replacement)
                 .expect("macro definition");
+            let definition_publication = definition;
+            let definition = definition_publication.reference();
             let symbol = universe.intern(name).expect("macro name");
             universe
                 .assign_meaning(
@@ -1042,35 +1046,40 @@ fn ifx_macro_equality_uses_flags_and_borrowed_token_content() {
     crate::test_harness::with_universe(|universe| {
         let parameter = [TokenWord::pack(other('p'))];
         let replacement = [TokenWord::pack(other('r'))];
+        let first_publication = universe
+            .allocate_definition(&parameter, &replacement)
+            .expect("first definition");
         let first = ResolvedMeaning::Macro {
             flags: MeaningFlags::LONG,
-            definition: universe
-                .allocate_definition(&parameter, &replacement)
-                .expect("first definition"),
+            definition: first_publication.reference(),
         };
+        let equal_publication = universe
+            .allocate_definition(&parameter, &replacement)
+            .expect("equal definition with distinct identity");
         let equal = ResolvedMeaning::Macro {
             flags: MeaningFlags::LONG,
-            definition: universe
-                .allocate_definition(&parameter, &replacement)
-                .expect("equal definition with distinct identity"),
+            definition: equal_publication.reference(),
         };
+        let different_flags_publication = universe
+            .allocate_definition(&parameter, &replacement)
+            .expect("definition with different flags");
         let different_flags = ResolvedMeaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: universe
-                .allocate_definition(&parameter, &replacement)
-                .expect("definition with different flags"),
+            definition: different_flags_publication.reference(),
         };
+        let different_parameter_publication = universe
+            .allocate_definition(&[TokenWord::pack(other('q'))], &replacement)
+            .expect("definition with different parameter text");
         let different_parameter = ResolvedMeaning::Macro {
             flags: MeaningFlags::LONG,
-            definition: universe
-                .allocate_definition(&[TokenWord::pack(other('q'))], &replacement)
-                .expect("definition with different parameter text"),
+            definition: different_parameter_publication.reference(),
         };
+        let different_replacement_publication = universe
+            .allocate_definition(&parameter, &[TokenWord::pack(other('s'))])
+            .expect("definition with different replacement text");
         let different_replacement = ResolvedMeaning::Macro {
             flags: MeaningFlags::LONG,
-            definition: universe
-                .allocate_definition(&parameter, &[TokenWord::pack(other('s'))])
-                .expect("definition with different replacement text"),
+            definition: different_replacement_publication.reference(),
         };
 
         let mut command = CommandState::default();

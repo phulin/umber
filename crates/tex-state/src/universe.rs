@@ -209,13 +209,23 @@ impl<G> EngineBoundaryHasher<'_, G> {
 pub(super) struct PrimitiveRegistry<G> {
     pub(super) names: Vec<String>,
     pub(super) meanings: Vec<MeaningWord<G>>,
+    roots: crate::definition_arena::DefinitionRoots,
 }
 
-impl<G> Default for PrimitiveRegistry<G> {
-    fn default() -> Self {
+impl<G> PrimitiveRegistry<G> {
+    fn new(roots: crate::definition_arena::DefinitionRoots) -> Self {
         Self {
             names: Vec::new(),
             meanings: Vec::new(),
+            roots,
+        }
+    }
+}
+
+impl<G> Drop for PrimitiveRegistry<G> {
+    fn drop(&mut self) {
+        for meaning in &self.meanings {
+            self.roots.release_meaning(*meaning);
         }
     }
 }
@@ -604,38 +614,6 @@ pub enum InteractionMode {
     ErrorStop,
 }
 
-/// One checked macro-definition builder moved through a promotion batch.
-///
-/// The owner preserves the identity policy and incremental parameter-program
-/// state selected where collection began. Generic promotion validates the
-/// builder in place, then transfers its allocation into one immutable row; it
-/// cannot rebuild the row from token slices under a different destination
-/// policy.
-#[derive(Debug)]
-pub struct DefinitionPromotion {
-    builder: crate::DefinitionBuilder,
-}
-
-impl DefinitionPromotion {
-    #[must_use]
-    pub fn new(builder: crate::DefinitionBuilder) -> Self {
-        Self { builder }
-    }
-
-    pub(crate) const fn builder(&self) -> &crate::DefinitionBuilder {
-        &self.builder
-    }
-
-    pub(crate) fn builder_mut(&mut self) -> &mut crate::DefinitionBuilder {
-        &mut self.builder
-    }
-
-    #[must_use]
-    pub fn into_builder(self) -> crate::DefinitionBuilder {
-        self.builder
-    }
-}
-
 /// One explicit durable token-list escape root in a promotion batch.
 #[derive(Clone, Copy, Debug)]
 pub struct TokenListPromotion<'a> {
@@ -695,7 +673,7 @@ impl From<DurableAllocationError> for PromotionError {
 /// Destination coordinates published together after complete batch staging.
 #[derive(Debug)]
 pub struct PromotionReceipt<G> {
-    pub definitions: SmallVec<[DefinitionRef<G>; 4]>,
+    pub definitions: SmallVec<[crate::PublishedDefinition<G>; 4]>,
     pub token_lists: SmallVec<[TokenListId<G>; 4]>,
     pub glue: SmallVec<[GlueId<G>; 4]>,
     pub provenance: SmallVec<[ProvenanceId<G>; 4]>,
@@ -720,7 +698,7 @@ pub trait ResidentPromotionBatch<G> {
     fn definition_count(&self) -> usize;
     fn definition(&self, index: usize) -> &crate::DefinitionBuilder;
     fn next_definition_mut(&mut self) -> &mut crate::DefinitionBuilder;
-    fn settle_next_definition(&mut self, definition: DefinitionRef<G>);
+    fn settle_next_definition(&mut self, definition: crate::PublishedDefinition<G>);
 
     fn token_list_source_count(&self) -> usize;
     fn token_list_count(&self) -> usize;
@@ -888,7 +866,6 @@ impl<G> Universe<G> {
         core.definition_meanings_match_accepted_checkpoint(
             *transaction.mark.journal(),
             *prior.state.mark().journal(),
-            &transaction.core,
         )
     }
 
@@ -1488,11 +1465,12 @@ impl<G> Universe<G> {
         }
         let page_region = PageRegionHistory::default();
         let command_generation_owner = core.generation_owner();
+        let definition_roots = core.definition_roots();
         Self {
             command_session: CommandSessionState {
                 interner: Some(interner),
                 error_context_widths: ErrorContextWidths::default(),
-                primitive_registry: Rc::new(PrimitiveRegistry::default()),
+                primitive_registry: Rc::new(PrimitiveRegistry::new(definition_roots)),
             },
             command_retained: RetainedCommandState {
                 fonts,
@@ -1620,6 +1598,7 @@ impl<G> Universe<G> {
             "primitive registry exceeds frozen-token capacity"
         );
         registry.names.push(name.to_owned());
+        registry.roots.acquire_meaning(meaning);
         registry.meanings.push(meaning);
     }
 
@@ -2185,7 +2164,7 @@ impl<G> Universe<G> {
         &mut self,
         parameter_text: &[TokenWord],
         replacement_text: &[TokenWord],
-    ) -> Result<DefinitionRef<G>, UniverseError> {
+    ) -> Result<crate::PublishedDefinition<G>, UniverseError> {
         let id = self
             .core
             .as_mut()
@@ -2208,7 +2187,7 @@ impl<G> Universe<G> {
         &mut self,
         parameter_text: Parameters,
         replacement_text: Replacement,
-    ) -> Result<DefinitionRef<G>, PromotionError>
+    ) -> Result<crate::PublishedDefinition<G>, PromotionError>
     where
         Parameters: ExactSizeIterator<Item = TokenWord>,
         Replacement: ExactSizeIterator<Item = TokenWord>,
@@ -2241,7 +2220,7 @@ impl<G> Universe<G> {
     pub fn promote_definition_builder(
         &mut self,
         builder: &mut crate::DefinitionBuilder,
-    ) -> Result<DefinitionRef<G>, PromotionError> {
+    ) -> Result<crate::PublishedDefinition<G>, PromotionError> {
         let transient_words = builder
             .parameter_text()
             .len()
@@ -2352,7 +2331,7 @@ impl<G> Universe<G> {
     /// relocation.
     pub fn promote_values(
         &mut self,
-        definitions: &mut [DefinitionPromotion],
+        definitions: &mut [crate::DefinitionBuilder],
         token_lists: &[TokenListPromotion<'_>],
         glue_values: &[GlueSpec],
         provenance: &[OriginRecord],

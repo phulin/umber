@@ -177,7 +177,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_macro_definition(
         &mut self,
         target: Symbol,
-        definition: tex_state::DefinitionRef<G>,
+        definition: tex_state::PublishedDefinition<G>,
         flags: MeaningFlags,
         global: bool,
     ) -> Result<ReplayStep, ExecError> {

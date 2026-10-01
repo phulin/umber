@@ -12,7 +12,7 @@ use crate::glue::{GlueSpec, Order};
 use crate::interner::ControlSequenceKind;
 use crate::meaning::{MeaningFlags, MeaningWord};
 use crate::token::{Catcode, FrozenToken, Token, TokenWord};
-use crate::universe::{DefinitionPromotion, PromotionError, TokenListPromotion, Universe};
+use crate::universe::{PromotionError, TokenListPromotion, Universe};
 use crate::world::ContentHash;
 use serde::{Deserialize, Serialize};
 
@@ -509,7 +509,7 @@ impl<G> Universe<G> {
     pub fn publish_memo_macro(
         &mut self,
         staged: StagedMemoMacro,
-    ) -> Result<MeaningWord<G>, MemoValueError> {
+    ) -> Result<(MeaningWord<G>, crate::PublishedDefinition<G>), MemoValueError> {
         let flags = MeaningFlags::from_bits(staged.value.flags);
         let parameter_text = staged
             .value
@@ -534,18 +534,20 @@ impl<G> Universe<G> {
                 .map_err(PromotionError::from)?;
         }
         builder.seal().map_err(PromotionError::from)?;
-        let mut definitions = [DefinitionPromotion::new(builder)];
+        let mut definitions = [builder];
         let id = self
             .promote_values(&mut definitions, &[], &[], &[])?
-            .definitions[0];
-        Ok(MeaningWord::macro_definition(flags, id))
+            .definitions
+            .pop()
+            .expect("one published memo definition");
+        Ok((MeaningWord::macro_definition(flags, id.reference()), id))
     }
 
     pub fn import_memo_macro_meaning(
         &mut self,
         value: &DetachedMemoValue,
         limits: MemoValueLimits,
-    ) -> Result<MeaningWord<G>, MemoValueError> {
+    ) -> Result<(MeaningWord<G>, crate::PublishedDefinition<G>), MemoValueError> {
         self.publish_memo_macro(value.stage_macro(limits)?)
     }
 }

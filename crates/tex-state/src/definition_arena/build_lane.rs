@@ -9,7 +9,7 @@ use crate::token::TokenWord;
 use super::body::DefinitionEntry;
 use super::{
     DefinitionAllocationError, DefinitionArena, DefinitionBuildError, DefinitionBuildPhase,
-    DefinitionDestination, DefinitionRef, FORMAT_REGION, GLOBAL_REGION, LOCAL_REGION,
+    PublishedDefinition,
 };
 
 pub struct DefinitionBuildKey<G> {
@@ -42,8 +42,6 @@ impl<G> Eq for DefinitionBuildKey<G> {}
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct ActiveDefinitionBuild {
     serial: NonZeroU32,
-    region: u32,
-    /// Open group count when a local build began.
     parameter_len: u32,
     pattern: MacroParameterPatternBuilder,
     origin: crate::token::OriginId,
@@ -145,17 +143,11 @@ impl<G> DefinitionBuildWriter<G> {
 impl<G> DefinitionArena<G> {
     pub(crate) fn begin_build(
         &mut self,
-        destination: DefinitionDestination,
         origin: crate::token::OriginId,
     ) -> Result<DefinitionBuildKey<G>, DefinitionAllocationError> {
         if self.active_build.is_some() || self.active_writer.is_some() {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
-        let region = match destination {
-            DefinitionDestination::Format => FORMAT_REGION,
-            DefinitionDestination::Global => GLOBAL_REGION,
-            DefinitionDestination::Local => LOCAL_REGION,
-        };
         let serial = NonZeroU32::new(self.next_build_serial)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
         self.next_build_serial = self
@@ -166,7 +158,6 @@ impl<G> DefinitionArena<G> {
         self.build_words.clear();
         self.active_build = Some(ActiveDefinitionBuild {
             serial,
-            region,
             parameter_len: 0,
             pattern: MacroParameterPatternBuilder::new(),
             origin,
@@ -274,28 +265,25 @@ impl<G> DefinitionArena<G> {
     pub(crate) fn seal_build(
         &mut self,
         key: DefinitionBuildKey<G>,
-    ) -> Result<DefinitionRef<G>, DefinitionBuildError> {
+    ) -> Result<PublishedDefinition<G>, DefinitionBuildError> {
         let (build, _) = self.active_build_mut(key)?;
         if build.phase != DefinitionBuildPhase::OpenReplacement {
             return Err(DefinitionBuildError::InvalidPhase);
         }
-        let region = build.region;
-        let rows = match region {
-            FORMAT_REGION => &mut self.format,
-            GLOBAL_REGION => &mut self.global,
-            _ => &mut self.local,
-        };
-        rows.try_reserve(1)
-            .map_err(|_| DefinitionBuildError::AllocationFailed)?;
+        self.reserve_batch(1).map_err(|error| match error {
+            DefinitionAllocationError::AllocationFailed => DefinitionBuildError::AllocationFailed,
+            _ => DefinitionBuildError::CapacityOverflow,
+        })?;
         let build = self.active_build.take().expect("validated active build");
         let entry = DefinitionEntry::new(
             self.build_words.as_slice().into(),
             build.parameter_len,
             build.origin,
             build.pattern,
+            self.accounting.clone(),
         );
         self.build_words.clear();
-        Ok(self.push_row(region, entry))
+        Ok(self.push_dynamic(entry))
     }
 
     pub(crate) fn abort_build(&mut self, key: DefinitionBuildKey<G>) {
