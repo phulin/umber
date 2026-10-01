@@ -104,7 +104,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let expanded = self
             .command
             .attempt
-            .arena_mut()
             .allocate_token_buffer()
             .map_err(|_| CommandError::input_invariant())?;
         let mut destination = None;
@@ -116,7 +115,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .ok_or_else(|| CommandError::input_invariant())?;
                     self.command
                         .attempt
-                        .arena_mut()
                         .push_buffer_token(expanded, command.spelling())
                         .map_err(|_| CommandError::input_invariant())?;
                 }
@@ -128,7 +126,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         self.command
             .attempt
-            .arena_mut()
             .finish_token_buffer(expanded)
             .map_err(|_| CommandError::input_invariant())
     }

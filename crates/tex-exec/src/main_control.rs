@@ -1833,6 +1833,10 @@ impl<G> MainControl<G> {
         if !stores.checkpoint_eligible() {
             return Err(tex_command::CommandSummaryError::CheckpointIneligible);
         }
+        // A halted command stopped mid-flight; only a restore resumes it.
+        if self.halted {
+            return Err(tex_command::CommandSummaryError::AttemptSuspended);
+        }
         crate::EngineCheckpoint::capture_checkpoint_with_identity_demand(
             eligibility,
             &mut self.command,
@@ -2857,7 +2861,7 @@ impl<G> MainControl<G> {
             // A resource miss or error halts this session in place. The next
             // host drive starts from the retained full checkpoint; no command,
             // scanner, expansion, or caller frame is parked here.
-            let mut operation = self.begin_direct_operation();
+            let operation = self.begin_direct_operation();
             let mut diagnostic_effects = DiagnosticEffects::new();
             // A cascading §1026 page break can become ready after the prior
             // operation. Resume that builder continuation in its own
@@ -2931,7 +2935,6 @@ impl<G> MainControl<G> {
             } else {
                 self.preflight_replay_delivery(
                     stores,
-                    &mut operation,
                     &mut operations,
                     max_operations,
                     &mut host_preparation,

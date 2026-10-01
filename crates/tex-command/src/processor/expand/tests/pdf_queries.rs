@@ -16,7 +16,6 @@ fn nested_pdf_integer_queries_return_through_the_shared_number_lane() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPageRef),
         );
         let mut command = CommandState::new(CommandProfile::PDFTEX14029);
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -84,7 +83,6 @@ fn pdf_ximage_bbox_uses_the_shared_two_integer_lane() {
         );
 
         let mut command = CommandState::new(CommandProfile::PDFTEX14029);
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -134,7 +132,6 @@ fn nested_pdf_string_projections_use_the_shared_collector_lane() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUnescapeHex),
         );
         let mut command = CommandState::new(CommandProfile::PDFTEX14029);
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -240,7 +237,6 @@ fn numbered_marks_use_the_shared_integer_lane() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -269,7 +265,6 @@ fn string_compare_uses_two_shared_collector_phases() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -317,7 +312,6 @@ fn pdf_last_match_uses_the_shared_number_lane_at_end_of_input() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch),
         );
         let mut command = CommandState::new(CommandProfile::PDFTEX14029);
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [

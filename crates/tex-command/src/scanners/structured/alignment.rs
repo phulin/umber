@@ -16,7 +16,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             .tokens;
         self.command
             .attempt
-            .arena_mut()
             .push_buffer_token(live_tokens, spelling)
             .map_err(|_| CommandError::input_invariant())
     }
@@ -172,7 +171,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             let live_tokens = self
                 .command
                 .attempt
-                .arena_mut()
                 .allocate_token_buffer()
                 .map_err(|_| CommandError::input_invariant())?;
             self.command
@@ -222,13 +220,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 u_template: self
                     .command
                     .attempt
-                    .arena_mut()
                     .allocate_token_buffer()
                     .map_err(|_| CommandError::input_invariant())?,
                 v_template: self
                     .command
                     .attempt
-                    .arena_mut()
                     .allocate_token_buffer()
                     .map_err(|_| CommandError::input_invariant())?,
                 phase: AlignmentPreamblePhase::UTemplate,
@@ -330,7 +326,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                             && self
                                 .command
                                 .attempt
-                                .arena()
                                 .token_buffer(pending.u_template)
                                 .map_err(|_| CommandError::input_invariant())?
                                 .is_empty()
@@ -372,14 +367,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ) || !self
                         .command
                         .attempt
-                        .arena()
                         .token_buffer(pending.u_template)
                         .map_err(|_| CommandError::input_invariant())?
                         .is_empty()
                     {
                         self.command
                             .attempt
-                            .arena_mut()
                             .push_buffer_token(pending.u_template, command.spelling())
                             .map_err(|_| CommandError::input_invariant())?;
                         self.push_alignment_live_token(pending.builder, command.spelling())?;
@@ -399,13 +392,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                         let u_template = self
                             .command
                             .attempt
-                            .arena_mut()
                             .finish_token_buffer(pending.u_template)
                             .map_err(|_| CommandError::input_invariant())?;
                         let v_template = self
                             .command
                             .attempt
-                            .arena_mut()
                             .finish_token_buffer(pending.v_template)
                             .map_err(|_| CommandError::input_invariant())?;
                         pending.columns.push(AlignmentCellTemplates {
@@ -419,13 +410,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                         pending.u_template = self
                             .command
                             .attempt
-                            .arena_mut()
                             .allocate_token_buffer()
                             .map_err(|_| CommandError::input_invariant())?;
                         pending.v_template = self
                             .command
                             .attempt
-                            .arena_mut()
                             .allocate_token_buffer()
                             .map_err(|_| CommandError::input_invariant())?;
                         pending.phase = AlignmentPreamblePhase::UTemplate;
@@ -456,7 +445,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     self.command
                         .attempt
-                        .arena_mut()
                         .push_buffer_token(pending.v_template, command.spelling())
                         .map_err(|_| CommandError::input_invariant())?;
                     self.push_alignment_live_token(pending.builder, command.spelling())?;

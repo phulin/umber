@@ -4243,7 +4243,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let words = self
                     .command
                     .attempt
-                    .arena()
                     .token_words(tokens)
                     .map_err(crate::scan_toks::attempt_command_error)
                     .expect("internal token value belongs to the installed attempt")

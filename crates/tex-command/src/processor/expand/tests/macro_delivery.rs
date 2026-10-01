@@ -21,7 +21,6 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
             )
             .expect("macro meaning");
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, [Token::Cs(symbol.symbol())]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -234,7 +233,6 @@ fn one_hundred_macros_materialize_only_the_final_command() {
         input.push(terminal);
 
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, input);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -292,7 +290,6 @@ fn synchronous_primitive_chain_stays_in_the_occupied_hot_owner() {
             cat: Catcode::Letter,
         };
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, [top_mark, first_mark, bot_mark, terminal]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -355,7 +352,6 @@ fn primitive_scanner_start_uses_compact_opener_state() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -417,7 +413,6 @@ fn expandafter_replays_first_token_when_undefined_second_is_compact() {
         );
         let missing = Token::Cs(universe.intern("missing").expect("undefined name").symbol());
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [

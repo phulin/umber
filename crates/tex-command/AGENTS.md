@@ -39,14 +39,14 @@ collector (see `src/conditionals.rs`).
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.
 - `src/lib.rs`: intentionally small public facade and private module tree.
 - `src/attempt.rs`, `src/attempt/token_lane.rs`, and `src/attempt/tests.rs`:
-  transitional scanner/operation scratch, including one attempt-owned
-  fixed-chunk token lane and promotion. Each
-  scanner carries only a typed branch coordinate into that lane; finalization
-  publishes the same words and truncation returns whole chunks. Macro
-  invocation storage does not use this arena. `CommandState` owns the sole
-  ordinary operation coordinate; the executor moves a coordinate-free opaque
-  lifecycle edge only until synchronous commit or rollback. A resource miss
-  drops that operation and the host replays from a full checkpoint.
+  command-lifetime scanner scratch, including one attempt-owned fixed-chunk
+  token lane and promotion. Each scanner carries only a typed branch
+  coordinate into that lane; finalization publishes the same words and
+  truncation returns whole chunks. Macro invocation storage does not use this
+  arena. The arena is clear at every command boundary: settling a command
+  releases its rows, and a failed synchronous scanner or child scope
+  truncates its own suffix to a mark. A resource miss halts the command and
+  the host replays from a full checkpoint.
 - `src/execution_scratch.rs`: current-generation reusable execution scratch.
   Argument admission validates the pending macro frame and its next fixed slot
   once, then mints the writer's exact fixed-block append position, provenance-
@@ -94,8 +94,8 @@ collector (see `src/conditionals.rs`).
   persistent command state, retirement-owned executor replay-completion
   fences transferred directly to §325/§390 descendants, current-generation
   execution scratch, and direct semantic mutation.
-  `src/state/attempt_transition.rs` owns direct-operation scope settlement and
-  checkpoint-replay cleanup, including the single state-owned ordinary attempt mark;
+  `src/state/attempt_transition.rs` owns command-boundary scratch settlement,
+  synchronous child scopes, and checkpoint-replay cleanup;
   `src/state/projection.rs` owns allocation-free retained-byte
   and dependency views; `src/state/executor_publication.rs` owns ordered
   executor-facing fact transfer. Each is an inherent implementation on the
@@ -596,8 +596,8 @@ collector (see `src/conditionals.rs`).
   runs; a resource miss unwinds the builder and expansion call tree. `read_toks`
   keeps its independent cold/import staging lifetime. Read setup and
   finalization share one cleanup transaction which
-  restores `align_state` and scanner status and truncates the exact child scope
-  on every error. General token-list scans append directly to independent
+  restores `align_state` and scanner status and truncates its exact attempt
+  suffix on every error. General token-list scans append directly to independent
   branches in the attempt's shared fixed-chunk lane; they never own or recycle
   a per-scan word vector, and sealing is a metadata-only publication. Nested macros
   use separate macro frame/argument lanes, so push/pop never interleaves their

@@ -26,12 +26,18 @@ pub(super) struct DirectFailureContext {
     pub(super) initial_effect_pos: tex_state::EffectPos,
 }
 
-/// One direct command operation's scratch scope.
+/// Move-only marker for the one live direct command operation.
 ///
-/// It holds no rollback coordinates. TeX has no per-command undo: a command
-/// that fails halts the session in place, and only a full checkpoint restore
-/// can resume it (see `docs/minimal_hot_loop.md`, "Errors and halts").
-pub(super) type DirectOperation = tex_command::CommandAttemptOperation;
+/// It owns nothing and holds no rollback coordinates. TeX has no per-command
+/// undo: a command that fails halts the session in place, and only a full
+/// checkpoint restore can resume it (see `docs/minimal_hot_loop.md`, "Errors
+/// and halts"). The marker only makes every operation end exactly once, by
+/// commit or halt.
+#[derive(Debug)]
+#[must_use = "a direct operation must be committed or halted"]
+pub(super) struct DirectOperation {
+    _private: (),
+}
 
 impl<G> MainControl<G> {
     /// Promotes one operation-local recoverable report at its commit seam.
@@ -351,21 +357,24 @@ impl<G> MainControl<G> {
     }
 
     pub(super) fn begin_direct_operation(&mut self) -> DirectOperation {
-        self.command.begin_attempt_operation()
+        debug_assert!(
+            self.command.attempt_is_clear(),
+            "command scratch is clear at every operation boundary"
+        );
+        DirectOperation { _private: () }
     }
 
-    /// Settles an ordinary admitted operation and opens the next one in
+    /// Settles an ordinary admitted command and continues the operation in
     /// place. Page-region succession is intentionally absent: a command which
     /// requests it is an enclosing-Universe boundary and never reaches this
     /// continuation seam.
-    pub(super) fn roll_admitted_direct_operation(&mut self, operation: &DirectOperation) {
+    #[inline(always)]
+    pub(super) fn roll_admitted_direct_operation(&mut self) {
         debug_assert!(
             !self.page_region_succession_pending,
             "page-region succession ends an admitted command run"
         );
-        self.command
-            .roll_attempt_operation(operation)
-            .expect("committed operation owns a valid command-attempt scope");
+        self.command.settle_attempt();
     }
 
     pub(super) fn commit_direct_operation(
@@ -374,10 +383,9 @@ impl<G> MainControl<G> {
         operation: DirectOperation,
         diagnostic_effects: &mut DiagnosticEffects,
     ) {
+        let DirectOperation { _private: () } = operation;
         self.promote_first_recoverable(stores, diagnostic_effects);
-        self.command
-            .commit_attempt_operation(operation)
-            .expect("committed operation owns a valid command-attempt scope");
+        self.command.settle_attempt();
         self.finish_pending_page_region_succession(stores);
     }
 
@@ -436,7 +444,7 @@ impl<G> MainControl<G> {
     /// full checkpoint, which replaces every root this operation touched and
     /// abandons its attempt scope. The latch refuses any other entry.
     pub(super) fn halt_direct_operation(&mut self, operation: DirectOperation) {
-        let _ = operation;
+        let DirectOperation { _private: () } = operation;
         self.halted = true;
     }
 

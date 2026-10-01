@@ -55,7 +55,7 @@ fn attempt_input_admission_rejects_a_mismatched_extent() {
     let mut state = CommandState::<()>::default();
     let list = state
         .attempt
-        .profile_allocate_token_list([crate::test_harness::traced(tex_state::token::Token::Char {
+        .allocate_token_list([crate::test_harness::traced(tex_state::token::Token::Char {
             ch: 'x',
             cat: tex_state::token::Catcode::Other,
         })])

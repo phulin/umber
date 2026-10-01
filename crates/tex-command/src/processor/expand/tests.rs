@@ -215,7 +215,6 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
         }
 
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, input);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();

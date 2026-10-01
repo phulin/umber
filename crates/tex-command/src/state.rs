@@ -143,17 +143,13 @@ pub struct CommandState<G> {
     /// Runtime-only source-owner incarnation allocator. Unlike semantic input
     /// identities, this counter is never rolled back, so an ordered source
     /// inverse cannot name a later occupant of the same physical stack row.
-    /// Storage for scanner, expansion, and retry coordinates in the current
-    /// operation. Checkpoints retain its bounded mark, never its payload.
-    pub(crate) attempt: crate::CommandAttempt<G>,
+    /// Scratch rows of the running command. It is clear at every command
+    /// boundary, so checkpoints never retain it.
+    pub(crate) attempt: crate::attempt::AttemptArena<G>,
     /// Current-generation reusable packed execution lanes. Macro activations
     /// and synchronous scanner calls retain only private generation-branded
     /// frame indices into this owner.
     pub(crate) scratch: crate::execution_scratch::ExecutionScratch<G>,
-    /// One direct-operation child scope. It is consumed only by commit or
-    /// rollback; named checkpoints require this field to be empty. A resource
-    /// miss unwinds the operation and the host replays from a full checkpoint.
-    pub(crate) active_attempt_operation: Option<crate::CommandAttemptMark>,
     /// Singular persistent exceptional-delivery authority. Rich
     /// scanner/alignment values retain cold-path context but are not polled by
     /// resident input; token-local suppression and outerness arrive directly
@@ -312,9 +308,8 @@ impl<G> Default for CommandState<G> {
             stack_usage: CommandStackUsage::default(),
             terminal_buffer_slots: 0,
             diagnostic_terminal_context_owner: 0,
-            attempt: crate::CommandAttempt::default(),
+            attempt: crate::attempt::AttemptArena::default(),
             scratch: crate::execution_scratch::ExecutionScratch::default(),
-            active_attempt_operation: None,
             delivery_mode: DeliveryMode::default(),
             csname_scratch: String::new(),
             #[cfg(test)]
@@ -725,7 +720,7 @@ impl<G> CommandState<G> {
         &self,
         id: crate::AttemptTokenListId,
     ) -> Result<crate::attempt::AttemptTokenListView<'_>, crate::AttemptError> {
-        self.attempt.arena().token_words(id)
+        self.attempt.token_words(id)
     }
 
     /// Atomically promotes every attempt-local root exposed by one resident
@@ -742,7 +737,7 @@ impl<G> CommandState<G> {
     where
         D: crate::AttemptPromotionDestination<G>,
     {
-        self.attempt.arena_mut().promote_into(universe, destination)
+        self.attempt.promote_into(universe, destination)
     }
 
     /// Promotes one declared macro-definition root and its schema-owned text
@@ -752,7 +747,7 @@ impl<G> CommandState<G> {
         universe: &mut tex_state::Universe<G>,
         id: crate::AttemptDefinitionId,
     ) -> Result<tex_state::DefinitionRef<G>, crate::AttemptError> {
-        self.attempt.arena_mut().promote_definition(universe, id)
+        self.attempt.promote_definition(universe, id)
     }
 
     /// Returns the number of live TeX input levels retained by this command state.
@@ -1056,7 +1051,7 @@ impl<G> CommandState<G> {
     ) {
         let list = self
             .attempt
-            .profile_allocate_token_list(words)
+            .allocate_token_list(words)
             .expect("profiling attempt span admits");
         self.push_attempt_list_level(
             list,
@@ -1174,7 +1169,7 @@ impl<G> CommandState<G> {
     #[must_use]
     pub fn output_open_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
         self.input
-            .output_open_context(stores, self.attempt.arena(), &self.scratch)
+            .output_open_context(stores, &self.attempt, &self.scratch)
     }
 
     /// Captures the allocation-free live-input coordinate used until a real
@@ -1231,7 +1226,7 @@ impl<G> CommandState<G> {
         stores: &tex_state::CommandContext<'_, G>,
     ) -> bool {
         self.input
-            .open_context_starts_with_print_ln(stores, self.attempt.arena(), &self.scratch)
+            .open_context_starts_with_print_ln(stores, &self.attempt, &self.scratch)
     }
 
     pub(crate) fn output_retiring_source_context(
@@ -1239,12 +1234,8 @@ impl<G> CommandState<G> {
         source: &crate::input::SourceLevel<G>,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
-        self.input.output_retiring_source_context(
-            source,
-            stores,
-            self.attempt.arena(),
-            &self.scratch,
-        )
+        self.input
+            .output_retiring_source_context(source, stores, &self.attempt, &self.scratch)
     }
 
     /// TeX82 §§1026/1028's context after the selected output list ends.
@@ -1256,7 +1247,7 @@ impl<G> CommandState<G> {
     #[must_use]
     pub fn output_close_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
         self.input
-            .output_close_context(stores, self.attempt.arena(), &self.scratch)
+            .output_close_context(stores, &self.attempt, &self.scratch)
     }
 
     /// Whether TeX82 §1370's artificial deferred-write input is live.

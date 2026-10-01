@@ -214,7 +214,6 @@ impl<G> MainControl<G> {
     pub(super) fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe<G>,
-        operation: &mut DirectOperation,
         operations: &mut usize,
         max_operations: usize,
         host_preparation: &mut OperationPreparation<G>,
@@ -321,7 +320,7 @@ impl<G> MainControl<G> {
                                 frame.clear_operation_origin();
                                 frame.assert_empty();
                                 *operations += 1;
-                                self.roll_admitted_direct_operation(operation);
+                                self.roll_admitted_direct_operation();
                                 *host_preparation = OperationPreparation::new();
                                 continue 'admitted;
                             }
@@ -411,7 +410,6 @@ impl<G> MainControl<G> {
                             boxes: &self.boxes,
                             cold: &mut *cold,
                             max_save_stack: &mut self.max_save_stack,
-                            operation,
                         };
                         let exit = super::lane::run(
                             &mut processor,
@@ -749,7 +747,7 @@ impl<G> MainControl<G> {
                 frame.clear_operation_origin();
                 frame.assert_empty();
                 *operations += 1;
-                self.roll_admitted_direct_operation(operation);
+                self.roll_admitted_direct_operation();
                 *host_preparation = OperationPreparation::new();
                 continue 'admitted;
             }

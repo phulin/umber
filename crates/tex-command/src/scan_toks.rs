@@ -517,13 +517,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let parameter = self
                     .command
                     .attempt
-                    .arena_mut()
                     .allocate_token_buffer()
                     .map_err(attempt_command_error)?;
                 let replacement = self
                     .command
                     .attempt
-                    .arena_mut()
                     .allocate_token_buffer()
                     .map_err(attempt_command_error)?;
                 collector
@@ -534,7 +532,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let definition = self
                     .command
                     .attempt
-                    .arena_mut()
                     .allocate_definition_builder()
                     .map_err(attempt_command_error)?;
                 collector
@@ -663,7 +660,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             TokenCollectorDestination::TokenBuffers { writer, .. } => self
                 .command
                 .attempt
-                .arena_mut()
                 .push_buffer_token(*writer, word)
                 .map_err(attempt_command_error),
             TokenCollectorDestination::Definition { .. } => match phase {
@@ -683,13 +679,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 TokenCollectorPhase::Parameter => self
                     .command
                     .attempt
-                    .arena_mut()
                     .push_definition_parameter(*definition, word.token_word())
                     .map_err(attempt_command_error),
                 TokenCollectorPhase::Replacement => self
                     .command
                     .attempt
-                    .arena_mut()
                     .push_definition_replacement(*definition, word.token_word())
                     .map_err(attempt_command_error),
                 TokenCollectorPhase::Complete => unreachable!(),
@@ -768,7 +762,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 *parameter_result = Some(
                     self.command
                         .attempt
-                        .arena_mut()
                         .finish_token_buffer(*writer)
                         .map_err(attempt_command_error)?,
                 );
@@ -782,7 +775,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             TokenCollectorDestination::AttemptDefinition { definition } => {
                 self.command
                     .attempt
-                    .arena_mut()
                     .finish_definition_parameters(*definition)
                     .map_err(attempt_command_error)?;
             }
@@ -822,7 +814,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 replacement: self
                     .command
                     .attempt
-                    .arena_mut()
                     .finish_token_buffer(*replacement)
                     .map_err(attempt_command_error)?,
             },
@@ -848,7 +839,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             TokenCollectorDestination::AttemptDefinition { definition } => {
                 self.command
                     .attempt
-                    .arena_mut()
                     .finish_definition(*definition)
                     .map_err(attempt_command_error)?;
                 ScannedToksStorage::AttemptDefinition(*definition)
@@ -882,7 +872,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &self,
         scanned: &ScannedToksBuffers<G>,
     ) -> Result<ScannedWords<'_, G>, CommandError> {
-        let arena = self.command.attempt.arena();
+        let arena = &self.command.attempt;
         match scanned.storage {
             ScannedToksStorage::Tokens { parameter, .. } => arena
                 .token_words(parameter)
@@ -904,7 +894,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &self,
         scanned: &ScannedToksBuffers<G>,
     ) -> Result<ScannedWords<'_, G>, CommandError> {
-        let arena = self.command.attempt.arena();
+        let arena = &self.command.attempt;
         match scanned.storage {
             ScannedToksStorage::Tokens { replacement, .. } => arena
                 .token_words(replacement)
@@ -934,7 +924,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<crate::attempt::AttemptTokenListView<'_>, CommandError> {
         self.command
             .attempt
-            .arena()
             .token_words(list)
             .map_err(attempt_command_error)
     }
@@ -973,7 +962,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // Only attempt-arena sinks are allocated before the scanner scope
         // opens; other destinations leave nothing there for failure to trim.
         let attempt_opening = matches!(config.destination, ScanToksDestination::Attempt)
-            .then(|| self.command.attempt.arena().mark());
+            .then(|| self.command.attempt.mark());
         let mut collector = TokenCollector::default();
         if let Err(error) = self.prepare_scan_toks_collector(
             &mut collector,
@@ -984,14 +973,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.truncate_attempt_opening(attempt_opening)?;
             return Err(error);
         }
-        let scope = match self.command.begin_attempt_scanner_scope() {
-            Ok(scope) => scope,
-            Err(error) => {
-                self.discard_scan_toks_collector(&mut collector)?;
-                self.truncate_attempt_opening(attempt_opening)?;
-                return Err(attempt_command_error(error));
-            }
-        };
+        let scope = self.command.attempt.mark();
         let builder = TokenBuilderId(self.command.transient.next_builder_identity);
         self.command.transient.next_builder_identity =
             self.command.transient.next_builder_identity.wrapping_add(1);
@@ -1021,7 +1003,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.finish_scanner_episode(episode);
                 self.discard_scan_toks_collector(&mut collector)?;
                 self.command
-                    .discard_attempt_scope_suffix(scope)
+                    .attempt
+                    .truncate(scope)
                     .map_err(attempt_command_error)?;
                 self.truncate_attempt_opening(attempt_opening)?;
                 return Err(error);
@@ -1071,9 +1054,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 tokens: completed_tokens,
             }),
         );
-        self.command
-            .defer_attempt_scope_retirement(scope)
-            .map_err(attempt_command_error)?;
+        // The scanner's rows stay with the command, which releases them when
+        // it settles.
         if let ScannedToksStorage::ReplayInputBuilder { builder, .. } = result.storage {
             let span = match self
                 .command
@@ -1110,13 +1092,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         collector: &mut TokenCollector<G>,
         episode: ScannerEpisode,
-        scope: crate::attempt::OwnedAttemptScope,
+        scope: AttemptMark,
         attempt_opening: Option<AttemptMark>,
     ) -> Result<(), CommandError> {
         self.finish_scanner_episode(episode);
         self.discard_scan_toks_collector(collector)?;
         self.command
-            .discard_attempt_scope_suffix(scope)
+            .attempt
+            .truncate(scope)
             .map_err(attempt_command_error)?;
         self.truncate_attempt_opening(attempt_opening)
     }
@@ -1130,7 +1113,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.command
             .attempt
-            .arena_mut()
             .truncate(mark)
             .map_err(attempt_command_error)
     }
@@ -1892,7 +1874,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let source = self
                         .command
                         .attempt
-                        .arena()
                         .token_word(tokens, index)
                         .map_err(attempt_command_error)?;
                     let word = TracedTokenWord::pack(source.semantic_token(), OriginId::UNKNOWN);
@@ -1961,7 +1942,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             let word = self
                 .command
                 .attempt
-                .arena()
                 .token_word(scanned.replacement_text, index)
                 .map_err(attempt_command_error)?;
             if self.is_observed() {
@@ -1979,7 +1959,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             let moved = self
                 .command
                 .attempt
-                .arena_mut()
                 .consume_token_list_into_buffer(scanned.replacement_text, destination)
                 .map_err(attempt_command_error)?;
             if moved as usize != len {
@@ -2229,11 +2208,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         target: tex_state::interner::Symbol,
         raw_catcodes: bool,
     ) -> Result<AttemptDefinitionId, CommandError> {
-        let mut scope = Some(
-            self.command
-                .begin_attempt_scanner_scope()
-                .map_err(attempt_command_error)?,
-        );
+        let scope = self.command.attempt.mark();
         let builder = TokenBuilderId(self.command.transient.next_builder_identity);
         self.command.transient.next_builder_identity =
             self.command.transient.next_builder_identity.wrapping_add(1);
@@ -2270,18 +2245,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ScannedToksStorage::AttemptDefinition(completed) if completed == definition => {}
                 _ => return Err(CommandError::input_invariant()),
             }
-            self.command
-                .validate_attempt_scope_retirement(
-                    scope.as_ref().expect("read owns its scanner scope"),
-                )
-                .map_err(attempt_command_error)?;
-            self.command
-                .defer_attempt_scope_retirement(
-                    scope
-                        .take()
-                        .expect("successful read owns its scanner scope"),
-                )
-                .expect("validated read scope retires without intervening mutation");
             Ok(definition)
         })();
         self.command.alignment.align_state = saved_align_state;
@@ -2289,9 +2252,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         match result {
             Ok(definition) => Ok(definition),
             Err(error) => {
-                let scope = scope.take().ok_or_else(CommandError::input_invariant)?;
                 self.command
-                    .discard_attempt_scope_suffix(scope)
+                    .attempt
+                    .truncate(scope)
                     .map_err(attempt_command_error)?;
                 Err(error)
             }
@@ -2536,7 +2499,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(self
             .command
             .attempt
-            .arena()
             .definition_replacement_words(definition)
             .map_err(attempt_command_error)?
             .iter()

@@ -6,8 +6,7 @@ use tex_state::{DefinitionBuildError, DefinitionRef, GlueId, ProvenanceId, Token
 
 use super::{
     AttemptArena, AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptPromotionDestination,
-    AttemptProvenanceId, AttemptScopeSerial, AttemptTokenListId, AttemptTokenStorage,
-    CommandAttempt,
+    AttemptProvenanceId, AttemptTokenListId, AttemptTokenStorage,
 };
 
 fn word(ch: char) -> TracedTokenWord {
@@ -954,30 +953,22 @@ fn pending_owner_rejects_retirement_without_partially_retiring_universe() {
 }
 
 #[test]
-fn owned_scopes_close_exact_lifo_and_reject_stale_coordinates() {
+fn child_scopes_close_exact_lifo_suffixes() {
     let mut attempt = AttemptArena::<()>::default();
     let retained = attempt
         .allocate_token_list([word('p')])
         .expect("parent value");
-    let parent = attempt.begin_owned_scope().expect("parent scope");
+    let parent = attempt.begin_child_scope();
     let parent_value = attempt
         .allocate_token_list([word('a')])
         .expect("parent-scope value");
-    let child = attempt.begin_owned_scope().expect("child scope");
+    let child = attempt.begin_child_scope();
     let child_value = attempt
         .allocate_token_list([word('b')])
         .expect("child-scope value");
 
-    assert_eq!(
-        attempt.validate_top_owner(&parent),
-        Err(AttemptError::InvalidCoordinate)
-    );
-    assert_eq!(
-        attempt.token_words(child_value).expect("child words"),
-        &[word('b')]
-    );
     attempt
-        .close_owned_scope(child)
+        .close_child_scope(child)
         .expect("child closes first");
     assert_eq!(
         attempt.token_words(child_value),
@@ -988,7 +979,7 @@ fn owned_scopes_close_exact_lifo_and_reject_stale_coordinates() {
         &[word('a')]
     );
     attempt
-        .close_owned_scope(parent)
+        .close_child_scope(parent)
         .expect("parent closes second");
     assert_eq!(
         attempt.token_words(retained).expect("retained words"),
@@ -997,206 +988,66 @@ fn owned_scopes_close_exact_lifo_and_reject_stale_coordinates() {
 }
 
 #[test]
-fn lexical_scope_truncates_its_branded_child_id() {
+fn settle_releases_every_root_table() {
     let mut attempt = AttemptArena::<()>::default();
-    attempt
-        .with_child_scope(|scope| {
-            let child = scope
-                .allocate_token_list([word('x')])
-                .expect("child allocation");
-            assert_eq!(
-                scope.token_words(&child).expect("child words"),
-                &[word('x')]
-            );
-        })
-        .expect("lexical scope");
+    assert!(attempt.is_clear());
+    attempt.settle();
     assert!(attempt.mark().is_empty());
+
+    let list = attempt
+        .allocate_token_list([word('a')])
+        .expect("finished list");
+    let buffer = attempt.allocate_token_buffer().expect("scanner buffer");
+    attempt
+        .push_buffer_token(buffer, word('b'))
+        .expect("buffer word");
+    let builder = attempt.begin_token_list().expect("open builder");
+    attempt.push_token(builder, word('c')).expect("open word");
+    attempt
+        .allocate_definition_builder()
+        .expect("definition builder");
+    attempt.allocate_glue(GlueSpec::ZERO).expect("glue");
+    attempt.allocate_name("name").expect("name");
+    assert!(!attempt.is_clear());
+
+    attempt.settle();
+    assert!(attempt.is_clear());
+    assert!(attempt.mark().is_empty());
+    assert_eq!(
+        attempt.token_words(list),
+        Err(AttemptError::InvalidCoordinate)
+    );
 }
 
 #[test]
-fn four_hundred_thousand_scope_handoffs_keep_arena_metadata_constant() {
-    let mut attempt = AttemptArena::<()>::default();
-    let operation = attempt.begin_owned_scope().expect("operation scope");
-    let mut scanner = attempt.begin_owned_scope().expect("scanner scope");
-    let output = attempt
-        .allocate_token_buffer()
-        .expect("parent-owned scanner sink");
-
-    for _ in 0..400_000 {
-        let child = attempt.begin_owned_scope().expect("macro child");
-        let retired = attempt
-            .allocate_token_list([word('x')])
-            .expect("child scratch");
-        attempt
-            .close_owned_scope(child)
-            .expect("top child retires immediately");
-        assert_eq!(attempt.top_scope, scanner.serial);
-        assert!(attempt.token_buffer(output).is_ok());
-        assert_eq!(
-            attempt.token_words(retired),
-            Err(AttemptError::InvalidCoordinate)
-        );
+fn every_root_table_alone_makes_the_arena_live() {
+    let roots: [fn(&mut AttemptArena<()>); 6] = [
+        |attempt| {
+            attempt.begin_token_list().expect("open builder");
+        },
+        |attempt| {
+            attempt.allocate_token_list([]).expect("finished list");
+        },
+        |attempt| {
+            attempt.allocate_token_buffer().expect("scanner buffer");
+        },
+        |attempt| {
+            attempt
+                .allocate_definition_builder()
+                .expect("definition builder");
+        },
+        |attempt| {
+            attempt.allocate_glue(GlueSpec::ZERO).expect("glue");
+        },
+        |attempt| {
+            attempt.allocate_name("name").expect("name");
+        },
+    ];
+    for root in roots {
+        let mut attempt = AttemptArena::<()>::default();
+        root(&mut attempt);
+        assert!(!attempt.is_clear());
+        attempt.settle();
+        assert!(attempt.mark().is_empty());
     }
-
-    attempt
-        .handoff_owned_parent(operation, &mut scanner)
-        .expect("scanner consumes its operation parent");
-    assert!(attempt.token_buffer(output).is_ok());
-    attempt
-        .close_owned_scope(scanner)
-        .expect("operation consumes scanner then itself");
-    assert!(attempt.mark().is_empty());
-}
-
-#[test]
-fn deferred_scanner_result_survives_a_younger_immediate_retirement() {
-    let mut attempt = AttemptArena::<()>::default();
-    let operation = attempt.begin_owned_scope().expect("operation scope");
-    let mut scanner = attempt.begin_owned_scope().expect("scanner scope");
-    let result = attempt
-        .allocate_token_list([word('s')])
-        .expect("scanner result");
-    let macro_child = attempt.begin_owned_scope().expect("macro child");
-    let scratch = attempt
-        .allocate_token_list([word('x')])
-        .expect("macro scratch");
-    attempt
-        .close_owned_scope(macro_child)
-        .expect("younger macro retires immediately");
-
-    assert_eq!(
-        attempt.token_words(result).expect("result words"),
-        &[word('s')]
-    );
-    assert_eq!(
-        attempt.token_words(scratch),
-        Err(AttemptError::InvalidCoordinate)
-    );
-    attempt
-        .handoff_owned_parent(operation, &mut scanner)
-        .expect("scanner consumes its operation parent");
-    attempt
-        .close_owned_scope(scanner)
-        .expect("commit releases scanner result and operation");
-    assert!(attempt.mark().is_empty());
-}
-
-#[test]
-fn successful_handoff_does_not_consult_an_obsolete_child_opening_mark() {
-    let mut attempt = AttemptArena::<()>::default();
-    let operation = attempt.begin_owned_scope().expect("operation scope");
-    let operation_opening = operation.opening;
-    attempt
-        .allocate_token_list([word('p')])
-        .expect("operation-local promoted prefix");
-    let mut scanner = attempt.begin_owned_scope().expect("scanner scope");
-
-    // Successful root publication may reclaim rows which preceded the child
-    // scope. The child opening is then intentionally stale, while its merged
-    // close-through operation mark remains the exact surviving boundary.
-    attempt
-        .truncate(operation_opening)
-        .expect("published prefix reclaims without closing the live scope");
-    assert_eq!(
-        attempt.validate_mark(scanner.opening),
-        Err(AttemptError::InvalidCoordinate)
-    );
-    attempt
-        .handoff_owned_parent(operation, &mut scanner)
-        .expect("handoff uses typed ownership, not obsolete opening lengths");
-    attempt
-        .close_owned_scope(scanner)
-        .expect("successful close uses the merged close-through mark");
-    assert_eq!(attempt.top_scope, AttemptScopeSerial::ROOT);
-    assert!(attempt.mark().is_empty());
-}
-
-#[test]
-fn preallocated_scanner_sink_survives_a_younger_operation_rollback() {
-    let mut attempt = AttemptArena::<()>::default();
-    let opening_operation = attempt.begin_owned_scope().expect("opening operation");
-    let mut scanner = attempt.begin_owned_scope().expect("scanner scope");
-    let output = attempt
-        .allocate_token_buffer()
-        .expect("scanner reserves its parent sink");
-    attempt
-        .handoff_owned_parent(opening_operation, &mut scanner)
-        .expect("scanner keeps the opening operation below it");
-
-    let rejected_retry = attempt.begin_owned_scope().expect("rejected retry");
-    let rejected = attempt
-        .allocate_token_list([word('x')])
-        .expect("retry-local scratch");
-    attempt
-        .close_owned_scope(rejected_retry)
-        .expect("retry suffix rolls back");
-    assert!(
-        attempt
-            .token_buffer(output)
-            .expect("output sink")
-            .is_empty()
-    );
-    assert_eq!(
-        attempt.token_words(rejected),
-        Err(AttemptError::InvalidCoordinate)
-    );
-
-    let mut completed_retry = attempt.begin_owned_scope().expect("completed retry");
-    attempt
-        .push_buffer_token(output, word('r'))
-        .expect("retry writes through the scanner-owned sink");
-    let result = attempt
-        .finish_token_buffer(output)
-        .expect("parent sink finalizes after retry");
-    attempt
-        .handoff_owned_parent(scanner, &mut completed_retry)
-        .expect("result survives through retry commit");
-    assert_eq!(
-        attempt.token_words(result).expect("result words"),
-        &[word('r')]
-    );
-    attempt
-        .close_owned_scope(completed_retry)
-        .expect("completed retry closes the whole retired suffix");
-    assert!(attempt.mark().is_empty());
-}
-
-#[test]
-fn foreign_deferred_child_is_rejected_without_consuming_the_live_operation() {
-    let mut attempt = CommandAttempt::<()>::default();
-    let operation = attempt.begin_operation(0).expect("operation scope");
-    let mut foreign = CommandAttempt::<()>::default();
-    let _foreign_operation = foreign.begin_operation(0).expect("foreign operation");
-    let foreign_child = foreign.begin_child_scope().expect("foreign child");
-
-    assert_eq!(
-        attempt.defer_child_to_operation(foreign_child),
-        Err(AttemptError::ForeignAttempt)
-    );
-    assert!(attempt.validate_operation(operation).is_ok());
-    assert_eq!(attempt.commit_operation(operation), Ok(()));
-    assert!(attempt.is_empty());
-}
-
-#[test]
-fn commit_truncates_a_child_that_inherited_the_operation_owner() {
-    let mut attempt = CommandAttempt::<()>::default();
-    let operation = attempt.begin_operation(0).expect("operation scope");
-    let child = attempt.begin_child_scope().expect("scanner child");
-    let rejected = attempt
-        .arena_mut()
-        .allocate_token_list([word('x')])
-        .expect("child scratch");
-    assert_eq!(
-        attempt.defer_child_to_operation(child),
-        Ok(()),
-        "the child directly inherits the operation"
-    );
-
-    assert_eq!(attempt.commit_operation(operation), Ok(()));
-    assert_eq!(
-        attempt.arena().token_words(rejected),
-        Err(AttemptError::InvalidCoordinate)
-    );
-    assert!(attempt.is_empty());
 }

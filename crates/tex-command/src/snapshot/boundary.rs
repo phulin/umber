@@ -137,9 +137,8 @@ impl<G> CommandState<G> {
         );
         self.roots = CommandStateRoots::default();
         self.checkpoints = CommandCheckpoints::default();
-        self.attempt = crate::CommandAttempt::default();
+        self.attempt = crate::attempt::AttemptArena::default();
         self.scratch = crate::execution_scratch::ExecutionScratch::default();
-        self.active_attempt_operation = None;
         self.synchronize_delivery_mode_roots();
     }
 
@@ -188,10 +187,7 @@ impl<G> CommandState<G> {
         if !self.transient.rollback_roots.is_empty() {
             return Err(CommandSummaryError::LiveRollbackRoot);
         }
-        if self.active_attempt_operation.is_some()
-            || !self.attempt.is_empty()
-            || !self.scratch.is_quiescent()
-        {
+        if !self.attempt.is_clear() || !self.scratch.is_quiescent() {
             return Err(CommandSummaryError::AttemptSuspended);
         }
         Ok(())
@@ -307,10 +303,7 @@ impl<G> CommandState<G> {
         if self.roots.reachable_state_identity_enabled {
             return true;
         }
-        if !self.attempt.is_empty()
-            || self.active_attempt_operation.is_some()
-            || !self.roots.replay_completions.is_empty()
-        {
+        if !self.attempt.is_clear() || !self.roots.replay_completions.is_empty() {
             return false;
         }
         self.roots.reachable_state_identity_enabled = true;

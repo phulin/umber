@@ -83,15 +83,13 @@ pub(super) struct LaneOwners<'a, G> {
     /// The admitted run's cold slot, where scalar assignments scan.
     pub(super) cold: &'a mut ColdOperationSlot<G>,
     pub(super) max_save_stack: &'a mut usize,
-    /// The admitted run's current operation scope.
-    pub(super) operation: &'a DirectOperation,
 }
 
 /// Delivers commands and settles every lane command in place until one the
 /// lane does not own, a report, or the operation limit ends the lane.
 ///
-/// Each lane command settled in place settles its own scratch scope, exactly
-/// as the admitted run's roll does.
+/// Each lane command settled in place releases its own scratch, exactly as
+/// the admitted run's roll does.
 ///
 /// `\relax` is TeX82 §1045's `any_mode(relax): do_nothing`. In an eligible
 /// context no character run is pending, so its §1030 word boundary flushes
@@ -241,7 +239,7 @@ fn run_compact<G>(
         slot.clear();
         destination.take();
         *operations += 1;
-        settle_unit(processor, owners.operation);
+        processor.lane_parts().1.settle_attempt();
     }
 }
 
@@ -472,15 +470,6 @@ fn apply_operation<G>(
         }
     }
     Ok(ReplayStep::Continue)
-}
-
-/// Settles the lane command's scratch scope and opens its successor in place,
-/// as the admitted run's roll does.
-fn settle_unit<G>(processor: &mut CommandProcessor<'_, '_, G>, operation: &DirectOperation) {
-    let (_, command, _) = processor.lane_parts();
-    command
-        .roll_attempt_operation(operation)
-        .expect("the lane's unit owns a valid command-attempt scope");
 }
 
 pub(super) fn schedule_afterassignment<G>(

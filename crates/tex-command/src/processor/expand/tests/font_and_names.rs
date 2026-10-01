@@ -26,7 +26,6 @@ fn nested_pdf_font_sizes_use_the_shared_font_selector_lane() {
             },
         ]);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, input);
         let output = collect_expanded_characters(universe, &mut command);
         assert!(!output.is_empty());
@@ -54,7 +53,6 @@ fn nested_pdf_font_queries_use_the_shared_font_selector_lane() {
         );
 
         let mut command = CommandState::new(CommandProfile::PDFTEX14029);
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -93,7 +91,6 @@ fn ifvoid_uses_the_shared_integer_lane_for_its_register_index() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -141,7 +138,6 @@ fn iffontchar_consumes_font_and_character_on_the_shared_integer_lane() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -190,7 +186,6 @@ fn ifcsname_collects_in_the_shared_delivery_lane() {
         );
         let _known = install_static(universe, "known", Meaning::Relax);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -279,7 +274,6 @@ fn csname_chardef_uses_missing_endcsname_recovery() {
             .expect("chardef meaning");
         let empty = universe.intern("").expect("empty control sequence");
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -344,7 +338,6 @@ fn ifcsname_chardef_uses_missing_endcsname_recovery() {
         let else_symbol = universe.intern("else").expect("else name");
         let fi_symbol = universe.intern("fi").expect("fi name");
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [

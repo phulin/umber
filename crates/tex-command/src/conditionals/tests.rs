@@ -613,7 +613,6 @@ fn if_operand_string_compare_completes_its_exact_parent_once() {
         let otherwise = install(universe, "else-string-compare", ExpandablePrimitive::Else);
         let fi = install(universe, "fi-string-compare", ExpandablePrimitive::Fi);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [

@@ -159,7 +159,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                             let semantic = self
                                 .command
                                 .attempt
-                                .arena()
                                 .token_words(tokens)
                                 .map_err(|_| CommandError::input_invariant())?
                                 .iter()

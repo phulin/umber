@@ -995,9 +995,7 @@ Because restoration swaps, the same logs serve redo of the accepted head. Redo
 is valid until new work runs, the same rule as today's aggregate head.
 
 Rewinding several intervals applies these steps per interval in reverse order.
-That is the positional-mark model of
-[positional journal marks](positional_journal_marks.md), with fewer and cheaper
-logs.
+That is the positional-mark model, with fewer and cheaper logs.
 
 ### Resource replay
 

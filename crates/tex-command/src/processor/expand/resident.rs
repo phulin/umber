@@ -263,7 +263,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         next_word_from_current_frame(&mut row.header.frame, |position| {
                             command_state
                                 .attempt
-                                .arena()
                                 .resident_token_word(list, position as usize)
                                 .map(|word| (word.token_word(), word.origin()))
                         })

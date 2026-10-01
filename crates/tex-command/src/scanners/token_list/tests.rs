@@ -11,7 +11,6 @@ fn token_register_assignment_returns_attempt_local_balanced_text() {
     crate::test_harness::with_universe(|universe| {
         let owner = universe.intern("toks").expect("owner").symbol();
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [

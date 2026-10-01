@@ -224,10 +224,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let output_has_remaining = match &self.command.input.levels[output_index] {
             level @ InputLevel::Resident(_) => level
                 .stored_indexed_token_at_cold(
-                    PackedTokenSources::new(
-                        &self.command.input.replay,
-                        self.command.attempt.arena(),
-                    ),
+                    PackedTokenSources::new(&self.command.input.replay, &self.command.attempt),
                     self.state,
                 )
                 .is_some(),
@@ -246,7 +243,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             && level
                                 .stored_indexed_token_at_cold(PackedTokenSources::new(
                                     &self.command.input.replay,
-                                    self.command.attempt.arena(),
+                                    &self.command.attempt,
                                 ), self.state)
                             .is_none()
                 )
@@ -277,7 +274,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 .stored_indexed_token_at_cold(
                                     PackedTokenSources::new(
                                         &self.command.input.replay,
-                                        self.command.attempt.arena(),
+                                        &self.command.attempt,
                                     ),
                                     self.state,
                                 )
@@ -320,8 +317,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         ) {
             return Ok(());
         }
-        let sources =
-            PackedTokenSources::new(&self.command.input.replay, self.command.attempt.arena());
+        let sources = PackedTokenSources::new(&self.command.input.replay, &self.command.attempt);
         if !matches!(row.header.behavior(), TokenBehavior::BackedUp(_))
             || level
                 .stored_indexed_token_at_cold(sources, self.state)
@@ -330,11 +326,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 level
                     .stored_span_cold()
                     .and_then(|span| {
-                        PackedTokenSources::new(
-                            &self.command.input.replay,
-                            self.command.attempt.arena(),
-                        )
-                        .indexed_token_at_cold(&span, 0)
+                        PackedTokenSources::new(&self.command.input.replay, &self.command.attempt)
+                            .indexed_token_at_cold(&span, 0)
                     })
                     .map(|(word, _)| word.semantic_token()),
                 Some(Token::Char {

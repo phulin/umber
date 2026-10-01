@@ -89,7 +89,6 @@ fn check(family: Family, depth: usize, parent_depth: u32, should_overflow: bool,
     crate::test_harness::with_universe(|universe| {
         let input = fixture(universe, family, depth);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, input);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = CommandFuelLedger::default();

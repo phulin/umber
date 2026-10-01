@@ -216,7 +216,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             let write_words = self
                 .command
                 .attempt
-                .arena()
                 .token_words(tokens)
                 .map_err(|_| CommandError::input_invariant())?
                 .len();
@@ -250,7 +249,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let words = self
                     .command
                     .attempt
-                    .arena()
                     .token_words(tokens)
                     .map_err(|_| CommandError::input_invariant())?;
                 for word in words.iter() {
@@ -284,7 +282,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let expanded_words = self
             .command
             .attempt
-            .arena()
             .token_words(expanded)
             .map_err(|_| CommandError::input_invariant())?
             .len();

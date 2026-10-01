@@ -1,8 +1,9 @@
-//! Operation-scoped command scratch and explicit-root promotion.
+//! Command-lifetime scratch and explicit-root promotion.
 //!
 //! Values in this module are coordinates, never owners. One [`AttemptArena`]
-//! owns all backing storage and can be truncated to a fixed-size mark or moved
-//! intact through one synchronous command operation.
+//! owns all backing storage. It is clear at every command boundary: a
+//! command's rows are released when the command settles, and a synchronous
+//! scanner that fails truncates its own suffix to a fixed-size mark.
 
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
@@ -27,22 +28,6 @@ mod tests;
 static NEXT_ATTEMPT_KEY: AtomicU64 = AtomicU64::new(1);
 static NEXT_ATTEMPT_SERIAL: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-struct AttemptScopeSerial(NonZeroU64);
-
-impl AttemptScopeSerial {
-    const ROOT: Self = Self(NonZeroU64::MIN);
-
-    fn checked_successor(self) -> Result<Self, AttemptError> {
-        self.0
-            .get()
-            .checked_add(1)
-            .and_then(NonZeroU64::new)
-            .map(Self)
-            .ok_or(AttemptError::CapacityOverflow)
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AttemptKey(NonZeroU64);
 
@@ -56,106 +41,14 @@ impl AttemptKey {
     }
 }
 
-/// Checked non-owning identity paired with one logical scope owner.
+/// Move-only rewind point for one synchronous child of the running command.
 ///
-/// The private [`OwnedAttemptScope`] is the sole linear owner. This identity
-/// may align cloneable command semantics with that move-only owner, but it
-/// cannot close a scope or address storage by itself.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct AttemptScopeCoordinate {
-    key: NonZeroU64,
-    serial: AttemptScopeSerial,
-}
-
-/// Linear capability owning one synchronous attempt scope.
-///
-/// Construction is arena-private, the value is neither `Copy` nor `Clone`,
-/// and exact close consumes it.
-#[derive(Debug, Eq, Hash, PartialEq)]
-#[must_use = "an owned attempt scope must be closed before the operation returns"]
-pub(crate) struct OwnedAttemptScope {
-    key: NonZeroU64,
-    serial: AttemptScopeSerial,
-    parent: AttemptScopeSerial,
+/// The child owns only the attempt rows allocated after it opened. Closing it
+/// truncates that suffix; semantic command roots stay with the command.
+#[derive(Debug)]
+#[must_use = "a child attempt scope must be closed"]
+pub struct CommandAttemptChildScope {
     opening: AttemptMark,
-    close_through_serial: AttemptScopeSerial,
-    close_through: AttemptMark,
-}
-
-impl OwnedAttemptScope {
-    pub(crate) const fn coordinate(&self) -> AttemptScopeCoordinate {
-        AttemptScopeCoordinate {
-            key: self.key,
-            serial: self.serial,
-        }
-    }
-
-    pub(crate) fn is_direct_child_of(&self, parent: &Self) -> bool {
-        self.key == parent.key && self.parent == parent.serial
-    }
-}
-
-/// One attempt-local id whose child-scope brand cannot escape an HRTB
-/// callback or be used through a sibling scope.
-#[derive(Debug, Eq, PartialEq)]
-pub struct ScopedAttemptTokenListId<'scope> {
-    id: AttemptTokenListId,
-    scope: AttemptScopeSerial,
-    _scope: PhantomData<fn(&'scope mut ()) -> &'scope mut ()>,
-}
-
-/// Borrowed synchronous child scope.
-///
-/// The dynamic engine uses [`OwnedAttemptScope`] where nested scanner helpers
-/// need a checked LIFO scope. Purely synchronous helpers use this facade so a
-/// child id is statically unable to escape the callback.
-pub struct AttemptScope<'arena, 'scope, G> {
-    arena: &'arena mut AttemptArena<G>,
-    owner: Option<OwnedAttemptScope>,
-    _scope: PhantomData<fn(&'scope mut ()) -> &'scope mut ()>,
-}
-
-impl<'scope, G> AttemptScope<'_, 'scope, G> {
-    pub fn allocate_token_list(
-        &mut self,
-        words: impl IntoIterator<Item = TracedTokenWord>,
-    ) -> Result<ScopedAttemptTokenListId<'scope>, AttemptError> {
-        let id = self.arena.allocate_token_list(words)?;
-        Ok(ScopedAttemptTokenListId {
-            id,
-            scope: self
-                .owner
-                .as_ref()
-                .expect("a lexical attempt scope remains open")
-                .serial,
-            _scope: PhantomData,
-        })
-    }
-
-    pub fn token_words(
-        &self,
-        id: &ScopedAttemptTokenListId<'scope>,
-    ) -> Result<AttemptTokenListView<'_>, AttemptError> {
-        if self
-            .owner
-            .as_ref()
-            .is_none_or(|owner| owner.serial != id.scope)
-        {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        self.arena.token_words(id.id)
-    }
-}
-
-impl<G> Drop for AttemptScope<'_, '_, G> {
-    fn drop(&mut self) {
-        let Some(owner) = self.owner.take() else {
-            return;
-        };
-        self.arena
-            .close_owned_scope(owner)
-            .expect("a lexical attempt scope closes in exact LIFO order");
-    }
 }
 
 macro_rules! attempt_id {
@@ -537,8 +430,6 @@ struct AttemptRow<T> {
 /// All command-side storage which shares one operation lifetime.
 pub(crate) struct AttemptArena<G> {
     key: AttemptKey,
-    top_scope: AttemptScopeSerial,
-    next_scope: AttemptScopeSerial,
     traced_words: Vec<TracedTokenWord>,
     traced_origins: Vec<Option<AttemptProvenanceId>>,
     token_scratch: Vec<TracedTokenWord>,
@@ -562,14 +453,16 @@ pub(crate) struct AttemptArena<G> {
     _generation: PhantomData<fn(&G) -> &G>,
 }
 
+impl<G> core::fmt::Debug for AttemptArena<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("AttemptArena(..)")
+    }
+}
+
 impl<G> Default for AttemptArena<G> {
     fn default() -> Self {
         Self {
             key: AttemptKey::fresh(),
-            top_scope: AttemptScopeSerial::ROOT,
-            next_scope: AttemptScopeSerial::ROOT
-                .checked_successor()
-                .expect("the root attempt scope has a successor"),
             traced_words: Vec::new(),
             traced_origins: Vec::new(),
             token_scratch: Vec::new(),
@@ -596,93 +489,6 @@ impl<G> Default for AttemptArena<G> {
 }
 
 impl<G> AttemptArena<G> {
-    /// Opens one dynamic child of the exact currently active scope.
-    ///
-    /// The returned linear capability remains local to the active operation.
-    /// No row, side table, or heap owner is allocated.
-    pub(crate) fn begin_owned_scope(&mut self) -> Result<OwnedAttemptScope, AttemptError> {
-        let serial = self.next_scope;
-        let next_scope = serial.checked_successor()?;
-        let opening = self.mark();
-        let owned = OwnedAttemptScope {
-            key: self.key.0,
-            serial,
-            parent: self.top_scope,
-            opening,
-            close_through_serial: serial,
-            close_through: opening,
-        };
-        self.next_scope = next_scope;
-        self.top_scope = serial;
-        Ok(owned)
-    }
-
-    /// Closes exactly the active LIFO suffix and restores its surviving
-    /// parent. Validation completes before any table or scope scalar mutates.
-    pub(crate) fn close_owned_scope(
-        &mut self,
-        owner: OwnedAttemptScope,
-    ) -> Result<(), AttemptError> {
-        self.validate_top_owner(&owner)?;
-        self.validate_mark(owner.close_through)?;
-        self.truncate(owner.close_through)?;
-        self.top_scope = owner.parent;
-        Ok(())
-    }
-
-    /// Transfers a retired logical parent into its still-live direct child.
-    ///
-    /// Both capabilities remain inline. No arena row is allocated or searched,
-    /// and the child will eventually close through the parent's opening mark.
-    pub(crate) fn handoff_owned_parent(
-        &self,
-        parent: OwnedAttemptScope,
-        child: &mut OwnedAttemptScope,
-    ) -> Result<(), AttemptError> {
-        self.validate_owner(&parent)?;
-        self.validate_owner(child)?;
-        if child.parent != parent.serial {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        child.parent = parent.parent;
-        child.close_through_serial = parent.close_through_serial;
-        child.close_through = parent.close_through;
-        Ok(())
-    }
-
-    fn validate_owner(&self, owner: &OwnedAttemptScope) -> Result<(), AttemptError> {
-        if owner.key != self.key.0 {
-            return Err(AttemptError::ForeignAttempt);
-        }
-        if owner.serial >= self.next_scope || owner.parent >= owner.serial {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        Ok(())
-    }
-
-    fn validate_top_owner(&self, owner: &OwnedAttemptScope) -> Result<(), AttemptError> {
-        self.validate_owner(owner)?;
-        if self.top_scope != owner.serial {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        Ok(())
-    }
-
-    fn with_child_scope<R>(
-        &mut self,
-        operation: impl for<'scope> FnOnce(&mut AttemptScope<'_, 'scope, G>) -> R,
-    ) -> Result<R, AttemptError> {
-        let owner = self.begin_owned_scope()?;
-        let mut scope = AttemptScope {
-            arena: self,
-            owner: Some(owner),
-            _scope: PhantomData,
-        };
-        let result = operation(&mut scope);
-        drop(scope);
-        Ok(result)
-    }
-
     #[must_use]
     pub(crate) fn mark(&self) -> AttemptMark {
         AttemptMark {
@@ -713,34 +519,6 @@ impl<G> AttemptArena<G> {
             provenance: u32::try_from(self.provenance.len())
                 .expect("attempt provenance length is bounded"),
         }
-    }
-
-    /// Whether every table sits exactly at `mark`, compared directly on the
-    /// raw lengths so the per-command roll needs no mark capture.
-    #[inline]
-    fn is_at(&self, mark: &AttemptMark) -> bool {
-        self.traced_words.len() == mark.traced_words as usize
-            && self.traced_origins.len() == mark.traced_origins as usize
-            && self.token_scratch.len() == mark.token_scratch as usize
-            && self.origin_scratch.len() == mark.origin_scratch as usize
-            && self.token_builders.len() == mark.token_builders as usize
-            && self.token_lists.len() == mark.token_lists as usize
-            && self.glue_values.len() == mark.glue_values as usize
-            && self.definitions.len() == mark.definitions as usize
-            && self.token_buffers.len() == mark.token_buffers as usize
-            && self.provenance.len() == mark.provenance as usize
-            && self.test_names_are_at(mark)
-    }
-
-    #[cfg(test)]
-    fn test_names_are_at(&self, mark: &AttemptMark) -> bool {
-        self.name_bytes.len() == mark.name_bytes as usize && self.names.len() == mark.names as usize
-    }
-
-    #[cfg(not(test))]
-    #[inline(always)]
-    const fn test_names_are_at(&self, _mark: &AttemptMark) -> bool {
-        true
     }
 
     pub(crate) fn validate_mark(&self, mark: AttemptMark) -> Result<(), AttemptError> {
@@ -794,7 +572,59 @@ impl<G> AttemptArena<G> {
         };
         self.truncate(empty)
             .expect("the empty attempt mark is always a valid prefix");
-        self.top_scope = AttemptScopeSerial::ROOT;
+    }
+
+    /// Whether no row is live. Every row hangs from a root table: an open
+    /// token builder, a finished list, a scanner buffer, a definition
+    /// builder, glue, provenance, or a name. Scratch words exist only under
+    /// an open builder and list words only under a finished list.
+    #[inline(always)]
+    pub(crate) fn is_clear(&self) -> bool {
+        (self.token_builders.len()
+            | self.token_lists.len()
+            | self.token_buffers.len()
+            | self.definitions.len()
+            | self.glue_values.len()
+            | self.provenance.len()
+            | self.test_name_count())
+            == 0
+    }
+
+    #[cfg(test)]
+    fn test_name_count(&self) -> usize {
+        self.names.len()
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    const fn test_name_count(&self) -> usize {
+        0
+    }
+
+    /// Releases every row of the command that just finished. Attempt rows
+    /// never outlive their command, so the arena is clear at every command
+    /// boundary and a command that allocated nothing pays one test.
+    #[inline(always)]
+    pub(crate) fn settle(&mut self) {
+        if !self.is_clear() {
+            self.clear();
+        }
+        debug_assert!(self.mark().is_empty());
+    }
+
+    /// Opens a synchronous child scope at the current suffix.
+    pub(crate) fn begin_child_scope(&self) -> CommandAttemptChildScope {
+        CommandAttemptChildScope {
+            opening: self.mark(),
+        }
+    }
+
+    /// Closes a child scope, releasing exactly the rows allocated inside it.
+    pub(crate) fn close_child_scope(
+        &mut self,
+        scope: CommandAttemptChildScope,
+    ) -> Result<(), AttemptError> {
+        self.truncate(scope.opening)
     }
 
     /// Rejects a suffix by truncating tables and returning whole scanner chunks.
@@ -1672,277 +1502,5 @@ where
     fn settle_next_provenance(&mut self, provenance: ProvenanceId<G>) {
         let source = self.destination.next_provenance_root();
         self.destination.settle_provenance_root(source, provenance);
-    }
-}
-
-/// Opaque owner for one command operation.
-///
-/// Individual ids never retain the arena owner. Macro activations use
-/// disjoint generation-owned scratch, and a resource miss unwinds this owner
-/// before the host replays from a full checkpoint.
-pub struct CommandAttempt<G> {
-    arena: AttemptArena<G>,
-    active_operation: Option<OwnedAttemptScope>,
-    active_operation_origin: Option<AttemptScopeCoordinate>,
-}
-
-/// Fixed-size settlement coordinate for one command operation.
-///
-/// Construction is restricted to [`crate::CommandState`]. The coordinate
-/// carries no storage owner and is valid only while the matching live attempt
-/// remains installed in that state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CommandAttemptMark {
-    opening: AttemptMark,
-    operation: AttemptScopeCoordinate,
-    macro_depth: u32,
-}
-
-/// Move-only caller capability for one active command operation.
-///
-/// Command state is the sole ordinary-path coordinate owner. The executor
-/// consumes this opaque lifecycle edge at the same synchronous boundary that
-/// commits the operation; a failure or resource miss drops the operation and
-/// replays from a full checkpoint.
-#[derive(Debug)]
-#[must_use = "an active command operation must be finished before the caller returns"]
-pub struct CommandAttemptOperation {
-    _private: (),
-}
-
-impl CommandAttemptOperation {
-    pub(crate) const fn new() -> Self {
-        Self { _private: () }
-    }
-}
-
-impl CommandAttemptMark {
-    fn new(
-        opening: AttemptMark,
-        operation: &OwnedAttemptScope,
-        macro_depth: usize,
-    ) -> Result<Self, AttemptError> {
-        Ok(Self {
-            opening,
-            operation: operation.coordinate(),
-            macro_depth: u32::try_from(macro_depth).map_err(|_| AttemptError::CapacityOverflow)?,
-        })
-    }
-}
-
-/// Move-only capability for one synchronous child of the active command
-/// operation.
-///
-/// Construction and consumption are restricted to [`crate::CommandState`].
-/// The child owns only its exact attempt-arena suffix; semantic command roots
-/// remain parent-owned and are not restored when the child closes.
-#[derive(Debug)]
-pub struct CommandAttemptChildScope {
-    owner: OwnedAttemptScope,
-}
-
-impl CommandAttemptChildScope {
-    pub(crate) const fn new(owner: OwnedAttemptScope) -> Self {
-        Self { owner }
-    }
-
-    pub(crate) fn into_owner(self) -> OwnedAttemptScope {
-        self.owner
-    }
-}
-
-impl<G> core::fmt::Debug for CommandAttempt<G> {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str("CommandAttempt(..)")
-    }
-}
-
-impl<G> Default for CommandAttempt<G> {
-    fn default() -> Self {
-        Self {
-            arena: AttemptArena::default(),
-            active_operation: None,
-            active_operation_origin: None,
-        }
-    }
-}
-
-impl<G> CommandAttempt<G> {
-    #[cfg(any(test, feature = "profiling"))]
-    pub(crate) fn profile_allocate_token_list(
-        &mut self,
-        words: impl IntoIterator<Item = TracedTokenWord>,
-    ) -> Result<AttemptTokenListId, AttemptError> {
-        self.arena.allocate_token_list(words)
-    }
-
-    /// Runs one synchronous child allocation episode under a fresh invariant
-    /// brand and closes it in exact LIFO order before returning.
-    ///
-    /// The higher-ranked callback prevents both its capability and every id
-    /// allocated through it from escaping. Dynamic scanner/macro frames use
-    /// the crate-private owned-scope boundary instead because they use dynamic
-    /// LIFO cleanup while the synchronous scan is active.
-    pub fn with_scope<R>(
-        &mut self,
-        operation: impl for<'scope> FnOnce(&mut AttemptScope<'_, 'scope, G>) -> R,
-    ) -> Result<R, AttemptError> {
-        self.arena.with_child_scope(operation)
-    }
-
-    pub(crate) fn begin_operation(
-        &mut self,
-        macro_depth: usize,
-    ) -> Result<CommandAttemptMark, AttemptError> {
-        if self.active_operation.is_some() || self.active_operation_origin.is_some() {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        let opening = self.arena.mark();
-        let owner = self.arena.begin_owned_scope()?;
-        let mark = CommandAttemptMark::new(opening, &owner, macro_depth)?;
-        self.active_operation_origin = Some(owner.coordinate());
-        self.active_operation = Some(owner);
-        Ok(mark)
-    }
-
-    /// Settles the active operation and opens its successor.
-    ///
-    /// An operation whose attempt tables still sit exactly at its opening
-    /// mark, and whose scope was never handed to a child, has nothing to
-    /// truncate: the same owned scope and mark already describe the
-    /// successor's opening. Any other operation takes the ordinary commit
-    /// and begin.
-    pub(crate) fn roll_operation(
-        &mut self,
-        mark: &mut CommandAttemptMark,
-        macro_depth: usize,
-    ) -> Result<(), AttemptError> {
-        // Scope serials are unique within an arena key, so a matching
-        // coordinate names the owner `mark` was taken from, with the same
-        // opening. A scope handed to a child or a changed top scope shows in
-        // the two serial comparisons.
-        let unchanged = mark.macro_depth as usize == macro_depth
-            && self.active_operation.as_ref().is_some_and(|owner| {
-                owner.coordinate() == mark.operation
-                    && owner.close_through_serial == owner.serial
-                    && self.arena.top_scope == owner.serial
-            })
-            && self.arena.is_at(&mark.opening);
-        if unchanged {
-            return Ok(());
-        }
-        self.commit_operation(*mark)?;
-        *mark = self
-            .begin_operation(macro_depth)
-            .expect("command operation scope capacity is bounded");
-        Ok(())
-    }
-
-    pub(crate) fn validate_operation(&self, mark: CommandAttemptMark) -> Result<(), AttemptError> {
-        self.arena.validate_mark(mark.opening)?;
-        if mark.operation.key != self.arena.key.0 {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        let owns_operation =
-            self.active_operation.is_some() && self.active_operation_origin == Some(mark.operation);
-        owns_operation
-            .then_some(())
-            .ok_or(AttemptError::InvalidCoordinate)
-    }
-
-    pub(crate) fn commit_operation(
-        &mut self,
-        mark: CommandAttemptMark,
-    ) -> Result<(), AttemptError> {
-        self.validate_operation(mark)?;
-        let operation = self
-            .active_operation
-            .take()
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        self.active_operation_origin = None;
-        self.arena.close_owned_scope(operation)
-    }
-
-    /// Drops the live operation and every row it allocated. Used only after
-    /// an aggregate checkpoint restore, whose captures always hold an empty
-    /// attempt.
-    pub(crate) fn abandon_operation(&mut self) {
-        self.active_operation = None;
-        self.active_operation_origin = None;
-        self.arena.clear();
-    }
-
-    pub(crate) fn begin_child_scope(&mut self) -> Result<OwnedAttemptScope, AttemptError> {
-        self.arena.begin_owned_scope()
-    }
-
-    pub(crate) fn close_child_scope(
-        &mut self,
-        owner: OwnedAttemptScope,
-    ) -> Result<(), AttemptError> {
-        self.arena.close_owned_scope(owner)
-    }
-
-    pub(crate) fn child_scope_is_direct_operation_child(&self, child: &OwnedAttemptScope) -> bool {
-        self.active_operation
-            .as_ref()
-            .is_some_and(|operation| child.is_direct_child_of(operation))
-    }
-
-    pub(crate) fn validate_child_retirement(
-        &self,
-        child: &OwnedAttemptScope,
-    ) -> Result<(), AttemptError> {
-        self.arena.validate_top_owner(child)?;
-        if self.child_scope_is_direct_operation_child(child) {
-            let parent = self
-                .active_operation
-                .as_ref()
-                .ok_or(AttemptError::InvalidCoordinate)?;
-            self.arena.validate_owner(parent)?;
-            if !child.is_direct_child_of(parent) {
-                return Err(AttemptError::InvalidCoordinate);
-            }
-        } else {
-            self.arena.validate_mark(child.close_through)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn defer_child_to_operation(
-        &mut self,
-        mut child: OwnedAttemptScope,
-    ) -> Result<(), AttemptError> {
-        self.arena.validate_top_owner(&child)?;
-        let parent = self
-            .active_operation
-            .as_ref()
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        self.arena.validate_owner(parent)?;
-        if !child.is_direct_child_of(parent) {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        let parent = self
-            .active_operation
-            .take()
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        self.arena.handoff_owned_parent(parent, &mut child)?;
-        self.active_operation = Some(child);
-        Ok(())
-    }
-
-    pub(crate) const fn arena(&self) -> &AttemptArena<G> {
-        &self.arena
-    }
-
-    pub(crate) const fn arena_mut(&mut self) -> &mut AttemptArena<G> {
-        &mut self.arena
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.arena.mark().is_empty()
-            && self.arena.top_scope == AttemptScopeSerial::ROOT
-            && self.active_operation.is_none()
-            && self.active_operation_origin.is_none()
     }
 }

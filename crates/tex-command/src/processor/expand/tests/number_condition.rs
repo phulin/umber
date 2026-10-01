@@ -11,7 +11,6 @@ fn nested_number_conversions_return_through_the_shared_delivery_loop() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         let mut input = vec![number, number, number];
         input.extend([
             Token::Char {
@@ -91,7 +90,6 @@ fn number_accepts_repeated_signs_spaces_and_macro_boundaries() {
         ];
         for (input, expected) in cases {
             let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
             crate::test_harness::push(&mut command, input);
             assert_eq!(
                 collect_expanded_characters(universe, &mut command),
@@ -111,7 +109,6 @@ fn number_reports_a_genuinely_missing_operand_and_preserves_the_token() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, [number, letter('X')]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -187,7 +184,6 @@ fn number_admits_direct_internal_values_and_composes_polarity() {
         ];
         for (input, expected) in cases {
             let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
             crate::test_harness::push(&mut command, input);
             assert_eq!(
                 collect_expanded_characters(universe, &mut command),
@@ -212,7 +208,6 @@ fn number_register_operands_use_the_shared_index_lane() {
             Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -251,7 +246,6 @@ fn ifnum_register_operands_use_the_shared_index_lane() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -309,7 +303,6 @@ fn ifdim_register_operands_use_the_shared_index_lane() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -375,7 +368,6 @@ fn ifodd_register_operands_use_the_shared_index_lane() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -415,7 +407,6 @@ fn ifodd_resumes_its_exact_parent_after_nested_expandafter() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -492,7 +483,6 @@ fn ifodd_exact_parent_matrix_covers_nested_scalar_children() {
         ];
         for (input, expected) in cases {
             let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
             crate::test_harness::push(&mut command, input);
             assert_eq!(collect_expanded_meanings(universe, &mut command), expected);
             assert!(command.scratch.is_quiescent());
@@ -524,7 +514,6 @@ fn low_fuel_nested_if_controls_balance_their_inline_frames() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [

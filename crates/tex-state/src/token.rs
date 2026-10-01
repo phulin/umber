@@ -347,6 +347,17 @@ impl TokenWord {
         self.0 >> Self::KIND_SHIFT == Self::KIND_CS
     }
 
+    /// The control sequence this word spells, when it is an ordinary one.
+    #[must_use]
+    #[inline(always)]
+    pub const fn control_sequence(self) -> Option<Symbol> {
+        if self.is_control_sequence() {
+            Some(Symbol::from_packed_slot(self.0 & Self::PAYLOAD_MASK))
+        } else {
+            None
+        }
+    }
+
     pub const fn raw(self) -> u32 {
         self.0
     }

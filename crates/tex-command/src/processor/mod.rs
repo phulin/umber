@@ -597,7 +597,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         &mut self,
         tokens: Option<tex_state::TokenListId<G>>,
     ) -> Result<crate::AttemptTokenListId, CommandError> {
-        let arena = self.command.attempt.arena_mut();
+        let arena = &mut self.command.attempt;
         match tokens {
             Some(tokens) => {
                 arena.allocate_token_list(self.state.token_list(tokens).iter().map(|word| {

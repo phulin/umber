@@ -281,31 +281,26 @@ fn attempt_definition<G>(
 ) -> crate::AttemptDefinitionId {
     let definition = state
         .attempt
-        .arena_mut()
         .allocate_definition_builder()
         .expect("definition builder");
     for word in parameters {
         state
             .attempt
-            .arena_mut()
             .push_definition_parameter(definition, word.token_word())
             .expect("parameter word");
     }
     state
         .attempt
-        .arena_mut()
         .finish_definition_parameters(definition)
         .expect("parameter boundary");
     for word in replacement {
         state
             .attempt
-            .arena_mut()
             .push_definition_replacement(definition, word.token_word())
             .expect("replacement word");
     }
     state
         .attempt
-        .arena_mut()
         .finish_definition(definition)
         .expect("definition");
     definition
@@ -461,13 +456,9 @@ fn unobserved_named_token_list_publication_allocates_nothing_at_depth_4096() {
 #[test]
 fn synchronous_attempt_child_scope_reclaims_only_its_exact_suffix() {
     let mut state = CommandState::<()>::default();
-    let operation = state.begin_attempt_operation();
-    let child = state
-        .begin_attempt_child_scope()
-        .expect("active operation admits one synchronous child");
+    let child = state.begin_attempt_child_scope();
     let scratch = state
         .attempt
-        .arena_mut()
         .allocate_token_list([word('x')])
         .expect("child scratch");
     assert_eq!(
@@ -482,30 +473,7 @@ fn synchronous_attempt_child_scope_reclaims_only_its_exact_suffix() {
         state.attempt_token_words(scratch),
         Err(AttemptError::InvalidCoordinate)
     );
-    state
-        .commit_attempt_operation(operation)
-        .expect("child close left the parent owner intact");
-}
-
-#[test]
-fn synchronous_attempt_child_scope_requires_an_active_operation() {
-    let mut state = CommandState::<()>::default();
-    assert_eq!(
-        state
-            .begin_attempt_child_scope()
-            .expect_err("a synchronous child requires an active operation"),
-        AttemptError::InvalidCoordinate
-    );
-    let operation = state.begin_attempt_operation();
-    let child = state
-        .begin_attempt_child_scope()
-        .expect("active operation admits a child");
-    state
-        .close_attempt_child_scope(child)
-        .expect("child closes normally");
-    state
-        .commit_attempt_operation(operation)
-        .expect("parent closes normally");
+    state.settle_attempt();
 }
 
 fn glue(width: i32) -> GlueSpec {
@@ -524,12 +492,10 @@ fn attempt_promotion_preserves_multiple_root_order_and_duplicates() {
         let mut state = CommandState::default();
         let first = state
             .attempt
-            .arena_mut()
             .allocate_token_list([word('a')])
             .expect("first list");
         let second = state
             .attempt
-            .arena_mut()
             .allocate_token_list([word('b')])
             .expect("second list");
 
@@ -563,18 +529,12 @@ fn attempt_promotion_returns_mixed_roots_in_declared_order() {
         let mut state = CommandState::default();
         let replacement = state
             .attempt
-            .arena_mut()
             .allocate_token_list([word('x')])
             .expect("replacement text");
         let definition = attempt_definition(&mut state, &[word('#')], &[word('x')]);
-        let glue_root = state
-            .attempt
-            .arena_mut()
-            .allocate_glue(glue(42))
-            .expect("glue");
+        let glue_root = state.attempt.allocate_glue(glue(42)).expect("glue");
         let provenance = state
             .attempt
-            .arena_mut()
             .allocate_provenance(OriginRecord::UnknownBootstrap)
             .expect("provenance");
 
@@ -614,7 +574,6 @@ fn warmed_single_definition_promotion_ignores_the_large_live_attempt_arena() {
         for _ in 0..16_384 {
             state
                 .attempt
-                .arena_mut()
                 .allocate_token_list([word('z')])
                 .expect("large unrelated attempt row");
         }
@@ -704,7 +663,7 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
                 .collect();
             let mut destination = ResidentPromotion::new(&[], &[], &definitions, &[]);
             let state_address = std::ptr::from_ref(&state);
-            let attempt_address = std::ptr::from_ref(state.attempt.arena());
+            let attempt_address = std::ptr::from_ref(state.attempt);
             let roots_address = destination.definitions.as_ptr();
             let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
             let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
@@ -751,7 +710,7 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
             }
 
             let address_changes = usize::from(std::ptr::from_ref(&state) != state_address)
-                + usize::from(std::ptr::from_ref(state.attempt.arena()) != attempt_address)
+                + usize::from(std::ptr::from_ref(state.attempt) != attempt_address)
                 + usize::from(destination.definitions.as_ptr() != roots_address);
             let admitted = universe.command_context().expect("definition context");
             let mut checksum = 0_u64;
@@ -804,7 +763,6 @@ fn foreign_attempt_root_rejection_is_mutation_free() {
         let mut foreign = CommandState::<()>::default();
         let foreign_root = foreign
             .attempt
-            .arena_mut()
             .allocate_token_list([word('x')])
             .expect("foreign root");
 
@@ -827,18 +785,13 @@ fn stale_root_rejection_validates_complete_batch_before_mutation() {
         let mut state = CommandState::default();
         let valid = state
             .attempt
-            .arena_mut()
             .allocate_token_list([word('a')])
             .expect("valid root");
-        let mark = state.begin_attempt_operation();
         let stale = state
             .attempt
-            .arena_mut()
             .allocate_token_list([word('b')])
             .expect("stale root");
-        state
-            .commit_attempt_operation(mark)
-            .expect("operation commits");
+        state.settle_attempt();
 
         let mut destination = ResidentPromotion::new(&[valid, stale], &[], &[], &[]);
         assert!(matches!(
@@ -854,46 +807,16 @@ fn stale_root_rejection_validates_complete_batch_before_mutation() {
 }
 
 #[test]
-fn operation_commit_truncates_only_the_attempt_suffix() {
-    crate::test_harness::with_universe(|_universe| {
-        let mut state = CommandState::<()>::default();
-        let retained = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('a')])
-            .expect("retained list");
-        let mark = state.begin_attempt_operation();
-        let rejected = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('b')])
-            .expect("candidate list");
-
-        state
-            .commit_attempt_operation(mark)
-            .expect("operation commits");
-        assert_eq!(
-            state.attempt_token_words(retained).expect("retained words"),
-            &[word('a')]
-        );
-        assert!(state.attempt_token_words(rejected).is_err());
-    });
-}
-
-#[test]
 fn successful_scope_commit_reclaims_promoted_operation_rows() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
-        let operation = state.begin_attempt_operation();
         let definition = attempt_definition(&mut state, &[word('#')], &[word('x')]);
         let durable = state
             .promote_attempt_definition(universe, definition)
             .expect("successful operation publishes its durable root");
 
-        state
-            .commit_attempt_operation(operation)
-            .expect("operation scope commits");
-        assert!(state.attempt.is_empty());
+        state.settle_attempt();
+        assert!(state.attempt.is_clear());
         assert_eq!(
             universe
                 .command_context()
@@ -903,50 +826,6 @@ fn successful_scope_commit_reclaims_promoted_operation_rows() {
             &[word('x').token_word()]
         );
     });
-}
-
-#[test]
-fn ordinary_attempt_lifecycle_has_one_coordinate_owner_and_a_coordinate_free_edge() {
-    assert!(core::mem::size_of::<crate::CommandAttemptMark>() > 0);
-    assert_eq!(
-        core::mem::size_of::<crate::CommandAttemptOperation>(),
-        0,
-        "the move-only executor edge must carry no ordinary coordinate"
-    );
-
-    let mut state = CommandState::<()>::default();
-    let operation = state.begin_attempt_operation();
-    assert!(state.active_attempt_operation.is_some());
-    state
-        .commit_attempt_operation(operation)
-        .expect("the state-owned coordinate commits");
-    assert!(state.active_attempt_operation.is_none());
-}
-
-#[test]
-#[cfg(feature = "profiling")]
-fn warmed_attempt_lifecycle_allocates_nothing() {
-    let mut state = CommandState::<()>::default();
-    let warm = state.begin_attempt_operation();
-    state
-        .commit_attempt_operation(warm)
-        .expect("warm operation commits");
-
-    let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
-    let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    {
-        let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-        for _ in 0..4_096 {
-            let operation = state.begin_attempt_operation();
-            std::hint::black_box(&state.active_attempt_operation);
-            state
-                .commit_attempt_operation(operation)
-                .expect("measured operation commits");
-        }
-    }
-    let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    assert_eq!(after.calls - before.calls, 0);
-    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
 }
 
 #[test]

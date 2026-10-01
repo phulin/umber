@@ -12,7 +12,6 @@ fn the_direct_internal_meanings_use_the_hot_value_projection() {
         );
         let count_alias = install_static(universe, "countalias", Meaning::CountRegister(0));
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -43,7 +42,6 @@ fn the_integer_expression_lane_preserves_operator_precedence() {
         );
         let relax = install_static(universe, "relax", Meaning::Relax);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -141,12 +139,10 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
             letter('X'),
         ];
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, integer_input);
         assert_eq!(collect_expanded_characters(universe, &mut command), "7X");
 
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -176,7 +172,6 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
             letter('X'),
         ];
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, integer_prefix_input);
         assert_eq!(collect_expanded_characters(universe, &mut command), "7X");
 
@@ -198,7 +193,6 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
             letter('X'),
         ];
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, dimension_input);
         assert_eq!(
             collect_expanded_characters(universe, &mut command),
@@ -219,7 +213,6 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
             letter('X'),
         ];
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, dimension_prefix_input);
         assert_eq!(
             collect_expanded_characters(universe, &mut command),
@@ -238,7 +231,6 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
             letter('X'),
         ];
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, internal_input);
         assert_eq!(collect_expanded_characters(universe, &mut command), "24X");
 
@@ -253,7 +245,6 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
             letter('X'),
         ];
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, unmatched_input);
         assert_eq!(collect_expanded_characters(universe, &mut command), "3X");
 
@@ -267,7 +258,6 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
             letter('X'),
         ];
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, invalid_input);
         assert_eq!(collect_expanded_characters(universe, &mut command), "1,2X");
     });
@@ -288,7 +278,6 @@ fn number_integer_expression_uses_the_shared_expression_lane() {
         );
         let relax = install_static(universe, "relax", Meaning::Relax);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -425,7 +414,6 @@ fn integer_expression_factors_admit_typed_internal_values() {
         ];
         for (input, expected) in cases {
             let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
             crate::test_harness::push(&mut command, input);
             assert_eq!(
                 collect_expanded_characters(universe, &mut command),
@@ -450,7 +438,6 @@ fn number_dimension_expression_uses_the_shared_dimension_lane() {
         );
         let relax = install_static(universe, "relax", Meaning::Relax);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -497,7 +484,6 @@ fn the_dimension_expression_lane_preserves_fixed_point_addition() {
         );
         let relax = install_static(universe, "relax", Meaning::Relax);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -574,7 +560,6 @@ fn nested_fontname_operands_use_the_shared_control_lane() {
             },
         ]);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, input);
         let output = collect_expanded_characters(universe, &mut command);
         assert!(output.starts_with("nullfont"));

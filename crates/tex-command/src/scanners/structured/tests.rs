@@ -21,7 +21,6 @@ fn space() -> Token {
 fn scan_math_delimiter(tokens: impl IntoIterator<Item = Token>) -> (u32, u32, Option<Token>) {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, tokens);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -62,7 +61,6 @@ fn scan_math_delimiter(tokens: impl IntoIterator<Item = Token>) -> (u32, u32, Op
 fn scan_write_stream(tokens: impl IntoIterator<Item = Token>) -> WriteStreamSelector {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, tokens);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -140,7 +138,6 @@ fn math_delimiter_consumes_one_expanded_command_before_adjacent_source() {
             .expect("delimiter macro meaning");
 
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, [Token::Cs(symbol.symbol()), other('.')]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -185,7 +182,6 @@ fn math_delimiter_consumes_one_expanded_command_before_adjacent_source() {
 fn math_delimiter_recovery_backs_up_only_the_rejected_operand() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, [other('x'), other('.')]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -240,7 +236,6 @@ fn math_delimiter_recovery_backs_up_only_the_rejected_operand() {
 fn fresh_active_character_is_a_definition_target_without_recovery() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -334,7 +329,6 @@ fn definition_target_projection_uses_spelling_and_active_map() {
         });
 
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -392,7 +386,6 @@ fn malformed_definition_target_follows_get_r_token_backup_and_diagnostic() {
             .expect("source control sequence")
             .symbol();
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, [other('x'), Token::Cs(source)]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -529,7 +522,6 @@ fn preamble_span_expansion_retires_its_command_before_raw_refill() {
         };
 
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         let alignment = AlignmentIdentity::new(1);
         command.begin_alignment(alignment);
         crate::test_harness::push(
@@ -572,7 +564,6 @@ fn preamble_span_expansion_retires_its_command_before_raw_refill() {
             .expect("ordinary column has a u-template");
         let words = command
             .attempt
-            .arena()
             .token_words(u_template)
             .expect("live attempt template");
         assert_eq!(words.len(), 1);
@@ -580,7 +571,6 @@ fn preamble_span_expansion_retires_its_command_before_raw_refill() {
         assert!(
             command
                 .attempt
-                .arena()
                 .token_words(preamble.columns[0].v_template)
                 .expect("live attempt template")
                 .is_empty()

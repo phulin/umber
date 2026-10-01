@@ -1561,13 +1561,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                             sink: PrintSink,
                             tokens: tex_state::ShipoutTokenSource<G>| {
         let mut command = command_cell.borrow_mut();
-        let child_scope = command
-            .state
-            .state_mut()
-            .begin_attempt_child_scope()
-            .map_err(|_| ExecError::MissingToken {
-                context: "deferred write child scope",
-            })?;
+        let child_scope = command.state.state_mut().begin_attempt_child_scope();
         // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
         // before moving to the next whatsit. A following write expands only
         // after those effects have happened, so publish the committed prefix

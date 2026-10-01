@@ -34,7 +34,6 @@ fn case_shift_one_64_and_4096_write_once_without_copy_or_warmed_allocation() {
             let mut fuel = crate::CommandFuelLedger::default();
             let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
 
-            let warm_operation = command.begin_attempt_operation();
             {
                 let mut context = universe.command_context().expect("command context");
                 let mut processor = crate::test_harness::processor(
@@ -61,11 +60,8 @@ fn case_shift_one_64_and_4096_write_once_without_copy_or_warmed_allocation() {
                     .back_input(opening)
                     .expect("restore measured opening");
             }
-            command
-                .commit_attempt_operation(warm_operation)
-                .expect("warm operation commit");
+            command.settle_attempt();
 
-            let measured_operation = command.begin_attempt_operation();
             command.profile_reset_token_collector_path_counters();
             reset_case_shift_path_counters();
             let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
@@ -125,9 +121,7 @@ fn case_shift_one_64_and_4096_write_once_without_copy_or_warmed_allocation() {
             assert_eq!(storage.2, 1, "one recycled builder lane");
             assert_eq!(storage.3, 0, "retirement truncates all active chunks");
             assert_eq!(storage.4, body_len.div_ceil(256), "chunks remain reusable");
-            command
-                .commit_attempt_operation(measured_operation)
-                .expect("measured operation commit");
+            command.settle_attempt();
         });
     }
 }
@@ -149,7 +143,6 @@ fn case_shift_empty_and_nested_groups_replay_the_final_span_directly() {
                 token('}', Catcode::EndGroup),
             ],
         );
-        let operation = command.begin_attempt_operation();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -182,9 +175,7 @@ fn case_shift_empty_and_nested_groups_replay_the_final_span_directly() {
             ]
         );
         drop(processor);
-        command
-            .commit_attempt_operation(operation)
-            .expect("case-shift operation commit");
+        command.settle_attempt();
     });
 }
 
@@ -196,18 +187,13 @@ fn assert_read_failure_is_fully_cleaned(finalize: bool) {
             .expect("terminal line");
         let target = universe.intern("readtarget").expect("read target").symbol();
         let mut command = CommandState::default();
-        let operation = command.begin_attempt_operation();
-        let before = command.attempt.arena().mark();
+        let before = command.attempt.mark();
         command.alignment.align_state = 37;
         if finalize {
-            command
-                .attempt
-                .arena_mut()
-                .inject_definition_finalization_failure();
+            command.attempt.inject_definition_finalization_failure();
         } else {
             command
                 .attempt
-                .arena_mut()
                 .inject_definition_builder_allocation_failure();
         }
         let mut capabilities = CommandHostCapabilities::default();
@@ -226,13 +212,11 @@ fn assert_read_failure_is_fully_cleaned(finalize: bool) {
         assert!(processor.read_toks(16, target, finalize).is_err());
         assert_eq!(processor.command.alignment.align_state, 37);
         assert!(processor.command.scanner.is_quiescent());
-        assert_eq!(processor.command.attempt.arena().mark(), before);
+        assert_eq!(processor.command.attempt.mark(), before);
         assert_eq!(processor.state.meaning(target), before_meaning);
         drop(processor);
-        command
-            .commit_attempt_operation(operation)
-            .expect("failed read leaves an exact operation scope to commit");
-        assert!(command.attempt.is_empty());
+        command.settle_attempt();
+        assert!(command.attempt.is_clear());
     });
 }
 
@@ -251,7 +235,6 @@ fn balanced_collection_freezes_nested_tokens_in_the_attempt_arena() {
     crate::test_harness::with_universe(|universe| {
         reset_runaway_render_count();
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -336,7 +319,6 @@ fn eof_recovery_renders_balanced_text_only_after_the_runaway_exists() {
                 token('c', Catcode::Letter),
             ],
         );
-        let operation = command.begin_attempt_operation();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -371,9 +353,7 @@ fn eof_recovery_renders_balanced_text_only_after_the_runaway_exists() {
         );
         assert_eq!(runaway_render_count(), 1);
         drop(processor);
-        command
-            .commit_attempt_operation(operation)
-            .expect("operation commit");
+        command.settle_attempt();
     });
 }
 
@@ -393,7 +373,6 @@ fn eof_recovery_streams_macro_parameter_and_replacement_slices_once() {
                 token('1', Catcode::Other),
             ],
         );
-        let operation = command.begin_attempt_operation();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -418,9 +397,7 @@ fn eof_recovery_streams_macro_parameter_and_replacement_slices_once() {
         );
         assert_eq!(runaway_render_count(), 1);
         drop(processor);
-        command
-            .commit_attempt_operation(operation)
-            .expect("operation commit");
+        command.settle_attempt();
     });
 }
 
@@ -448,7 +425,6 @@ fn outer_recovery_renders_only_the_collected_balanced_prefix() {
                 Token::Cs(outer.symbol()),
             ],
         );
-        let operation = command.begin_attempt_operation();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -470,9 +446,7 @@ fn outer_recovery_renders_only_the_collected_balanced_prefix() {
         );
         assert_eq!(runaway_render_count(), 1);
         drop(processor);
-        command
-            .commit_attempt_operation(operation)
-            .expect("operation commit");
+        command.settle_attempt();
     });
 }
 
@@ -497,7 +471,6 @@ fn warmed_successful_scan_builds_no_runaway_and_allocates_nothing() {
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
 
-        let warm_operation = command.begin_attempt_operation();
         {
             let mut context = universe.command_context().expect("command context");
             let mut processor = crate::test_harness::processor(
@@ -511,11 +484,8 @@ fn warmed_successful_scan_builds_no_runaway_and_allocates_nothing() {
                 .scan_toks(ScanToksMode::General { expanded: false })
                 .expect("warm scan");
         }
-        command
-            .commit_attempt_operation(warm_operation)
-            .expect("warm operation commit");
+        command.settle_attempt();
 
-        let measured_operation = command.begin_attempt_operation();
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
         {
@@ -536,9 +506,7 @@ fn warmed_successful_scan_builds_no_runaway_and_allocates_nothing() {
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
         assert_eq!(runaway_render_count(), 0);
-        command
-            .commit_attempt_operation(measured_operation)
-            .expect("measured operation commit");
+        command.settle_attempt();
     });
 }
 
@@ -607,7 +575,6 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
             let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
 
             crate::test_harness::push(&mut command, mixed_scan_workload(rounds));
-            let warm_operation = command.begin_attempt_operation();
             {
                 let mut context = universe.command_context().expect("command context");
                 let mut processor = crate::test_harness::processor(
@@ -619,12 +586,9 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
                 );
                 run_mixed_scan_workload(&mut processor, owner, rounds);
             }
-            command
-                .commit_attempt_operation(warm_operation)
-                .expect("warm scanner scratch commit");
+            command.settle_attempt();
 
             crate::test_harness::push(&mut command, mixed_scan_workload(rounds));
-            let measured_operation = command.begin_attempt_operation();
             command.profile_reset_token_collector_path_counters();
             universe
                 .command_context()
@@ -677,9 +641,7 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
                 0
             );
 
-            command
-                .commit_attempt_operation(measured_operation)
-                .expect("measured scanner scratch commit");
+            command.settle_attempt();
         });
     }
 }
@@ -700,7 +662,6 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
             )
             .expect("macro meaning");
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -792,7 +753,6 @@ fn expanded_scan_adopts_unexpanded_child_tokens_without_recursive_expansion() {
             .expect("nested macro meaning");
 
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -849,7 +809,6 @@ fn expanded_scan_adopts_unexpanded_child_tokens_without_recursive_expansion() {
 fn macro_definition_scan_shares_one_checked_builder_coordinate() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -897,7 +856,6 @@ fn macro_definition_scan_shares_one_checked_builder_coordinate() {
 fn macro_definition_hash_brace_shares_one_checked_builder_boundary() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -962,7 +920,6 @@ fn expanded_macro_definition_keeps_its_builder_across_nested_macro_retirement() 
             )
             .expect("nested macro meaning");
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -1002,7 +959,6 @@ fn ordinary_definition_body_constructs_no_per_token_command() {
         crate::test_harness::with_universe(|universe| {
             let symbol = universe.intern("retained_in_definition").expect("symbol");
             let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
             let body = [
                 token('a', Catcode::Letter),
                 Token::Cs(symbol.symbol()),
@@ -1056,7 +1012,6 @@ fn direct_definition_collection_matches_observed_recovery_at_every_fuel_cut() {
         crate::test_harness::with_universe(|universe| {
             let retained = universe.intern("retained").expect("symbol");
             let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
             crate::test_harness::push(
                 &mut command,
                 [
@@ -1215,7 +1170,6 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
                 vec![install(universe, "carrier", &[], &text)]
             };
             let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
             crate::test_harness::push(&mut command, input);
             let mut capabilities = CommandHostCapabilities::default();
             let mut fuel = crate::CommandFuelLedger::new(limit).expect("fuel");

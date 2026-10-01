@@ -7,11 +7,10 @@ actually does for them. Every other command, and every context the lane does
 not own, leaves through a single hand-off to the existing admitted run and
 typed episode, which remain the only owners of uncommon semantics.
 
-The lane is not a second executor. It calls the same scanners, the same
-semantic appliers, and the same journals as the admitted run. What it removes
-is repeated generic work: per-command context sampling, facade construction,
-trace and barrier classification, cold-operation materialization, empty
-buffer clearing, and journal re-capture.
+The lane is not a second executor. It calls the same scanners and the same
+semantic appliers as the admitted run. What it removes is repeated generic
+work: per-command context sampling, facade construction, trace and barrier
+classification, cold-operation materialization, and empty buffer clearing.
 
 ## Measured floor
 
@@ -149,21 +148,16 @@ command where ordinary delivery would have left it:
   through the admitted run's continuation predicate, which publishes the
   report, counts the operation, and ends or continues the run.
 
-## Rollback units
+## Command boundaries
 
-An operation mark delimits a replayable suffix: discarding it restores every
-journal to the mark. The admitted run discards the current unit on a
-resource suspension and on every non-fatal error it returns, so the failing
-command's partial writes vanish while every earlier command stays. Each
-command the lane settles in place therefore settles its own unit, exactly as
-the admitted run's roll does, and the unit that ends the lane holds only the
-command that ended it. Lane commands never write the mode nest, the page
-list, or the active boxes, so the state and command-attempt journals are the
-only ones the lane rolls.
-
-The rolls are the lane's largest remaining per-command cost. The
-[Positional journal marks](positional_journal_marks.md) design replaces them
-with position captures.
+TeX has no per-command undo. A command that fails halts the session in place,
+and only a full checkpoint restore resumes it, so a settled command leaves no
+rollback coordinate behind. The only per-command settlement is releasing the
+command attempt's scratch rows. Attempt rows never outlive their command, so
+the attempt arena is clear at every command boundary, and a command that
+allocated nothing pays one test of the arena's root-table lengths. Each
+command the lane settles in place releases its own scratch exactly as the
+admitted run does.
 
 ## Prefixes
 
@@ -254,7 +248,7 @@ All six stages are implemented.
    the prefix into the admitted run's transaction path without backing up
    the command it fetched.
 4. Rootless scalar assignments and `\advance`/`\multiply`/`\divide`.
-5. Per-command generic overhead that the lane still shares: journal roll,
-   facade construction, and the fetch wrapper.
+5. Per-command generic overhead that the lane still shares: command
+   settlement, facade construction, and the fetch wrapper.
 6. Expansion fast arms, in census order: macro calls, `\expandafter`, and
    conditionals.

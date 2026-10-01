@@ -1,37 +1,32 @@
-//! Direct-operation scratch settlement and checkpoint-replay cleanup.
+//! Command-boundary scratch settlement and checkpoint-replay cleanup.
 
 use super::CommandState;
 
 impl<G> CommandState<G> {
-    /// Captures every attempt-local table and subordinate builder cursor for
-    /// an executor operation.
-    pub fn begin_attempt_operation(&mut self) -> crate::CommandAttemptOperation {
-        assert!(
-            self.active_attempt_operation.is_none(),
-            "direct command operations do not nest"
-        );
-        let mark = self
-            .attempt
-            .begin_operation(self.scratch.frame_len())
-            .expect("command operation scope capacity is bounded");
-        self.active_attempt_operation = Some(mark);
-        crate::CommandAttemptOperation::new()
+    /// Releases the attempt rows of the command that just finished.
+    ///
+    /// Attempt rows never outlive their command, so the arena is clear at
+    /// every command boundary. A command that allocated nothing pays one
+    /// test of the arena's root lengths.
+    #[inline(always)]
+    pub fn settle_attempt(&mut self) {
+        self.attempt.settle();
     }
 
-    /// Opens one move-only synchronous child of the active direct operation.
+    /// Whether the running command holds no attempt rows.
+    #[must_use]
+    pub fn attempt_is_clear(&self) -> bool {
+        self.attempt.is_clear()
+    }
+
+    /// Opens one move-only synchronous child of the running command.
     ///
     /// The child is attempt scratch only. Callers may consume its values while
     /// it is live, but must detach their final non-attempt result before
-    /// [`Self::close_attempt_child_scope`] consumes the receipt. Semantic
-    /// command mutations deliberately remain in the parent operation.
-    pub fn begin_attempt_child_scope(
-        &mut self,
-    ) -> Result<crate::CommandAttemptChildScope, crate::AttemptError> {
-        if self.active_attempt_operation.is_none() {
-            return Err(crate::AttemptError::InvalidCoordinate);
-        }
-        let owner = self.attempt.begin_child_scope()?;
-        Ok(crate::CommandAttemptChildScope::new(owner))
+    /// [`Self::close_attempt_child_scope`] consumes it. Semantic command
+    /// mutations deliberately remain with the command.
+    pub fn begin_attempt_child_scope(&mut self) -> crate::CommandAttemptChildScope {
+        self.attempt.begin_child_scope()
     }
 
     /// Consumes and closes exactly one synchronous LIFO child scope.
@@ -39,93 +34,22 @@ impl<G> CommandState<G> {
         &mut self,
         scope: crate::CommandAttemptChildScope,
     ) -> Result<(), crate::AttemptError> {
-        self.attempt.close_child_scope(scope.into_owner())
-    }
-
-    pub(crate) fn begin_attempt_scanner_scope(
-        &mut self,
-    ) -> Result<crate::attempt::OwnedAttemptScope, crate::AttemptError> {
-        self.attempt.begin_child_scope()
-    }
-
-    pub(crate) fn defer_attempt_scope_retirement(
-        &mut self,
-        scope: crate::attempt::OwnedAttemptScope,
-    ) -> Result<(), crate::AttemptError> {
-        if self.active_attempt_operation.is_none() {
-            return Err(crate::AttemptError::InvalidCoordinate);
-        }
-        self.attempt.validate_child_retirement(&scope)?;
-        if self.attempt.child_scope_is_direct_operation_child(&scope) {
-            self.attempt.defer_child_to_operation(scope)
-        } else {
-            self.attempt.close_child_scope(scope)
-        }
-    }
-
-    pub(crate) fn validate_attempt_scope_retirement(
-        &self,
-        scope: &crate::attempt::OwnedAttemptScope,
-    ) -> Result<(), crate::AttemptError> {
-        if self.active_attempt_operation.is_none() {
-            return Err(crate::AttemptError::InvalidCoordinate);
-        }
-        self.attempt.validate_child_retirement(scope)
-    }
-
-    pub(crate) fn discard_attempt_scope_suffix(
-        &mut self,
-        scope: crate::attempt::OwnedAttemptScope,
-    ) -> Result<(), crate::AttemptError> {
         self.attempt.close_child_scope(scope)
     }
 
-    /// Drops an attempt owner after an aggregate checkpoint has already
-    /// restored its command roots.
+    /// Drops the attempt rows of a halted command after an aggregate
+    /// checkpoint has already restored its command roots.
     ///
-    /// No operation is ever rolled back in place: a failed or suspended
+    /// No command is ever rolled back in place: a failed or suspended
     /// command halts, and checkpoint replay is the one coarse transaction
-    /// that restores the aggregate command cursor. The halted operation's
-    /// coordinates are consequently no longer valid and must be discarded
-    /// rather than replayed against the restored arena.
+    /// that restores the aggregate command cursor.
     #[doc(hidden)]
     pub fn abandon_attempt_after_checkpoint_restore(&mut self) {
-        // Captures are taken only at quiescent boundaries, where the attempt
-        // arena is empty. Clear it and replace the scratch owner so no stale
-        // row, child scope, or scanner builder can make the restored named
-        // boundary appear active.
+        // Captures are taken only at command boundaries, where the attempt
+        // arena is clear. Clear it and replace the scratch owner so no stale
+        // row or scanner builder can make the restored boundary appear
+        // active.
         self.scratch = crate::execution_scratch::ExecutionScratch::default();
-        self.active_attempt_operation = None;
-        self.attempt.abandon_operation();
-    }
-
-    /// Commits the exact direct-operation/scanner scope. Macro frames live in
-    /// the disjoint generation-owned scratch lanes until input retirement.
-    /// Commits the active direct operation and opens its successor in one
-    /// step, keeping the scope open when the operation allocated nothing.
-    pub fn roll_attempt_operation(
-        &mut self,
-        _operation: &crate::CommandAttemptOperation,
-    ) -> Result<(), crate::AttemptError> {
-        let mark = self
-            .active_attempt_operation
-            .as_mut()
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        self.attempt.roll_operation(mark, self.scratch.frame_len())
-    }
-
-    pub fn commit_attempt_operation(
-        &mut self,
-        _operation: crate::CommandAttemptOperation,
-    ) -> Result<(), crate::AttemptError> {
-        let mark = self
-            .active_attempt_operation
-            .take()
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        let result = self.attempt.commit_operation(mark);
-        if result.is_err() {
-            self.active_attempt_operation = Some(mark);
-        }
-        result
+        self.attempt.clear();
     }
 }

@@ -186,12 +186,9 @@ parameters, code tables, and `\advance`, `\multiply`, `\divide`) when the
 operation is unobserved. Any other command, and any settled command that
 published an effect or artifact, returns to the enclosing episode driver.
 
-Between admitted commands the operation mark rolls forward in place. The state
-journal commits and reopens its transaction. The attempt arena keeps its open
-scope when the settled operation left its tables at the opening mark, and the
-mode journal keeps its frame when no inverse was recorded and every level root
-still equals its projection. Otherwise each journal takes its ordinary commit
-and begin.
+Between admitted commands the executor only releases the finished command's
+attempt scratch. The attempt arena is clear at every command boundary, so a
+command that allocated nothing pays one test of its root-table lengths.
 
 ## Validation
 

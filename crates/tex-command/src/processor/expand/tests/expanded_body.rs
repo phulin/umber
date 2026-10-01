@@ -16,7 +16,6 @@ fn the_scans_its_target_from_the_same_expanded_delivery_loop() {
             Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -46,7 +45,6 @@ fn expanded_collects_a_balanced_body_in_the_shared_control_lane() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -96,7 +94,6 @@ fn expanded_body_uses_the_shared_lane_for_nested_the() {
             Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -151,7 +148,6 @@ fn nested_expanded_bodies_return_through_the_same_driver() {
             )
             .expect("nested meaning");
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -215,7 +211,6 @@ fn expanded_body_splices_unexpanded_children_without_reentering_delivery() {
             )
             .expect("nested meaning");
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -262,7 +257,6 @@ fn expanded_body_detokenizes_children_into_the_parent_buffer() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -315,7 +309,6 @@ fn expanded_missing_opening_brace_uses_balanced_recovery() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
         );
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -347,7 +340,6 @@ fn expanded_unterminated_body_recovers_at_end_and_exposes_collected_text() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
         );
         let mut command = CommandState::default();
-        let operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -403,10 +395,8 @@ fn expanded_unterminated_body_recovers_at_end_and_exposes_collected_text() {
                 && *heading == "Runaway text?"
                 && partial == "A"
         ));
-        command
-            .commit_attempt_operation(operation)
-            .expect("commit after unterminated expanded body");
+        command.settle_attempt();
         assert!(command.scratch.is_quiescent());
-        assert!(command.attempt.is_empty());
+        assert!(command.attempt.is_clear());
     });
 }

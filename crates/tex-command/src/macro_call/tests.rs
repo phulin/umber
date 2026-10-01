@@ -625,7 +625,6 @@ fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
         let nested = install_replacement_macro(universe, "nested", &[inner, letter('t')]);
         let tail = install_replacement_macro(universe, "tail", &[inner]);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, [nested, letter('n'), tail, letter('z')]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -994,7 +993,6 @@ fn replay_completion_follows_nested_final_token_macro_descendants_once() {
             .allocate_token_list(&[TokenWord::pack(outer)])
             .expect("stored replay");
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, [letter('z')]);
         let episode = {
             let context = universe.command_context().expect("command context");
@@ -1094,7 +1092,6 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
         input.push(letter('z'));
 
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, input);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -1258,7 +1255,6 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
     crate::test_harness::with_universe(|universe| {
         let macro_token = install_macro(universe, "m", &[Token::Param(1), other(',')]);
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [macro_token, letter('x'), other(','), letter('z')],
@@ -1381,7 +1377,6 @@ fn delimited_argument_preserves_a_failed_overlapping_prefix() {
         );
         let expected = [letter('x'), other('a'), other('b'), letter('x')];
         let mut command = CommandState::default();
-        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -1866,7 +1861,6 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
             };
 
             let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
             let mut capabilities = CommandHostCapabilities::default();
             let mut fuel = crate::CommandFuelLedger::default();
             let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
