@@ -87,7 +87,6 @@ pub(crate) struct DefinitionArena<G> {
     global: Vec<DefinitionEntry>,
     local: Vec<DefinitionEntry>,
     /// Local row count at entry to each open group.
-    local_marks: Vec<u32>,
     /// Memoized local-to-global copies, ordered by local row.
     promotions: Vec<DefinitionPromotion>,
     next_build_serial: u32,
@@ -108,7 +107,6 @@ impl<G> DefinitionArena<G> {
             format: Vec::new(),
             global: Vec::new(),
             local: Vec::new(),
-            local_marks: Vec::new(),
             promotions: Vec::new(),
             next_build_serial: 1,
             active_build: None,
@@ -232,10 +230,7 @@ impl<G> DefinitionArena<G> {
     /// are taken only outside every group, so no local row is live.
     pub(crate) fn cursor(&self) -> DefinitionArenaCursor {
         assert!(self.active_writer.is_none());
-        debug_assert!(
-            self.local_marks.is_empty(),
-            "checkpoints are outside groups"
-        );
+
         DefinitionArenaCursor {
             format_rows: u32::try_from(self.format.len()).expect("definition rows fit u32"),
             global_rows: u32::try_from(self.global.len()).expect("definition rows fit u32"),
@@ -256,7 +251,6 @@ impl<G> DefinitionArena<G> {
         self.truncate_format_rows(cursor.format_rows as usize);
         self.truncate_global_rows(cursor.global_rows as usize);
         self.truncate_local_rows(0);
-        self.local_marks.clear();
     }
 
     fn truncate_format_rows(&mut self, len: usize) {
@@ -431,32 +425,21 @@ impl<G> DefinitionArena<G> {
         reserve_rows(&mut self.format, rows)
     }
 
-    /// Opens one local scope. No storage is allocated until the group
-    /// defines something.
-    pub(crate) fn begin_group(&mut self) -> Result<(), DefinitionAllocationError> {
+    /// Captures the real local-row frontier for the native TeX boundary.
+    pub(crate) fn local_frontier(&self) -> Result<u32, DefinitionAllocationError> {
         if self.active_build.is_some() || self.active_writer.is_some() {
             return Err(DefinitionAllocationError::InvalidDefinition);
         }
-        self.local_marks
-            .try_reserve(1)
-            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
-        self.local_marks
-            .push(u32::try_from(self.local.len()).expect("definition rows fit u32"));
-        Ok(())
+        Ok(u32::try_from(self.local.len()).expect("definition rows fit u32"))
     }
 
-    /// Drops the innermost group's local rows. Executing bodies keep their
-    /// own word spans alive.
-    pub(crate) fn end_group(&mut self) {
+    /// Retires local rows after synchronous restoration observation.
+    pub(crate) fn retire_local_suffix(&mut self, frontier: u32) {
         assert!(
             self.active_build.is_none() && self.active_writer.is_none(),
             "definition scan crosses group exit"
         );
-        let mark = self
-            .local_marks
-            .pop()
-            .expect("definition group stack matches TeX groups");
-        self.truncate_local_rows(mark as usize);
+        self.truncate_local_rows(frontier as usize);
     }
 
     pub(crate) fn promote_global(

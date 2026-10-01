@@ -1432,6 +1432,25 @@ enum CommandHostFactAccess<'a, G> {
 }
 
 impl<'a, G> CommandHostContext<'a, G> {
+    pub(crate) fn reborrow(&mut self) -> CommandHostContext<'_, G> {
+        CommandHostContext {
+            capabilities: self.capabilities,
+            facts: match &mut self.facts {
+                CommandHostFactAccess::Initial(_) => {
+                    CommandHostFactAccess::Initial(InitialCommandHostFacts)
+                }
+                CommandHostFactAccess::Borrowed(facts) => {
+                    CommandHostFactAccess::Borrowed(&mut **facts)
+                }
+            },
+            resource_provider: self
+                .resource_provider
+                .as_mut()
+                .map(|provider| &mut **provider as &mut dyn ResourceProvider<G>),
+            attempted_resource: self.attempted_resource.as_deref_mut(),
+        }
+    }
+
     /// Borrows resource capabilities for a processor outside an executor.
     /// Such processors observe TeX's exact initial outer-vertical facts.
     #[must_use]

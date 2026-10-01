@@ -457,16 +457,16 @@ fn apply_operation<G>(
                     frame.entered_line(),
                 );
             }
-            let aftergroup = {
-                let (stores, command, diagnostic_effects) = processor.lane_parts();
-                leave_group_payloads(stores, command, diagnostic_effects, kind)
-                    .map_err(|_| ExecError::MissingToken { context })?
-            };
-            if !aftergroup.is_empty() {
-                processor
-                    .back_input_aftergroup_tokens(aftergroup)
-                    .map_err(command_error)?;
-            }
+            let closed = processor
+                .end_group(kind, crate::assignments::tracing::trace_group_restoration)
+                .map_err(|_| ExecError::MissingToken { context })?;
+            let (stores, _, effects) = processor.lane_parts();
+            stores.trace_group_leave(
+                effects,
+                closed.kind(),
+                u32::try_from(level).unwrap_or(u32::MAX),
+                closed.entered_line(),
+            );
         }
     }
     Ok(ReplayStep::Continue)

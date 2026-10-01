@@ -13,7 +13,7 @@ mod support;
 
 pub(super) use alignment::*;
 pub(super) use apply::{
-    apply as apply_cold_operation, commit_scalar_assignment, enter_group, leave_group_payloads,
+    apply as apply_cold_operation, commit_scalar_assignment, enter_group, unsave_group,
 };
 pub(super) use operation::*;
 pub(super) use pdf::*;

@@ -160,9 +160,9 @@ pub use snapshot::{
     CommandRestoreError, CommandSummary, CommandSummaryError, PreparedCommandRestore,
 };
 pub use state::{
-    CommandGroupError, CommandGroupExit, CommandReplayEpisode, CommandSemanticDiagnostic,
-    CommandStackUsage, CommandState, DiagnosticContextCoordinate, RunawayPrelude,
-    StaleDiagnosticContext, UnknownRegisteredSource,
+    CommandGroupError, CommandReplayEpisode, CommandSemanticDiagnostic, CommandStackUsage,
+    CommandState, DiagnosticContextCoordinate, RunawayPrelude, StaleDiagnosticContext,
+    UnknownRegisteredSource,
 };
 pub use tex_state::SourceId;
 pub use tex_state::token::Catcode;

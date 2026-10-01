@@ -122,17 +122,10 @@ fn aborted_build_publishes_nothing_and_releases_its_lane() {
 }
 
 #[test]
-fn local_builds_require_an_open_group_and_cannot_cross_it() {
+fn local_frontier_capture_rejects_an_active_build() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
-        assert_eq!(
-            arena.begin_build(
-                DefinitionDestination::Local,
-                crate::token::OriginId::UNKNOWN
-            ),
-            Err(DefinitionAllocationError::InvalidDefinition)
-        );
-        arena.begin_group().expect("group");
+        let frontier_1 = arena.local_frontier().expect("group");
         let build = arena
             .begin_build(
                 DefinitionDestination::Local,
@@ -140,14 +133,14 @@ fn local_builds_require_an_open_group_and_cannot_cross_it() {
             )
             .expect("local build");
         assert_eq!(
-            arena.begin_group(),
+            arena.local_frontier(),
             Err(DefinitionAllocationError::InvalidDefinition),
             "a group cannot open across an active build"
         );
         arena.finish_parameters(build).expect("parameter boundary");
         let local = arena.seal_build(build).expect("sealed local");
         assert!(arena.get(local).replacement_text().is_empty());
-        arena.end_group();
+        arena.retire_local_suffix(frontier_1);
         assert!(arena.is_empty());
     });
 }
@@ -157,20 +150,20 @@ fn group_exit_drops_only_its_own_local_rows() {
     with_generation(|mut generation| {
         let baseline = generation.memory_accounting().words(false);
         let arena = generation.definitions_mut();
-        arena.begin_group().expect("outer group");
+        let frontier_2 = arena.local_frontier().expect("outer group");
         let outer = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('o')]);
-        arena.begin_group().expect("empty group");
-        arena.end_group();
-        arena.begin_group().expect("inner group");
+        let frontier_3 = arena.local_frontier().expect("empty group");
+        arena.retire_local_suffix(frontier_3);
+        let frontier_4 = arena.local_frontier().expect("inner group");
         let inner = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('i')]);
         let global = direct_definition(arena, DefinitionDestination::Global, &[], &[letter('g')]);
         assert_eq!(arena.len(), 3);
-        arena.end_group();
+        arena.retire_local_suffix(frontier_4);
         assert_eq!(arena.len(), 2);
         assert_eq!(arena.get(outer).replacement_text(), [letter('o')]);
         assert_eq!(arena.get(global).replacement_text(), [letter('g')]);
         assert!(arena.entry(inner).is_none());
-        arena.end_group();
+        arena.retire_local_suffix(frontier_2);
         assert_eq!(arena.len(), 1);
         arena.restore_cursor(super::DefinitionArenaCursor {
             format_rows: 0,
@@ -184,7 +177,7 @@ fn group_exit_drops_only_its_own_local_rows() {
 fn executing_local_body_outlives_its_group() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
-        arena.begin_group().expect("local definition group");
+        let frontier_5 = arena.local_frontier().expect("local definition group");
         let parameters = [
             TokenWord::pack(Token::Char {
                 ch: '#',
@@ -204,7 +197,7 @@ fn executing_local_body_outlives_its_group() {
             .expect("resident local body");
         assert_eq!(body.profile_region_owner_count(), 2);
 
-        arena.end_group();
+        arena.retire_local_suffix(frontier_5);
 
         assert!(arena.entry(definition).is_none());
         assert_eq!(body.profile_region_owner_count(), 1);
@@ -255,15 +248,15 @@ fn admitted_macro_definition_classifies_simple_matching_and_empty() {
 fn local_promotion_copies_once_and_forgets_dropped_rows() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
-        arena.begin_group().expect("outer group");
+        let frontier_6 = arena.local_frontier().expect("outer group");
         let outer = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('o')]);
-        arena.begin_group().expect("inner group");
+        let frontier_7 = arena.local_frontier().expect("inner group");
         let inner = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('i')]);
         let promoted_outer = arena.promote_global(outer).expect("outer promotion");
         let promoted_inner = arena.promote_global(inner).expect("inner promotion");
         assert_eq!(arena.promote_global(outer), Ok(promoted_outer));
         assert_eq!(arena.promote_global(promoted_outer), Ok(promoted_outer));
-        arena.end_group();
+        arena.retire_local_suffix(frontier_7);
 
         let replacement =
             direct_definition(arena, DefinitionDestination::Local, &[], &[letter('r')]);
@@ -271,7 +264,7 @@ fn local_promotion_copies_once_and_forgets_dropped_rows() {
         let promoted_replacement = arena.promote_global(replacement).expect("promotion");
         assert_ne!(promoted_replacement, promoted_inner);
         assert_eq!(arena.promote_global(outer), Ok(promoted_outer));
-        arena.end_group();
+        arena.retire_local_suffix(frontier_6);
 
         assert_eq!(arena.get(promoted_outer).replacement_text(), [letter('o')]);
         assert_eq!(arena.get(promoted_inner).replacement_text(), [letter('i')]);
@@ -322,11 +315,10 @@ fn checkpoint_acceptance_releases_the_detached_rows() {
 }
 
 #[test]
-fn restore_discards_open_groups_and_an_active_build() {
+fn restore_discards_local_rows_and_an_active_build() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
         let checkpoint = arena.cursor();
-        arena.begin_group().expect("group");
         let local = direct_definition(arena, DefinitionDestination::Local, &[], &[letter('l')]);
         let body = arena.admit_macro_body(local).expect("body");
         let build = arena
@@ -341,14 +333,7 @@ fn restore_discards_open_groups_and_an_active_build() {
             arena.finish_parameters(build),
             Err(DefinitionBuildError::InvalidPhase)
         );
-        assert_eq!(
-            arena.begin_build(
-                DefinitionDestination::Local,
-                crate::token::OriginId::UNKNOWN
-            ),
-            Err(DefinitionAllocationError::InvalidDefinition),
-            "restore leaves every group"
-        );
+
         assert_eq!(body.word(0), Some(letter('l')));
     });
 }
@@ -386,7 +371,6 @@ fn content_identity_survives_allocation_order_and_local_promotion() {
     with_generation(|mut generation| {
         assert!(generation.enable_semantic_identity());
         let arena = generation.definitions_mut();
-        arena.begin_group().expect("local definition group");
         let body = [TokenWord::pack(Token::frozen_relax())];
         let local = direct_definition(arena, super::DefinitionDestination::Local, &[], &body);
         let local_identity = arena
@@ -751,7 +735,7 @@ fn sealed_matcher_survives_promotion_group_exit_and_format_materialization() {
             letter('a'),
             letter('b'),
         ];
-        arena.begin_group().expect("group");
+        let frontier_10 = arena.local_frontier().expect("group");
         let local = direct_definition(
             arena,
             DefinitionDestination::Local,
@@ -767,7 +751,7 @@ fn sealed_matcher_survives_promotion_group_exit_and_format_materialization() {
         let allocated = arena
             .allocate(&parameters, &[TokenWord::pack(Token::param(1))])
             .expect("detached builder publication");
-        arena.end_group();
+        arena.retire_local_suffix(frontier_10);
         assert_eq!(
             resident.parameter_pattern(),
             arena.get(promoted).parameter_pattern()

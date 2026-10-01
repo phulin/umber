@@ -1732,13 +1732,13 @@ impl<G> Universe<G> {
                 .copy_page_root_to_durable(root)
                 .map_err(|_| FormatError::AllocationFailed)?;
             self.durable_boxes
-                .assign_with_group_position(
+                .assign_grouped::<G>(
                     &mut self.page_region.nodes_mut(),
                     index,
                     Some(owner),
                     crate::AssignmentScope::Global,
                     crate::env::banks::LEVEL_ONE,
-                    0,
+                    None,
                 )
                 .map_err(|_| FormatError::AllocationFailed)?;
         }

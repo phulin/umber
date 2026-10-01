@@ -176,22 +176,6 @@ pub(in crate::main_control) fn print_display_content<G>(
 /// deepest, so rereading restores save order. `CommandState` hands the payload
 /// over in save order, so backing it up in reverse reproduces both the input
 /// structure and the order `unsave` observes it in.
-pub(in crate::main_control) fn schedule_aftergroup<G>(
-    command: &mut CommandMachine<'_, '_, G>,
-    stores: &mut tex_state::CommandContext<'_, G>,
-    tokens: Vec<tex_state::token::TracedTokenWord>,
-) -> Result<(), ExecError> {
-    if tokens.is_empty() {
-        return Ok(());
-    }
-    let mut processor = command.processor(stores);
-    let result = processor
-        .back_input_aftergroup_tokens(tokens)
-        .map_err(command_error);
-    processor.retire();
-    result
-}
-
 pub(in crate::main_control) fn warn_cross_file_group_close<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
@@ -1373,16 +1357,9 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         .unwrap_or(GlueSpec::ZERO);
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
-    let aftergroup = leave_group_payloads(
-        stores,
-        command.state,
-        command.diagnostic_effects,
-        GroupKind::Insert,
-    )
-    .map_err(|_| ExecError::MissingToken {
+    unsave_group(stores, command, GroupKind::Insert).map_err(|_| ExecError::MissingToken {
         context: "insert group",
     })?;
-    schedule_aftergroup(command, stores, aftergroup)?;
     let mut level = crate::box_runtime::commit_current_list(
         modes,
         stores,

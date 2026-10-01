@@ -2727,7 +2727,7 @@ impl<G> MainControl<G> {
     fn save_stack_words(
         stores: &CommandContext<'_, G>,
         boxes: &ReplayBoxes<G>,
-        command: &tex_command::CommandState<G>,
+        _command: &tex_command::CommandState<G>,
         profile: CommandProfile,
     ) -> usize {
         // TeX82 §§645/1083 keeps ordinary box specs immediately below their
@@ -2738,14 +2738,8 @@ impl<G> MainControl<G> {
             .iter()
             .map(|active| active.kind.save_stack_spec_words())
             .fold(0_usize, usize::saturating_add);
-        let (aftergroup_words, latest_aftergroup_position) =
-            command.aftergroup_save_stack_projection();
         stores
-            .checked_save_stack_words(
-                aftergroup_words,
-                latest_aftergroup_position,
-                profile.capabilities().supports_etex(),
-            )
+            .checked_save_stack_words(profile.capabilities().supports_etex())
             .saturating_add(box_spec_words)
     }
 
@@ -5162,21 +5156,15 @@ impl<G> MainControl<G> {
             .current_list_mutation()
             .append_unique_list(&mut context, nodes);
         self.modes.current_list_mutation().set_space_factor(1000);
-        let aftergroup = leave_group_payloads(
+        unsave_group(
             &mut context,
-            &mut self.command,
-            diagnostic_effects,
+            &mut self.command_machine(diagnostic_effects),
             GroupKind::MathShift,
         )
         .map_err(|_| ExecError::MissingToken {
             context: "math shift group",
         })?;
         self.active_math_shifts.pop();
-        schedule_aftergroup(
-            &mut self.command_machine(diagnostic_effects),
-            &mut context,
-            aftergroup,
-        )?;
         Ok(())
     }
 
@@ -5237,21 +5225,15 @@ impl<G> MainControl<G> {
             content,
             Some(&conversion_error_context),
         );
-        let aftergroup = leave_group_payloads(
+        unsave_group(
             &mut context,
-            &mut self.command,
-            diagnostic_effects,
+            &mut self.command_machine(diagnostic_effects),
             GroupKind::MathShift,
         )
         .map_err(|_| ExecError::MissingToken {
             context: "equation number group",
         })?;
         self.active_math_shifts.pop();
-        schedule_aftergroup(
-            &mut self.command_machine(diagnostic_effects),
-            &mut context,
-            aftergroup,
-        )?;
         Ok((eq.display.list(), finished))
     }
 
@@ -5296,21 +5278,15 @@ impl<G> MainControl<G> {
                     context: "display alignment interrupt",
                 })?;
         crate::math::display::finish_display_alignment(&mut self.modes, &mut context, finished)?;
-        let aftergroup = leave_group_payloads(
+        unsave_group(
             &mut context,
-            &mut self.command,
-            diagnostic_effects,
+            &mut self.command_machine(diagnostic_effects),
             GroupKind::MathShift,
         )
         .map_err(|_| ExecError::MissingToken {
             context: "display alignment group",
         })?;
         self.active_math_shifts.pop();
-        schedule_aftergroup(
-            &mut self.command_machine(diagnostic_effects),
-            &mut context,
-            aftergroup,
-        )?;
         drop(context);
         self.resume_display_inner(
             stores,
@@ -5390,21 +5366,15 @@ impl<G> MainControl<G> {
             prototype,
             Some(&conversion_error_context),
         )?;
-        let aftergroup = leave_group_payloads(
+        unsave_group(
             &mut context,
-            &mut self.command,
-            diagnostic_effects,
+            &mut self.command_machine(diagnostic_effects),
             GroupKind::MathShift,
         )
         .map_err(|_| ExecError::MissingToken {
             context: "display math group",
         })?;
         self.active_math_shifts.pop();
-        schedule_aftergroup(
-            &mut self.command_machine(diagnostic_effects),
-            &mut context,
-            aftergroup,
-        )?;
         drop(context);
         self.resume_display(
             stores,
@@ -5614,21 +5584,15 @@ impl<G> MainControl<G> {
                         diagnostic_effects,
                         self.fuel.fuel_mut(),
                     )?;
-                    let aftergroup = leave_group_payloads(
+                    unsave_group(
                         &mut context,
-                        &mut self.command,
-                        diagnostic_effects,
+                        &mut self.command_machine(diagnostic_effects),
                         GroupKind::MathLeft,
                     )
                     .map_err(|_| ExecError::MissingToken {
                         context: "math left group",
                     })?;
                     self.active_math_left_boundaries.pop();
-                    schedule_aftergroup(
-                        &mut self.command_machine(diagnostic_effects),
-                        &mut context,
-                        aftergroup,
-                    )?;
 
                     enter_group(
                         &mut context,
@@ -5696,21 +5660,15 @@ impl<G> MainControl<G> {
                     diagnostic_effects,
                     self.fuel.fuel_mut(),
                 )?;
-                let aftergroup = leave_group_payloads(
+                unsave_group(
                     &mut context,
-                    &mut self.command,
-                    diagnostic_effects,
+                    &mut self.command_machine(diagnostic_effects),
                     GroupKind::MathLeft,
                 )
                 .map_err(|_| ExecError::MissingToken {
                     context: "math left group",
                 })?;
                 self.active_math_left_boundaries.pop();
-                schedule_aftergroup(
-                    &mut self.command_machine(diagnostic_effects),
-                    &mut context,
-                    aftergroup,
-                )?;
                 let boundary = context.publish_page_nodes(vec![Node::MathNoad(MathNoad::new(
                     NoadKind::RightDelimiter {
                         delimiter: boundary.delimiter.code,

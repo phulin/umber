@@ -8,8 +8,6 @@ impl<G> CommandStateRoots<G> {
         CommandCapture {
             input: self.input.checkpoint_copy(),
             conditions: self.conditions.frames.clone(),
-            group_payloads: self.group_payloads.clone(),
-            aftergroup_payloads: self.aftergroup_payloads.clone(),
             afterassignment: self.afterassignment,
             alignment: self.alignment.checkpoint_copy(),
             name_in_progress: self.name_in_progress,
@@ -31,9 +29,6 @@ impl<G> CommandStateRoots<G> {
         self.replay_completions.clear();
         self.semantic_diagnostics.clear();
         self.last_diagnostic_location = capture.last_diagnostic_location;
-        self.group_payloads.clone_from(&capture.group_payloads);
-        self.aftergroup_payloads
-            .clone_from(&capture.aftergroup_payloads);
         self.afterassignment = capture.afterassignment;
         self.name_in_progress = capture.name_in_progress;
         self.pending_input_open = None;
@@ -273,6 +268,9 @@ impl<G> CommandState<G> {
         universe: &Universe<G>,
     ) -> Result<CommandSummary<G>, CommandSummaryError> {
         self.validate_summary_quiescence()?;
+        if !universe.checkpoint_eligible() {
+            return Err(CommandSummaryError::CheckpointIneligible);
+        }
         let generation = universe
             .generation_owner()
             .map_err(|_| CommandSummaryError::GenerationUnavailable)?;

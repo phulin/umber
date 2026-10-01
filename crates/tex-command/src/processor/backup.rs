@@ -245,45 +245,84 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         Ok(())
     }
-    /// Replays one group's `\aftergroup` tokens in save order.
-    ///
-    /// TeX82 §282 invokes §326 once for every `insert_token` save entry.
-    /// e-TeX 2.6 etex.ch [15.282] optimizes the second and later entries:
-    /// after the first `back_input`, it links each token directly onto that
-    /// same `backed_up` list. Those direct links adjust `align_state`, but do
-    /// not push or observe another input level.
-    pub fn back_input_aftergroup_tokens(
+    /// Restores a native save level and admits aftergroup tokens directly to
+    /// final input. The callback observes each value before its saved owner drops.
+    pub fn end_group(
         &mut self,
-        tokens: impl IntoIterator<Item = TracedTokenWord>,
-    ) -> Result<(), CommandError> {
-        let mut tokens = tokens.into_iter().collect::<Vec<_>>();
-        let Some(last) = tokens.pop() else {
-            return Ok(());
-        };
-        if self.profile().capabilities().supports_etex() {
-            // e-TeX links the remaining tokens onto the first backup's list,
-            // so the group's tokens form one backed-up level in save order.
-            let linked = tokens.len();
-            tokens.push(last);
-            self.push_backed_up_token(
-                last,
-                PackedTokenSpanHandle::backed_up(
-                    tokens.iter().map(|&spelling| BackedUpToken { spelling }),
-                ),
-            )?;
-            for spelling in tokens[..linked].iter().rev() {
-                self.command.alignment.undo_delivery(
-                    AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
-                );
-            }
-        } else {
-            self.back_input_token(last)?;
-            for spelling in tokens.into_iter().rev() {
-                self.back_input_token(spelling)?;
-            }
+        kind: tex_state::GroupKind,
+        mut restore: impl FnMut(
+            &mut tex_state::CommandContext<'_, G>,
+            &mut tex_state::diagnostic::DiagnosticEffects,
+            &tex_state::GroupRestorationEntry<G>,
+        ),
+    ) -> Result<tex_state::GroupFrame, CommandError> {
+        let etex = self.profile().capabilities().supports_etex();
+        let command = &mut *self.command;
+        let host = &mut self.host;
+        let fuel = &mut *self.fuel;
+        let observer = &mut self.observer;
+        let effects = &mut *self.diagnostic_effects;
+        let mut linked = None;
+        let mut failure = None;
+        let frame = self
+            .state
+            .end_group_observed(kind, |state, event| match event {
+                tex_state::GroupUnsaveEvent::Restoration(entry) => restore(state, effects, entry),
+                tex_state::GroupUnsaveEvent::AfterGroup(word) if failure.is_none() => {
+                    if let Some(identity) = linked {
+                        command.alignment.undo_delivery(
+                            AlignmentDeliveryState::<G>::back_input_adjustment(
+                                word.semantic_token(),
+                            ),
+                        );
+                        command.input.levels.link_aftergroup_word(identity, word);
+                    } else {
+                        let observed = observer
+                            .as_mut()
+                            .map(|observer| &mut **observer as &mut dyn crate::CommandObserver);
+                        let mut processor = CommandProcessor::new(
+                            command,
+                            state,
+                            host.reborrow(),
+                            fuel,
+                            observed,
+                            effects,
+                        );
+                        let result = if etex {
+                            processor.push_backed_up_token(
+                                word,
+                                PackedTokenSpanHandle::backed_up(core::iter::once(BackedUpToken {
+                                    spelling: word,
+                                })),
+                            )
+                        } else {
+                            processor.back_input_token(word)
+                        };
+                        match result {
+                            Ok(()) if etex => {
+                                linked = processor.command.input.levels.rows.last().map(|row| {
+                                    row.stored_common()
+                                        .expect("backup row has a header")
+                                        .identity()
+                                })
+                            }
+                            Ok(()) => {}
+                            Err(error) => failure = Some(error),
+                        }
+                    }
+                }
+                tex_state::GroupUnsaveEvent::AfterGroup(_) => {}
+            })
+            .map_err(|_| CommandError::input_invariant())?;
+        if let Some(identity) = linked {
+            command.input.levels.finish_aftergroup_links(identity);
         }
-        Ok(())
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(frame)
     }
+
     /// Canonical backing operation used by `\\noexpand` for one replayed
     /// command. The treatment belongs to the backed-up level, not the token
     /// or the returned command.

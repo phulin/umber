@@ -728,6 +728,31 @@ impl<G> InputStack<G> {
         }
     }
 
+    pub(crate) fn link_aftergroup_word(
+        &mut self,
+        identity: super::InputLevelId,
+        word: tex_state::token::TracedTokenWord,
+    ) {
+        let super::InputLevel::Resident(row) =
+            self.rows.last_mut().expect("aftergroup backup exists")
+        else {
+            unreachable!("aftergroup backup is token input")
+        };
+        assert_eq!(row.header.identity(), identity);
+        assert_eq!(row.header.frame.absolute_limit(), self.words.len());
+        self.words.push(word);
+        row.header.frame.extend_undelivered_tokens(1);
+    }
+
+    pub(crate) fn finish_aftergroup_links(&mut self, identity: super::InputLevelId) {
+        let super::InputLevel::Resident(row) = self.rows.last().expect("aftergroup backup exists")
+        else {
+            unreachable!("aftergroup backup is token input")
+        };
+        assert_eq!(row.header.identity(), identity);
+        self.words[row.header.frame.start() as usize..row.header.frame.absolute_limit()].reverse();
+    }
+
     /// The innermost macro activation's argument words and replacement.
     #[cfg(test)]
     pub(crate) fn innermost_macro_activation(

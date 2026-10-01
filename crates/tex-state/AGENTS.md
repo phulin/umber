@@ -86,11 +86,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   demand-only semantic-root traversal. Ordinary meaning writes replace their
   dense row directly and never hash definition contents.
 - `src/env/durable_boxes.rs` and `src/env/durable_boxes/tests.rs`: move-only
-  durable node-closure register owners, exact group/checkpoint owner swaps,
+  durable node-closure register owners, native save-stack group swaps, cold checkpoint owner swaps and direct indexed interval stamps,
   one pending register take abandoned by checkpoint restore, bounded history-preservation copies, and lifecycle tests.
-- `src/env/restoration.rs`: one scalar/box unsave walk in dense save-stack
-  and shared e-TeX sparse-chain order, with live trace controls captured at
-  each restoration and no copying of the box mutation vector.
+- `src/env/restoration.rs`: native save-stack unsave in classic chronology and lazy e-TeX sparse-marker chain order. It consumes the original typed entries without merge scratch or a restoration vector.
 - `src/env/font_runtime.rs`: Direct-index generation-owned mutable per-font
   dimensions, character settings, PDF code tables, and ligature state.
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
@@ -251,16 +249,17 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/journal.rs`: Separate compact TeX group saves, indexed host-epoch
   first-touch and owning named-checkpoint deltas holding one
   reversible alternate per written cell, fixed save-stack projections, exact
-  capacity-change accounting for constant-time budget reads, and
+  capacity-change accounting for constant-time budget reads, synchronous unsave observation, and
   prefix-independent accepted/current suffix settlement. Host stamps never
   enter group or checkpoint preimages.
+- `src/journal/groups.rs`: One contiguous native TeX save stack containing scalar boundaries, actual scalar/box before-values, aftergroup words, and lazy sparse marker/links. Borrowed group-frame views read these boundaries without another group topology. The real local-definition frontier remains here until counted definitions replace it.
 - `src/journal/checkpoints.rs`: Plain cold owning dense undo tails, unique
   branch-valid checkpoint cuts, repeated restoration, accepted/candidate
   settlement, prefix release and final-root disarm. Dense undo owns no node
   region, arena lease or fork topology.
 - `src/journal/cell.rs`: Private packed encoding for the typed dense-state
   coordinates stored by narrow journal records.
-- `src/journal/tests.rs`: Split-lifetime rollback, packed-width, fixed-mark,
+- `src/journal/tests.rs`: Split-lifetime rollback, packed-cell identity, root cuts,
   first-alternate deduplication, cursor, and foreign-owner rejection tests.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
 - `src/macro_definition.rs`: Storage-independent allocation-free macro

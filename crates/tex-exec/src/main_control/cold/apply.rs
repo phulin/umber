@@ -17,40 +17,30 @@ pub(in crate::main_control) fn enter_group<G>(
     kind: GroupKind,
 ) {
     let entered_line = command.current_file_line_number();
-    let frame = command
-        .begin_group(stores, kind, entered_line)
-        .expect("executor and command group stacks remain synchronized");
+    let frame = stores
+        .begin_group(kind, entered_line)
+        .expect("native TeX group boundary opens");
     let level = u32::try_from(stores.execution_group_depth()).unwrap_or(u32::MAX);
     stores.trace_group_enter(diagnostic_effects, frame.kind(), level, entered_line);
 }
 
-pub(in crate::main_control) fn leave_group_payloads<G>(
+pub(in crate::main_control) fn unsave_group<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut tex_command::CommandState<G>,
-    diagnostic_effects: &mut DiagnosticEffects,
+    command: &mut CommandMachine<'_, '_, G>,
     kind: GroupKind,
-) -> Result<Vec<tex_state::token::TracedTokenWord>, tex_command::CommandGroupError> {
-    let frame = stores
-        .group_frames()
-        .last()
-        .copied()
-        .ok_or(tex_command::CommandGroupError::NoOpenGroup)?;
+) -> Result<(), tex_command::CommandError> {
     let level = u32::try_from(stores.execution_group_depth()).unwrap_or(u32::MAX);
-    let closed = command.end_group(stores, kind)?;
-    // e-TeX [19.282--283]: each trace observes the already restored/retained
-    // live word, and all of them precede §282's `\aftergroup` backups.
-    crate::assignments::tracing::trace_group_restorations(
-        stores,
-        diagnostic_effects,
-        closed.restorations(),
-    );
+    let mut processor = command.processor(stores);
+    let result = processor.end_group(kind, crate::assignments::tracing::trace_group_restoration);
+    processor.retire();
+    let frame = result?;
     stores.trace_group_leave(
-        diagnostic_effects,
+        command.diagnostic_effects,
         frame.kind(),
         level,
         frame.entered_line(),
     );
-    Ok(closed.into_aftergroup())
+    Ok(())
 }
 
 /// Commits one rootless register or parameter assignment, TeX82 §1228's
@@ -2226,7 +2216,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AfterGroup(token) => {
-            match command.state.state_mut().save_aftergroup(&**stores, *token) {
+            match command.state.state_mut().save_aftergroup(stores, *token) {
                 // TeX82 §280's `save_for_after` consumes the operand at every
                 // level, but creates an `insert_token` save word only when
                 // `cur_level > level_one`. `NoOpenGroup` is therefore the
@@ -3186,16 +3176,11 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::EndSimpleGroup => {
-            let aftergroup = leave_group_payloads(
-                stores,
-                command.state,
-                command.diagnostic_effects,
-                GroupKind::Simple,
-            )
-            .map_err(|_| ExecError::MissingToken {
-                context: "simple recovery group",
+            unsave_group(stores, command, GroupKind::Simple).map_err(|_| {
+                ExecError::MissingToken {
+                    context: "simple recovery group",
+                }
             })?;
-            schedule_aftergroup(command, stores, aftergroup)?;
             boxes.recovery_simple_group_open = false;
             Ok(ReplayStep::Continue)
         }
@@ -3266,19 +3251,14 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 command.fuel,
             )?;
-            let aftergroup = leave_group_payloads(
-                stores,
-                command.state,
-                command.diagnostic_effects,
-                GroupKind::Output,
-            )
-            .map_err(|_| ExecError::MissingToken {
-                context: "output routine group",
+            unsave_group(stores, command, GroupKind::Output).map_err(|_| {
+                ExecError::MissingToken {
+                    context: "output routine group",
+                }
             })?;
             // TeX82 §1026 closes `output_group` with §282's `unsave`
             // before resuming `build_page`. `unsave` backs every saved
             // `insert_token` into input, including `\aftergroup` material.
-            schedule_aftergroup(command, stores, aftergroup)?;
             boxes.output_routine_active = false;
             crate::page_output::resume_page_builder_after_output(
                 stores,
@@ -3401,12 +3381,9 @@ pub(in crate::main_control) fn apply<G>(
             // and storing the result in the field or branch -- belongs to the
             // scanner that opened the group, so `execute_live_math_group`
             // performs it once its level is gone.
-            let aftergroup =
-                leave_group_payloads(stores, command.state, command.diagnostic_effects, *kind)
-                    .map_err(|_| ExecError::MissingToken {
-                        context: "math group",
-                    })?;
-            schedule_aftergroup(command, stores, aftergroup)?;
+            unsave_group(stores, command, *kind).map_err(|_| ExecError::MissingToken {
+                context: "math group",
+            })?;
             if *kind == GroupKind::Math {
                 // TeX82 §1186 runs `fin_mlist` in the right-brace command
                 // itself, then writes the result through §1153's saved field
@@ -3570,16 +3547,9 @@ pub(in crate::main_control) fn apply<G>(
             // Keeping the hook here preserves save-stack order when one
             // nested source closes both a box group and a conditional.
             warn_cross_file_group_close(stores, command);
-            let aftergroup = leave_group_payloads(
-                stores,
-                command.state,
-                command.diagnostic_effects,
-                group_kind,
-            )
-            .map_err(|_| ExecError::MissingToken {
+            unsave_group(stores, command, group_kind).map_err(|_| ExecError::MissingToken {
                 context: "box group",
             })?;
-            schedule_aftergroup(command, stores, aftergroup)?;
             // TeX82 §1086 restores the box group before it calls `hpack` or
             // `vpack`. Besides putting §283's tracing-restores lines ahead of
             // §660/§674 diagnostics, this makes the enclosing h/v badness,
@@ -4034,14 +4004,10 @@ pub(in crate::main_control) fn apply<G>(
                 diagnostic_context,
                 command.fuel,
             )?;
-            leave_group_payloads(
-                stores,
-                command.state,
-                command.diagnostic_effects,
-                GroupKind::NoAlign,
-            )
-            .map_err(|_| ExecError::MissingToken {
-                context: "noalign group",
+            unsave_group(stores, command, GroupKind::NoAlign).map_err(|_| {
+                ExecError::MissingToken {
+                    context: "noalign group",
+                }
             })?;
             Ok(ReplayStep::Continue)
         }
@@ -4112,18 +4078,8 @@ pub(in crate::main_control) fn apply<G>(
             // |align_group| was for individual entries", then "that
             // |align_group| was for the whole alignment" -- before it
             // determines the column widths and packages the prototype box.
-            let entry_aftergroup = leave_fin_align_save_level(
-                command.state,
-                command.diagnostic_effects,
-                stores,
-                "align1",
-            )?;
-            let alignment_aftergroup = leave_fin_align_save_level(
-                command.state,
-                command.diagnostic_effects,
-                stores,
-                "align0",
-            )?;
+            leave_fin_align_save_level(command, stores, "align1")?;
+            leave_fin_align_save_level(command, stores, "align0")?;
             let active = active_alignment
                 .as_mut()
                 .expect("active replay alignment was checked");
@@ -4138,8 +4094,6 @@ pub(in crate::main_control) fn apply<G>(
                 command.fuel,
                 AlignmentFinishSite::new(&error_context, *current_line),
             )?;
-            schedule_aftergroup(command, stores, entry_aftergroup)?;
-            schedule_aftergroup(command, stores, alignment_aftergroup)?;
             command
                 .state
                 .apply_alignment_request(&**stores, AlignmentRequest::Finish(*alignment))

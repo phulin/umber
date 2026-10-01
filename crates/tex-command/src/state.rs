@@ -3,8 +3,8 @@
 use std::ops::{Deref, DerefMut};
 
 use tex_state::CommandContext;
+use tex_state::StateError;
 use tex_state::token::TracedTokenWord;
-use tex_state::{GroupFrame, GroupKind, StateError};
 
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
@@ -82,12 +82,6 @@ pub struct CommandStateRoots<G> {
     /// Last source command that reached TeX82 §342's `get_next` exit. An
     /// intercepted alignment delimiter never replaces this report site.
     pub(crate) last_diagnostic_location: Option<crate::DiagnosticLocation>,
-    /// TeX82 §§280--282 `insert_token` payloads paired with the exact state
-    /// save level that owns them. Frames and words are generation-branded by
-    /// this aggregate root; no payload registry or per-value owner exists.
-    pub(crate) group_payloads: Vec<CommandGroupPayload<G>>,
-    /// Generation-owned append lane addressed by compact group-local spans.
-    pub(crate) aftergroup_payloads: Vec<CommandPayload<G>>,
     /// TeX82 §1269's single pending token. The traced spelling remains in the
     /// same command root as input and group payloads, so rollback cannot leave
     /// an uncheckpointed side value behind.
@@ -226,8 +220,6 @@ impl<G> Default for CommandStateRoots<G> {
             replay_completions: Vec::new(),
             semantic_diagnostics: Vec::new(),
             last_diagnostic_location: None,
-            group_payloads: Vec::new(),
-            aftergroup_payloads: Vec::new(),
             afterassignment: None,
             name_in_progress: false,
             pending_input_open: None,
@@ -383,87 +375,19 @@ impl<G> CommandPayload<G> {
     }
 }
 
-/// Ordered `\aftergroup` payload for one exact TeX save level.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct CommandGroupPayload<G> {
-    pub(crate) frame: GroupFrame,
-    pub(crate) token_start: usize,
-    pub(crate) token_top: usize,
-    brand: core::marker::PhantomData<fn(&G) -> &G>,
-    /// State-journal position of this level's newest §276 push.
-    ///
-    /// Tokens remain command-owned. This scalar only orders their newest
-    /// physical save word against state-owned group/restore records.
-    pub(crate) latest_aftergroup_position: Option<u32>,
-}
-
-impl<G> Clone for CommandGroupPayload<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<G> Copy for CommandGroupPayload<G> {}
-
-impl<G> CommandGroupPayload<G> {
-    const fn new(frame: GroupFrame, token_start: usize) -> Self {
-        Self {
-            frame,
-            token_start,
-            token_top: token_start,
-            brand: core::marker::PhantomData,
-            latest_aftergroup_position: None,
-        }
-    }
-}
-
-/// One synchronized state/command group close.
-///
-/// The restoration diagnostics are consumed by the executor before it replays the
-/// returned `\aftergroup` tokens. Both values are owned and borrow-free, but
-/// remain admitted-generation-local and must not enter a cold summary.
-pub struct CommandGroupExit<G> {
-    restorations: tex_state::GroupRestorations<G>,
-    aftergroup: Vec<TracedTokenWord>,
-}
-
-impl<G> CommandGroupExit<G> {
-    #[must_use]
-    pub fn restorations(&self) -> &tex_state::GroupRestorations<G> {
-        &self.restorations
-    }
-
-    #[must_use]
-    pub fn into_aftergroup(self) -> Vec<TracedTokenWord> {
-        self.aftergroup
-    }
-}
-
 /// Failure to coordinate generation-bound command payloads with TeX's state
 /// save journal. Every variant is detected before either owner mutates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommandGroupError {
     State(StateError),
-    StaleGroupState,
     NoOpenGroup,
-    GroupMismatch {
-        expected: GroupKind,
-        actual: Option<GroupKind>,
-    },
 }
 
 impl core::fmt::Display for CommandGroupError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::State(error) => write!(formatter, "state group operation failed: {error:?}"),
-            Self::StaleGroupState => {
-                formatter.write_str("command group payloads do not match the state save journal")
-            }
             Self::NoOpenGroup => formatter.write_str("no TeX group is open for this payload"),
-            Self::GroupMismatch { expected, actual } => write!(
-                formatter,
-                "expected {expected:?} command group, found {actual:?}"
-            ),
         }
     }
 }
@@ -486,141 +410,26 @@ pub(crate) struct ReplayCompletionFence {
 }
 
 impl<G> CommandState<G> {
-    fn validate_group_payloads(
-        &self,
-        state: &CommandContext<'_, G>,
-    ) -> Result<(), CommandGroupError> {
-        let state_frames = state.group_frames();
-        // Both stacks open and close in lockstep, and every frame carries a
-        // fresh group lineage, so equal depths with equal innermost frames
-        // identify the same stack. Debug builds still compare every level.
-        let matches = state_frames.len() == self.group_payloads.len()
-            && state_frames.last() == self.group_payloads.last().map(|command| &command.frame);
-        debug_assert!(
-            !matches
-                || state_frames
-                    .iter()
-                    .zip(&self.group_payloads)
-                    .all(|(state, command)| *state == command.frame)
-        );
-        if matches {
-            Ok(())
-        } else {
-            Err(CommandGroupError::StaleGroupState)
-        }
-    }
-
-    /// Opens one state save level and its generation-bound command payload
-    /// frame as a single validated transition.
-    pub fn begin_group(
-        &mut self,
-        state: &mut CommandContext<'_, G>,
-        kind: GroupKind,
-        entered_line: u32,
-    ) -> Result<GroupFrame, CommandGroupError> {
-        self.validate_group_payloads(state)?;
-        let frame = state
-            .begin_group(kind, entered_line)
-            .map_err(CommandGroupError::State)?;
-        let aftergroup_top = self.aftergroup_payloads.len();
-        self.group_payloads
-            .push(CommandGroupPayload::new(frame, aftergroup_top));
-        Ok(frame)
-    }
-
-    /// Saves one traced `\aftergroup` spelling on the innermost exact save
-    /// level. The state and command stacks are checked before the append.
     pub fn save_aftergroup(
         &mut self,
-        state: &CommandContext<'_, G>,
+        state: &mut CommandContext<'_, G>,
         spelling: TracedTokenWord,
     ) -> Result<(), CommandGroupError> {
-        self.validate_group_payloads(state)?;
-        let Some(group) = self.group_payloads.last_mut() else {
+        if state.execution_group_depth() == 0 {
             return Err(CommandGroupError::NoOpenGroup);
-        };
-        group.latest_aftergroup_position = Some(state.save_stack_order_position());
-        group.token_top += 1;
-        self.aftergroup_payloads.push(CommandPayload::new(spelling));
-        Ok(())
-    }
-
-    /// Command-owned live §276 words and the state-journal coordinate of
-    /// their newest push.
-    ///
-    /// Level payload ranges tile the live payload stack: a level opens at the
-    /// current payload top and only the innermost level grows. Journal
-    /// positions never fall below a live level's start, so the newest push
-    /// belongs to the innermost level that has one. Both answers therefore
-    /// come from the stack ends rather than a walk over every open group.
-    #[must_use]
-    pub fn aftergroup_save_stack_projection(&self) -> (usize, Option<u32>) {
-        let groups = self.group_payloads.as_slice();
-        let words = groups.first().map_or(0, |outer| {
-            self.aftergroup_payloads.len() - outer.token_start
-        });
-        let latest = if words == 0 {
-            None
-        } else {
-            groups
-                .iter()
-                .rev()
-                .find_map(|group| group.latest_aftergroup_position)
-        };
-        debug_assert_eq!(
-            (words, latest),
-            groups
-                .iter()
-                .fold((0_usize, None), |(words, latest), group| {
-                    (
-                        words + (group.token_top - group.token_start),
-                        latest.max(group.latest_aftergroup_position),
-                    )
-                })
-        );
-        (words, latest)
-    }
-
-    /// Restores one exact state save level and returns its ordered restoration
-    /// receipt plus `\aftergroup` payload in save order. Both owners and the
-    /// expected kind are validated before state restoration begins; after it
-    /// succeeds, removing the already-proven command frame is infallible.
-    pub fn end_group(
-        &mut self,
-        state: &mut CommandContext<'_, G>,
-        expected: GroupKind,
-    ) -> Result<CommandGroupExit<G>, CommandGroupError> {
-        self.validate_group_payloads(state)?;
-        let actual = self.group_payloads.last().map(|group| group.frame.kind());
-        if actual != Some(expected) {
-            return Err(CommandGroupError::GroupMismatch { expected, actual });
         }
-        let restorations = state
-            .end_group(expected)
-            .map_err(CommandGroupError::State)?;
-        let group = self
-            .group_payloads
-            .pop()
-            .expect("validated command group frame remains present");
-        let aftergroup = self.aftergroup_payloads[group.token_start..group.token_top]
-            .iter()
-            .map(|payload| payload.spelling)
-            .collect();
-        self.aftergroup_payloads.truncate(group.token_start);
-        Ok(CommandGroupExit {
-            restorations,
-            aftergroup,
-        })
+        state
+            .save_aftergroup(spelling)
+            .map_err(CommandGroupError::State)
     }
 
     /// Replaces TeX82 §1269's pending `\afterassignment` token inside the
     /// checkpointed command root.
     pub fn set_afterassignment(
         &mut self,
-        state: &CommandContext<'_, G>,
+        _state: &CommandContext<'_, G>,
         spelling: TracedTokenWord,
     ) -> Result<(), CommandGroupError> {
-        self.validate_group_payloads(state)?;
         self.afterassignment = Some(CommandPayload::new(spelling));
         Ok(())
     }
@@ -629,12 +438,11 @@ impl<G> CommandState<G> {
     /// command root still accompanies the admitted state group stack.
     pub fn take_afterassignment(
         &mut self,
-        state: &CommandContext<'_, G>,
+        _state: &CommandContext<'_, G>,
     ) -> Result<Option<TracedTokenWord>, CommandGroupError> {
         if self.afterassignment.is_none() {
             return Ok(None);
         }
-        self.validate_group_payloads(state)?;
         Ok(self.afterassignment.take().map(|payload| payload.spelling))
     }
 

@@ -705,7 +705,7 @@ fn checked_save_stack_projection_tracks_restore_forms_and_rollback() {
     let mut state = state();
     state.admit_symbol(fresh.symbol()).expect("admit meaning");
     state.begin_group(GroupKind::Simple, 1).expect("group");
-    assert_eq!(state.checked_save_stack_words(0, None, false), 0);
+    assert_eq!(state.checked_save_stack_words(false), 0);
 
     state
         .assign_meaning(
@@ -714,16 +714,21 @@ fn checked_save_stack_projection_tracks_restore_forms_and_rollback() {
             AssignmentScope::Local,
         )
         .expect("level-zero meaning save");
-    assert_eq!(state.checked_save_stack_words(0, None, false), 1);
+    assert_eq!(state.checked_save_stack_words(false), 1);
 
     state
         .assign_count(0, 1, AssignmentScope::Local)
         .expect("two-word count save");
-    assert_eq!(state.checked_save_stack_words(0, None, false), 2);
+    assert_eq!(state.checked_save_stack_words(false), 2);
 
-    let aftergroup_position = state.save_stack_order_position();
+    state
+        .journal_mut()
+        .save_aftergroup(crate::token::TracedTokenWord::pack(
+            Token::frozen_relax(),
+            crate::token::OriginId::UNKNOWN,
+        ));
     assert_eq!(
-        state.checked_save_stack_words(1, Some(aftergroup_position), false),
+        state.checked_save_stack_words(false),
         4,
         "the command-owned one-word push is newer than the tied state record"
     );
@@ -736,13 +741,13 @@ fn checked_save_stack_projection_tracks_restore_forms_and_rollback() {
         .assign_dimension(0, Scaled::from_raw(1), AssignmentScope::Local)
         .expect("later two-word restore");
     assert_eq!(
-        state.checked_save_stack_words(1, Some(aftergroup_position), false),
+        state.checked_save_stack_words(false),
         5,
         "the later state record supersedes aftergroup ordering"
     );
 
     state.end_group(GroupKind::Simple).expect("group closes");
-    assert_eq!(state.checked_save_stack_words(0, None, false), 0);
+    assert_eq!(state.checked_save_stack_words(false), 0);
 }
 
 #[test]
@@ -763,7 +768,6 @@ fn ordered_journal_carries_each_exact_prior_word_and_only_the_tex_save() {
         panic!("expected first local mutation");
     };
     assert_eq!(first.before, super::StateWord::Integer(3));
-    assert_eq!(first.saved_at(), Some(2));
     assert_eq!(
         state.journal().len(),
         2,
@@ -834,7 +838,7 @@ fn restorations_preserve_nested_reverse_order_and_exact_font_outcomes() {
         .expect("global font");
 
     let inner = state.end_group(GroupKind::SemiSimple).expect("inner end");
-    let inner_entries = inner.entries();
+    let inner_entries = inner.as_slice();
     assert_eq!(inner_entries.len(), 3);
     assert_eq!(
         inner_entries[0].cell(),
@@ -883,7 +887,7 @@ fn restorations_preserve_nested_reverse_order_and_exact_font_outcomes() {
     );
 
     let outer = state.end_group(GroupKind::Simple).expect("outer end");
-    let outer_entries = outer.entries();
+    let outer_entries = outer.as_slice();
     assert_eq!(outer_entries.len(), 3);
     assert_eq!(
         outer_entries[0].cell(),

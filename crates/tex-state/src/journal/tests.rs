@@ -1,5 +1,5 @@
 use super::cell::JournalCell;
-use super::{JournalEntry, Mutation, SaveJournal, canonical_restore_words};
+use super::{Mutation, SaveJournal, canonical_restore_words};
 use crate::StateError;
 use crate::env::group::{GroupFrame, GroupKind};
 use crate::env::{CodeTableKind, FontRuntimeCell, StateCell, StateWord};
@@ -19,7 +19,7 @@ fn enter_group(journal: &mut SaveJournal<TestGeneration>, lineage: u64) -> Group
     let frame = GroupFrame::for_journal_test(
         GroupKind::Simple,
         lineage,
-        u32::try_from(journal.active_groups.len()).expect("test depth fits u32") + 2,
+        u32::try_from(journal.group_frames().len()).expect("test depth fits u32") + 2,
         save_stack_words_before,
         latest_save_push_before,
     );
@@ -29,10 +29,9 @@ fn enter_group(journal: &mut SaveJournal<TestGeneration>, lineage: u64) -> Group
 
 fn record_saved_count(journal: &mut SaveJournal<TestGeneration>, cell: u16, before: i32) {
     let level = journal
-        .active_groups
+        .group_frames()
         .last()
         .expect("saved mutation has an active group")
-        .frame
         .level();
     journal.record_assignment(
         StateCell::Count(cell),
@@ -41,24 +40,6 @@ fn record_saved_count(journal: &mut SaveJournal<TestGeneration>, cell: u16, befo
         0,
         Some(level),
     );
-}
-
-#[test]
-fn reports_journal_component_widths() {
-    eprintln!(
-        "journal widths: entry={} mutation={} state_word={} state_cell={} group_frame={} meaning={}",
-        core::mem::size_of::<JournalEntry<TestGeneration>>(),
-        core::mem::size_of::<Mutation<TestGeneration>>(),
-        core::mem::size_of::<StateWord<TestGeneration>>(),
-        core::mem::size_of::<crate::env::StateCell>(),
-        core::mem::size_of::<crate::env::group::GroupFrame>(),
-        core::mem::size_of::<crate::meaning::MeaningWord<TestGeneration>>(),
-    );
-    #[cfg(target_pointer_width = "64")]
-    {
-        assert_eq!(core::mem::size_of::<Mutation<TestGeneration>>(), 56);
-        assert_eq!(core::mem::size_of::<JournalEntry<TestGeneration>>(), 64);
-    }
 }
 
 #[test]
@@ -228,7 +209,7 @@ fn checkpoint_intervals_deduplicate_the_first_prior_value() {
     assert_eq!(checkpoint_values[0].0, StateCell::Count(7));
     assert!(matches!(checkpoint_values[0].1, StateWord::Integer(1)));
     assert_eq!(checkpoint_values[0].2, 1);
-    assert!(journal.active_groups.is_empty());
+    assert!(journal.group_frames().is_empty());
     let _interval = journal.checkpoint_cursor(0).expect("root checkpoint");
     journal.record_assignment(
         StateCell::Count(7),
@@ -365,8 +346,7 @@ fn null_token_parameter_uses_tex_restore_zero_word() {
             StateCell::TokenParameter(0),
             StateWord::TokenList(None),
             1,
-            Some(2),
         )),
-        Some(1)
+        1
     );
 }

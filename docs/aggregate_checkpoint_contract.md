@@ -117,8 +117,8 @@ order; preserve the dense/sparse boundary implemented today in
 stacks. This sparse chain is language semantics, not a graph shared with the
 checkpoint log.
 
-Group close validates kind and boundary before mutation, then walks the save
-stack in TeX order. A current level-one binding suppresses a saved local value;
+Group close validates kind and boundary before mutation, decrements the effective assignment level at TeX82 §281, then walks the save
+stack in TeX order. The physical closing boundary still supplies `cur_group` until §282 reaches that boundary. A current level-one binding suppresses a saved local value;
 otherwise transfer the saved value and its old TeX level into the current
 cell. Release each losing owner exactly once. A later local assignment after
 a global write can create another save in the same group: restoring that
@@ -339,22 +339,22 @@ bookkeeping on mutations and cold boundaries without inventing ratios.
 
 ## Source deletions and implementation order
 
-| Tracked work                        | Source now                                                                                                                                             | Required replacement and deletion                                                                                                                                                                                                                                                                                        |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `.10` arguments                     | `tex-command/src/macro_call.rs` and input argument activation still move collected argument words into frame storage.                                  | Construct each argument once in final retained storage; preserve origins and matcher semantics. Checkpoint design adds no argument history.                                                                                                                                                                              |
-| `.6` groups/mutations               | `tex-state/src/journal.rs`, `env.rs`, `env/restoration.rs`, `env/durable_boxes.rs`; command `group_payloads`/aftergroup lanes; definition group hooks. | Central assignment ownership; direct group stack and indexed interval stamps; remove old group serial fields, duplicate box/command topology and restoration carriers. Preserve sparse ordering and box scalar lineage.                                                                                                  |
-| `.6` dispatch/aggregate integration | `tex-exec/src/main_control{,/lane,/hot_apply,/resources,/settlement}.rs`, `ColdOperation` protocol; `Universe`/retained-generation two-slot admission. | One direct mode/command loop including prefixes and cold semantics; delete eligibility split, immediate-consumption operation/request carriers and eager multi-owner captures. Preserve existing sole-core move/alternate-tail lifecycle and genuine coarse slot/brand ownership; simplify only real redundant adapters. |
-| `.13` definitions                   | `definition_arena.rs` format/global/local vectors, `AcceptedDefinitionTail`, local marks, promotion memo and row-based memory release.                 | Pinned format plus stable counted dynamic slots; tombstones, payload accounting, centralized root transitions. Delete append-only payload retention and local/global promotion. Accepted alternates own roots rather than accidental row tails.                                                                          |
-| `.12` closure                       | `tex-exec/src/checkpoint.rs`, `Universe` aggregate restore, command snapshot/capture, `tex-incr` history/resource drivers.                             | Prove complete inventory, repeatable roots, validate-all/root-before-drop, candidate reject/accept, JobStart, pruning, replay, monotone fuel/high water and forwarded provenance; delete obsolete adapters remaining across the seams.                                                                                   |
+| Tracked work                         | Source now                                                                                                                                                                                                                                                                                          | Required replacement and deletion                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.10` arguments                      | `tex-command/src/macro_call.rs` and input argument activation still move collected argument words into frame storage.                                                                                                                                                                               | Construct each argument once in final retained storage; preserve origins and matcher semantics. Checkpoint design adds no argument history.                                                                                                                                                                                                                                                        |
+| `.6` groups/mutations                | `tex-state/src/journal/groups.rs` owns the native contiguous boundary/scalar/box/aftergroup stack and sparse chain. `journal/checkpoints.rs` owns plain dense undo tails. Specialized box checkpoint/dimension owners remain cold; definition local-row frontier lives only in the native boundary. | Implemented: value/level-only preimages, current-epoch unsave, direct indexed stamps, last-root disarm and branch-valid cuts. Deleted chunk save sequence, duplicate dense/box/command group topology, box epoch maps, definition group hooks, scalar/box merge scratch, retained box group ancestry and restoration/token-result vectors. `.13` replaces the remaining actual local-row frontier. |
+| `.15` dispatch/aggregate integration | `tex-exec/src/main_control{,/lane,/hot_apply,/resources,/settlement}.rs`, `ColdOperation` protocol; `Universe`/retained-generation two-slot admission.                                                                                                                                              | One direct mode/command loop including prefixes and cold semantics; delete eligibility split, immediate-consumption operation/request carriers and eager multi-owner captures. Preserve existing sole-core move/alternate-tail lifecycle and genuine coarse slot/brand ownership; simplify only real redundant adapters.                                                                           |
+| `.13` definitions                    | `definition_arena.rs` format/global/local vectors, `AcceptedDefinitionTail`, local marks, promotion memo and row-based memory release.                                                                                                                                                              | Pinned format plus stable counted dynamic slots; tombstones, payload accounting, centralized root transitions. Delete append-only payload retention and local/global promotion. Accepted alternates own roots rather than accidental row tails.                                                                                                                                                    |
+| `.12` closure                        | `tex-exec/src/checkpoint.rs`, `Universe` aggregate restore, command snapshot/capture, `tex-incr` history/resource drivers.                                                                                                                                                                          | Prove complete inventory, repeatable roots, validate-all/root-before-drop, candidate reject/accept, JobStart, pruning, replay, monotone fuel/high water and forwarded provenance; delete obsolete adapters remaining across the seams.                                                                                                                                                             |
 
 `.14` settles the design only. `.10` completes arguments, then `.6` replaces
-save/dispatch ownership in reviewable logical chunks, `.13` installs counted
+save ownership in reviewable logical chunks, `.15` replaces the direct dispatch engine, `.13` installs counted
 reclamation against those central transitions, and `.12` audits the integrated
 engine. Each implementation must delete its displaced representation and port
 all real consumers in the same logical change. No shim or second engine may
 remain; a design split is for review, not parallel authority.
 
-### Direct-control migration details
+### Implemented group seam and remaining direct-control migration
 
 The `.6` implementation moves the real local-definition retirement frontier
 into the sole scalar group boundary. Until `.13` replaces the definition
@@ -368,10 +368,16 @@ context restores a scalar or box binding, invokes the synchronous restoration
 observer while both values are valid, then releases the losing value. A saved
 aftergroup token enters ordinary backup input directly at its pop position.
 The executor's diagnostic renderer therefore needs no retained restoration
-vector or second token vector. Sparse entries use a lazy marker and stack-index
+vector or second token vector. `CommandProcessor::end_group` is the execution
+seam: its renderer callback observes one native restoration. e-TeX links later
+popped words into the final backed-up input row and reverses that row once at
+close; TeX82 pushes each word separately. There is no collected token result.
+The native boundary temporarily carries the actual local definition row
+frontier until `.13`; its read is scalar and captures no owner or mutable bank.
+Named command captures prove the native stack empty and contain no group fields. Sparse entries use a lazy marker and a nullable packed `u32` stack-index
 chain; their chain traversal remains distinct from ordinary reverse popping.
 
-The direct control loop preserves the two TeX fetch labels, current mode,
+The `.15` direct control loop must preserve the two TeX fetch labels, current mode,
 prefix flags and pending diagnostics as explicit control facts. It invokes
 ordinary synchronous scanner and application leaves from the same dispatch
 arm. Observation selects evidence production in those leaves, not a different

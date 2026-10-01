@@ -220,6 +220,15 @@ impl InputFrame {
     }
 
     /// Advances once and returns the position that was consumed.
+    /// Links freshly backed-up words before this token frame is delivered.
+    pub fn extend_undelivered_tokens(&mut self, count: u32) {
+        assert_eq!(self.position, 0, "aftergroup linking precedes delivery");
+        self.limit = self
+            .limit
+            .checked_add(count)
+            .expect("input frame length exceeds u32");
+    }
+
     pub const fn advance(&mut self) -> Option<u32> {
         if self.position >= self.limit {
             return None;

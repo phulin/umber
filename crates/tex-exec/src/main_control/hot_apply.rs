@@ -443,8 +443,6 @@ fn leave_group<G>(
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
     warn_cross_file_group_close(stores, command);
-    let aftergroup = leave_group_payloads(stores, command.state, command.diagnostic_effects, kind)
-        .map_err(|_| ExecError::MissingToken { context })?;
-    schedule_aftergroup(command, stores, aftergroup)?;
+    unsave_group(stores, command, kind).map_err(|_| ExecError::MissingToken { context })?;
     Ok(ReplayStep::Continue)
 }

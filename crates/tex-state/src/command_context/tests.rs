@@ -72,3 +72,74 @@ fn read_target_uses_live_control_sequence_spelling_after_a_print_break() {
         assert_eq!(log, "\n!ordinary=\n");
     });
 }
+
+#[test]
+fn unsave_observes_classic_sparse_and_aftergroup_at_their_tex_positions() {
+    with_test_universe(|universe| {
+        use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
+        use crate::{GroupKind, GroupRestorationCell, GroupUnsaveEvent};
+        let word = |ch| {
+            TracedTokenWord::pack(
+                Token::Char {
+                    ch,
+                    cat: Catcode::Other,
+                },
+                OriginId::UNKNOWN,
+            )
+        };
+        let mut state = universe.command_context().expect("admitted state");
+        state.begin_group(GroupKind::Simple, 1).expect("group");
+        state
+            .assign_count(0, 10, AssignmentScope::Local)
+            .expect("classic write");
+        state
+            .save_aftergroup(word('A'))
+            .expect("aftergroup before sparse marker");
+        state
+            .assign_count(256, 20, AssignmentScope::Local)
+            .expect("sparse write");
+        state
+            .save_aftergroup(word('B'))
+            .expect("aftergroup after sparse marker");
+        state
+            .assign_count(1, 30, AssignmentScope::Local)
+            .expect("classic write above marker");
+        let mut chronology = Vec::new();
+        state
+            .end_group_observed(GroupKind::Simple, |state, event| {
+                assert_eq!(
+                    state.current_group_values(),
+                    (0, GroupKind::Simple.etex_code()),
+                    "TeX decrements cur_level before popping but keeps cur_group until the boundary"
+                );
+                match event {
+                    GroupUnsaveEvent::Restoration(entry) => {
+                        let GroupRestorationCell::Count(index) = entry.cell() else {
+                            panic!("count restoration")
+                        };
+                        assert_eq!(
+                            state.count(index),
+                            Ok(0),
+                            "observer sees the restored value"
+                        );
+                        chronology.push(format!("count{index}"));
+                    }
+                    GroupUnsaveEvent::AfterGroup(token) => {
+                        chronology.push(format!("{:?}", token.semantic_token()))
+                    }
+                }
+            })
+            .expect("unsave");
+        assert_eq!(
+            chronology,
+            [
+                "count1".to_owned(),
+                format!("{:?}", word('B').semantic_token()),
+                "count256".to_owned(),
+                format!("{:?}", word('A').semantic_token()),
+                "count0".to_owned()
+            ]
+        );
+        assert_eq!(state.execution_group_depth(), 0);
+    });
+}

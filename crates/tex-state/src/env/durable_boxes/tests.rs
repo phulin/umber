@@ -57,7 +57,7 @@ fn dimensions(
     (node.width, node.height, node.depth)
 }
 
-fn assign_box(state: &mut DurableBoxState, arena: &mut PageMaterialArena, index: u16) {
+fn assign_box(state: &mut BoxFixture, arena: &mut PageMaterialArena, index: u16) {
     let boxed = boxed_owner(arena);
     state
         .assign(
@@ -74,7 +74,7 @@ fn assign_box(state: &mut DurableBoxState, arena: &mut PageMaterialArena, index:
 fn direct_register_take_moves_one_owner_without_copying() {
     page_arena!(arena, pool, region, 65_536);
     arena.enable_semantic_identity();
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assign_box(&mut state, &mut arena, 3);
     assign_box(&mut state, &mut arena, 4);
     assert!(state.enable_semantic_identity());
@@ -91,7 +91,6 @@ fn direct_register_take_moves_one_owner_without_copying() {
                 4,
                 super::super::AssignmentScope::Global,
                 LEVEL_ONE,
-                0,
             )
             .expect("exclusive owner handoff")
     );
@@ -115,20 +114,13 @@ fn direct_register_take_moves_one_owner_without_copying() {
 #[test]
 fn same_register_local_take_restores_void_after_group_exit() {
     page_arena!(arena, pool, region, 65_536);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assign_box(&mut state, &mut arena, 0);
     let moved = current_region(&state, 0);
     state.begin_group(2);
     assert!(
         state
-            .assign_unique_register_take(
-                &mut arena,
-                0,
-                0,
-                super::super::AssignmentScope::Local,
-                2,
-                0,
-            )
+            .assign_unique_register_take(&mut arena, 0, 0, super::super::AssignmentScope::Local, 2,)
             .expect("same-register handoff")
     );
     assert_eq!(current_region(&state, 0), moved);
@@ -140,7 +132,7 @@ fn same_register_local_take_restores_void_after_group_exit() {
 #[test]
 fn direct_take_respects_saved_group_source_and_checkpoint_history() {
     page_arena!(arena, pool, region, 65_536);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assign_box(&mut state, &mut arena, 8);
     let outer = current_region(&state, 8);
     state.begin_group(2);
@@ -163,7 +155,6 @@ fn direct_take_respects_saved_group_source_and_checkpoint_history() {
                 9,
                 super::super::AssignmentScope::Global,
                 2,
-                0,
             )
             .expect("move current source")
     );
@@ -185,7 +176,6 @@ fn direct_take_respects_saved_group_source_and_checkpoint_history() {
                 10,
                 super::super::AssignmentScope::Global,
                 LEVEL_ONE,
-                0,
             )
             .expect("checkpoint-retained source declines direct move")
     );
@@ -198,7 +188,7 @@ fn direct_take_respects_saved_group_source_and_checkpoint_history() {
 #[test]
 fn failed_destination_history_staging_restores_pending_source_without_history_changes() {
     page_arena!(arena, pool, region, 65_536);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assign_box(&mut state, &mut arena, 4);
     let checkpoint = state.checkpoint_cursor();
     assign_box(&mut state, &mut arena, 3);
@@ -206,8 +196,8 @@ fn failed_destination_history_staging_restores_pending_source_without_history_ch
     let destination = current_region(&state, 4);
     state.begin_group(2);
     let checkpoint_count = state.checkpoint_entries.len();
-    let group_count = state.groups.last().expect("open group").entries.len();
-    let stamps = state.checkpoint_stamps.clone();
+    let group_count = state.dense_state.journal().len();
+    let stamp = state.cell(4).expect("destination").host_epoch;
     let live_count = state.owners.slots.iter().filter(|slot| slot.live).count();
 
     let take = state
@@ -222,18 +212,14 @@ fn failed_destination_history_staging_restores_pending_source_without_history_ch
             4,
             super::super::AssignmentScope::Local,
             2,
-            0,
         ),
         Err(BankError::AllocationFailed)
     ));
     assert_eq!(current_region(&state, 3), source);
     assert_eq!(current_region(&state, 4), destination);
     assert_eq!(state.checkpoint_entries.len(), checkpoint_count);
-    assert_eq!(
-        state.groups.last().expect("open group").entries.len(),
-        group_count
-    );
-    assert_eq!(state.checkpoint_stamps, stamps);
+    assert_eq!(state.dense_state.journal().len(), group_count);
+    assert_eq!(state.cell(4).expect("destination").host_epoch, stamp);
     assert_eq!(
         state.owners.slots.iter().filter(|slot| slot.live).count(),
         live_count
@@ -247,7 +233,7 @@ fn failed_destination_history_staging_restores_pending_source_without_history_ch
 #[test]
 fn checkpoint_restore_abandons_unfinished_register_take() {
     page_arena!(arena, pool, region, 65_536);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let checkpoint = state.checkpoint_cursor();
     assign_box(&mut state, &mut arena, 3);
     assign_box(&mut state, &mut arena, 4);
@@ -269,7 +255,7 @@ fn checkpoint_restore_abandons_unfinished_register_take() {
 #[test]
 fn same_register_global_take_survives_group_exit() {
     page_arena!(arena, pool, region, 65_536);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assign_box(&mut state, &mut arena, 0);
     let moved = current_region(&state, 0);
     state.begin_group(2);
@@ -283,7 +269,6 @@ fn same_register_global_take_survives_group_exit() {
             0,
             super::super::AssignmentScope::Global,
             2,
-            0,
         )
         .expect("global same-register assignment");
     state.end_group(&mut arena, 2).expect("group exit");
@@ -295,7 +280,7 @@ fn same_register_global_take_survives_group_exit() {
 fn scalar_box_root_mutation_preserves_closure() {
     page_arena!(arena, pool, region, 64);
     arena.enable_semantic_identity();
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assert!(state.enable_semantic_identity());
     let boxed = boxed_owner(&mut arena);
     state
@@ -341,7 +326,7 @@ fn scalar_box_root_mutation_preserves_closure() {
 #[test]
 fn checkpoint_scalar_history_restores_through_overwrite_and_destructive_take() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assign_box(&mut state, &mut arena, 8);
     let original = current_region(&state, 8);
     let checkpoint = state.checkpoint_cursor();
@@ -389,7 +374,7 @@ fn checkpoint_scalar_history_restores_through_overwrite_and_destructive_take() {
 #[test]
 fn scalar_checkpoint_candidate_reject_and_accept_keep_separate_root_values() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assign_box(&mut state, &mut arena, 9);
     let accepted_region = current_region(&state, 9);
     let checkpoint = state.checkpoint_cursor();
@@ -429,7 +414,7 @@ fn scalar_checkpoint_candidate_reject_and_accept_keep_separate_root_values() {
 #[test]
 fn earlier_checkpoint_skips_later_box_lineage_scalar_inverse() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assign_box(&mut state, &mut arena, 11);
     let original = current_region(&state, 11);
     let first = state.checkpoint_cursor();
@@ -472,7 +457,7 @@ fn earlier_checkpoint_skips_later_box_lineage_scalar_inverse() {
 #[test]
 fn earlier_void_checkpoint_skips_later_box_scalar_inverse() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let first = state.checkpoint_cursor();
     assign_box(&mut state, &mut arena, 12);
     let second = state.checkpoint_cursor();
@@ -488,7 +473,7 @@ fn earlier_void_checkpoint_skips_later_box_scalar_inverse() {
 #[test]
 fn fork_rejection_preserves_intermediate_checkpoint_box_dimensions() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assign_box(&mut state, &mut arena, 13);
     let first = state.checkpoint_cursor();
     state
@@ -512,7 +497,7 @@ fn fork_rejection_preserves_intermediate_checkpoint_box_dimensions() {
 #[test]
 fn fork_acceptance_discards_superseded_scalar_and_binding_history() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     assign_box(&mut state, &mut arena, 14);
     let original = current_region(&state, 14).expect("initial region");
     let first = state.checkpoint_cursor();
@@ -565,7 +550,7 @@ fn durable_owner_slots_reuse_storage_with_a_fresh_incarnation() {
 #[test]
 fn overwrite_without_retained_history_retires_the_old_owner() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let first = owner(&mut arena, 11);
     let first_id = first.region_id();
     state
@@ -597,7 +582,7 @@ fn overwrite_without_retained_history_retires_the_old_owner() {
 #[test]
 fn retained_checkpoint_rewinds_and_reject_restores_exact_owners() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let accepted = owner(&mut arena, 17);
     let accepted_id = accepted.region_id();
     state
@@ -648,7 +633,7 @@ fn retained_checkpoint_rewinds_and_reject_restores_exact_owners() {
 #[test]
 fn take_moves_the_owner_to_the_page_without_copying() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let original = owner(&mut arena, 33);
     let original_address = arena
         .durable_list(&original)
@@ -690,7 +675,7 @@ fn take_moves_the_owner_to_the_page_without_copying() {
 #[test]
 fn open_groups_without_a_saved_current_owner_keep_destructive_take_unique() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     state.begin_group(2);
     state.begin_group(3);
     let boxed = owner(&mut arena, 35);
@@ -734,7 +719,7 @@ fn open_groups_without_a_saved_current_owner_keep_destructive_take_unique() {
 #[test]
 fn local_group_restore_moves_the_saved_owner_back() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let original = owner(&mut arena, 37);
     let original_id = original.region_id();
     state
@@ -768,7 +753,7 @@ fn local_group_restore_moves_the_saved_owner_back() {
 #[test]
 fn checkpoint_accept_drops_the_superseded_owner_only_once() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let old = owner(&mut arena, 43);
     let old_id = old.region_id();
     state
@@ -815,91 +800,9 @@ fn checkpoint_accept_drops_the_superseded_owner_only_once() {
 }
 
 #[test]
-fn checkpoint_restore_reopens_group_and_restores_exact_live_owner() {
-    page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
-    let outer = owner(&mut arena, 59);
-    state
-        .assign(
-            &mut arena,
-            18,
-            Some(outer),
-            super::super::AssignmentScope::Global,
-            LEVEL_ONE,
-        )
-        .expect("outer assignment");
-    state.begin_group(2);
-    let local = owner(&mut arena, 61);
-    let local_id = local.region_id();
-    state
-        .assign(
-            &mut arena,
-            18,
-            Some(local),
-            super::super::AssignmentScope::Local,
-            2,
-        )
-        .expect("local assignment");
-    let checkpoint = state.checkpoint_cursor();
-
-    state.end_group(&mut arena, 2).expect("accepted group exit");
-    state.restore(&mut arena, checkpoint);
-
-    assert_eq!(current_region(&state, 18), Some(local_id));
-    state
-        .end_group(&mut arena, 2)
-        .expect("restored group topology exits again");
-    state.retire_all(&mut arena);
-}
-
-#[test]
-fn candidate_reject_redoes_accepted_group_exit_with_exact_owner() {
-    page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
-    let outer = owner(&mut arena, 67);
-    let outer_id = outer.region_id();
-    state
-        .assign(
-            &mut arena,
-            21,
-            Some(outer),
-            super::super::AssignmentScope::Global,
-            LEVEL_ONE,
-        )
-        .expect("outer assignment");
-    state.begin_group(2);
-    let local = owner(&mut arena, 71);
-    state
-        .assign(
-            &mut arena,
-            21,
-            Some(local),
-            super::super::AssignmentScope::Local,
-            2,
-        )
-        .expect("local assignment");
-    let checkpoint = state.checkpoint_cursor();
-    state.end_group(&mut arena, 2).expect("accepted group exit");
-    let accepted = state
-        .begin_checkpoint_candidate(&mut arena, checkpoint)
-        .expect("candidate");
-    let candidate = owner(&mut arena, 73);
-    let candidate_id = candidate.region_id();
-    state
-        .replace(&mut arena, 21, Some(candidate))
-        .expect("candidate replacement");
-
-    state.reject_checkpoint_candidate(&mut arena, checkpoint, accepted);
-
-    assert_eq!(current_region(&state, 21), Some(outer_id));
-    assert!(!arena.durable_region_is_live(candidate_id));
-    state.retire_all(&mut arena);
-}
-
-#[test]
 fn released_checkpoint_prefix_retires_only_obsolete_alternates_and_rebases_cursors() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let obsolete = owner(&mut arena, 73);
     let obsolete_id = obsolete.region_id();
     state
@@ -927,7 +830,6 @@ fn released_checkpoint_prefix_retires_only_obsolete_alternates_and_rebases_curso
         released.checkpoint_entries, 1,
         "pre-checkpoint assignment needs no historical alternate"
     );
-    assert_eq!(released.retained_groups, 0);
     assert!(!state.validates_cursor(root));
     assert!(state.validates_cursor(floor));
     assert!(!arena.durable_region_is_live(obsolete_id));
@@ -944,7 +846,7 @@ fn released_checkpoint_prefix_retires_only_obsolete_alternates_and_rebases_curso
 #[test]
 fn released_prefix_keeps_candidate_rejection_exact() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let root = state.checkpoint_cursor();
     let selected_value = owner(&mut arena, 97);
     let selected_id = selected_value.region_id();
@@ -983,7 +885,7 @@ fn released_prefix_keeps_candidate_rejection_exact() {
 #[test]
 fn released_prefix_keeps_candidate_acceptance_restorable() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let obsolete = owner(&mut arena, 107);
     let obsolete_id = obsolete.region_id();
     state
@@ -1026,66 +928,15 @@ fn released_prefix_keeps_candidate_acceptance_restorable() {
 }
 
 #[test]
-fn group_local_replacement_survives_checkpoint_prefix_release() {
-    page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
-    let outer = owner(&mut arena, 131);
-    let outer_id = outer.region_id();
-    state
-        .replace(&mut arena, 31, Some(outer))
-        .expect("outer value");
-    state.begin_group(2);
-    let old_local = owner(&mut arena, 137);
-    state
-        .assign(
-            &mut arena,
-            31,
-            Some(old_local),
-            super::super::AssignmentScope::Local,
-            2,
-        )
-        .expect("old local value");
-    let old_group_cursor = state.checkpoint_cursor();
-    state.end_group(&mut arena, 2).expect("old group exit");
-    let floor = state.checkpoint_cursor();
-
-    state.begin_group(2);
-    let live_local = owner(&mut arena, 139);
-    let live_local_id = live_local.region_id();
-    state
-        .assign(
-            &mut arena,
-            31,
-            Some(live_local),
-            super::super::AssignmentScope::Local,
-            2,
-        )
-        .expect("live local value");
-    let before = arena.durable_transition_counters();
-
-    let released = state
-        .release_checkpoint_prefix(&mut arena, Some(floor), None)
-        .expect("group prefix release");
-
-    assert_eq!(released.retained_groups, 1);
-    assert!(!state.validates_cursor(old_group_cursor));
-    assert_eq!(current_region(&state, 31), Some(live_local_id));
-    assert!(arena.durable_region_is_live(outer_id));
-    assert_eq!(arena.durable_transition_counters(), before);
-    state.end_group(&mut arena, 2).expect("live group exit");
-    assert_eq!(current_region(&state, 31), Some(outer_id));
-    state.retire_all(&mut arena);
-}
-
-#[test]
 fn releasing_last_checkpoint_unpins_but_preserves_an_active_group() {
     page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
+    let mut state = BoxFixture::new();
     let outer = owner(&mut arena, 149);
     let outer_id = outer.region_id();
     state
         .replace(&mut arena, 33, Some(outer))
         .expect("outer value");
+    let _released = state.checkpoint_cursor();
     state.begin_group(2);
     let local = owner(&mut arena, 151);
     state
@@ -1097,70 +948,134 @@ fn releasing_last_checkpoint_unpins_but_preserves_an_active_group() {
             2,
         )
         .expect("local value");
-    let _released = state.checkpoint_cursor();
 
     state
         .release_checkpoint_prefix(&mut arena, None, None)
         .expect("last checkpoint release");
 
-    assert!(!state.groups[0].checkpoint_pinned);
+    assert_eq!(state.dense_state.group_depth(), 1);
     assert!(arena.durable_region_is_live(outer_id));
     state.end_group(&mut arena, 2).expect("group exit");
     assert_eq!(current_region(&state, 33), Some(outer_id));
-    assert!(state.retained_groups.is_empty());
+    assert_eq!(state.dense_state.group_depth(), 0);
     state.retire_all(&mut arena);
 }
 
-#[test]
-fn candidate_accept_preserves_earlier_retained_group_ancestry() {
-    page_arena!(arena, pool, region, 64);
-    let mut state = DurableBoxState::new();
-    let outer = owner(&mut arena, 157);
-    let outer_id = outer.region_id();
-    state
-        .replace(&mut arena, 35, Some(outer))
-        .expect("outer value");
-    state.begin_group(2);
-    let local = owner(&mut arena, 163);
-    let local_id = local.region_id();
-    state
-        .assign(
-            &mut arena,
-            35,
-            Some(local),
-            super::super::AssignmentScope::Local,
-            2,
+/// A native dense-state fixture supplies the exact same scalar group stack
+/// used by CommandContext. The physical box arena remains independently owned.
+struct BoxFixture {
+    boxes: DurableBoxState,
+    dense_state: crate::env::DenseState<()>,
+}
+impl core::ops::Deref for BoxFixture {
+    type Target = DurableBoxState;
+    fn deref(&self) -> &Self::Target {
+        &self.boxes
+    }
+}
+impl core::ops::DerefMut for BoxFixture {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.boxes
+    }
+}
+impl BoxFixture {
+    fn new() -> Self {
+        Self {
+            boxes: DurableBoxState::new(),
+            dense_state: crate::env::DenseState::new_with_meaning_capacity(1)
+                .expect("native group fixture"),
+        }
+    }
+    fn begin_group(&mut self, level: u32) {
+        self.dense_state
+            .begin_group(crate::GroupKind::Simple, 0)
+            .expect("group");
+        assert_eq!(self.dense_state.current_level(), level);
+    }
+    fn end_group(&mut self, arena: &mut PageMaterialArena, level: u32) -> Result<(), BankError> {
+        let frame = self
+            .dense_state
+            .closing_group(crate::GroupKind::Simple)
+            .expect("closing group");
+        assert_eq!(frame.level(), level);
+        let mut cursor = self.dense_state.journal().len();
+        let mut sparse = None;
+        self.dense_state.journal_mut().begin_unsave();
+        while let Some(entry) = self
+            .dense_state
+            .next_group_restore(frame, &mut cursor, &mut sparse)
+        {
+            let crate::journal::JournalEntry::Box { mut saved, .. } = entry else {
+                panic!("fixture contains only box saves")
+            };
+            self.boxes.restore_group_record(&mut saved);
+            self.boxes.retire_group_record(arena, saved);
+        }
+        self.dense_state
+            .journal_mut()
+            .record_group_exit_with_records(frame);
+        Ok(())
+    }
+    fn assign(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        index: u16,
+        value: Option<DurableNodeClosure>,
+        scope: super::super::AssignmentScope,
+        current_level: u32,
+    ) -> Result<(), BankError> {
+        self.boxes.assign_grouped(
+            arena,
+            index,
+            value,
+            scope,
+            current_level,
+            Some(self.dense_state.journal_mut()),
         )
-        .expect("local value");
-    let earlier = state.checkpoint_cursor();
-    state.end_group(&mut arena, 2).expect("accepted group exit");
-    let selected = state.checkpoint_cursor();
-    let mut accepted = state
-        .begin_checkpoint_candidate(&mut arena, selected)
-        .expect("candidate");
-    let candidate = owner(&mut arena, 167);
-    state
-        .replace(&mut arena, 36, Some(candidate))
-        .expect("candidate value");
-
-    state
-        .release_checkpoint_prefix(&mut arena, Some(earlier), Some(&mut accepted))
-        .expect("release before selected group base");
-    state.accept_checkpoint_candidate(&mut arena, accepted);
-
-    assert!(state.validates_cursor(earlier));
-    state.restore(&mut arena, earlier);
-    assert_eq!(current_region(&state, 35), Some(local_id));
-    state
-        .end_group(&mut arena, 2)
-        .expect("restored earlier group exits");
-    assert!(matches!(
-        arena
-            .durable_list(state.value(35).expect("restored outer value"))
-            .expect("restored outer list")
-            .get(0),
-        Some(crate::NodeView::Penalty(157))
-    ));
-    assert!(!arena.durable_region_is_live(outer_id));
-    state.retire_all(&mut arena);
+    }
+    fn assign_unique_register_take(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        source: u16,
+        destination: u16,
+        scope: super::super::AssignmentScope,
+        current_level: u32,
+    ) -> Result<bool, BankError> {
+        self.boxes.assign_unique_register_take(
+            arena,
+            source,
+            destination,
+            scope,
+            current_level,
+            Some(self.dense_state.journal_mut()),
+        )
+    }
+    fn finish_unique_register_take(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        take: UniqueBoxRegisterTake,
+        destination: u16,
+        scope: super::super::AssignmentScope,
+        current_level: u32,
+    ) -> Result<(), BankError> {
+        self.boxes.finish_unique_register_take(
+            arena,
+            take,
+            destination,
+            scope,
+            current_level,
+            Some(self.dense_state.journal_mut()),
+        )
+    }
+    fn checkpoint_cursor(&mut self) -> DurableBoxCursor {
+        assert_eq!(
+            self.dense_state.group_depth(),
+            0,
+            "admissible named root has no groups"
+        );
+        self.boxes.checkpoint_cursor()
+    }
+    fn retire_all(self, arena: &mut PageMaterialArena) {
+        self.boxes.retire_all(arena);
+    }
 }

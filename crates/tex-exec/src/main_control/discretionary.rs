@@ -117,20 +117,14 @@ impl<G> MainControl<G> {
             let nodes = stores.slice_page_node_span(part, 0..prefix_end);
             let deleted = first_forbidden
                 .map(|index| stores.slice_page_node_span(part, index..part_len).list());
-            let aftergroup = leave_group_payloads(
+            unsave_group(
                 &mut stores,
-                &mut self.command,
-                diagnostic_effects,
+                &mut self.command_machine(diagnostic_effects),
                 GroupKind::Disc,
             )
             .map_err(|_| ExecError::MissingToken {
                 context: "discretionary group",
             })?;
-            schedule_aftergroup(
-                &mut self.command_machine(diagnostic_effects),
-                &mut stores,
-                aftergroup,
-            )?;
             (nodes, deleted, prefix_end)
         };
 

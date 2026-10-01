@@ -82,7 +82,7 @@ collector (see `src/conditionals.rs`).
 - `src/state.rs`: exclusively mutable live aggregate command roots,
   persistent command state, retirement-owned executor replay-completion
   fences transferred directly to §325/§390 descendants, current-generation
-  execution scratch, and direct semantic mutation.
+  execution scratch, pending afterassignment, and direct semantic mutation. It owns no group topology or aftergroup lane. `CommandProcessor::end_group` consumes the native state stack and links aftergroup words directly into final backup input; restoration callbacks run synchronously.
   `src/state/attempt_transition.rs` owns command-boundary scratch settlement,
   synchronous child scopes, and checkpoint-replay cleanup;
   `src/state/projection.rs` owns allocation-free retained-byte
@@ -529,8 +529,7 @@ collector (see `src/conditionals.rs`).
   by-value command checkpoints. `snapshot.rs` owns `CommandCapture`, the
   serial-ordered `CommandCheckpoints` list, its single candidate fork, and the
   public `CommandSummary` naming one `(owner, serial)` capture. Each capture
-  copies the quiescent input levels, replay rows, conditions, group and
-  aftergroup payloads, the alignment preamble, and the small scanner remnants;
+  copies the quiescent input levels, replay rows, conditions, pending afterassignment token and alignment state. Native groups and aftergroup saves belong to tex-state and are forbidden at publication;
   its retained bytes are charged under its own aggregate owner key.
   `boundary.rs` owns quiescence validation, publication, restore (which drops
   every newer capture), release, editor-source rehome, and the

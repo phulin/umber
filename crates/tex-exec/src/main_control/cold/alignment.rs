@@ -215,30 +215,23 @@ pub(in crate::main_control) fn replace_alignment_entry_save_level<G>(
     command: &mut CommandMachine<'_, '_, G>,
     stores: &mut tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
-    let aftergroup = leave_alignment_save_level(
-        command.state,
-        command.diagnostic_effects,
-        stores,
-        "alignment entry group",
-    )?;
+    leave_alignment_save_level(command, stores, "alignment entry group")?;
     enter_group(
         stores,
         command.state,
         command.diagnostic_effects,
         GroupKind::Align,
     );
-    schedule_aftergroup(command, stores, aftergroup)
+    Ok(())
 }
 
 /// One of TeX82 §800 `fin_align`'s `unsave`s, or §791's.
 pub(in crate::main_control) fn leave_alignment_save_level<G>(
-    command: &mut PersistentInterpreter<G>,
-    diagnostic_effects: &mut DiagnosticEffects,
+    command: &mut CommandMachine<'_, '_, G>,
     stores: &mut tex_state::CommandContext<'_, G>,
     context: &'static str,
-) -> Result<Vec<tex_state::token::TracedTokenWord>, ExecError> {
-    leave_group_payloads(stores, command, diagnostic_effects, GroupKind::Align)
-        .map_err(|_| ExecError::MissingToken { context })
+) -> Result<(), ExecError> {
+    unsave_group(stores, command, GroupKind::Align).map_err(|_| ExecError::MissingToken { context })
 }
 
 /// TeX82 §800's internal save-stack checks at the start of `fin_align`.
@@ -248,12 +241,11 @@ pub(in crate::main_control) fn leave_alignment_save_level<G>(
 /// inconsistent. TeX therefore calls `confusion`, with a distinct site for
 /// the entry level and the whole-alignment level.
 pub(in crate::main_control) fn leave_fin_align_save_level<G>(
-    command: &mut PersistentInterpreter<G>,
-    diagnostic_effects: &mut DiagnosticEffects,
+    command: &mut CommandMachine<'_, '_, G>,
     stores: &mut tex_state::CommandContext<'_, G>,
     confusion_site: &'static str,
-) -> Result<Vec<tex_state::token::TracedTokenWord>, ExecError> {
-    leave_group_payloads(stores, command, diagnostic_effects, GroupKind::Align)
+) -> Result<(), ExecError> {
+    unsave_group(stores, command, GroupKind::Align)
         .map_err(|_| ExecError::Fatal(FatalError::confusion(confusion_site)))
 }
 

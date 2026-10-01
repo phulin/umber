@@ -571,12 +571,14 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.definitions_mut().reserve_batch(rows, words)
     }
 
-    pub(crate) fn begin_definition_group(&mut self) -> Result<(), DefinitionAllocationError> {
-        self.generation.definitions_mut().begin_group()
+    pub(crate) fn definition_local_frontier(&self) -> Result<u32, DefinitionAllocationError> {
+        self.generation.definitions().local_frontier()
     }
 
-    pub(crate) fn end_definition_group(&mut self) {
-        self.generation.definitions_mut().end_group();
+    pub(crate) fn retire_definition_local_suffix(&mut self, frontier: u32) {
+        self.generation
+            .definitions_mut()
+            .retire_local_suffix(frontier);
     }
 
     pub(crate) fn allocate_token_list(

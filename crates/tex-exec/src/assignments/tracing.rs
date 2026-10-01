@@ -32,8 +32,8 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::token_show::TokenDisplayState;
 use tex_state::{
-    CommandContext, GroupRestorationCell, GroupRestorationOutcome, GroupRestorationValue,
-    GroupRestorations, PenaltyArrayKind, TokenListId,
+    CommandContext, GroupRestorationCell, GroupRestorationEntry, GroupRestorationOutcome,
+    GroupRestorationValue, PenaltyArrayKind, TokenListId,
 };
 
 use super::primitives::{dimen_param_name, glue_param_name, int_param_name, tok_param_name};
@@ -123,49 +123,47 @@ fn restoration_control_sequence_text<G>(
 
 /// Renders e-TeX [19.282--283]'s `restore_trace` values after state mutation
 /// and before §282 replays any `\aftergroup` token.
-pub(crate) fn trace_group_restorations<G>(
+pub(crate) fn trace_group_restoration<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    restorations: &GroupRestorations<G>,
+    entry: &GroupRestorationEntry<G>,
 ) {
-    for entry in restorations.entries() {
-        let trace = entry.trace_state();
-        if trace.tracing_restores() <= 0 {
-            continue;
-        }
-        let Some((name, value, box_value)) = restoration_text(
-            stores,
-            entry.cell(),
-            entry.live_value(),
-            trace.escape_char(),
-        ) else {
-            continue;
-        };
-        let label = match entry.outcome() {
-            GroupRestorationOutcome::Restored => "restoring",
-            GroupRestorationOutcome::Retained => "retaining",
-        };
-        let mut diagnostic = stores.begin_group_restoration_diagnostic(diagnostic_effects, trace);
-        diagnostic
-            .print_char('{')
-            .print(label)
-            .print_char(' ')
-            .print(&name)
-            .print_char('=');
-        if box_value && value != "void" {
-            diagnostic.print_ln().print_rendered(&value);
-        } else {
-            // TeX82 §§59--60/252 and pdftex.web §252 route every non-box
-            // `show_eqtb` value through the live print primitives.  In
-            // particular, a math-family font identifier reaches
-            // `print_esc`/`slow_print`, so an embedded eight-bit character
-            // observes `\newlinechar` and printable `^^` notation.  Only the
-            // box dump above is already a completed multi-line rendering.
-            diagnostic.print(&value);
-        }
-        diagnostic.print_char('}');
-        diagnostic.end(false);
+    let trace = entry.trace_state();
+    if trace.tracing_restores() <= 0 {
+        return;
     }
+    let Some((name, value, box_value)) = restoration_text(
+        stores,
+        entry.cell(),
+        entry.live_value(),
+        trace.escape_char(),
+    ) else {
+        return;
+    };
+    let label = match entry.outcome() {
+        GroupRestorationOutcome::Restored => "restoring",
+        GroupRestorationOutcome::Retained => "retaining",
+    };
+    let mut diagnostic = stores.begin_group_restoration_diagnostic(diagnostic_effects, trace);
+    diagnostic
+        .print_char('{')
+        .print(label)
+        .print_char(' ')
+        .print(&name)
+        .print_char('=');
+    if box_value && value != "void" {
+        diagnostic.print_ln().print_rendered(&value);
+    } else {
+        // TeX82 §§59--60/252 and pdftex.web §252 route every non-box
+        // `show_eqtb` value through the live print primitives.  In
+        // particular, a math-family font identifier reaches
+        // `print_esc`/`slow_print`, so an embedded eight-bit character
+        // observes `\newlinechar` and printable `^^` notation.  Only the
+        // box dump above is already a completed multi-line rendering.
+        diagnostic.print(&value);
+    }
+    diagnostic.print_char('}');
+    diagnostic.end(false);
 }
 
 fn restoration_text<G>(

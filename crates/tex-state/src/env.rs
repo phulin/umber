@@ -2,7 +2,7 @@
 
 #[path = "env/banks.rs"]
 pub mod banks;
-mod durable_boxes;
+pub(crate) mod durable_boxes;
 #[path = "env/meaning_bank.rs"]
 mod meaning_bank;
 mod restoration;
@@ -28,9 +28,7 @@ use meaning_bank::MeaningBank;
 use crate::durable_arena::{GlueId, TokenListId};
 use crate::ids::FontId;
 use crate::interner::Symbol;
-use crate::journal::{
-    AcceptedJournalTail, JournalCursor, JournalEntry, Mutation, RestoredGroups, SaveJournal,
-};
+use crate::journal::{AcceptedJournalTail, JournalCursor, JournalEntry, Mutation, SaveJournal};
 use crate::meaning::{MeaningWord, ResolvedMeaning};
 use crate::scaled::Scaled;
 use crate::world::JobClock;
@@ -312,11 +310,11 @@ impl GroupRestorationTraceState {
 /// One entry in TeX82 §283's top-down `unsave` restoration order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GroupRestorationEntry<G> {
-    cell: GroupRestorationCell,
-    saved: GroupRestorationValue<G>,
-    live: GroupRestorationValue<G>,
-    outcome: GroupRestorationOutcome,
-    trace: GroupRestorationTraceState,
+    pub(crate) cell: GroupRestorationCell,
+    pub(crate) saved: GroupRestorationValue<G>,
+    pub(crate) live: GroupRestorationValue<G>,
+    pub(crate) outcome: GroupRestorationOutcome,
+    pub(crate) trace: GroupRestorationTraceState,
 }
 
 impl<G> GroupRestorationEntry<G> {
@@ -346,26 +344,10 @@ impl<G> GroupRestorationEntry<G> {
     }
 }
 
-/// Ordered, borrow-free result of closing one TeX save level.
-///
-/// Consumers render these restorations synchronously within the producing
-/// generation, before replaying the group's `\aftergroup` input.
-#[derive(Debug, Eq, PartialEq)]
-pub struct GroupRestorations<G> {
-    frame: GroupFrame,
-    entries: Vec<GroupRestorationEntry<G>>,
-}
-
-impl<G> GroupRestorations<G> {
-    #[must_use]
-    pub const fn frame(&self) -> GroupFrame {
-        self.frame
-    }
-
-    #[must_use]
-    pub fn entries(&self) -> &[GroupRestorationEntry<G>] {
-        &self.entries
-    }
+/// Synchronous observation of one native unsave action.
+pub enum GroupUnsaveEvent<'a, G> {
+    Restoration(&'a GroupRestorationEntry<G>),
+    AfterGroup(crate::token::TracedTokenWord),
 }
 
 /// One packed scalar or typed generation coordinate stored by a bank/journal.
@@ -477,7 +459,6 @@ pub(crate) struct DenseState<G> {
     font_runtime: FontRuntimeBank,
     fresh_parameter_profiles: u8,
     journal: Option<SaveJournal<G>>,
-    groups: Vec<GroupFrame>,
     next_group_lineage: u64,
     reachable_state_identity_enabled: bool,
 }
@@ -563,13 +544,13 @@ impl<G> DenseState<G> {
         true
     }
 
-    fn journal(&self) -> &SaveJournal<G> {
+    pub(crate) fn journal(&self) -> &SaveJournal<G> {
         self.journal
             .as_ref()
             .expect("dense state journal is not recursively borrowed")
     }
 
-    fn journal_mut(&mut self) -> &mut SaveJournal<G> {
+    pub(crate) fn journal_mut(&mut self) -> &mut SaveJournal<G> {
         self.journal
             .as_mut()
             .expect("dense state journal is not recursively borrowed")
@@ -947,7 +928,6 @@ impl<G> DenseState<G> {
             font_runtime: FontRuntimeBank::new(),
             fresh_parameter_profiles: 0,
             journal: Some(SaveJournal::new()),
-            groups: Vec::new(),
             next_group_lineage: 1,
             reachable_state_identity_enabled: false,
         })
@@ -970,7 +950,9 @@ impl<G> DenseState<G> {
         if self.reachable_state_identity_enabled {
             return true;
         }
-        if self.fresh_parameter_profiles != 0 || !self.groups.is_empty() || self.journal_len() != 0
+        if self.fresh_parameter_profiles != 0
+            || !self.journal().group_frames().is_empty()
+            || self.journal_len() != 0
         {
             return false;
         }
@@ -1644,7 +1626,7 @@ impl<G> DenseState<G> {
 
     #[must_use = "handle the checkpoint admission result"]
     pub(crate) fn journal_cursor(&mut self) -> Result<JournalCursor<G>, StateError> {
-        let group_depth = self.groups.len();
+        let group_depth = self.journal().group_frames().len();
         self.journal_mut().checkpoint_cursor(group_depth)
     }
 
@@ -1659,56 +1641,30 @@ impl<G> DenseState<G> {
     /// boundary: TeX group depth zero, no group-save records, and no pending
     /// operation undo records.
     pub(crate) fn checkpoint_eligible(&self) -> bool {
-        self.groups.is_empty() && self.journal().checkpoint_eligible()
+        self.journal().group_frames().is_empty() && self.journal().checkpoint_eligible()
     }
 
     #[must_use]
     pub(crate) fn group_depth(&self) -> usize {
-        self.groups.len()
+        self.journal().group_frames().len()
     }
 
     #[must_use]
-    pub(crate) fn group_frames(&self) -> &[GroupFrame] {
-        &self.groups
+    pub(crate) fn group_frames(&self) -> crate::GroupFrames<'_, G> {
+        self.journal().group_frames()
     }
 
-    /// Returns the state-journal coordinate used to order a command-owned
-    /// `\aftergroup` push against state-owned save records.
+    /// TeX's checked save depth immediately before its most recent push.
     #[must_use]
-    pub(crate) fn save_stack_order_position(&self) -> u32 {
-        u32::try_from(self.journal().len()).expect("state journal exceeds u32 entries")
+    pub(crate) fn checked_save_stack_words(&self, source_lines: bool) -> usize {
+        let (words, latest) = self.journal().save_stack_projection();
+        words
+            .saturating_add(if source_lines { self.group_depth() } else { 0 })
+            .saturating_sub(latest.map_or(0, |(_, words)| words))
     }
 
-    /// TeX82 §§273/275's depth immediately before the newest checked
-    /// push, merged with command-owned `\aftergroup` words.
-    #[must_use]
-    pub(crate) fn checked_save_stack_words(
-        &self,
-        aftergroup_words: usize,
-        latest_aftergroup_position: Option<u32>,
-        save_group_source_lines: bool,
-    ) -> usize {
-        let (state_words, latest_state_push) = self.journal().save_stack_projection();
-        let latest_push_words = match (latest_state_push, latest_aftergroup_position) {
-            (Some((state_position, _)), Some(aftergroup_position))
-                if aftergroup_position >= state_position =>
-            {
-                1
-            }
-            (Some((_, words)), _) => words,
-            (None, Some(_)) => 1,
-            (None, None) => 0,
-        };
-        state_words
-            .saturating_add(aftergroup_words)
-            // e-TeX [19.274] stores one source-line word immediately before
-            // every §273 boundary, so it contributes to the checked depth.
-            .saturating_add(if save_group_source_lines {
-                self.groups.len()
-            } else {
-                0
-            })
-            .saturating_sub(latest_push_words)
+    pub(crate) fn set_group_definition_frontier(&mut self, frontier: u32) {
+        self.journal_mut().set_definition_frontier(frontier);
     }
 
     pub(crate) fn begin_group(
@@ -1716,8 +1672,8 @@ impl<G> DenseState<G> {
         kind: GroupKind,
         entered_line: u32,
     ) -> Result<GroupFrame, StateError> {
-        let depth =
-            u32::try_from(self.groups.len()).map_err(|_| StateError::GroupDepthExhausted)?;
+        let depth = u32::try_from(self.journal().group_frames().len())
+            .map_err(|_| StateError::GroupDepthExhausted)?;
         let level = depth
             .checked_add(2)
             .ok_or(StateError::GroupDepthExhausted)?;
@@ -1738,16 +1694,15 @@ impl<G> DenseState<G> {
             save_stack_words_before,
             latest_save_push_before,
         );
-        self.journal_mut().record_group_enter(frame);
-        self.groups.push(frame);
+        self.journal_mut()
+            .record_group_enter_with_frontier(frame, 0);
         Ok(frame)
     }
 
-    fn restore_group_mutation(
+    pub(crate) fn restore_group_mutation(
         &mut self,
-        saved: Mutation<G>,
-        entries: &mut Vec<GroupRestorationEntry<G>>,
-    ) -> Result<(), StateError> {
+        saved: &Mutation<G>,
+    ) -> Result<GroupRestorationEntry<G>, StateError> {
         let cell = saved.cell();
         let current = self.read_cell(cell)?;
         // A global definition made after this save suppresses it exactly
@@ -1765,14 +1720,13 @@ impl<G> DenseState<G> {
             )?;
             (saved.before.clone(), GroupRestorationOutcome::Restored)
         };
-        entries.push(GroupRestorationEntry {
+        Ok(GroupRestorationEntry {
             cell: restoration_cell(cell),
-            saved: restoration_value(saved.before),
+            saved: restoration_value(saved.before.clone()),
             live: restoration_value(live),
             outcome,
             trace: self.group_restoration_trace_state()?,
-        });
-        Ok(())
+        })
     }
 
     pub(crate) fn group_restoration_trace_state(
@@ -1789,7 +1743,7 @@ impl<G> DenseState<G> {
     /// Atomically restores all banks and open-group state to `cursor`.
     pub(crate) fn restore(&mut self, cursor: JournalCursor<G>) -> Result<(), StateError> {
         self.validate_restore(cursor)?;
-        self.restore_validated(cursor, false)
+        self.restore_validated(cursor, false, |_| {})
     }
 
     /// Restores an aggregate checkpoint after the direct execution attempt
@@ -1799,15 +1753,20 @@ impl<G> DenseState<G> {
     pub(crate) fn restore_after_replay(
         &mut self,
         cursor: JournalCursor<G>,
+        boxes: &mut durable_boxes::DurableBoxState,
+        arena: &mut crate::page_node_arena::PageMaterialArena,
     ) -> Result<(), StateError> {
         self.validate_restore_after_replay(cursor)?;
-        self.restore_validated(cursor, true)
+        self.restore_validated(cursor, true, |journal| {
+            journal.retire_group_boxes(boxes, arena)
+        })
     }
 
     fn restore_validated(
         &mut self,
         cursor: JournalCursor<G>,
         after_replay: bool,
+        retire_groups: impl FnOnce(&mut SaveJournal<G>),
     ) -> Result<(), StateError> {
         let mut journal = self
             .journal
@@ -1818,12 +1777,12 @@ impl<G> DenseState<G> {
             self.swap_checkpoint_delta(delta, host_epoch)
                 .expect("validated dense checkpoint value swaps in place");
         });
-        let RestoredGroups::Truncate(len) = if after_replay {
+        retire_groups(&mut journal);
+        if after_replay {
             journal.restore_group_cursor_after_replay(cursor)
         } else {
             journal.restore_group_cursor(cursor)
         };
-        self.groups.truncate(len);
         journal.truncate_checkpoint(cursor);
         self.journal = Some(journal);
         Ok(())
@@ -1895,7 +1854,6 @@ impl<G> DenseState<G> {
         // Candidate grouping is intentionally not part of the accepted tail.
         // Abandoning a candidate therefore drops every open candidate group as
         // one scalar-owned suffix before the accepted delta is restored.
-        self.groups.clear();
         journal.reject_checkpoint_candidate(tail.journal);
         self.next_group_lineage = tail.next_group_lineage;
         self.journal = Some(journal);
@@ -1968,7 +1926,7 @@ impl<G> DenseState<G> {
     }
 
     pub(crate) fn current_level(&self) -> u32 {
-        self.groups.last().map_or(LEVEL_ONE, |frame| frame.level)
+        self.journal().current_level()
     }
 
     fn read_cell(&self, cell: StateCell) -> Result<BankCell<StateWord<G>>, StateError> {

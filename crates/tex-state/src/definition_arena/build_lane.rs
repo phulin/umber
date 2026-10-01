@@ -44,7 +44,6 @@ pub(super) struct ActiveDefinitionBuild {
     serial: NonZeroU32,
     region: u32,
     /// Open group count when a local build began.
-    depth: usize,
     parameter_len: u32,
     pattern: MacroParameterPatternBuilder,
     origin: crate::token::OriginId,
@@ -155,9 +154,6 @@ impl<G> DefinitionArena<G> {
         let region = match destination {
             DefinitionDestination::Format => FORMAT_REGION,
             DefinitionDestination::Global => GLOBAL_REGION,
-            DefinitionDestination::Local if self.local_marks.is_empty() => {
-                return Err(DefinitionAllocationError::InvalidDefinition);
-            }
             DefinitionDestination::Local => LOCAL_REGION,
         };
         let serial = NonZeroU32::new(self.next_build_serial)
@@ -171,7 +167,6 @@ impl<G> DefinitionArena<G> {
         self.active_build = Some(ActiveDefinitionBuild {
             serial,
             region,
-            depth: self.local_marks.len(),
             parameter_len: 0,
             pattern: MacroParameterPatternBuilder::new(),
             origin,
@@ -193,11 +188,10 @@ impl<G> DefinitionArena<G> {
         if self.active_writer.is_some() {
             return Err(DefinitionBuildError::InvalidPhase);
         }
-        let valid = self.active_build.as_ref().is_some_and(|build| {
-            build.serial == key.serial
-                && build.phase == phase
-                && (build.region != LOCAL_REGION || build.depth == self.local_marks.len())
-        });
+        let valid = self
+            .active_build
+            .as_ref()
+            .is_some_and(|build| build.serial == key.serial && build.phase == phase);
         if !valid {
             return Err(DefinitionBuildError::InvalidPhase);
         }

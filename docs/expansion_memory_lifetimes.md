@@ -19,7 +19,7 @@ resource retry protocol.
 | Arguments             | `input/arguments.rs` final pooled regions; call-local ranges/cursor in `macro_call.rs`.                                                                | Matching writes once into invocation-owned pooled `ArgumentArena` vectors; body owns the region and parameter frames borrow it. No per-argument allocation/copy/lease; free capacity is an engine allocator cache, not snapshot state. Preserve origins and brace trimming. |
 | Stored lists/backup   | Input rows own shared immutable list handles or actual transient words.                                                                                | Activation reads immutable storage directly; retirement drops the actual owner once. Backup is semantic input, distinct from host replay.                                                                                                                                   |
 | Scanner/build scratch | Call-local scanner episodes and nested marks, reusable unpublished lanes.                                                                              | Failed calls unwind/truncate; no parked scanner or caller crosses a host boundary. Delete immediate-consumption carriers as their real consumers migrate.                                                                                                                   |
-| Groups                | State `SaveJournal`, durable-box groups, command group/aftergroup payloads; executor restoration rendering.                                            | `.6` replaces duplicate topology with the direct ordered save stack. Render while real owners live; delete `GroupRestorations` and post-unsave borrowed definition hazards.                                                                                                 |
+| Groups                | One native `GroupSaveStack` in `tex-state/src/journal/groups.rs`; synchronous context/processor unsave and executor renderer.                          | `.6` removes duplicate topology and restoration/token-result vectors. Scalar/box restores and aftergroup words share chronology; sparse saves restore at a lazy marker. The real local-row frontier remains in the sole boundary until `.13`.                               |
 | Named capture         | `CommandCapture`/`InputCapture` in command snapshot code copy actual cold rows and transient words.                                                    | Ordinary delivery produces no input undo entries. Actual vectors are charged; capture is not uniformly O(1). Active macros/groups remain forbidden.                                                                                                                         |
 | Host need             | Typed resource request plus full checkpoint and matched host transaction prefix.                                                                       | Unwind, restore aggregate, admit verified outcome, parse again; no command/matcher/scanner continuation.                                                                                                                                                                    |
 
@@ -156,8 +156,7 @@ text/location before the source generation can retire. No success-path
 Group restoration tracing is especially order-sensitive: restoring a print or
 trace parameter changes how later restoration entries render. Target unsave
 observes each decision with its now-current controls while both live/saved
-payloads exist, then drops losing roots. The current created-then-consumed
-restoration collection is a migration gap, not an owner exemption.
+payloads exist, then drops losing roots. `CommandContext::end_group_observed` streams each native action; `CommandProcessor::end_group` admits backup input at that action. No restoration collection survives the callback.
 
 Diagnostics and observations are transactional output. Completed semantic
 queues move their existing allocation to the executor/World rather than
@@ -179,7 +178,7 @@ payloads are the explicit `.13` gap; command snapshot copies are legitimate
 cold retention, not per-token activation history.
 
 Page/box/node/PDF lifetimes remain their specialized exclusive region and
-version-root contracts. `.6` deletes redundant group/operation protocols while
+version-root contracts. `.6` deletes redundant group protocols and `.15` deletes operation protocols while
 preserving real transfers; `.12` audits complete checkpoint restore/drop,
 repeatable roots, candidates, resources, provenance and bounded halt. The
 migration and proof cases live in

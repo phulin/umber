@@ -315,46 +315,44 @@ fn nested_source_pop_and_summary_restore_keep_authoritative_line_exact() {
 }
 
 #[test]
-fn summary_restores_group_and_assignment_payload_roots() {
+fn summary_rejects_open_groups_and_restores_pending_afterassignment() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
         {
             let mut state = universe.command_context().expect("admitted state");
+            state
+                .begin_group(tex_state::GroupKind::Simple, 7)
+                .expect("group");
             command
-                .begin_group(&mut state, tex_state::GroupKind::Simple, 7)
-                .expect("group opens");
-            command
-                .save_aftergroup(&state, word('a'))
-                .expect("aftergroup saved");
+                .save_aftergroup(&mut state, word('a'))
+                .expect("aftergroup");
             command
                 .set_afterassignment(&state, word('x'))
-                .expect("afterassignment saved");
+                .expect("afterassignment");
         }
+        assert_eq!(
+            command
+                .publish_summary(universe)
+                .expect_err("native groups forbid a named capture"),
+            CommandSummaryError::CheckpointIneligible
+        );
+        universe
+            .end_group(tex_state::GroupKind::Simple)
+            .expect("close");
         let summary = command
             .publish_summary(universe)
-            .expect("summary captures payloads");
+            .expect("quiescent summary");
         {
             let state = universe.command_context().expect("admitted state");
             command
-                .save_aftergroup(&state, word('b'))
-                .expect("candidate aftergroup");
-            command
                 .set_afterassignment(&state, word('y'))
-                .expect("candidate afterassignment");
+                .expect("candidate token");
         }
-
-        restore(&mut command, &summary, universe).expect("summary restores payload roots");
-        let mut state = universe.command_context().expect("admitted state");
+        restore(&mut command, &summary, universe).expect("restore");
+        let state = universe.command_context().expect("admitted state");
         assert_eq!(
-            command.take_afterassignment(&state).expect("take summary"),
+            command.take_afterassignment(&state).expect("token"),
             Some(word('x'))
-        );
-        assert_eq!(
-            command
-                .end_group(&mut state, tex_state::GroupKind::Simple)
-                .expect("summary group closes")
-                .into_aftergroup(),
-            vec![word('a')]
         );
     });
 }

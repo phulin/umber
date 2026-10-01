@@ -198,8 +198,8 @@ pub use env::{
     AssignmentScope, CodeTableKind, DurableNodeMetadata, FreshParameterBank, FreshParameterDefault,
     FreshParameterInstallError, FreshParameterInstallation, FreshParameterProfile,
     GroupRestorationCell, GroupRestorationEntry, GroupRestorationFontRuntimeCell,
-    GroupRestorationOutcome, GroupRestorationTraceState, GroupRestorationValue, GroupRestorations,
-    StateError, UniqueBoxRegisterTake,
+    GroupRestorationOutcome, GroupRestorationTraceState, GroupRestorationValue, StateError,
+    UniqueBoxRegisterTake,
 };
 pub use font::PdfFontCode;
 pub use generation::GenerationBrand;
@@ -268,3 +268,7 @@ pub use world::{
 
 #[cfg(test)]
 mod tests;
+
+pub use journal::{GroupFrames, GroupFramesIter};
+
+pub use env::GroupUnsaveEvent;

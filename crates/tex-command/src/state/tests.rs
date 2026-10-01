@@ -4,7 +4,7 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{DefinitionRef, GlueId, ProvenanceId, TokenListId};
 
-use super::{CommandGroupError, CommandSemanticDiagnostic, CommandState};
+use super::{CommandSemanticDiagnostic, CommandState};
 use crate::processor::AlignmentIdentity;
 use crate::{
     AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptPromotionDestination,
@@ -906,62 +906,47 @@ fn default_command_state_is_quiescent_at_a_cold_summary_boundary() {
 }
 
 #[test]
-fn nested_group_payloads_restore_exact_save_order() {
-    crate::test_harness::with_universe(|universe| {
-        let mut command = CommandState::default();
-        let mut state = universe.command_context().expect("admitted state");
-        command
-            .begin_group(&mut state, tex_state::GroupKind::Simple, 1)
-            .expect("outer group");
-        command.save_aftergroup(&state, word('a')).expect("outer a");
-        command.save_aftergroup(&state, word('b')).expect("outer b");
-        let outer_projection = command.aftergroup_save_stack_projection();
-        assert_eq!(outer_projection.0, 2);
-        assert!(outer_projection.1.is_some());
-        command
-            .begin_group(&mut state, tex_state::GroupKind::Math, 2)
-            .expect("inner group");
-        command.save_aftergroup(&state, word('c')).expect("inner c");
-        command.save_aftergroup(&state, word('d')).expect("inner d");
-        let nested_projection = command.aftergroup_save_stack_projection();
-        assert_eq!(nested_projection.0, 4);
-        assert!(nested_projection.1 > outer_projection.1);
-
-        assert_eq!(
-            command
-                .end_group(&mut state, tex_state::GroupKind::Math)
-                .expect("inner closes")
-                .into_aftergroup(),
-            vec![word('c'), word('d')]
-        );
-        assert_eq!(
-            command.aftergroup_save_stack_projection(),
-            outer_projection,
-            "closing the inner level restores the outer ordering owner"
-        );
-        assert_eq!(
-            command
-                .end_group(&mut state, tex_state::GroupKind::Simple)
-                .expect("outer closes")
-                .into_aftergroup(),
-            vec![word('a'), word('b')]
-        );
-    });
-}
-
-#[test]
-fn stale_state_group_rejection_precedes_payload_mutation() {
+fn native_groups_yield_aftergroup_words_in_unsave_order() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
         let mut state = universe.command_context().expect("admitted state");
         state
             .begin_group(tex_state::GroupKind::Simple, 1)
-            .expect("bypass creates stale state");
-
-        assert_eq!(
-            command.set_afterassignment(&state, word('x')),
-            Err(CommandGroupError::StaleGroupState)
-        );
-        assert!(!command.has_afterassignment());
+            .expect("outer group");
+        command
+            .save_aftergroup(&mut state, word('a'))
+            .expect("outer a");
+        command
+            .save_aftergroup(&mut state, word('b'))
+            .expect("outer b");
+        state
+            .begin_group(tex_state::GroupKind::Math, 2)
+            .expect("inner group");
+        command
+            .save_aftergroup(&mut state, word('c'))
+            .expect("inner c");
+        command
+            .save_aftergroup(&mut state, word('d'))
+            .expect("inner d");
+        let mut words = Vec::new();
+        state
+            .end_group_observed(tex_state::GroupKind::Math, |_, event| {
+                if let tex_state::GroupUnsaveEvent::AfterGroup(word) = event {
+                    words.push(word);
+                }
+            })
+            .expect("inner close");
+        assert_eq!(words, [word('d'), word('c')]);
+        assert_eq!(state.execution_group_depth(), 1);
+        words.clear();
+        state
+            .end_group_observed(tex_state::GroupKind::Simple, |_, event| {
+                if let tex_state::GroupUnsaveEvent::AfterGroup(word) = event {
+                    words.push(word);
+                }
+            })
+            .expect("outer close");
+        assert_eq!(words, [word('b'), word('a')]);
+        assert_eq!(state.execution_group_depth(), 0);
     });
 }

@@ -20,7 +20,7 @@ use crate::conditionals::ConditionFrame;
 use crate::input::InputCapture;
 use crate::processor::{AlignmentDeliveryState, ScannerStatus};
 use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
-use crate::state::{CommandGroupPayload, CommandPayload, CommandState, CommandStateRoots};
+use crate::state::{CommandPayload, CommandState, CommandStateRoots};
 
 mod boundary;
 
@@ -56,8 +56,6 @@ fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
     // The last §342 report site is captured for restore, but is source
     // provenance. Editor rebinds give equal future states different SourceIds
     // (and edits may move their line/column), so it cannot gate convergence.
-    feed(roots.group_payloads.len() as u64);
-    feed(roots.aftergroup_payloads.len() as u64);
     feed(u64::from(roots.afterassignment.is_some()));
     feed(u64::from(roots.name_in_progress));
     feed(u64::from(roots.pending_input_open.is_some()));
@@ -79,8 +77,6 @@ fn vec_bytes<T>(values: &[T], capacity: usize) -> usize {
 pub(crate) struct CommandCapture<G> {
     input: InputCapture<G>,
     conditions: Vec<ConditionFrame>,
-    group_payloads: Vec<CommandGroupPayload<G>>,
-    aftergroup_payloads: Vec<CommandPayload<G>>,
     afterassignment: Option<CommandPayload<G>>,
     alignment: AlignmentDeliveryState<G>,
     name_in_progress: bool,
@@ -92,14 +88,6 @@ impl<G> CommandCapture<G> {
         std::mem::size_of::<Self>()
             .saturating_add(self.input.retained_bytes())
             .saturating_add(vec_bytes(&self.conditions, self.conditions.capacity()))
-            .saturating_add(vec_bytes(
-                &self.group_payloads,
-                self.group_payloads.capacity(),
-            ))
-            .saturating_add(vec_bytes(
-                &self.aftergroup_payloads,
-                self.aftergroup_payloads.capacity(),
-            ))
     }
 }
 

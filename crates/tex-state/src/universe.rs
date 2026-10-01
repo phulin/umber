@@ -950,7 +950,11 @@ impl<G> Universe<G> {
         {
             let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
             if after_direct_replay_discard {
-                core.state_mut().restore_after_replay(*mark.journal())?;
+                core.state_mut().restore_after_replay(
+                    *mark.journal(),
+                    &mut self.durable_boxes,
+                    &mut self.page_region.nodes_mut(),
+                )?;
             } else {
                 core.state_mut().restore(*mark.journal())?;
             }
@@ -1060,21 +1064,15 @@ impl<G> Universe<G> {
         depth: usize,
         sequential_history: usize,
     ) -> Result<(), UniverseError> {
-        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-        let mut admitted = core.admit_mut()?;
         for _ in 0..depth {
-            admitted
-                .begin_definition_group()
-                .map_err(|_| StateError::GroupDepthExhausted)?;
+            self.begin_group(GroupKind::Simple, 0)?;
         }
         for _ in 0..depth {
-            admitted.end_definition_group();
+            self.end_group(GroupKind::Simple)?;
         }
         for _ in 0..sequential_history {
-            admitted
-                .begin_definition_group()
-                .map_err(|_| StateError::GroupDepthExhausted)?;
-            admitted.end_definition_group();
+            self.begin_group(GroupKind::Simple, 0)?;
+            self.end_group(GroupKind::Simple)?;
         }
         Ok(())
     }
@@ -1266,6 +1264,10 @@ impl<G> Universe<G> {
             .core
             .take()
             .expect("the current lineage owns the direct state core");
+        core.state_mut().journal_mut().retire_group_boxes(
+            &mut candidate.durable_boxes,
+            &mut candidate.page_region.nodes_mut(),
+        );
         core.reject_checkpoint_candidate(
             *mark.journal(),
             *mark.input(),
@@ -2605,15 +2607,22 @@ impl<G> Universe<G> {
             .ok_or(NodePromotionError::Values(PromotionError::Retired))?
             .state();
         let current_level = state.current_level();
-        let group_save_position = state.save_stack_order_position();
         self.durable_boxes
-            .assign_with_group_position(
+            .assign_grouped(
                 &mut self.page_region.nodes_mut(),
                 index,
                 durable,
                 scope,
                 current_level,
-                group_save_position,
+                Some(
+                    self.core
+                        .as_mut()
+                        .expect("live core")
+                        .admit_mut()
+                        .map_err(|_| NodePromotionError::Values(PromotionError::Retired))?
+                        .state()
+                        .journal_mut(),
+                ),
             )
             .map_err(|_| NodePromotionError::Values(PromotionError::AllocationFailed))?;
         Ok(())
@@ -3385,35 +3394,11 @@ impl<G> Universe<G> {
         kind: GroupKind,
         entered_line: u32,
     ) -> Result<GroupFrame, UniverseError> {
-        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-        let mut admitted = core.admit_mut()?;
-        admitted
-            .begin_definition_group()
-            .map_err(|_| StateError::GroupDepthExhausted)?;
-        let frame = match admitted.state().begin_group(kind, entered_line) {
-            Ok(frame) => frame,
-            Err(error) => {
-                admitted.end_definition_group();
-                return Err(error.into());
-            }
-        };
-        self.durable_boxes.begin_group(frame.level());
-        Ok(frame)
+        Ok(self.command_context()?.begin_group(kind, entered_line)?)
     }
 
-    pub fn end_group(
-        &mut self,
-        kind: GroupKind,
-    ) -> Result<crate::GroupRestorations<G>, UniverseError> {
-        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-        let mut admitted = core.admit_mut()?;
-        let restored = admitted.state().end_group_with_boxes(
-            kind,
-            &mut self.durable_boxes,
-            &mut self.page_region.nodes_mut(),
-        )?;
-        admitted.end_definition_group();
-        Ok(restored)
+    pub fn end_group(&mut self, kind: GroupKind) -> Result<GroupFrame, UniverseError> {
+        Ok(self.command_context()?.end_group(kind)?)
     }
 
     /// Admits matching coarse owners once for a command episode.

@@ -499,14 +499,17 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
             s(0)
         );
         install_box(&mut stores, register, true);
-        let receipt = stores
-            .end_group(tex_state::GroupKind::Simple)
+        stores
+            .end_group_observed(tex_state::GroupKind::Simple, |stores, event| {
+                if let tex_state::GroupUnsaveEvent::Restoration(entry) = event {
+                    crate::assignments::tracing::trace_group_restoration(
+                        stores,
+                        &mut diagnostic_effects,
+                        entry,
+                    );
+                }
+            })
             .expect("group");
-        crate::assignments::tracing::trace_group_restorations(
-            &mut stores,
-            &mut diagnostic_effects,
-            &receipt,
-        );
         assert!(stores.copy_box_to_page(register).is_some());
         drop(stores);
         universe
@@ -533,14 +536,17 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
             .assign_page_box(register, None, tex_state::AssignmentScope::Local)
             .expect("box");
         install_box(&mut stores, register, true);
-        let receipt = stores
-            .end_group(tex_state::GroupKind::Simple)
+        stores
+            .end_group_observed(tex_state::GroupKind::Simple, |stores, event| {
+                if let tex_state::GroupUnsaveEvent::Restoration(entry) = event {
+                    crate::assignments::tracing::trace_group_restoration(
+                        stores,
+                        &mut diagnostic_effects,
+                        entry,
+                    );
+                }
+            })
             .expect("group");
-        crate::assignments::tracing::trace_group_restorations(
-            &mut stores,
-            &mut diagnostic_effects,
-            &receipt,
-        );
         drop(stores);
         universe
             .world_mut()

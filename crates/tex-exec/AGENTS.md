@@ -8,6 +8,8 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 Command operands are scanned by `tex-command` into typed request and result values. Execution code must apply those completed values after the processor borrow ends; it must not add another source cursor, raw-token delivery loop, scanner facade, or command compatibility adapter.
 
+Group close calls `unsave_group`, which drives the same `CommandProcessor::end_group` native stack walk in both existing dispatch paths. Its diagnostic callback renders each restoration while the saved owners are live; aftergroup words enter final input during unsave. There is no restoration receipt, token result vector, or delayed aftergroup scheduling helper. The lane/cold dispatch split itself remains tracked by `.15`.
+
 ## Boundaries
 
 - Do not read raw input directly. All execution consumes `tex-command` delivery.

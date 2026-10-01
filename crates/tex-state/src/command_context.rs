@@ -1551,15 +1551,14 @@ impl<'a, G> CommandContext<'a, G> {
             .transpose()
             .map_err(crate::NodePromotionError::Nodes)?;
         let current_level = self.admitted.state_ref().current_level();
-        let group_save_position = self.admitted.state_ref().save_stack_order_position();
         self.durable_boxes
-            .assign_with_group_position(
+            .assign_grouped(
                 &mut self.page_nodes,
                 index,
                 durable,
                 scope,
                 current_level,
-                group_save_position,
+                Some(self.admitted.state().journal_mut()),
             )
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
@@ -1600,15 +1599,14 @@ impl<'a, G> CommandContext<'a, G> {
             }
         };
         let current_level = self.admitted.state_ref().current_level();
-        let group_save_position = self.admitted.state_ref().save_stack_order_position();
         self.durable_boxes
-            .assign_with_group_position(
+            .assign_grouped(
                 &mut self.page_nodes,
                 index,
                 durable,
                 scope,
                 current_level,
-                group_save_position,
+                Some(self.admitted.state().journal_mut()),
             )
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
@@ -1632,15 +1630,14 @@ impl<'a, G> CommandContext<'a, G> {
             .finish_interleaved_page_box(root, metadata, reset_shift)
             .map_err(crate::NodePromotionError::Nodes)?;
         let current_level = self.admitted.state_ref().current_level();
-        let group_save_position = self.admitted.state_ref().save_stack_order_position();
         self.durable_boxes
-            .assign_with_group_position(
+            .assign_grouped(
                 &mut self.page_nodes,
                 index,
                 Some(durable),
                 scope,
                 current_level,
-                group_save_position,
+                Some(self.admitted.state().journal_mut()),
             )
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
@@ -1736,7 +1733,6 @@ impl<'a, G> CommandContext<'a, G> {
         scope: AssignmentScope,
     ) -> Result<(), crate::NodePromotionError> {
         let current_level = self.admitted.state_ref().current_level();
-        let group_save_position = self.admitted.state_ref().save_stack_order_position();
         self.durable_boxes
             .finish_unique_register_take(
                 &mut self.page_nodes,
@@ -1744,7 +1740,7 @@ impl<'a, G> CommandContext<'a, G> {
                 destination,
                 scope,
                 current_level,
-                group_save_position,
+                Some(self.admitted.state().journal_mut()),
             )
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
@@ -1822,7 +1818,6 @@ impl<'a, G> CommandContext<'a, G> {
             .page_nodes
             .take_output_carrier_to_durable(self.page, modes)?;
         let current_level = self.admitted.state_ref().current_level();
-        let group_save_position = self.admitted.state_ref().save_stack_order_position();
         self.durable_boxes
             .assign_output_carrier(
                 &mut self.page_nodes,
@@ -1831,9 +1826,9 @@ impl<'a, G> CommandContext<'a, G> {
                     index: destination,
                     scope,
                     current_level,
-                    group_save_position,
                 },
                 assignment,
+                self.admitted.state().journal_mut(),
             )
             .map_err(|_| {
                 crate::page_node_arena::OutputCarrierTakeError::Promotion(
@@ -2025,7 +2020,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// command state copies the compact frames it needs and never retains a
     /// reference into the mutable state bank.
     #[must_use]
-    pub fn group_frames(&self) -> &[crate::GroupFrame] {
+    pub fn group_frames(&self) -> crate::GroupFrames<'_, G> {
         self.admitted.state_ref().group_frames()
     }
 
@@ -2045,7 +2040,8 @@ impl<'a, G> CommandContext<'a, G> {
     #[must_use]
     pub fn current_group_values(&self) -> (i32, i32) {
         let frames = self.admitted.state_ref().group_frames();
-        let level = i32::try_from(frames.len()).unwrap_or(i32::MAX);
+        let level =
+            i32::try_from(self.admitted.state_ref().current_level() - 1).unwrap_or(i32::MAX);
         let kind = frames.last().map_or(0, |frame| frame.kind().etex_code());
         (level, kind)
     }
@@ -2055,27 +2051,11 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.state_ref().group_frames().len()
     }
 
-    /// Journal-relative ordering coordinate for a command-owned
-    /// `\aftergroup` save. The coordinate names no value or owner and is
-    /// meaningful only while this admitted generation remains live.
     #[must_use]
-    pub fn save_stack_order_position(&self) -> u32 {
-        self.admitted.state_ref().save_stack_order_position()
-    }
-
-    /// Returns TeX's checked state/aftergroup save depth for §1334.
-    #[must_use]
-    pub fn checked_save_stack_words(
-        &self,
-        aftergroup_words: usize,
-        latest_aftergroup_position: Option<u32>,
-        save_group_source_lines: bool,
-    ) -> usize {
-        self.admitted.state_ref().checked_save_stack_words(
-            aftergroup_words,
-            latest_aftergroup_position,
-            save_group_source_lines,
-        )
+    pub fn checked_save_stack_words(&self, source_lines: bool) -> usize {
+        self.admitted
+            .state_ref()
+            .checked_save_stack_words(source_lines)
     }
 
     #[must_use]
@@ -2092,37 +2072,83 @@ impl<'a, G> CommandContext<'a, G> {
         kind: crate::GroupKind,
         entered_line: u32,
     ) -> Result<crate::GroupFrame, StateError> {
-        self.admitted
-            .begin_definition_group()
+        let frontier = self
+            .admitted
+            .definition_local_frontier()
             .map_err(|_| StateError::GroupDepthExhausted)?;
-        let frame = match self.admitted.state().begin_group(kind, entered_line) {
-            Ok(frame) => frame,
-            Err(error) => {
-                self.admitted.end_definition_group();
-                return Err(error);
-            }
-        };
-        self.durable_boxes.begin_group(frame.level());
+        let frame = self.admitted.state().begin_group(kind, entered_line)?;
+        self.admitted
+            .state()
+            .set_group_definition_frontier(frontier);
         Ok(frame)
     }
 
-    pub fn end_group(
+    /// Streams each native restore while its saved owners are still live.
+    /// Aftergroup words are admitted at their actual position in unsave.
+    pub fn end_group_observed(
         &mut self,
         kind: crate::GroupKind,
-    ) -> Result<crate::GroupRestorations<G>, StateError> {
-        let restored = self.admitted.state().end_group_with_boxes(
-            kind,
-            self.durable_boxes,
-            &mut self.page_nodes,
-        )?;
-        self.admitted.end_definition_group();
-        // Closing a save level replays an ordered environment-journal suffix.
-        // That timeline mutation cannot be validated from the individual live
-        // post-images alone, so an in-flight memo episode must fail closed.
+        mut observe: impl FnMut(&mut Self, crate::GroupUnsaveEvent<'_, G>),
+    ) -> Result<crate::GroupFrame, StateError> {
+        use crate::journal::JournalEntry;
+        let frame = self.admitted.state_ref().closing_group(kind)?;
+        let frontier = self.admitted.state_ref().journal().definition_frontier();
+        let mut cursor = self.admitted.state_ref().journal().len();
+        let mut sparse = None;
+        self.admitted.state().journal_mut().begin_unsave();
+        while let Some(entry) =
+            self.admitted
+                .state()
+                .next_group_restore(frame, &mut cursor, &mut sparse)
+        {
+            match entry {
+                JournalEntry::Mutation(saved) => {
+                    let entry = self.admitted.state().restore_group_mutation(&saved)?;
+                    observe(self, crate::GroupUnsaveEvent::Restoration(&entry));
+                }
+                JournalEntry::Box { mut saved, .. } => {
+                    let value = self.durable_boxes.restore_group_record(&mut saved);
+                    let entry = crate::GroupRestorationEntry {
+                        cell: crate::GroupRestorationCell::BoxRegister(value.index),
+                        saved: crate::GroupRestorationValue::NodeList(value.saved),
+                        live: crate::GroupRestorationValue::NodeList(value.live),
+                        outcome: value.outcome,
+                        trace: self.admitted.state_ref().group_restoration_trace_state()?,
+                    };
+                    observe(self, crate::GroupUnsaveEvent::Restoration(&entry));
+                    self.durable_boxes
+                        .retire_group_record(&mut self.page_nodes, saved);
+                }
+                JournalEntry::AfterGroup(word) => {
+                    observe(self, crate::GroupUnsaveEvent::AfterGroup(word))
+                }
+                _ => unreachable!("native unsave returns only typed saved entries"),
+            }
+        }
+        self.admitted
+            .state()
+            .journal_mut()
+            .record_group_exit_with_records(frame);
+        self.admitted.retire_definition_local_suffix(frontier);
         self.resident
             .dependencies
             .poison(TrackedRegionBarrier::EnvironmentTimelineChange);
-        Ok(restored)
+        Ok(frame)
+    }
+
+    pub fn end_group(&mut self, kind: crate::GroupKind) -> Result<crate::GroupFrame, StateError> {
+        self.end_group_observed(kind, |_, _| {})
+    }
+
+    pub fn save_aftergroup(
+        &mut self,
+        word: crate::token::TracedTokenWord,
+    ) -> Result<(), StateError> {
+        if self.execution_group_depth() == 0 {
+            return Err(StateError::CheckpointIneligible);
+        }
+        self.admitted.state().journal_mut().save_aftergroup(word);
+        Ok(())
     }
 
     /// Opens §245's diagnostic channel with the print controls captured after
