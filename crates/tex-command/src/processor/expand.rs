@@ -721,7 +721,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .as_ref()
                 .ok_or_else(CommandError::input_invariant)?;
             let stop = matches!(
-                command.meaning_ref(),
+                &command.meaning(),
                 ResolvedMeaning::Static(Meaning::Undefined)
             );
             if stop {
@@ -769,7 +769,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut initial_action = initial_action;
         if destination.as_ref().is_some_and(|command| {
             matches!(
-                command.meaning_ref(),
+                &command.meaning(),
                 ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                     ExpandablePrimitive::EndTemplate
                 ))
@@ -2116,7 +2116,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 /// but its command remains `out_param<max_command`; its token spelling keeps
 /// the two command identities distinct here.
 pub(crate) fn is_expandable_command<G>(command: &CurrentCommand<G>) -> bool {
-    let meaning = command.meaning_ref();
+    let meaning = &command.meaning();
     matches!(meaning, ResolvedMeaning::Macro { .. })
         || matches!(meaning, ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) if *primitive != ExpandablePrimitive::EndCsName)
         || (matches!(meaning, ResolvedMeaning::Static(Meaning::Undefined))

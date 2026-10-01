@@ -985,7 +985,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             return ch as u32;
         }
-        match command.meaning_ref() {
+        match &command.meaning() {
             ResolvedMeaning::Static(Meaning::CharToken { ch, .. })
                 if (*ch as u32) <= u32::from(u8::MAX) =>
             {
@@ -1001,7 +1001,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if command.no_expand_active_character().is_some() {
             return Some(tex_state::token::Catcode::Active);
         }
-        match command.meaning_ref() {
+        match &command.meaning() {
             ResolvedMeaning::Static(Meaning::CharToken { cat, .. }) => Some(*cat),
             _ => None,
         }
@@ -1093,7 +1093,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::input_invariant());
         }
         let relation = relation.expect("command status initializes destination");
-        match static_meaning(relation.meaning_ref()) {
+        match static_meaning(&relation.meaning()) {
             Some(Meaning::CharToken { ch: '<', .. }) => Ok(IfRelation::Less),
             Some(Meaning::CharToken { ch: '=', .. }) => Ok(IfRelation::Equal),
             Some(Meaning::CharToken { ch: '>', .. }) => Ok(IfRelation::Greater),

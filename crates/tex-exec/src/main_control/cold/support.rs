@@ -1,8 +1,8 @@
 //! Shared cold semantic helpers for boxes, arithmetic, diagnostics, and hooks.
 
 use super::super::*;
-use super::apply::enter_group;
-use super::operation::*;
+use super::groups::enter_group;
+use super::operand_values::*;
 
 /// Borrow-only facade for one admitted command context used by semantic apply.
 ///
@@ -733,7 +733,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
 /// The leader context (`box_context>ship_out_flag`, §1078) is not represented:
 /// §1078 has to scan the *following* glue command before it can build its
 /// node, so the command scanner resolves leader payloads as their own
-/// `ColdOperation`s with the glue already attached.
+/// native leader handlers with the glue already attached.
 #[derive(Debug)]
 pub(in crate::main_control) enum BoxContext {
     /// `box_context<box_flag`: §1076's "Append box `cur_box` to the current
@@ -1813,7 +1813,7 @@ pub(in crate::main_control) fn show_tokens_tokens_text<G>(
 /// e-TeX 2.6 `etex.ch` [17.3715--3732]'s exact `show_ifs` traversal.
 /// The `### level N: ...` body only, joined by `\n` -- not etex.ch
 /// [17.3720]'s leading `print_nl(""); print_ln`, which needs live column
-/// state this pure builder does not have. The canonical `ColdOperation::ShowIfs`
+/// state this pure builder does not have. The canonical show-conditionals handler
 /// site prints those two calls itself, through the open diagnostic, before
 /// printing this body.
 pub(in crate::main_control) fn render_showifs(

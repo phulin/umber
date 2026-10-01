@@ -145,6 +145,7 @@ impl<G> CommandWord<G> {
         Self::Static { class, word }
     }
 
+    #[cfg(test)]
     fn from_meaning(meaning: ResolvedMeaning<G>) -> Self {
         match meaning {
             ResolvedMeaning::Static(Meaning::Font(font)) => Self::Font(font),
@@ -340,7 +341,7 @@ impl<G> Clone for HotCommand<G> {
 #[derive(Debug)]
 pub struct CurrentCommand<G> {
     spelling: TracedTokenWord,
-    meaning: ResolvedMeaning<G>,
+    meaning: CommandWord<G>,
     identity: CommandIdentity,
     control_sequence: Option<Symbol>,
     direct_source_line: u32,
@@ -533,6 +534,22 @@ impl XRaySelector {
 }
 
 impl CommandIdentity {
+    fn from_command_word<G>(command: CommandWord<G>) -> Self {
+        if let Some(primitive) = command.expandable_primitive() {
+            return match primitive {
+                ExpandablePrimitive::ExpandAfter => Self::ExpandAfter,
+                ExpandablePrimitive::CsName => Self::CsName,
+                ExpandablePrimitive::EndCsName => Self::EndCsName,
+                other => {
+                    ConvertSelector::from_primitive(other).map_or(Self::Ordinary, Self::Convert)
+                }
+            };
+        }
+        command
+            .unexpandable_primitive()
+            .and_then(XRaySelector::from_primitive)
+            .map_or(Self::Ordinary, Self::XRay)
+    }
     fn from_static_meaning(meaning: Meaning) -> Self {
         match meaning {
             Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::ExpandAfter) => {
@@ -921,7 +938,6 @@ impl<G> HotCommand<G> {
         update_command_ownership_counters(|counters| {
             counters.rich_materializations = counters.rich_materializations.saturating_add(1);
         });
-        let meaning = self.command.resolved_meaning();
         CurrentCommand {
             spelling: TracedTokenWord::from_parts(self.token.word, self.token.origin),
             identity: if self
@@ -932,14 +948,9 @@ impl<G> HotCommand<G> {
             {
                 CommandIdentity::NoExpandFrozenRelax
             } else {
-                match meaning {
-                    ResolvedMeaning::Static(meaning) => {
-                        CommandIdentity::from_static_meaning(meaning)
-                    }
-                    ResolvedMeaning::Macro { .. } => CommandIdentity::Ordinary,
-                }
+                CommandIdentity::from_command_word(self.command)
             },
-            meaning,
+            meaning: self.command,
             control_sequence: self.token.site.control_sequence,
             direct_source_line: self.token.site.direct_source_line,
             alignment_adjustment: self.token.site.alignment_adjustment,
@@ -952,7 +963,7 @@ impl<G> HotCommand<G> {
         update_command_ownership_counters(|counters| {
             counters.hot_reconstructions = counters.hot_reconstructions.saturating_add(1);
         });
-        let command_word = CommandWord::from_meaning(command.meaning);
+        let command_word = command.meaning;
         Self {
             token: HotToken {
                 word: command.spelling.token_word(),
@@ -973,7 +984,7 @@ impl<G> HotCommand<G> {
         update_command_ownership_counters(|counters| {
             counters.hot_reconstructions = counters.hot_reconstructions.saturating_add(1);
         });
-        let command_word = CommandWord::from_meaning(command.meaning);
+        let command_word = command.meaning;
         Self {
             token: HotToken {
                 word: command.spelling.token_word(),
@@ -1030,7 +1041,7 @@ impl<G> CurrentCommand<G> {
         });
         Self {
             spelling: TracedTokenWord::INITIALIZED_PLACEHOLDER,
-            meaning: ResolvedMeaning::Static(Meaning::Undefined),
+            meaning: CommandWord::from_static_word(Meaning::UNDEFINED_WORD),
             identity: CommandIdentity::Ordinary,
             control_sequence: None,
             direct_source_line: 0,
@@ -1079,10 +1090,7 @@ impl<G> CurrentCommand<G> {
             },
             tex_state::token::OriginId::UNKNOWN,
         );
-        self.meaning = ResolvedMeaning::Static(Meaning::CharToken {
-            ch: ' ',
-            cat: Catcode::Space,
-        });
+        self.meaning = CommandWord::from_static_word(Meaning::char_token_word(' ', Catcode::Space));
         self.control_sequence = None;
         self.delivery_flags
             .set(CommandDeliveryFlags::DIRECT_SOURCE, false);
@@ -1104,16 +1112,8 @@ impl<G> CurrentCommand<G> {
     }
 
     /// Whether this delivery is an outer macro command.
-    pub(crate) const fn is_outer(&self) -> bool {
-        matches!(
-            self.meaning,
-            ResolvedMeaning::Macro { flags, .. } if flags.contains(tex_state::meaning::MeaningFlags::OUTER)
-        ) || matches!(
-            self.meaning,
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                tex_state::meaning::ExpandablePrimitive::EndTemplate
-            ))
-        )
+    pub(crate) fn is_outer(&self) -> bool {
+        self.meaning.is_outer()
     }
 
     /// Returns the original token spelling, including its delivery origin.
@@ -1125,13 +1125,29 @@ impl<G> CurrentCommand<G> {
     /// Returns the effective meaning resolved at this delivery.
     #[must_use]
     pub fn meaning(&self) -> ResolvedMeaning<G> {
-        self.meaning
+        self.meaning.resolved_meaning()
     }
 
-    /// Borrows the effective meaning without creating a transient alias.
+    /// Borrows the delivered packed static word for direct main-control dispatch.
+    /// Macro and font capabilities remain in their actual typed command fields.
     #[must_use]
-    pub const fn meaning_ref(&self) -> &ResolvedMeaning<G> {
-        &self.meaning
+    pub const fn static_word(&self) -> Option<u64> {
+        match self.meaning {
+            CommandWord::Static { word, .. } => Some(word),
+            _ => None,
+        }
+    }
+
+    /// Native packed command family and modifier for mode/command dispatch.
+    #[must_use]
+    pub fn control_code(&self) -> Option<u64> {
+        match self.meaning {
+            CommandWord::Static { word, .. } => Some(Meaning::runtime_word_control_code(word)),
+            CommandWord::Font(font) => Some(Meaning::runtime_word_control_code(
+                Meaning::Font(font).encode(),
+            )),
+            CommandWord::Macro { .. } => None,
+        }
     }
 
     /// Returns the control-sequence identity, if this spelling resolves via

@@ -1,7 +1,7 @@
 //! Cold alignment lifecycle and diagnostic projection.
 
 use super::super::*;
-use super::apply::enter_group;
+use super::groups::enter_group;
 use super::support::*;
 
 pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(

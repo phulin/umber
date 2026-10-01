@@ -3133,18 +3133,22 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
     assert_eq!(preloaded_telemetry.execution.replayed_dispatches, 0);
     assert_eq!(partitioned_telemetry.execution.cold_starts, 1);
     assert_eq!(partitioned_telemetry.execution.suspensions, 3);
-    // Every partitioned response discards the cold attempt and restarts from
-    // its retained full checkpoint. The fixture therefore replays one
-    // dispatch per suspension and four delivered commands from the discarded
-    // prefixes; local continuation cannot report zero replay work here.
+    // Every response discards the attempt and restarts from its full checkpoint.
+    // `replayed_delivered_tokens` measures completed production-driver chunks;
+    // a chunk can contain several native commands. Its partition changes when
+    // direct dispatch removes cold handoffs, but discarded completed work must
+    // still be visible alongside the three real replay restarts.
     assert_eq!(
         (
             partitioned_telemetry.execution.local_step_retries,
-            partitioned_telemetry.execution.replayed_delivered_tokens,
             partitioned_telemetry.execution.replayed_dispatches,
         ),
-        (3, 4, 3),
-        "resource responses retry from full checkpoints with discarded delivery work"
+        (3, 3),
+        "each partitioned response restarts from a full checkpoint"
+    );
+    assert!(
+        partitioned_telemetry.execution.replayed_delivered_tokens > 0,
+        "full-checkpoint replay discards completed driver work"
     );
     assert_eq!(partitioned.attempts(), 4);
     assert!(

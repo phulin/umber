@@ -154,7 +154,8 @@ pub use scanners::{
     ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial,
     ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec,
     ScannedScalar, ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedTokenParameterAssignment,
-    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance, WriteStreamSelector,
+    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance, TokenRequest,
+    WriteStreamSelector,
 };
 pub use snapshot::{
     CommandRestoreError, CommandSummary, CommandSummaryError, PreparedCommandRestore,

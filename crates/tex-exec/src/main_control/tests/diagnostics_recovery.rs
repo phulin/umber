@@ -879,46 +879,7 @@ fn production_batch_reuses_admitted_context_for_ordinary_source_run() {
         ));
     });
 }
-#[cfg(feature = "profiling")]
-#[test]
-fn one_and_4096_warmed_post_apply_fact_settlements_allocate_and_copy_no_context() {
-    fn evidence(repetitions: usize) -> tex_state::measurement::HotCoreAllocationMeasurement {
-        crate::test_harness::with_nonstop_plain_universe(|stores| {
-            let context = stores.command_context().expect("post-apply test admission");
-            let context_address = std::ptr::from_ref(&context);
-            let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
-            let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            {
-                let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-                for _ in 0..repetitions {
-                    let facts = PostApplyFacts::capture(
-                        MainControlParking {
-                            character: Some('A'),
-                            resumes_interrupted_fetch: false,
-                        },
-                        Mode::Horizontal,
-                        &context,
-                    );
-                    std::hint::black_box(facts);
-                    assert_eq!(std::ptr::from_ref(&context), context_address);
-                }
-            }
-            let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            tex_state::measurement::HotCoreAllocationMeasurement {
-                calls: after.calls - before.calls,
-                requested_bytes: after.requested_bytes - before.requested_bytes,
-            }
-        })
-    }
 
-    let one = evidence(1);
-    let many = evidence(4_096);
-    assert_eq!(one.calls, 0);
-    assert_eq!(one.requested_bytes, 0);
-    assert_eq!(many.calls, 0);
-    assert_eq!(many.requested_bytes, 0);
-    assert!(std::mem::size_of::<PostApplyFacts>() < std::mem::size_of::<CommandContext<'_, ()>>());
-}
 #[test]
 fn diagnostic_expand_step_preserves_undefined_for_the_diagnostic_host() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {

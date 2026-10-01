@@ -649,7 +649,7 @@ fn immediate_openout_applies_one_print_nl_after_an_open_log_line() {
     });
 }
 #[test]
-fn post_apply_facts_preserve_character_font_and_page_output_decisions() {
+fn character_loop_uses_current_font_and_page_output_keeps_selected_break() {
     // TeX82 §§552/1030/1034/1036: the post-apply handoff distinguishes a
     // present character from nullfont's empty range, preserves an interrupted
     // fetch's existing parking, and carries §1012's selected break without
@@ -669,36 +669,27 @@ fn post_apply_facts_preserve_character_font_and_page_output_decisions() {
         context.record_best_page_break(0, Scaled::from_raw(0), 0);
         context.record_page_fire_up(0);
 
-        let present = PostApplyFacts::capture(
-            MainControlParking {
-                character: Some('A'),
-                resumes_interrupted_fetch: false,
-            },
-            Mode::Horizontal,
-            &context,
-        );
-        assert_eq!(present.main_loop_active, Some(true));
-        assert!(present.page_output.fire_up.is_some());
-        assert!(!present.page_output.resume_after_output);
-
-        context
+        let pending = PendingPageOutputFacts::capture(&context);
+        assert!(pending.fire_up.is_some());
+        assert!(!pending.resume_after_output);
+        drop(context);
+        let mut control = MainControl::tex82_initex(stores);
+        control
+            .modes
+            .push(Mode::Horizontal)
+            .expect("horizontal mode");
+        control.resume_character_loop(stores, Some('A'));
+        assert!(control.main_loop_active);
+        stores
+            .command_context()
+            .expect("font update")
             .assign_current_font(
                 tex_state::font::NULL_FONT,
                 tex_state::AssignmentScope::Global,
             )
             .expect("nullfont assignment");
-        let missing = MainControlParking {
-            character: Some('A'),
-            resumes_interrupted_fetch: false,
-        }
-        .post_apply(Mode::Horizontal, &context);
-        assert_eq!(missing, Some(false));
-        let preserved = MainControlParking {
-            character: None,
-            resumes_interrupted_fetch: true,
-        }
-        .post_apply(Mode::Vertical, &context);
-        assert_eq!(preserved, None);
+        control.resume_character_loop(stores, Some('A'));
+        assert!(!control.main_loop_active);
     });
 }
 #[test]

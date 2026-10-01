@@ -82,7 +82,7 @@ fn etex_unexpanded_input_survives_the_first_main_control_operation() {
     });
 }
 #[test]
-fn production_batch_commits_ordinary_prefix_before_terminal_transaction() {
+fn production_batch_commits_assignments_and_terminal_command_once() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\count0=11 \count1=22 \end");
@@ -93,51 +93,13 @@ fn production_batch_commits_ordinary_prefix_before_terminal_transaction() {
         );
         assert_eq!(stores.count(0).expect("count register"), 11);
         assert_eq!(stores.count(1).expect("count register"), 22);
-        // Both rootless count assignments settle in the delivering admission;
-        // only the terminal `\end` is a typed attempt.
+        // The direct engine settles command scratch after each command and
+        // commits the bounded batch once at its terminal boundary.
         assert_eq!(control.advance_telemetry().attempts, 1);
-        assert_eq!(control.advance_telemetry().commits, 2);
+        assert_eq!(control.advance_telemetry().commits, 1);
     });
 }
-#[cfg(feature = "profiling")]
-#[test]
-fn one_and_4096_ordinary_episodes_construct_zero_operation_frames() {
-    let (one_allocations, one_transitions, one_copies, one_overlapping_moves) =
-        ordinary_command_episode_evidence(1);
-    let (many_allocations, many_transitions, many_copies, many_overlapping_moves) =
-        ordinary_command_episode_evidence(4_096);
 
-    assert_eq!(one_allocations.calls, 0);
-    assert_eq!(one_allocations.requested_bytes, 0);
-    assert_eq!(many_allocations.calls, 0);
-    assert_eq!(many_allocations.requested_bytes, 0);
-    assert_eq!(one_transitions, 3);
-    assert_eq!(many_transitions, 12_288);
-    assert_eq!(one_copies, 0);
-    assert_eq!(many_copies, 0);
-    assert_eq!(one_overlapping_moves, 0);
-    assert_eq!(many_overlapping_moves, 0);
-}
-#[cfg(feature = "profiling")]
-#[test]
-fn one_and_4096_cold_scan_cycles_are_allocation_free_and_stationary() {
-    let (one_allocations, one_transitions, one_address_changes, one_moves, one_checksum) =
-        resident_cold_scan_evidence(1);
-    let (many_allocations, many_transitions, many_address_changes, many_moves, many_checksum) =
-        resident_cold_scan_evidence(4_096);
-
-    assert_eq!(one_allocations.calls, 0);
-    assert_eq!(one_allocations.requested_bytes, 0);
-    assert_eq!(many_allocations.calls, 0);
-    assert_eq!(many_allocations.requested_bytes, 0);
-    assert_eq!(one_transitions, 2);
-    assert_eq!(many_transitions, 8_192);
-    assert_eq!(one_address_changes, 0);
-    assert_eq!(many_address_changes, 0);
-    assert_eq!(one_moves, 0);
-    assert_eq!(many_moves, 0);
-    assert_ne!(one_checksum, many_checksum);
-}
 #[test]
 fn production_batch_returns_after_a_world_effect() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {

@@ -1,0 +1,35 @@
+//! Native group entry and unsave on the live save stack.
+use super::super::*;
+
+pub(in crate::main_control) fn enter_group<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut tex_command::CommandState<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    kind: GroupKind,
+) {
+    let entered_line = command.current_file_line_number();
+    let frame = stores
+        .begin_group(kind, entered_line)
+        .expect("native TeX group boundary opens");
+    let level = u32::try_from(stores.execution_group_depth()).unwrap_or(u32::MAX);
+    stores.trace_group_enter(diagnostic_effects, frame.kind(), level, entered_line);
+}
+
+pub(in crate::main_control) fn unsave_group<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
+    kind: GroupKind,
+) -> Result<(), tex_command::CommandError> {
+    let level = u32::try_from(stores.execution_group_depth()).unwrap_or(u32::MAX);
+    let mut processor = command.processor(stores);
+    let result = processor.end_group(kind, crate::assignments::tracing::trace_group_restoration);
+    processor.retire();
+    let frame = result?;
+    stores.trace_group_leave(
+        command.diagnostic_effects,
+        frame.kind(),
+        level,
+        frame.entered_line(),
+    );
+    Ok(())
+}

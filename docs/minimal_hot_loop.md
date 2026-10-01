@@ -1,5 +1,11 @@
 # Minimal hot loop
 
+The current packed mode/command/prefix implementation is mapped in
+[Main-control dispatch](main_control_dispatch.md). Its eligibility lane,
+operation unions, phase requests, and per-command lifecycle carrier are
+removed. Earlier measurements below describe the pre-replacement source;
+they are informative evidence, not current source maps or closure gates.
+
 Status: revised implementation target, reconciled against `eb754fc2d` on
 2026-10-01. The original measurements use the frozen binary from the
 `23548ce50` full-book profile; the source was read at `ea2b720e6`. Tracking:

@@ -588,6 +588,20 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.token_lists_mut().allocate(words)
     }
 
+    pub(crate) fn reserve_token_lists(
+        &mut self,
+        rows: usize,
+        words: usize,
+    ) -> Result<(), DurableAllocationError> {
+        self.generation.token_lists_mut().reserve_batch(rows, words)
+    }
+    pub(crate) fn allocate_reserved_token_list(
+        &mut self,
+        words: impl ExactSizeIterator<Item = TokenWord>,
+    ) -> Result<TokenListId<G>, DurableAllocationError> {
+        self.generation.token_lists_mut().allocate_from_iter(words)
+    }
+
     pub(crate) fn begin_token_list_builder(
         &mut self,
     ) -> Result<TokenListBuilder<G>, DurableAllocationError> {

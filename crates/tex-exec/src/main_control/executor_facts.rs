@@ -2,90 +2,6 @@
 
 use super::*;
 
-/// Copy-free delivery/retry preparation for one operation.
-pub(super) struct OperationPreparation<G> {
-    checked_save_stack_words: Option<usize>,
-    delivery: Option<OperationDelivery>,
-    delivery_status: Option<tex_command::DeliveryStatus>,
-    trace_reported: bool,
-    _generation: core::marker::PhantomData<fn(&G) -> &G>,
-}
-
-impl<G> OperationPreparation<G> {
-    pub(super) fn new() -> Self {
-        Self {
-            checked_save_stack_words: None,
-            delivery: None,
-            delivery_status: None,
-            trace_reported: false,
-            _generation: core::marker::PhantomData,
-        }
-    }
-
-    pub(super) fn fill_delivery(&mut self, delivery: OperationDelivery) {
-        assert!(
-            self.delivery.is_none(),
-            "one operation preparation owns one direct dispatch result"
-        );
-        self.delivery = Some(delivery);
-    }
-
-    pub(super) fn has_delivery(&self) -> bool {
-        self.delivery.is_some()
-    }
-
-    pub(super) fn fill_applied_direct(&mut self) {
-        self.fill_delivery(OperationDelivery::AppliedDirect);
-    }
-
-    pub(super) fn delivery(&self) -> &OperationDelivery {
-        self.delivery
-            .as_ref()
-            .expect("operation preparation owns one delivery")
-    }
-
-    pub(super) fn take_delivery(&mut self) -> OperationDelivery {
-        self.delivery
-            .take()
-            .expect("operation preparation drains one delivery")
-    }
-
-    pub(super) fn record_delivery_status(
-        &mut self,
-        status: tex_command::DeliveryStatus,
-        trace_reported: bool,
-    ) {
-        assert!(
-            self.delivery_status.replace(status).is_none(),
-            "one operation preparation owns one raw delivery status"
-        );
-        self.trace_reported = trace_reported;
-    }
-
-    pub(super) fn take_delivery_status(&mut self) -> tex_command::DeliveryStatus {
-        self.delivery_status
-            .take()
-            .expect("raw preflight fills one delivery status")
-    }
-
-    pub(super) fn take_trace_reported(&mut self) -> bool {
-        std::mem::take(&mut self.trace_reported)
-    }
-
-    pub(super) fn discard_delivery_status(&mut self) {
-        self.delivery_status = None;
-        self.trace_reported = false;
-    }
-
-    pub(super) fn record_checked_save_stack_words(&mut self, words: usize) {
-        self.checked_save_stack_words = Some(words);
-    }
-
-    pub(super) fn take_checked_save_stack_words(&mut self) -> Option<usize> {
-        self.checked_save_stack_words.take()
-    }
-}
-
 pub(super) struct EffectiveTailFacts {
     pub(super) last_node: Option<tex_command::LastNodeItem>,
     pub(super) last_node_type: i32,
@@ -275,17 +191,5 @@ fn classify_last_node<G>(
             .last()
             .and_then(|node| classify_last_node(stores, node)),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod layout_tests {
-    use super::*;
-
-    #[test]
-    fn operation_preparation_initializes_only_direct_delivery_state() {
-        let mut preparation: OperationPreparation<()> = OperationPreparation::new();
-        preparation.fill_delivery(OperationDelivery::Replay);
-        assert!(matches!(preparation.delivery(), OperationDelivery::Replay));
     }
 }

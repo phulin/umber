@@ -460,7 +460,7 @@ exhausted-but-unpopped levels (nested macro expansions, parameter
 substitutions, a trailing operand scan with no lookahead of its own), so the
 next real token the cascade finds can belong to the _enclosing_ cell/field
 context rather than the episode. `scan_alignment_delivery_step` reports this
-as `ColdOperation::ReplayCompleted`, exactly like ordinary `scan_step` already
+as the direct replay-completion case, exactly like ordinary delivery
 does via `get_x_token_with_replay_completion_into`, rather than risking that
 enclosing token being misattributed to the just-retired episode.
 
@@ -489,7 +489,7 @@ frozen-insertion recoveries (`\par`/`\fi`/`\cr`) rather than duplicated.
 half: given a command and the innermost `GroupKind`, it selects and issues the
 matching closer (`SemiSimple` → `\endgroup`, `MathShift` → `$`, `MathLeft` →
 `\right.`, otherwise → `}`, or the bottom-level drop when no group is open),
-returning `ColdOperation::OffSave`/`OffSaveBottomDrop` so the execute phase
+calling the concrete off-save recovery handler so execution
 prints the matching "Missing ... inserted"/"Extra ..." text once, after
 scanning already ran the recovery. It is written as a general, reusable
 routine rather than inlined at its first call site (TeX82 §1095's
@@ -1047,7 +1047,7 @@ dedicated `is_vadjust` flag telling replay to skip the 0..=255 clamp and the
 "you can't `\insert255`" rejection -- both diagnostics are specific to a
 user-scanned class and would otherwise misfire on `\vadjust`'s always-valid
 255 sentinel. `\vadjust` in (outer or internal) vertical mode is one of
-tex.web's "Forbidden cases" (`ColdOperation::IllegalInsertOrAdjust`, sharing
+tex.web's "Forbidden cases" (the illegal-insert/adjust handler, sharing
 `report_illegal_case` with `IllegalBoxShift`/`IllegalItalicCorrection`) rather
 than `any_mode` like `\insert`. `finish_insert_or_adjust_group` branches on
 the completed class: 255 builds a bare `adjust_node` (`Node::Adjust`,
@@ -1112,7 +1112,7 @@ Several no-operand primitives cross the boundary as a bare mode-classification
 with no scanner of their own, since `scan_command` already has the live mode
 and (for the two that need it) `command` to back up: TeX82 §1105's
 `any_mode(remove_item): delete_last` (`\unpenalty`/`\unkern`/`\unskip`) is
-identical in every mode, so `scan_command` returns `ColdOperation::DeleteLast`
+identical in every mode, so `scan_command` returns the delete-last handler
 unconditionally and replay's existing mode/list-sensitive `delete_last` helper
 (shared with the legacy dispatcher) does the rest. TeX82 §1112's
 `hmode+ital_corr`/`mmode+ital_corr` (`\/`) differ only in which apply-time
@@ -1124,7 +1124,7 @@ instead, mirroring `IllegalBoxShift`'s `report_illegal_case` reuse. TeX82
 §1030/§1045/§1090's `\noboundary` similarly resolves per mode at apply time
 (a flag on the current list in hmode, `do_nothing` in mmode) except in
 vertical mode, where `scan_command` backs the token up and returns the
-existing generic `ColdOperation::ParagraphStart` exactly as `\hskip`/`\accent`
+existing generic the paragraph-start handler exactly as `\hskip`/`\accent`
 already do. TeX82 §1171's `mmode+non_script` (`\nonscript`) and §1046's
 `non_math(non_script)` recovery for every other mode reuse
 `CommandProcessor::recover_missing_math_shift` unchanged -- the same generic
@@ -1174,7 +1174,7 @@ shared Forbidden-cases list first built at §1048) routes vmode/hmode
 `\eqno`/`\leqno` through the same `report_illegal_case` (``You can't use
 `\eqno' in ... mode``) already reused by `IllegalBoxShift`/
 `IllegalItalicCorrection`/`IllegalInsertOrAdjust`, via their own dedicated
-`ColdOperation::IllegalEqNo` arm (umber2-johp.88), not `insert_dollar_sign`.
+the illegal-equation-number arm (umber2-johp.88), not `insert_dollar_sign`.
 `mmode+eq_no` itself (gated by `privileged`/`cur_group`, §§1140-1142) is
 unaffected. This is umber2-johp.79's generalization of umber2-johp.56's
 original `mmode+hrule` mechanism to the entire §1046 table.
@@ -1183,7 +1183,7 @@ TeX82 §1264's `new_interaction` (`\batchmode`/`\nonstopmode`/`\scrollmode`/
 `\errorstopmode`, any_mode via §1210's `set_interaction`) sets `interaction`
 directly from the delivered primitive's own `chr_code`, with no operand scan
 of its own -- the same no-scan shape as `\unpenalty`/`\unkern`/`\unskip`'s
-`ColdOperation::DeleteLast`. `interaction` is a plain global Pascal variable
+the delete-last handler. `interaction` is a plain global Pascal variable
 outside `eqtb`, so this assignment ignores `\global`/`\globaldefs` and is
 never undone by group exit, unlike an ordinary parameter assignment
 (umber2-johp.83).
@@ -1192,8 +1192,8 @@ never undone by group exit, unlike an ordinary parameter assignment
 generic `Meaning::IntParam(index)` scan/apply arms, shared with every other
 integer parameter) rather than a distinct `UnexpandablePrimitive` variant, so
 its own value was already written correctly. The actual defect was that two
-of canonical replay's assignment apply arms -- `ColdOperation::MacroDefinition`
-(`\def`/`\edef`/`\gdef`/`\xdef`) and `ColdOperation::Let` (`\let`/
+of canonical replay's assignment apply arms -- the macro-definition handler
+(`\def`/`\edef`/`\gdef`/`\xdef`) and the let handler (`\let`/
 `\futurelet`) -- used their raw `\global` prefix bit directly instead of
 resolving it through `assignment_global` (the shared helper every other
 assignment kind, including `\count`/`\dimen`/`\toks`/code-table/
@@ -4381,7 +4381,7 @@ this matrix and remains Beads `.4.2`.
 | Canonical family                                                                                   | WEB authority                                                                                                        | Canonical owner and committed test inventory                                                                                                                                                                                                                                                                |
 | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Delivery, expansion, recovery, and scanner state                                                   | TeX82 §§24--25; §1030                                                                                                | `CommandProcessor::{get_next,get_x_token}` is the only source path; `tex-command` raw/expanded delivery, macro, conditional, and structured-scanner tests plus `tex-exec` architecture gate.                                                                                                                |
-| Mode selection, groups, prefixes, definitions, registers, parameters, code tables, and diagnostics | TeX82 §1030+ mode tables; §§1064, 1066, 1095, 1131; §1257 (`new_font`)                                               | Typed `ColdOperation` application; `assignments_*`, `canonical_definition_*`, `canonical_font_definition_*`, `canonical_grouping_*`, and `canonical_display_diagnostics_*`.                                                                                                                                 |
+| Mode selection, groups, prefixes, definitions, registers, parameters, code tables, and diagnostics | TeX82 §1030+ mode tables; §§1064, 1066, 1095, 1131; §1257 (`new_font`)                                               | Direct native semantic application; `assignments_*`, `canonical_definition_*`, `canonical_font_definition_*`, `canonical_grouping_*`, and `canonical_display_diagnostics_*`.                                                                                                                                |
 | Paragraph and horizontal material                                                                  | TeX82 §1030+ horizontal/vertical branches                                                                            | Typed paragraph start/backup, `\\everypar`, characters, spaces, ligatures, accents, discretionary, kern/glue, parshape, line breaking, and page contribution; `production_driver_*paragraph*`, `production_driver_*horizontal*`, and `paragraph_page_builder_is_observer_neutral`.                          |
 | Boxes, leaders, packing, splitting, and explicit shipment                                          | TeX82 §1071 (`box_end`/`\\shipout`) and §1030+ box branches                                                          | Typed box construction/selection/unboxing/leaders/vsplit; `canonical_box_*`, `canonical_vsplit_*`, `canonical_initex_replay_scans_setbox_*`, and `shipout_box_completion_*`.                                                                                                                                |
 | Math and display material                                                                          | TeX82 §§691--734 and §1030+ math branches                                                                            | Typed `MathRequest`/`MathDelimiterBoundary`; `canonical_math_*`, `canonical_math_replay_observer_does_not_change_frozen_mlist`, and math scanner recovery tests.                                                                                                                                            |
@@ -4592,63 +4592,28 @@ lists through `scan_left_brace`/`push_nest` and leaves them through
 `handle_right_brace`, never mid-character-run, so an episode's own last
 character must not park the enclosing context at the lookahead.
 
-### 33.5 Host-applied step routing
+### 33.5 Direct semantic routing and nested observation
 
-Most `ColdOperation`s are applied by the cold module's `apply_cold_operation`,
-which owns no `MainControl`. A few cannot be: TeX82 §1137's
-`init_math`, §1193's `after_math`, §1190's `math_left_right`, §1116's
-`append_discretionary`, the math-noad family, and the end of a replay episode
-all need the mode nest, the save stack, and the command processor's
-token-list scheduling at once, plus the ability to run nested episodes. Those
-steps are applied by `MainControl` itself, and `apply_cold_operation`
-carries an `unreachable!()` arm for each.
+`main_control/direct/dispatch.rs` selects the packed mode/command arm once.
+Ordinary, observed, diagnostic, and alignment entry points use this same
+engine. Concrete scanner methods end their processor loan before native
+semantic routines execute. TeX82 §1137's `init_math`, §1193's `after_math`,
+§1190's `math_left_right`, §1116's discretionary handling, and the math-noad
+family call their actual `MainControl` owners directly; no host-applied
+operation union or parallel routing decision remains.
 
-There are three step-delivery entry points -- unobserved, observed, and the
-alignment cell's. The host-applied set is named exactly once, in
-`MainControl::apply_host_owned_step`, and all three route through
-it. It used to be an `if let` chain copied into each entry point, and the
-observed copy omitted `ColdOperation::MathShift`: an observed `$` fell through
-to `apply_cold_operation`'s `unreachable!()` and panicked while the identical
-unobserved `$` executed correctly (`umber2-johp.118`). Add a host-applied
-step in that one function, never at a call site.
+Observation is an instrumentation boundary, not an alternate execution mode.
+Nested assignments and semantic scans share `operation_observations`, so the
+whole command contributes ordered evidence to the same commit sink. A nested
+processor cannot silently detach the enclosing observer.
 
-The rule that failure exposed is the general one, and it is not specific to
-math: **observation is an instrumentation boundary, not an alternate
-execution mode.** Any behavior that differs between an observed and an
-unobserved step is a defect on its own terms, before any trace is compared
-against the oracle -- the traced run is then not the run being shipped. Two
-independent copies of a routing decision are the mechanism that lets that
-happen, so the fix is always to derive both paths from one shared commit
-rather than to repair the copy that drifted.
-
-A host-applied step is also where an operation stops being one command
-processor episode. `init_math`, the math-noad family, and `append_discretionary`
-each run **nested** command-processor episodes while they execute -- a math
-field's scan (§1151 `scan_math`, reached from §1176's `sub_sup` for a
-script; see §33.8 for why the field itself is never a replay level), a
-`\mathchoice` branch, a discretionary part -- and each of those is a fresh
-`CommandProcessor`. Which is the same duplication one level down:
-every construction site got to decide for itself whether the operation's
-observer was installed, and the three nested math constructions never did.
-An observed `^{\the\footnotenum}` then consumed its entire braced field with
-zero observations, and the backup level holding the backed-up `^` was never
-seen retiring, while the unobserved run consumed it identically
-(`umber2-johp.195`). That is the same defect as `umber2-johp.118` with the
-opposite symptom: not a step that behaves differently when observed, but a
-step whose observation silently stops partway through. Both make the traced
-run a different artifact from the shipped one.
-
-So the construction is named once too. `command_processor` is the only
-`CommandProcessor::new` call in `tex-exec`, and it takes the operation's
-commit slot as a parameter, so an episode cannot be constructed without
-stating which buffer it publishes into. `MainControl` holds that slot
-as engine state (`operation_observations`) rather than threading an observer
-argument, precisely because a nested episode is several frames below the entry
-point that knows whether the operation is observed. Deliberate silence -- the
-startup terminal line's exhaustion retirement -- vacates the slot for that one
-episode and says so; it is never expressed by omitting the observer at a
-construction site. `crates/tex-exec/tests/it.rs` pins the single constructor
-and the single `.with_observer` call.
+`command_processor` remains the only `CommandProcessor::new` call in
+`tex-exec`. It takes the operation's observation sink explicitly. Deliberate
+silence at startup vacates that sink for the selected call rather than omitting
+an observer at another constructor. Public-boundary tests pin the sole
+constructor; semantic tests compare observed and unobserved results. See
+[Main-control dispatch](main_control_dispatch.md) for native scanner
+publication and resource/error lifetimes.
 
 ### 33.6 The two math-shift probes are not one probe
 

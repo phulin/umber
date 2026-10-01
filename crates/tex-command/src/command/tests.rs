@@ -191,7 +191,7 @@ fn packed_input_resolution_materializes_only_at_execution() {
 
         let command = command.materialize();
         assert_eq!(
-            command.meaning_ref(),
+            (&command.meaning()),
             &ResolvedMeaning::Static(Meaning::CharToken {
                 ch: 'x',
                 cat: Catcode::Letter,
@@ -205,7 +205,7 @@ fn compact_font_command_preserves_opaque_runtime_identity() {
     let font = tex_state::ids::FontId::testing_from_words([0x5a17_0042, 7, 11, 23])
         .expect("valid branded font identity");
     let mut rich = CurrentCommand::<()>::empty();
-    rich.meaning = ResolvedMeaning::Static(Meaning::Font(font));
+    rich.meaning = CommandWord::Font(font);
 
     let hot = HotCommand::from_current(rich);
 
@@ -295,7 +295,7 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
         let ResolvedMeaning::Macro {
             flags,
             definition: delivered,
-        } = command.meaning_ref()
+        } = &command.meaning()
         else {
             panic!("macro meaning")
         };
@@ -554,12 +554,12 @@ fn direct_delivery_preserves_table_meaning_families_and_active_namespace() {
             ),
         ];
         for (token, expected) in cases {
-            assert_eq!(resolved(universe, token).meaning_ref(), &expected);
+            assert_eq!(&resolved(universe, token).meaning(), &expected);
         }
 
         let first = resolved(universe, Token::Cs(macro_name.symbol()));
         let alias = resolved(universe, Token::Cs(macro_alias.symbol()));
-        assert_eq!(first.meaning_ref(), alias.meaning_ref());
+        assert_eq!((&first.meaning()), (&alias.meaning()));
         assert_eq!(
             first.spelling().semantic_token(),
             Token::Cs(macro_name.symbol())
@@ -577,7 +577,7 @@ fn direct_delivery_preserves_table_meaning_families_and_active_namespace() {
             },
         );
         assert_eq!(active_command.control_sequence(), Some(active.symbol()));
-        assert_eq!(active_command.meaning_ref(), &Meaning::CharGiven('A'));
+        assert_eq!((&active_command.meaning()), &Meaning::CharGiven('A'));
         let undefined_active = resolved(
             universe,
             Token::Char {
@@ -586,7 +586,7 @@ fn direct_delivery_preserves_table_meaning_families_and_active_namespace() {
             },
         );
         assert_eq!(undefined_active.control_sequence(), None);
-        assert_eq!(undefined_active.meaning_ref(), &Meaning::Undefined);
+        assert_eq!((&undefined_active.meaning()), &Meaning::Undefined);
         assert_eq!(
             universe
                 .command_context()

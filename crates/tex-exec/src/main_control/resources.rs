@@ -41,15 +41,12 @@ impl<G> MainControl<G> {
             })
     }
 
-    pub(super) fn resolve_font_resource(
+    pub(super) fn resolve_font_request(
         &mut self,
-        scanned: &mut ColdOperation<G>,
+        request: &mut FontLoadRequest,
         stores: &mut Universe<G>,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<Option<FontResource>, ExecError> {
-        let ColdOperation::<G>::FontDefinition { request, .. } = scanned else {
-            return Ok(None);
-        };
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let path = crate::canonical_font_resource_path(&request.name);
         loop {
@@ -105,18 +102,16 @@ impl<G> MainControl<G> {
         }
     }
 
-    pub(super) fn resolve_input_stream_resource(
+    pub(super) fn resolve_input_stream_request(
         &mut self,
-        scanned: &mut ColdOperation<G>,
+        request: &mut tex_command::InputStreamRequest<tex_command::AttemptDefinitionId>,
+        resource: &mut Option<SourceRegistration>,
         stores: &mut Universe<G>,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
-        let ColdOperation::<G>::InputStream { request, resource } = scanned else {
-            return Ok(());
-        };
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let resolved_source = match request {
-            RootedInputStreamRequest::Open { file_name, .. } => {
+            tex_command::InputStreamRequest::Open { file_name, .. } => {
                 // tex.web §1275: `if cur_ext="" then cur_ext:=".tex";
                 // pack_cur_name`. The packed name is what is opened, so it is
                 // written back into the request rather than recomputed.
@@ -179,21 +174,20 @@ impl<G> MainControl<G> {
                     }
                 }
             }
-            RootedInputStreamRequest::Close { .. } | RootedInputStreamRequest::Read { .. } => None,
+            tex_command::InputStreamRequest::Close { .. }
+            | tex_command::InputStreamRequest::Read { .. } => None,
         };
         *resource = resolved_source;
         Ok(())
     }
 
-    pub(super) fn resolve_pdf_image_resource(
+    pub(super) fn resolve_pdf_image_request(
         &mut self,
-        scanned: &mut ColdOperation<G>,
+        request: &mut tex_command::PdfImageRequest<tex_command::AttemptTokenListId>,
+        resource: &mut PdfImageResource,
         stores: &mut Universe<G>,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
-        let ColdOperation::<G>::PdfXImage { request, resource } = scanned else {
-            return Ok(());
-        };
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         // pdfTeX checks \pdfoutput before it enters `scan_image`; in DVI
         // mode this must be the diagnostic, not a host-resource suspension.
@@ -221,10 +215,7 @@ impl<G> MainControl<G> {
             page_box: request.page_box,
             page_box_explicit: request.page_box_explicit,
             resolution: request.resolution,
-            attr: request.attr.as_ref().map(|root| {
-                root.attempt_id()
-                    .expect("PDF image resource resolution precedes root preparation")
-            }),
+            attr: request.attr,
         };
         loop {
             let Some((resolved_resource, dependencies)) =

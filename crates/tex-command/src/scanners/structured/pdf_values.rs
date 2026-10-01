@@ -6,7 +6,7 @@ use super::*;
 /// but neither an open file nor parsed image state.  The host supplies those
 /// only after the enclosing canonical operation has suspended.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfImageRequest {
+pub struct PdfImageRequest<T = AttemptTokenListId> {
     pub name: String,
     pub width: Option<Scaled>,
     pub height: Option<Scaled>,
@@ -23,10 +23,10 @@ pub struct PdfImageRequest {
     pub page_box_explicit: bool,
     /// pdftex.web §1553's live fallback DPI, frozen when the host lookup begins.
     pub resolution: u32,
-    pub attr: Option<AttemptTokenListId>,
+    pub attr: Option<T>,
 }
 
-impl PdfImageRequest {
+impl<T> PdfImageRequest<T> {
     /// Whether two requests select the same immutable host image resource.
     ///
     /// pdftex.web §1550's `read_image` receives the file/page/page-box facts;
@@ -71,20 +71,20 @@ pub enum PdfImagePageBox {
 /// it, expanded) by [`CommandProcessor`].  Replay receives neither a token
 /// cursor nor a mutable input frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PdfGraphicsRequest {
+pub enum PdfGraphicsRequest<T = AttemptTokenListId> {
     Literal {
         mode: tex_state::node::PdfLiteralMode,
         deferred: bool,
-        text: ScannedBalancedText,
+        text: ScannedBalancedText<T>,
     },
     SetMatrix {
-        text: ScannedBalancedText,
+        text: ScannedBalancedText<T>,
     },
     Save,
     Restore,
     ColorStack {
         id: i32,
-        action: Option<PdfColorStackActionRequest>,
+        action: Option<PdfColorStackActionRequest<T>>,
     },
     SavePosition,
     SnapReferencePoint,
@@ -98,9 +98,9 @@ pub enum PdfGraphicsRequest {
 
 /// The completed action word and, for setters, its expanded payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PdfColorStackActionRequest {
-    Set(ScannedBalancedText),
-    Push(ScannedBalancedText),
+pub enum PdfColorStackActionRequest<T = AttemptTokenListId> {
+    Set(ScannedBalancedText<T>),
+    Push(ScannedBalancedText<T>),
     Pop,
     Current,
 }
@@ -109,23 +109,23 @@ pub enum PdfColorStackActionRequest {
 /// every retained general-text scan; object allocation remains an application
 /// concern so it occurs after the processor borrow.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PdfObjectRequest {
+pub enum PdfObjectRequest<T = AttemptTokenListId> {
     Reserve,
     Define {
         use_object: Option<i32>,
         stream: bool,
-        stream_attr: Option<ScannedBalancedText>,
+        stream_attr: Option<ScannedBalancedText<T>>,
         file: bool,
-        data: ScannedBalancedText,
+        data: ScannedBalancedText<T>,
     },
 }
 
 /// Completed `\\pdfxform`/`\\pdfrefxform` request.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PdfFormRequest {
+pub enum PdfFormRequest<T = AttemptTokenListId> {
     Create {
-        attr: Option<ScannedBalancedText>,
-        resources: Option<ScannedBalancedText>,
+        attr: Option<ScannedBalancedText<T>>,
+        resources: Option<ScannedBalancedText<T>>,
         box_register: u16,
     },
     Reference {
@@ -148,56 +148,56 @@ pub struct PdfReferenceObjectRequest {
 
 /// Completed document-level PDF token-list assignment.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PdfDocumentFragmentRequest {
+pub struct PdfDocumentFragmentRequest<T = AttemptTokenListId> {
     pub kind: tex_state::PdfDocumentFragmentKind,
-    pub text: ScannedBalancedText,
-    pub open_action: Option<PdfActionSpec>,
+    pub text: ScannedBalancedText<T>,
+    pub open_action: Option<PdfActionSpec<T>>,
 }
 
 /// Fully scanned pdfTeX navigation whatsit.  All general text is frozen in
 /// the command token store; application never reopens input to finish an
 /// action or rule specification.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PdfNavigationRequest {
-    Annotation(PdfAnnotationRequest),
-    StartLink(PdfStartLinkRequest),
+pub enum PdfNavigationRequest<T = AttemptTokenListId> {
+    Annotation(PdfAnnotationRequest<T>),
+    StartLink(PdfStartLinkRequest<T>),
     EndLink,
-    Outline(PdfOutlineRequest),
-    Destination(PdfDestinationRequest),
-    Thread(PdfThreadRequest),
+    Outline(PdfOutlineRequest<T>),
+    Destination(PdfDestinationRequest<T>),
+    Thread(PdfThreadRequest<T>),
     EndThread,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PdfAnnotationRequest {
+pub enum PdfAnnotationRequest<T = AttemptTokenListId> {
     Reserve,
     Define {
         use_object: Option<i32>,
         dimensions: tex_state::PdfAnnotationDimensions,
-        entries: ScannedBalancedText,
+        entries: ScannedBalancedText<T>,
     },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PdfStartLinkRequest {
+pub struct PdfStartLinkRequest<T = AttemptTokenListId> {
     pub dimensions: tex_state::PdfAnnotationDimensions,
-    pub attributes: Option<ScannedBalancedText>,
-    pub action: PdfActionSpec,
+    pub attributes: Option<ScannedBalancedText<T>>,
+    pub action: PdfActionSpec<T>,
 }
 
 /// Fully scanned `\\pdfoutline` document-state mutation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PdfOutlineRequest {
-    pub attributes: Option<ScannedBalancedText>,
-    pub action: PdfActionSpec,
+pub struct PdfOutlineRequest<T = AttemptTokenListId> {
+    pub attributes: Option<ScannedBalancedText<T>>,
+    pub action: PdfActionSpec<T>,
     pub count: i32,
-    pub title: ScannedBalancedText,
+    pub title: ScannedBalancedText<T>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PdfDestinationRequest {
+pub struct PdfDestinationRequest<T = AttemptTokenListId> {
     pub structure: Option<u32>,
-    pub identifier: PdfActionIdentifier,
+    pub identifier: PdfActionIdentifier<T>,
     pub kind: tex_state::node::PdfDestinationKind,
 }
 
@@ -205,9 +205,9 @@ pub struct PdfDestinationRequest {
 /// dimensions deliberately retain running values: pdfTeX resolves them while
 /// traversing the containing box at shipout, not while it scans the command.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PdfThreadRequest {
+pub struct PdfThreadRequest<T = AttemptTokenListId> {
     pub dimensions: tex_state::PdfAnnotationDimensions,
-    pub attributes: Option<ScannedBalancedText>,
-    pub identifier: PdfActionIdentifier,
+    pub attributes: Option<ScannedBalancedText<T>>,
+    pub identifier: PdfActionIdentifier<T>,
     pub running: bool,
 }

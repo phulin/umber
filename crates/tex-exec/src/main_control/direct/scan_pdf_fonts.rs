@@ -1,0 +1,155 @@
+//! Native scan pdf fonts in the sole main-control engine.
+use super::*;
+impl<G> DirectDispatch<'_, '_, G> {
+    pub(super) fn scan_pdf_font_code_assignment(
+        &mut self,
+        primitive: UnexpandablePrimitive,
+    ) -> Result<ReplayStep, ExecError> {
+        let boxes = &self.control.boxes;
+
+        let mut admitted_context = self
+            .stores
+            .command_context()
+            .expect("direct scanner admission");
+
+        let mut host_facts = ExecutorHostFacts {
+            modes: &self.control.modes,
+            pdf_ignore_depth: self.control.pdf_ignore_depth,
+            telemetry: &mut self.control.episode_telemetry,
+        };
+        let mut owned_processor = if let Some(provider) = self.provider.as_deref_mut() {
+            command_processor_with_resource_provider(
+                &mut self.control.command,
+                self.control.fuel.fuel_mut(),
+                &mut self.control.capabilities,
+                &mut host_facts,
+                provider,
+                &mut self.control.declined_resource_attempt,
+                &mut self.control.operation_observations,
+                self.effects,
+                &mut admitted_context,
+            )
+        } else {
+            command_processor(
+                &mut self.control.command,
+                self.control.fuel.fuel_mut(),
+                &mut self.control.capabilities,
+                &mut host_facts,
+                &mut self.control.operation_observations,
+                self.effects,
+                &mut admitted_context,
+            )
+        };
+        owned_processor.set_output_routine_active(boxes.output_routine_active);
+        if let Some(cursor) = self.cursor {
+            owned_processor.resume_delivery_cursor(cursor);
+        }
+        let processor: &mut CommandProcessor<'_, '_, G> = &mut owned_processor;
+        // Finish this actual processor/context loan before semantic application.
+        macro_rules! finish_scan {
+            ($call:expr) => {
+                direct_finish_scan!(self, owned_processor, admitted_context, host_facts, $call)
+            };
+        }
+
+        let mut scalar_storage = tex_command::ScalarScanFrame::default();
+        let scalar = &mut scalar_storage;
+
+        let scan_origin = self.current_origin;
+
+        let status = processor.scan_font_selector_into(scalar);
+        let font = take_control_scalar!(scalar, status, take_font, scan_origin);
+        let status =
+            processor.scan_restricted_integer_into(RestrictedIntegerClass::CharacterCode, scalar);
+        let character = take_control_scalar!(scalar, status, take_restricted, scan_origin).value;
+        let character = u8::try_from(character).expect("pdfTeX character scanner is byte bounded");
+        let status = processor.scan_optional_equals_into(scalar);
+        let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
+        let status = processor.scan_integer_into(scalar);
+        let value = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
+        {
+            let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) =
+                (pdf_font_code_table(primitive), font, character, value);
+            finish_scan!(self.execute_pdf_font_code(
+                direct_arg0,
+                direct_arg1,
+                direct_arg2,
+                direct_arg3
+            ))
+        }
+    }
+
+    pub(super) fn scan_pdf_font_expand_assignment(&mut self) -> Result<ReplayStep, ExecError> {
+        let boxes = &self.control.boxes;
+
+        let mut admitted_context = self
+            .stores
+            .command_context()
+            .expect("direct scanner admission");
+
+        let mut host_facts = ExecutorHostFacts {
+            modes: &self.control.modes,
+            pdf_ignore_depth: self.control.pdf_ignore_depth,
+            telemetry: &mut self.control.episode_telemetry,
+        };
+        let mut owned_processor = if let Some(provider) = self.provider.as_deref_mut() {
+            command_processor_with_resource_provider(
+                &mut self.control.command,
+                self.control.fuel.fuel_mut(),
+                &mut self.control.capabilities,
+                &mut host_facts,
+                provider,
+                &mut self.control.declined_resource_attempt,
+                &mut self.control.operation_observations,
+                self.effects,
+                &mut admitted_context,
+            )
+        } else {
+            command_processor(
+                &mut self.control.command,
+                self.control.fuel.fuel_mut(),
+                &mut self.control.capabilities,
+                &mut host_facts,
+                &mut self.control.operation_observations,
+                self.effects,
+                &mut admitted_context,
+            )
+        };
+        owned_processor.set_output_routine_active(boxes.output_routine_active);
+        if let Some(cursor) = self.cursor {
+            owned_processor.resume_delivery_cursor(cursor);
+        }
+        let processor: &mut CommandProcessor<'_, '_, G> = &mut owned_processor;
+        // Finish this actual processor/context loan before semantic application.
+        macro_rules! finish_scan {
+            ($call:expr) => {
+                direct_finish_scan!(self, owned_processor, admitted_context, host_facts, $call)
+            };
+        }
+
+        let mut scalar_storage = tex_command::ScalarScanFrame::default();
+        let scalar = &mut scalar_storage;
+
+        let scan_origin = self.current_origin;
+
+        let status = processor.scan_font_selector_into(scalar);
+        let font = take_control_scalar!(scalar, status, take_font, scan_origin);
+        let status = processor.scan_optional_equals_into(scalar);
+        let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
+        let status = processor.scan_integer_into(scalar);
+        let stretch = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
+        let status = processor.scan_integer_into(scalar);
+        let shrink = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
+        let status = processor.scan_integer_into(scalar);
+        let step = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
+        let status = processor.scan_keyword_into("autoexpand", scalar);
+        let auto_expand = take_control_scalar!(scalar, status, take_boolean, scan_origin).value;
+        let spec =
+            (tex_typeset::expansion::FontExpansionSpec::new(stretch, shrink, step, auto_expand))
+                .map_err(|error| scan_error(error, scan_origin))?;
+        {
+            let (direct_arg0, direct_arg1) = (font, spec);
+            finish_scan!(self.execute_pdf_font_expand(direct_arg0, direct_arg1))
+        }
+    }
+}

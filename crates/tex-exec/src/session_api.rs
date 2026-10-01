@@ -11,6 +11,8 @@ pub struct ExecutionTelemetry {
     /// Full aggregate checkpoint rewinds caused by host resource misses.
     pub resource_restarts: u64,
     pub local_step_retries: u64,
+    /// Completed driver chunks discarded by full-root replay. A production
+    /// chunk can contain several native commands; this is not raw-token fuel.
     pub replayed_delivered_tokens: u64,
     pub replayed_dispatches: u64,
     /// Fuel spent by attempts whose semantic state was later rewound.

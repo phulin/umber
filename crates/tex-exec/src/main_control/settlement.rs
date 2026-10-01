@@ -25,19 +25,6 @@ pub(super) struct DirectFailureContext {
     pub(super) initial_effect_pos: tex_state::EffectPos,
 }
 
-/// Move-only marker for the one live direct command operation.
-///
-/// It owns nothing and holds no rollback coordinates. TeX has no per-command
-/// undo: a command that fails halts the session in place, and only a full
-/// checkpoint restore can resume it (see `docs/minimal_hot_loop.md`, "Errors
-/// and halts"). The marker only makes every operation end exactly once, by
-/// commit or halt.
-#[derive(Debug)]
-#[must_use = "a direct operation must be committed or halted"]
-pub(super) struct DirectOperation {
-    _private: (),
-}
-
 impl<G> MainControl<G> {
     /// Promotes one operation-local recoverable report at its commit seam.
     ///
@@ -355,85 +342,21 @@ impl<G> MainControl<G> {
         self.advance_telemetry.commits += 1;
     }
 
-    pub(super) fn begin_direct_operation(&mut self) -> DirectOperation {
+    pub(super) fn assert_command_scratch_clear(&self) {
         debug_assert!(
             self.command.attempt_is_clear(),
             "command scratch is clear at every operation boundary"
         );
-        DirectOperation { _private: () }
-    }
-
-    /// Settles an ordinary admitted command and continues the operation in
-    /// place. Page-region succession is intentionally absent: a command which
-    /// requests it is an enclosing-Universe boundary and never reaches this
-    /// continuation seam.
-    #[inline(always)]
-    pub(super) fn roll_admitted_direct_operation(&mut self) {
-        debug_assert!(
-            !self.page_region_succession_pending,
-            "page-region succession ends an admitted command run"
-        );
-        self.command.settle_attempt();
     }
 
     pub(super) fn commit_direct_operation(
         &mut self,
         stores: &mut Universe<G>,
-        operation: DirectOperation,
         diagnostic_effects: &mut DiagnosticEffects,
     ) {
-        let DirectOperation { _private: () } = operation;
         self.promote_first_recoverable(stores, diagnostic_effects);
         self.command.settle_attempt();
         self.finish_pending_page_region_succession(stores);
-    }
-
-    /// Finishes a failed prepared-resource preflight while the operation
-    /// capability still has exactly one structural location.
-    ///
-    /// A genuine resource suspension halts the operation in place; every
-    /// terminal result commits while the attempt owner is still installed.
-    pub(super) fn finish_unavailable_prepared_resource_operation(
-        &mut self,
-        stores: &mut Universe<G>,
-        operation: DirectOperation,
-        mut frame: CommandEpisode<G>,
-        cold: ColdOperationSlot<G>,
-        _barrier: Option<crate::transaction_protocol::CommandBarrier>,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<StepResult, ExecError> {
-        assert!(
-            frame.has_unavailable(&cold),
-            "unavailable resource remains in its attempt-owned frame"
-        );
-        let error = frame.take_error();
-        let result = self.finish_resource_preflight_failure(stores, error, diagnostic_effects);
-        if matches!(result, Ok(StepResult::Suspended(_))) {
-            // The resource need is the only owned value that escapes this
-            // operation. Its diagnostic origin and host outcome live outside
-            // the engine roots, which only a full-checkpoint restore resumes.
-            self.halt_direct_operation(operation);
-            return result;
-        }
-        let Err(error) = result else {
-            self.commit_direct_operation(stores, operation, diagnostic_effects);
-            return result;
-        };
-        let error = {
-            let mut context = stores.command_context().expect("diagnostic admission");
-            error.freeze_diagnostic_origin(&mut context, self.command.diagnostic_input_context(8))
-        };
-        Self::publish_pdf_fatal_error(stores, &error)?;
-        if error.is_pdftex_output_fatal() {
-            self.observe_committed([CommandObservation::Effect(engine_termination_effect())]);
-        }
-        let evidence_error = self.commit_direct_operation_after_error(
-            stores,
-            operation,
-            diagnostic_effects,
-            OperationTermination::Failed,
-        );
-        evidence_error.map_or(Err(error), Err)
     }
 
     /// Halts the session at a failed operation without undoing it.
@@ -442,8 +365,7 @@ impl<G> MainControl<G> {
     /// afterwards is observable: the host either ends the run or restores a
     /// full checkpoint, which replaces every root this operation touched and
     /// abandons its attempt scope. The latch refuses any other entry.
-    pub(super) fn halt_direct_operation(&mut self, operation: DirectOperation) {
-        let DirectOperation { _private: () } = operation;
+    pub(super) fn halt_direct_operation(&mut self) {
         self.halted = true;
     }
 
@@ -454,20 +376,18 @@ impl<G> MainControl<G> {
     pub(super) fn commit_direct_operation_after_error(
         &mut self,
         stores: &mut Universe<G>,
-        operation: DirectOperation,
         diagnostic_effects: &mut DiagnosticEffects,
         termination: OperationTermination,
     ) -> Option<ExecError> {
         let evidence_error = self.admit_observed_receipt(stores, termination);
         self.error_operation_committed = true;
-        self.commit_direct_operation(stores, operation, diagnostic_effects);
+        self.commit_direct_operation(stores, diagnostic_effects);
         evidence_error
     }
 
     pub(super) fn finish_direct_failure(
         &mut self,
         stores: &mut Universe<G>,
-        operation: DirectOperation,
         error: ExecError,
         context: DirectFailureContext,
         mut diagnostic_effects: DiagnosticEffects,
@@ -493,7 +413,6 @@ impl<G> MainControl<G> {
             }
             let evidence_error = self.commit_direct_operation_after_error(
                 stores,
-                operation,
                 &mut diagnostic_effects,
                 OperationTermination::Failed,
             );
@@ -508,7 +427,7 @@ impl<G> MainControl<G> {
             return evidence_error.map_or(Err(error), Err);
         }
         let Some(fatal) = error.as_fatal() else {
-            self.halt_direct_operation(operation);
+            self.halt_direct_operation();
             return Err(error);
         };
         self.promote_first_recoverable(stores, &mut diagnostic_effects);
@@ -552,7 +471,6 @@ impl<G> MainControl<G> {
             .publish_diagnostic_effects_preserving(&mut diagnostic_effects);
         let evidence_error = self.commit_direct_operation_after_error(
             stores,
-            operation,
             &mut diagnostic_effects,
             OperationTermination::Fatal(fatal),
         );

@@ -70,6 +70,11 @@ collector (see `src/conditionals.rs`).
   constructing a command. `HotCommand` and `CurrentCommand` are request-local
   delivery/scanner/observation/recovery values. Resource misses unwind consumers
   before host-owned full-checkpoint replay.
+- `src/scanners/structured/token_requests.rs`: token-field visitation and
+  consuming mapping on genuine generic scanner requests. PDF/image/balanced
+  text requests use attempt token ids while scanning and native token ids
+  after publication; input-read requests similarly use their actual definition
+  field. There are no duplicate rooted request shapes or phase placeholders.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
   Long-lived immutable resources remain in `CommandHostCapabilities`; live
   executor mode, auxiliary, and effective-tail facts cross the synchronous
@@ -97,7 +102,9 @@ collector (see `src/conditionals.rs`).
   scalar stack maxima directly; they are operational session evidence outside
   snapshot roots and survive restore without shared synchronization.
 - `src/command.rs`: compact internal `HotToken { word, origin, site }`, native
-  24-byte `CommandWord<G>` (static meaning, macro key/flags, or font capability), and public opaque, ephemeral `CurrentCommand`.
+  24-byte `CommandWord<G>` (static meaning, macro key/flags, or font capability), and public opaque, ephemeral `CurrentCommand` containing that same packed
+  word. Its native control-code projection drives the sole executor switch;
+  decoded meaning is materialized only at a consuming boundary.
   Command-sensitive boundaries materialize this pair from the reader's facts
   and already-resolved meaning. Ordinary macro activation and unexpanded body
   collection construct no command record; rich commands remain local to actual

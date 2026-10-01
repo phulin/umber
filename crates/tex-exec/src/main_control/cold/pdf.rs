@@ -4,7 +4,6 @@
 //! barrier; none owns command delivery.
 
 use super::super::*;
-use super::operation::*;
 use super::support::*;
 
 pub(in crate::main_control) fn write_text<G>(
@@ -87,41 +86,40 @@ fn node_pdf_navigation_identifier<G>(
 }
 
 fn take_admitted_pdf_identifier<G>(
-    identifier: &mut RootedPdfActionIdentifier<OperationTokenRoot<G>>,
+    identifier: &mut tex_command::PdfActionIdentifier<tex_state::TokenListId<G>>,
 ) -> tex_state::PdfActionIdentifier<G> {
     match identifier {
-        RootedPdfActionIdentifier::Name(tokens) => {
-            tex_state::PdfActionIdentifier::Name(tokens.take_prepared())
+        tex_command::PdfActionIdentifier::Name(tokens) => {
+            tex_state::PdfActionIdentifier::Name(tokens.clone())
         }
-        RootedPdfActionIdentifier::Number(number) => {
+        tex_command::PdfActionIdentifier::Number(number) => {
             tex_state::PdfActionIdentifier::Number(*number)
         }
-        RootedPdfActionIdentifier::Raw(tokens) => {
-            tex_state::PdfActionIdentifier::Raw(tokens.take_prepared())
+        tex_command::PdfActionIdentifier::Raw(tokens) => {
+            tex_state::PdfActionIdentifier::Raw(tokens.clone())
         }
     }
 }
 
 pub(in crate::main_control) fn take_admitted_pdf_action<G>(
-    action: &mut RootedPdfActionSpec<OperationTokenRoot<G>>,
+    action: &mut tex_command::PdfActionSpec<tex_state::TokenListId<G>>,
 ) -> tex_state::PdfActionSpec<G> {
     fn destination<G>(
-        destination: &mut RootedPdfActionDestination<OperationTokenRoot<G>>,
+        destination: &mut tex_command::PdfActionDestination<tex_state::TokenListId<G>>,
     ) -> tex_state::PdfActionDestination<G> {
         let target = match &mut destination.target {
-            RootedPdfActionTarget::Page { number, view } => tex_state::PdfActionTarget::Page {
-                number: *number,
-                view: view.take_prepared(),
-            },
-            RootedPdfActionTarget::Destination(identifier) => {
+            tex_command::PdfActionTarget::Page { number, view } => {
+                tex_state::PdfActionTarget::Page {
+                    number: *number,
+                    view: view.clone(),
+                }
+            }
+            tex_command::PdfActionTarget::Destination(identifier) => {
                 tex_state::PdfActionTarget::Destination(take_admitted_pdf_identifier(identifier))
             }
         };
         tex_state::PdfActionDestination {
-            file: destination
-                .file
-                .as_mut()
-                .map(OperationTokenRoot::take_prepared),
+            file: destination.file.take(),
             structure: destination
                 .structure
                 .as_mut()
@@ -132,38 +130,42 @@ pub(in crate::main_control) fn take_admitted_pdf_action<G>(
     }
 
     match action {
-        RootedPdfActionSpec::User(tokens) => tex_state::PdfActionSpec::User(tokens.take_prepared()),
-        RootedPdfActionSpec::GoTo(value) => tex_state::PdfActionSpec::GoTo(destination(value)),
-        RootedPdfActionSpec::Thread(value) => tex_state::PdfActionSpec::Thread(destination(value)),
+        tex_command::PdfActionSpec::User(tokens) => tex_state::PdfActionSpec::User(tokens.clone()),
+        tex_command::PdfActionSpec::GoTo(value) => {
+            tex_state::PdfActionSpec::GoTo(destination(value))
+        }
+        tex_command::PdfActionSpec::Thread(value) => {
+            tex_state::PdfActionSpec::Thread(destination(value))
+        }
     }
 }
 
 pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
-    request: &mut RootedPdfNavigationRequest<OperationTokenRoot<G>>,
+    request: &mut tex_command::PdfNavigationRequest<tex_state::TokenListId<G>>,
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ReplayStep, ExecError> {
     match request {
-        RootedPdfNavigationRequest::Annotation(request) => {
+        tex_command::PdfNavigationRequest::Annotation(request) => {
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfannot"));
             }
             match request {
-                RootedPdfAnnotationRequest::Reserve => {
+                tex_command::PdfAnnotationRequest::Reserve => {
                     stores
                         .reserve_pdf_annotation()
                         .map_err(|_| ExecError::PdfObjectCapacity)?;
                 }
-                RootedPdfAnnotationRequest::Define {
+                tex_command::PdfAnnotationRequest::Define {
                     use_object,
                     dimensions,
                     entries,
                 } => {
                     let data = tex_state::PdfAnnotationData {
                         dimensions: *dimensions,
-                        entries: entries.tokens.take_prepared(),
+                        entries: entries.tokens.clone(),
                     };
                     let record = match use_object {
                         Some(object) => stores
@@ -189,7 +191,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                 }
             }
         }
-        RootedPdfNavigationRequest::StartLink(RootedPdfStartLinkRequest {
+        tex_command::PdfNavigationRequest::StartLink(tex_command::PdfStartLinkRequest {
             dimensions,
             attributes,
             action,
@@ -205,7 +207,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
             }
             let action = take_admitted_pdf_action(action);
             let attributes = match attributes {
-                Some(value) => value.tokens.take_prepared(),
+                Some(value) => value.tokens.clone(),
                 None => stores
                     .allocate_token_list(&[])
                     .expect("empty PDF link attributes fit admitted storage"),
@@ -229,7 +231,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                 },
             )?;
         }
-        RootedPdfNavigationRequest::EndLink => {
+        tex_command::PdfNavigationRequest::EndLink => {
             if matches!(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
@@ -255,7 +257,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                 },
             )?;
         }
-        RootedPdfNavigationRequest::Outline(RootedPdfOutlineRequest {
+        tex_command::PdfNavigationRequest::Outline(tex_command::PdfOutlineRequest {
             attributes,
             action,
             count,
@@ -266,22 +268,17 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
             }
             let action = take_admitted_pdf_action(action);
             let attributes = match attributes {
-                Some(value) => value.tokens.take_prepared(),
+                Some(value) => value.tokens.clone(),
                 None => stores
                     .allocate_token_list(&[])
                     .expect("empty PDF outline attributes fit admitted storage"),
             };
             stores
-                .create_pdf_outline(
-                    attributes,
-                    action.clone(),
-                    *count,
-                    title.tokens.take_prepared(),
-                )
+                .create_pdf_outline(attributes, action.clone(), *count, title.tokens.clone())
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             reserve_navigation_action_targets(stores, &action)?;
         }
-        RootedPdfNavigationRequest::Destination(RootedPdfDestinationRequest {
+        tex_command::PdfNavigationRequest::Destination(tex_command::PdfDestinationRequest {
             structure,
             identifier,
             kind,
@@ -312,7 +309,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                 })),
             )?;
         }
-        RootedPdfNavigationRequest::Thread(RootedPdfThreadRequest {
+        tex_command::PdfNavigationRequest::Thread(tex_command::PdfThreadRequest {
             dimensions,
             attributes,
             identifier,
@@ -338,13 +335,13 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                     attributes: attributes
                         .as_ref()
                         .map_or_else(tex_state::node::NodeTokenKey::default, |value| {
-                            stores.node_token_list(value.tokens.prepared())
+                            stores.node_token_list(&value.tokens)
                         }),
                     running: *running,
                 })),
             )?;
         }
-        RootedPdfNavigationRequest::EndThread => {
+        tex_command::PdfNavigationRequest::EndThread => {
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfendthread"));
             }
@@ -418,53 +415,53 @@ pub(in crate::main_control) fn pdf_action_target_identities<G>(
 }
 
 pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
-    request: &mut RootedPdfGraphicsRequest<OperationTokenRoot<G>>,
+    request: &mut tex_command::PdfGraphicsRequest<tex_state::TokenListId<G>>,
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     command: &CommandState<G>,
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ReplayStep, ExecError> {
-    use RootedPdfColorStackAction as Action;
+    use tex_command::PdfColorStackActionRequest as Action;
 
-    if !matches!(request, RootedPdfGraphicsRequest::SavePosition)
+    if !matches!(request, tex_command::PdfGraphicsRequest::SavePosition)
         && stores.int_param(IntParam::PDF_OUTPUT) <= 0
     {
         let primitive = match request {
-            RootedPdfGraphicsRequest::Literal { .. } => "pdfliteral",
-            RootedPdfGraphicsRequest::SetMatrix { .. } => "pdfsetmatrix",
-            RootedPdfGraphicsRequest::Save => "pdfsave",
-            RootedPdfGraphicsRequest::Restore => "pdfrestore",
-            RootedPdfGraphicsRequest::ColorStack { .. } => "pdfcolorstack",
-            RootedPdfGraphicsRequest::SavePosition => unreachable!(),
-            RootedPdfGraphicsRequest::SnapReferencePoint => "pdfsnaprefpoint",
-            RootedPdfGraphicsRequest::SnapY { .. } => "pdfsnapy",
-            RootedPdfGraphicsRequest::SnapYComp { .. } => "pdfsnapycomp",
+            tex_command::PdfGraphicsRequest::Literal { .. } => "pdfliteral",
+            tex_command::PdfGraphicsRequest::SetMatrix { .. } => "pdfsetmatrix",
+            tex_command::PdfGraphicsRequest::Save => "pdfsave",
+            tex_command::PdfGraphicsRequest::Restore => "pdfrestore",
+            tex_command::PdfGraphicsRequest::ColorStack { .. } => "pdfcolorstack",
+            tex_command::PdfGraphicsRequest::SavePosition => unreachable!(),
+            tex_command::PdfGraphicsRequest::SnapReferencePoint => "pdfsnaprefpoint",
+            tex_command::PdfGraphicsRequest::SnapY { .. } => "pdfsnapy",
+            tex_command::PdfGraphicsRequest::SnapYComp { .. } => "pdfsnapycomp",
         };
         return Err(ExecError::PdfExtensionInDviMode(primitive));
     }
 
     let whatsit = match request {
-        RootedPdfGraphicsRequest::Literal {
+        tex_command::PdfGraphicsRequest::Literal {
             mode,
             deferred: true,
             text,
         } => Whatsit::DeferredPdfLiteral {
             mode: *mode,
-            tokens: stores.node_token_list(text.tokens.prepared()),
+            tokens: stores.node_token_list(&text.tokens),
         },
-        RootedPdfGraphicsRequest::Literal { mode, text, .. } => Whatsit::PdfLiteral {
+        tex_command::PdfGraphicsRequest::Literal { mode, text, .. } => Whatsit::PdfLiteral {
             mode: *mode,
-            payload: pdf_graphics_text(text.tokens.prepared(), stores),
+            payload: pdf_graphics_text(&text.tokens, stores),
         },
-        RootedPdfGraphicsRequest::SetMatrix { text } => Whatsit::PdfSetMatrix {
-            payload: pdf_graphics_text(text.tokens.prepared(), stores),
+        tex_command::PdfGraphicsRequest::SetMatrix { text } => Whatsit::PdfSetMatrix {
+            payload: pdf_graphics_text(&text.tokens, stores),
         },
-        RootedPdfGraphicsRequest::Save => Whatsit::PdfSave,
-        RootedPdfGraphicsRequest::Restore => Whatsit::PdfRestore,
-        RootedPdfGraphicsRequest::SavePosition => Whatsit::PdfSavePos,
-        RootedPdfGraphicsRequest::SnapReferencePoint => Whatsit::PdfSnapRefPoint,
-        RootedPdfGraphicsRequest::SnapY { glue } => {
+        tex_command::PdfGraphicsRequest::Save => Whatsit::PdfSave,
+        tex_command::PdfGraphicsRequest::Restore => Whatsit::PdfRestore,
+        tex_command::PdfGraphicsRequest::SavePosition => Whatsit::PdfSavePos,
+        tex_command::PdfGraphicsRequest::SnapReferencePoint => Whatsit::PdfSnapRefPoint,
+        tex_command::PdfGraphicsRequest::SnapY { glue } => {
             if glue.width.raw() < 0 {
                 return Err(ExecError::PdfNavigation(
                     "pdfTeX error (ext1): negative snap glue",
@@ -472,8 +469,10 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
             }
             Whatsit::PdfSnapY { glue: *glue }
         }
-        RootedPdfGraphicsRequest::SnapYComp { ratio } => Whatsit::PdfSnapYComp { ratio: *ratio },
-        RootedPdfGraphicsRequest::ColorStack { id, action } => {
+        tex_command::PdfGraphicsRequest::SnapYComp { ratio } => {
+            Whatsit::PdfSnapYComp { ratio: *ratio }
+        }
+        tex_command::PdfGraphicsRequest::ColorStack { id, action } => {
             // pdftex.web's `<Implement \pdfcolorstack>` reports all three of
             // these through `print_err`/`error`, so each is a counted error
             // with a context display, not a bare note.
@@ -524,14 +523,12 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
                 return Ok(ReplayStep::Continue);
             };
             let action = match action {
-                Action::Set(text) => tex_state::PdfColorStackAction::Set(pdf_graphics_text(
-                    text.tokens.prepared(),
-                    stores,
-                )),
-                Action::Push(text) => tex_state::PdfColorStackAction::Push(pdf_graphics_text(
-                    text.tokens.prepared(),
-                    stores,
-                )),
+                Action::Set(text) => {
+                    tex_state::PdfColorStackAction::Set(pdf_graphics_text(&text.tokens, stores))
+                }
+                Action::Push(text) => {
+                    tex_state::PdfColorStackAction::Push(pdf_graphics_text(&text.tokens, stores))
+                }
                 Action::Pop => tex_state::PdfColorStackAction::Pop,
                 Action::Current => tex_state::PdfColorStackAction::Current,
             };
@@ -543,7 +540,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
 }
 
 pub(in crate::main_control) fn apply_pdf_object_request<G>(
-    request: &mut RootedPdfObjectRequest<OperationTokenRoot<G>>,
+    request: &mut tex_command::PdfObjectRequest<tex_state::TokenListId<G>>,
     stores: &mut tex_state::CommandContext<'_, G>,
     immediate: bool,
 ) -> Result<ReplayStep, ExecError> {
@@ -551,12 +548,12 @@ pub(in crate::main_control) fn apply_pdf_object_request<G>(
         return Err(ExecError::PdfExtensionInDviMode("pdfobj"));
     }
     match request {
-        RootedPdfObjectRequest::Reserve => {
+        tex_command::PdfObjectRequest::Reserve => {
             stores
                 .reserve_pdf_raw_object()
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
         }
-        RootedPdfObjectRequest::Define {
+        tex_command::PdfObjectRequest::Define {
             use_object,
             stream,
             stream_attr,
@@ -591,9 +588,9 @@ pub(in crate::main_control) fn apply_pdf_object_request<G>(
                 .initialize_pdf_raw_object(
                     id,
                     *stream,
-                    stream_attr.as_mut().map(|text| text.tokens.take_prepared()),
+                    stream_attr.as_mut().map(|text| text.tokens.clone()),
                     *file,
-                    data.tokens.take_prepared(),
+                    data.tokens.clone(),
                     immediate,
                 )
                 .map_err(|_| ExecError::PdfReferencedObjectNotFound)?;
@@ -603,7 +600,7 @@ pub(in crate::main_control) fn apply_pdf_object_request<G>(
 }
 
 pub(in crate::main_control) fn apply_pdf_form_request<G>(
-    request: &mut RootedPdfFormRequest<OperationTokenRoot<G>>,
+    request: &mut tex_command::PdfFormRequest<tex_state::TokenListId<G>>,
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
@@ -611,13 +608,13 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
 ) -> Result<Option<tex_state::PdfFormRecord<G>>, ExecError> {
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
         let name = match request {
-            RootedPdfFormRequest::Create { .. } => "pdfxform",
-            RootedPdfFormRequest::Reference { .. } => "pdfrefxform",
+            tex_command::PdfFormRequest::Create { .. } => "pdfxform",
+            tex_command::PdfFormRequest::Reference { .. } => "pdfrefxform",
         };
         return Err(ExecError::PdfExtensionInDviMode(name));
     }
     match request {
-        RootedPdfFormRequest::Reference { object } => {
+        tex_command::PdfFormRequest::Reference { object } => {
             let form = u32::try_from(*object)
                 .ok()
                 .and_then(|object| stores.pdf_form(object))
@@ -636,7 +633,7 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
             )?;
             Ok(None)
         }
-        RootedPdfFormRequest::Create {
+        tex_command::PdfFormRequest::Create {
             attr,
             resources,
             box_register,
@@ -677,8 +674,8 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
                     identity,
                     (list, form_build),
                     dimensions,
-                    attr.as_mut().map(|text| text.tokens.take_prepared()),
-                    resources.as_mut().map(|text| text.tokens.take_prepared()),
+                    attr.as_mut().map(|text| text.tokens.clone()),
+                    resources.as_mut().map(|text| text.tokens.clone()),
                     immediate,
                 )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
@@ -1065,7 +1062,7 @@ pub(in crate::main_control) fn apply_pdf_image_compatibility_policy<G>(
 /// ensuring the host sees the effective page-box identity.
 pub(in crate::main_control) fn pdf_image_page_box<G, T>(
     stores: &tex_state::CommandContext<'_, G>,
-    request: &RootedPdfImageRequest<T>,
+    request: &tex_command::PdfImageRequest<T>,
 ) -> tex_command::PdfImagePageBox {
     let page_box = |value| match value {
         1 => tex_command::PdfImagePageBox::Media,
@@ -1174,74 +1171,6 @@ pub(in crate::main_control) fn write_effect_channel(sink: PrintSink) -> String {
         PrintSink::Log => 17,
     };
     format!("stream:{stream}")
-}
-
-pub(in crate::main_control) fn applied_effect_observation<G>(
-    scanned: &PreparedColdCommand<G>,
-    stores: &tex_state::CommandContext<'_, G>,
-) -> Option<EffectRecord> {
-    match scanned {
-        ColdOperation::Message { tokens, .. } => Some(EffectRecord {
-            kind: ObservationEffectKind::Message,
-            // TeX82 §1279 observes the string produced by
-            // `token_show(def_ref)`, not a character-only projection of the
-            // expanded list. Control-sequence tokens can deliberately survive
-            // expansion through `\noexpand` and must retain `print_cs`'s
-            // spelling and separator.
-            channel: "terminal".into(),
-            value: ObservationValue::Bytes(
-                message_tokens_text(stores, tokens.prepared().clone()).into_bytes(),
-            ),
-            source: None,
-        }),
-        ColdOperation::ShowTokens { tokens } => Some(EffectRecord {
-            kind: ObservationEffectKind::ShowTokens,
-            channel: "showtokens".into(),
-            value: ObservationValue::Tokens(
-                stores
-                    .token_list(tokens.prepared().clone())
-                    .iter()
-                    .map(|word| observed_macro_token(word.semantic_token(), stores))
-                    .collect(),
-            ),
-            source: None,
-        }),
-        ColdOperation::ShowIfs { conditions } => Some(EffectRecord {
-            kind: ObservationEffectKind::ShowIfs,
-            channel: "showifs".into(),
-            value: ObservationValue::Name(render_showifs(conditions)),
-            source: None,
-        }),
-        ColdOperation::ShowGroups {
-            diagnostic: Some(diagnostic),
-        } => Some(EffectRecord {
-            kind: ObservationEffectKind::ShowGroups,
-            channel: "showgroups".into(),
-            value: ObservationValue::Name(crate::diagnostics::render_showgroups(diagnostic)),
-            source: None,
-        }),
-        ColdOperation::ShowGroups { diagnostic: None } => None,
-        ColdOperation::ImmediateExtension(RootedImmediateExtension::Write { stream, tokens }) => {
-            Some(EffectRecord {
-                kind: ObservationEffectKind::Write,
-                channel: format!("stream:{}", stream.normalized_number()),
-                value: ObservationValue::Tokens(
-                    stores
-                        .token_list(tokens.prepared().clone())
-                        .iter()
-                        .map(|word| observed_macro_token(word.semantic_token(), stores))
-                        .collect(),
-                ),
-                source: None,
-            })
-        }
-        // TeX82 §1335's `final_cleanup` and §1333's
-        // `close_files_and_terminate` run once `its_all_over` has returned
-        // true, so the job-termination effect belongs to that step and to no
-        // other normal command.
-        ColdOperation::End { .. } => Some(engine_termination_effect()),
-        _ => None,
-    }
 }
 
 pub(in crate::main_control) fn engine_termination_effect() -> EffectRecord {

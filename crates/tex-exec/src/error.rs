@@ -222,7 +222,7 @@ pub enum ExecError {
     /// different mode (e.g. a math-noad primitive reached outside math
     /// mode). See `docs/tex_command_core.md`'s dispatch-completeness
     /// invariant and umber2-johp.69: converting this from a silent
-    /// `ColdOperation::Continue` into a loud, named failure is the point --
+    /// a silent continue into a loud, named failure is the point --
     /// the alternative silently drops the primitive's own operand tokens
     /// into the document as literal text arbitrarily far downstream.
     UnimplementedPrimitive {
@@ -237,7 +237,7 @@ pub enum ExecError {
     /// This is `UnimplementedPrimitive`'s sibling one level up the meaning
     /// word, and exists for the same reason (umber2-johp.108): main
     /// control's `Meaning`-level match used to end in a silent
-    /// `_ => Ok(ColdOperation::Continue)`, which turned "this meaning has no
+    /// a silent continue catch-all, which turned "this meaning has no
     /// dispatch" into "succeeded and consumed nothing" and left the
     /// command's own operand tokens to be typeset as literal text
     /// arbitrarily far downstream. Every variant reported here is a real

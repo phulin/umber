@@ -1,0 +1,112 @@
+//! Publication consumes genuine scanner requests into native token owners.
+use super::*;
+use tex_command::TokenRequest;
+
+pub(super) fn publish_tokens<G, T: TokenRequest<tex_command::AttemptTokenListId>>(
+    command: &CommandState<G>,
+    stores: &mut Universe<G>,
+    request: T,
+) -> Result<T::Mapped<tex_state::TokenListId<G>>, ExecError> {
+    let mut rows = 0usize;
+    let mut words = 0usize;
+    let mut invalid = false;
+    request.visit_tokens(&mut |source| match command.attempt_token_words(*source) {
+        Ok(tokens) => {
+            if let (Some(next_rows), Some(next_words)) =
+                (rows.checked_add(1), words.checked_add(tokens.len()))
+            {
+                rows = next_rows;
+                words = next_words;
+            } else {
+                invalid = true;
+            }
+        }
+        Err(_) => invalid = true,
+    });
+    if invalid {
+        return Err(ExecError::MissingToken {
+            context: "validated scanner token roots",
+        });
+    }
+    stores
+        .reserve_token_lists(rows, words)
+        .map_err(|_| ExecError::MissingToken {
+            context: "scanner token destination capacity",
+        })?;
+    Ok(request.map_tokens(&mut |source| {
+        let words = command
+            .attempt_token_words(source)
+            .expect("all scanner roots validated before publication");
+        stores
+            .allocate_reserved_token_list(words.iter().map(|word| word.token_word()))
+            .expect("all native destinations reserved before publication")
+    }))
+}
+pub(super) fn publish_alignment_preamble<G>(
+    command: &mut CommandState<G>,
+    stores: &mut Universe<G>,
+    alignment: AlignmentIdentity,
+) -> Result<PreparedAlignmentPreamble<G>, ExecError> {
+    let preamble = command
+        .take_completed_alignment_preamble(alignment)
+        .map_err(|_| ExecError::MissingToken {
+            context: "completed alignment preamble",
+        })?;
+    let mut invalid = false;
+    let mut rows = 0usize;
+    let mut words = 0usize;
+    for column in &preamble.columns {
+        for source in column
+            .u_template
+            .into_iter()
+            .chain(std::iter::once(column.v_template))
+        {
+            match command.attempt_token_words(source) {
+                Ok(tokens) => {
+                    if let (Some(r), Some(w)) =
+                        (rows.checked_add(1), words.checked_add(tokens.len()))
+                    {
+                        rows = r;
+                        words = w;
+                    } else {
+                        invalid = true;
+                    }
+                }
+                Err(_) => invalid = true,
+            }
+        }
+    }
+    if invalid {
+        return Err(ExecError::MissingToken {
+            context: "validated alignment template roots",
+        });
+    }
+    stores
+        .reserve_token_lists(rows, words)
+        .map_err(|_| ExecError::MissingToken {
+            context: "scanner token destination capacity",
+        })?;
+    let mut publish = |source| {
+        let words = command
+            .attempt_token_words(source)
+            .expect("validated alignment source");
+        stores
+            .allocate_reserved_token_list(words.iter().map(|word| word.token_word()))
+            .expect("reserved alignment destination")
+    };
+    let columns = preamble
+        .columns
+        .into_iter()
+        .map(|column| PreparedAlignmentCellTemplates {
+            u_template: column.u_template.map(&mut publish),
+            v_template: publish(column.v_template),
+        })
+        .collect();
+    Ok(PreparedAlignmentPreamble {
+        alignment,
+        columns,
+        tabskips: preamble.tabskips,
+        default_tabskip: preamble.default_tabskip,
+        repeat_start: preamble.repeat_start,
+    })
+}

@@ -2297,6 +2297,28 @@ impl<G> Universe<G> {
         Ok(id)
     }
 
+    /// Reserves every token-list destination before a structured request is published.
+    pub fn reserve_token_lists(&mut self, rows: usize, words: usize) -> Result<(), UniverseError> {
+        self.core
+            .as_mut()
+            .ok_or(UniverseError::Retired)?
+            .admit_mut()?
+            .reserve_token_lists(rows, words)?;
+        Ok(())
+    }
+    /// Streams validated scanner words into a pre-reserved native token owner.
+    pub fn allocate_reserved_token_list(
+        &mut self,
+        words: impl ExactSizeIterator<Item = TokenWord>,
+    ) -> Result<TokenListId<G>, UniverseError> {
+        Ok(self
+            .core
+            .as_mut()
+            .ok_or(UniverseError::Retired)?
+            .admit_mut()?
+            .allocate_reserved_token_list(words)?)
+    }
+
     pub fn allocate_glue(&mut self, value: GlueSpec) -> Result<GlueId<G>, UniverseError> {
         let id = self
             .core

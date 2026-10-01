@@ -1,194 +1,12 @@
-//! Fused scanning and allocation-free application for common commands.
+//! Concrete definition, let, catcode, and group mutation helpers.
 //!
-//! These handlers are the single semantic owner for TeX82 §§1211--1234's
-//! definition, let, prefix-result, group, and catcode families. They scan into
-//! a family-sized typed operand and apply it immediately after the command
-//! processor releases its borrow. `ColdOperation` is not materialized on this
-//! path. Dispatch returns the family-sized hot result directly to the admitted
-//! caller; it never enters the suspension-only command episode.
+//! TeX82 §§1211--1234 scan through the sole direct engine and pass completed
+//! native operands here after ending the processor loan. Published definitions
+//! enter the actual destination meaning cell; no operation carrier is created.
 
 use super::*;
 
-/// The complete operand of one measured common operation.
-///
-/// This enum is intentionally private to the fused scan/apply seam. It is not
-/// a second executor or a durable continuation: it exists only long enough to
-/// release `CommandProcessor`'s borrow of `Universe` before stomach mutation.
-/// Keeping the scanned definition inline preserves the allocation-free common
-/// command path despite the deliberate variant size difference.
-pub(super) enum HotOperation<G> {
-    MacroDefinition {
-        target: Symbol,
-        definition: tex_state::DefinitionRef<G>,
-        flags: MeaningFlags,
-        global: bool,
-    },
-    Let {
-        target: Symbol,
-        meaning: tex_state::meaning::ResolvedMeaning<G>,
-        global: bool,
-    },
-    CatCode {
-        character: char,
-        value: i32,
-        global: bool,
-    },
-    EnterGroup(GroupKind),
-    LeaveGroup {
-        kind: GroupKind,
-        context: &'static str,
-    },
-}
-
-impl<G> HotOperation<G> {
-    pub(super) const fn begin_ordinary_group() -> Self {
-        Self::EnterGroup(GroupKind::Simple)
-    }
-
-    pub(super) const fn end_ordinary_group() -> Self {
-        Self::LeaveGroup {
-            kind: GroupKind::Simple,
-            context: "ordinary simple group",
-        }
-    }
-
-    pub(super) const fn is_group_transition(&self) -> bool {
-        matches!(self, Self::EnterGroup(_) | Self::LeaveGroup { .. })
-    }
-
-    pub(super) const fn fires_afterassignment(&self) -> bool {
-        matches!(
-            self,
-            Self::MacroDefinition { .. } | Self::Let { .. } | Self::CatCode { .. }
-        )
-    }
-}
-
-/// Scans a ranked common command after §1211's prefix loop and all contextual
-/// mode/group cases have selected the ordinary assignment arm.
-pub(super) fn scan<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
-    meaning: tex_state::meaning::ResolvedMeaning<G>,
-    scalar: &mut tex_command::ScalarScanFrame,
-    global: bool,
-    flags: MeaningFlags,
-    innermost_group: Option<GroupKind>,
-) -> Result<Option<HotOperation<G>>, ExecError> {
-    let operation = match meaning {
-        tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
-            cat: Catcode::BeginGroup,
-            ..
-        }) => HotOperation::begin_ordinary_group(),
-        tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::BeginGroup,
-        )) => HotOperation::EnterGroup(GroupKind::SemiSimple),
-        tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::EndGroup,
-        )) if innermost_group == Some(GroupKind::SemiSimple) => HotOperation::LeaveGroup {
-            kind: GroupKind::SemiSimple,
-            context: "semi simple group",
-        },
-        tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::CatCode,
-        )) => scan_catcode_assignment(processor, scalar, global)?,
-        tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-            primitive @ (UnexpandablePrimitive::Def
-            | UnexpandablePrimitive::Edef
-            | UnexpandablePrimitive::Gdef
-            | UnexpandablePrimitive::Xdef),
-        )) => {
-            let definition = processor
-                .scan_macro_definition(
-                    matches!(
-                        primitive,
-                        UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
-                    ),
-                    global,
-                )
-                .map_err(command_error)?;
-            HotOperation::MacroDefinition {
-                target: definition.target,
-                definition: definition.definition,
-                flags,
-                global,
-            }
-        }
-        tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-            primitive @ (UnexpandablePrimitive::Let | UnexpandablePrimitive::FutureLet),
-        )) => {
-            let (target, meaning) = processor
-                .scan_let_assignment(primitive == UnexpandablePrimitive::FutureLet)
-                .map_err(command_error)?;
-            HotOperation::Let {
-                target,
-                meaning,
-                global,
-            }
-        }
-        _ => return Ok(None),
-    };
-    Ok(Some(operation))
-}
-
-pub(super) fn scan_catcode_assignment<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
-    scalar: &mut tex_command::ScalarScanFrame,
-    global: bool,
-) -> Result<HotOperation<G>, ExecError> {
-    let (character, value) = scan_code_table_operands(processor, scalar)?;
-    Ok(HotOperation::CatCode {
-        character,
-        value,
-        global,
-    })
-}
-
-/// Applies one measured common operation to canonical state and journals.
-pub(super) fn apply<G>(
-    operation: &mut HotOperation<G>,
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
-    // TeX82 §§1034--1038 finishes the character/ligature loop when its
-    // lookahead reaches any unexpandable command.  These common assignments
-    // are applied through the hot path, so they must end the pending run just
-    // as a group boundary does.  In particular, a `\let` between two glyphs
-    // must expose the first glyph's right font boundary before the next one.
-    crate::box_runtime::flush_pending_hchars_with_fuel(
-        modes,
-        stores,
-        command.diagnostic_effects,
-        command.fuel,
-    )?;
-    let mut stores = LinearCommandContext::new(stores);
-    let stores = &mut stores;
-    match operation {
-        HotOperation::MacroDefinition {
-            target,
-            definition,
-            flags,
-            global,
-        } => apply_macro_definition(*target, *definition, *flags, *global, stores, command),
-        HotOperation::Let {
-            target,
-            meaning,
-            global,
-        } => apply_let(*target, *meaning, *global, stores, command),
-        HotOperation::CatCode {
-            character,
-            value,
-            global,
-        } => apply_catcode(*character, *value, *global, stores, command),
-        HotOperation::EnterGroup(kind) => {
-            enter_group(stores, command.state, command.diagnostic_effects, *kind);
-            Ok(ReplayStep::Continue)
-        }
-        HotOperation::LeaveGroup { kind, context } => leave_group(*kind, context, stores, command),
-    }
-}
-
-fn apply_macro_definition<G>(
+pub(super) fn apply_macro_definition<G>(
     target: Symbol,
     definition: tex_state::DefinitionRef<G>,
     flags: MeaningFlags,
@@ -270,7 +88,7 @@ pub(super) fn commit_macro_definition<G>(
     );
 }
 
-fn apply_let<G>(
+pub(super) fn apply_let<G>(
     target: Symbol,
     meaning: tex_state::meaning::ResolvedMeaning<G>,
     global: bool,
@@ -338,7 +156,7 @@ pub(super) fn commit_let<G>(
     Ok(committed.then_some(meaning))
 }
 
-fn apply_catcode<G>(
+pub(super) fn apply_catcode<G>(
     character: char,
     raw_value: i32,
     global: bool,
@@ -436,7 +254,7 @@ pub(super) fn catcode_from_value(value: i32) -> Result<Catcode, ExecError> {
     }
 }
 
-fn leave_group<G>(
+pub(super) fn leave_group<G>(
     kind: GroupKind,
     context: &'static str,
     stores: &mut LinearCommandContext<'_, '_, G>,

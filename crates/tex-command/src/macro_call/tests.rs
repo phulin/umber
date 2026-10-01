@@ -440,7 +440,7 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 DeliveryStatus::Command
             );
             let mut call = destination.take().expect("macro command");
-            let owners_before = match call.meaning_ref() {
+            let owners_before = match &call.meaning() {
                 tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
                     definition.semantic_owner_count()
                 }
@@ -466,13 +466,13 @@ fn successful_macro_calls_admit_one_nonowning_replacement_row() {
                 arguments.len()
             );
             assert!(processor.command.scratch.is_quiescent());
-            let tex_state::meaning::ResolvedMeaning::Macro { definition, .. } = call.meaning_ref()
+            let tex_state::meaning::ResolvedMeaning::Macro { definition, .. } = &call.meaning()
             else {
                 panic!("macro meaning");
             };
             assert_eq!(definition.semantic_owner_count(), owners_before);
             assert!(matches!(
-                call.meaning_ref(),
+                &call.meaning(),
                 tex_state::meaning::ResolvedMeaning::Macro { .. }
             ));
 
@@ -557,7 +557,7 @@ fn failed_macro_call_keeps_the_resident_definition_owner() {
             &mut diagnostic_effects,
         );
         let mut call = crate::test_harness::expect_raw_command(&mut processor);
-        let owners_before = match call.meaning_ref() {
+        let owners_before = match &call.meaning() {
             tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
                 definition.semantic_owner_count()
             }
@@ -565,7 +565,7 @@ fn failed_macro_call_keeps_the_resident_definition_owner() {
         };
 
         assert_eq!(processor.macro_call(&mut call), Ok(false));
-        match call.meaning_ref() {
+        match &call.meaning() {
             tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
                 assert_eq!(definition.semantic_owner_count(), owners_before);
             }

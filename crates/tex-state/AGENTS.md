@@ -8,6 +8,11 @@ Read the repository-level `AGENTS.md` before editing here. This crate is the liv
 
 All production mutation of live TeX state should pass through `Universe` or similarly aggregate facades. This crate also owns the barriered APIs that keep rollback, grouping, effect commit, and replay behavior coherent.
 
+The executor publishes scanner token roots through `Universe::reserve_token_lists`
+and `allocate_reserved_token_list`: complete source validation and destination
+reservation precede streaming into the native token arena. These methods do not
+expose substores or introduce another arena.
+
 ## File Map
 
 - `AGENTS.md`: Local guidance for agents working in the `tex-state` crate.

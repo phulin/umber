@@ -344,9 +344,6 @@ fn attempt_promotion_preflights_then_writes_the_resident_destination_once() {
         .expect("read attempt promotion implementation");
     let stores = fs::read_to_string(repository.join("crates/tex-state/src/stores.rs"))
         .expect("read destination promotion implementation");
-    let operation =
-        fs::read_to_string(repository.join("crates/tex-exec/src/main_control/cold/operation.rs"))
-            .expect("read resident cold-operation promotion implementation");
     let promotion = attempt
         .split("pub(crate) fn promote_into<D>(")
         .nth(1)
@@ -357,17 +354,6 @@ fn attempt_promotion_preflights_then_writes_the_resident_destination_once() {
         .nth(1)
         .and_then(|tail| tail.split("fn promote_value_streams_from<").next())
         .expect("locate resident destination promotion");
-    let resident_writer = operation
-        .split("struct ColdOperationPromotion<'a, G>")
-        .nth(1)
-        .and_then(|tail| tail.split("impl<G> ColdOperation<G>").next())
-        .expect("locate cold-operation resident writer");
-    let preparation = operation
-        .split("pub(in crate::main_control) fn prepare_cold_operation<G>(")
-        .nth(1)
-        .and_then(|tail| tail.split("struct ColdOperationPromotion<'a, G>").next())
-        .expect("locate resident cold-operation preparation");
-
     assert!(promotion.contains("universe.promote_resident_batch(&mut batch)?"));
     assert!(promotion.contains("AttemptResidentPromotion"));
     assert!(!promotion.contains("SmallVec"));
@@ -393,16 +379,6 @@ fn attempt_promotion_preflights_then_writes_the_resident_destination_once() {
     assert!(destination.contains("batch.settle_next_definition(definition)"));
     assert!(destination.contains("batch.settle_next_token_list(tokens)"));
     assert!(!destination.contains("PromotionReceipt"));
-    assert!(!resident_writer.contains("AttemptPromotionReceipt"));
-    assert!(!resident_writer.contains("AttemptPromotionRoots"));
-    assert!(!resident_writer.contains("receipt.token_lists"));
-    assert!(!resident_writer.contains("receipt.definitions"));
-    assert!(preparation.contains(") -> Result<(), ColdPreparationError>"));
-    assert!(preparation.contains("command.promote_attempt_roots_into(stores, &mut destination)?"));
-    assert!(!preparation.contains("Result<Vec<"));
-    assert!(!preparation.contains("let mut roots"));
-    assert!(!preparation.contains("let mut definitions"));
-    assert!(!preparation.contains("collect::<Vec"));
 }
 
 #[test]
@@ -494,21 +470,6 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
                 path.display()
             );
         }
-    }
-
-    let main_control =
-        fs::read_to_string(repository.join("crates/tex-exec/src/main_control/command_episode.rs"))
-            .expect("read main-control continuation architecture");
-    let command_episode = main_control
-        .split("struct CommandEpisode<G>")
-        .nth(1)
-        .and_then(|tail| tail.split("impl<G> Default for CommandEpisode<G>").next())
-        .expect("locate singular resident command episode");
-    assert!(command_episode.contains("command: Option<tex_command::CurrentCommand<G>>"));
-    assert!(command_episode.contains("phase: Option<PreflightCommandPhase>"));
-    assert!(!command_episode.contains("OperationPayload"));
-    for forbidden in ["Box<", "Vec<", "Arc<", "VecDeque", "HashMap"] {
-        assert!(!command_episode.contains(forbidden));
     }
 }
 

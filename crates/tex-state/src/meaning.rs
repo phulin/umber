@@ -1314,6 +1314,21 @@ impl Meaning {
         }
     }
 
+    /// TeX main-control command family and modifier, without decoding operands.
+    /// Primitive selectors and literal catcodes distinguish control cases;
+    /// register indices, character values, and other scanned operands do not.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn runtime_word_control_code(word: u64) -> u64 {
+        let opcode = (word >> OPCODE_SHIFT) as u8;
+        let modifier = match opcode {
+            OP_EXPANDABLE_PRIMITIVE | OP_UNEXPANDABLE_PRIMITIVE => word & OPERAND_MASK,
+            OP_CHAR_TOKEN => word & 15,
+            _ => 0,
+        };
+        ((opcode as u64) << OPCODE_SHIFT) | modifier
+    }
+
     /// Returns the operand of a validated runtime word without semantic decode.
     #[doc(hidden)]
     #[must_use]

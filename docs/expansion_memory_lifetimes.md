@@ -18,7 +18,7 @@ resource retry protocol.
 | Macro frames          | Input rows retain `ResidentMacroBody` with full payload `Rc`; position is in the packed frame.                                                         | One admission retain, direct slices thereafter. Payload survives row retirement; target slot tombstoning does not invalidate it.                                                                                                                                            |
 | Arguments             | `input/arguments.rs` final pooled regions; call-local ranges/cursor in `macro_call.rs`.                                                                | Matching writes once into invocation-owned pooled `ArgumentArena` vectors; body owns the region and parameter frames borrow it. No per-argument allocation/copy/lease; free capacity is an engine allocator cache, not snapshot state. Preserve origins and brace trimming. |
 | Stored lists/backup   | Input rows own shared immutable list handles or actual transient words.                                                                                | Activation reads immutable storage directly; retirement drops the actual owner once. Backup is semantic input, distinct from host replay.                                                                                                                                   |
-| Scanner/build scratch | Call-local scanner episodes and nested marks, reusable unpublished lanes.                                                                              | Failed calls unwind/truncate; no parked scanner or caller crosses a host boundary. Delete immediate-consumption carriers as their real consumers migrate.                                                                                                                   |
+| Scanner/build scratch | Call-local scanner episodes and nested marks, reusable unpublished lanes.                                                                              | Failed calls unwind/truncate; no parked scanner or caller crosses a host boundary. Genuine scanner requests transfer their token/definition fields directly into native owners; immediate-consumption operation and phase carriers are deleted.                             |
 | Groups                | One native `GroupSaveStack` in `tex-state/src/journal/groups.rs`; synchronous context/processor unsave and executor renderer.                          | `.6` removes duplicate topology and restoration/token-result vectors. Scalar/box restores and aftergroup words share chronology; sparse saves restore at a lazy marker. The real local-row frontier remains in the sole boundary until `.13`.                               |
 | Named capture         | `CommandCapture`/`InputCapture` in command snapshot code copy actual cold rows and transient words.                                                    | Ordinary delivery produces no input undo entries. Actual vectors are charged; capture is not uniformly O(1). Active macros/groups remain forbidden.                                                                                                                         |
 | Host need             | Typed resource request plus full checkpoint and matched host transaction prefix.                                                                       | Unwind, restore aggregate, admit verified outcome, parse again; no command/matcher/scanner continuation.                                                                                                                                                                    |
@@ -76,6 +76,15 @@ clears abandoned scanner/build/replay/group/diagnostic state and retains
 session configuration, registered future sources and identity high water.
 Candidate command setup/restoration uses real cold captures; its cost is
 proportional to their contents rather than per-token work.
+
+`CurrentCommand` stores the same packed `CommandWord` produced by dense meaning
+delivery. Its control-family projection selects the direct executor arm;
+meaning decoding is demand-local. Scanner token publication preflights the
+whole real request before allocating any native destination. It consumes that
+request into the same typed shape with native owner fields, without a rooted
+adapter, promotion receipt, phase placeholder, or universal operation value.
+Diagnostic and nested consumers use the same direct engine and scratch
+settlement as ordinary execution.
 
 ## Scanner cleanup and direct construction
 

@@ -8,7 +8,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 Command operands are scanned by `tex-command` into typed request and result values. Execution code must apply those completed values after the processor borrow ends; it must not add another source cursor, raw-token delivery loop, scanner facade, or command compatibility adapter.
 
-Group close calls `unsave_group`, which drives the same `CommandProcessor::end_group` native stack walk in both existing dispatch paths. Its diagnostic callback renders each restoration while the saved owners are live; aftergroup words enter final input during unsave. There is no restoration receipt, token result vector, or delayed aftergroup scheduling helper. The lane/cold dispatch split itself remains tracked by `.15`.
+Group close calls `unsave_group`, which drives the same `CommandProcessor::end_group` native stack walk in the sole direct dispatcher. Its diagnostic callback renders each restoration while the saved owners are live; aftergroup words enter final input during unsave. There is no restoration receipt, token result vector, or delayed aftergroup scheduling helper. Ordinary, observed, diagnostic, and nested commands use that same group seam.
 
 ## Boundaries
 
@@ -36,20 +36,28 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   complete-job versus fragment completion, and terminal parking. Ownership
   transitions are direct calls into the private sibling modules below; none is
   a facade or second command front.
-- `src/main_control/delivery.rs`: same-borrow raw fetch, classification,
-  expansion, alignment interception, and general operand scanning. Ordinary
-  scanner helpers keep their typed results local and publish only completed
-  cold leaves; a resource miss unwinds the attempt for full-checkpoint replay.
-  TeX82 code-table assignments share one selector/equal/value operand scan
-  between the hot catcode and cold table paths.
+- `src/main_control/direct/`: the single packed mode/command/prefix switch in
+  `dispatch.rs`, with synchronous `scan_*` routines and concrete `apply_*`
+  methods organized by native command responsibility. `scan_macros.rs` ends
+  the actual processor/context loan before applying completed operands; it
+  owns no operation value or continuation. `characters.rs` consumes borrowed
+  source spans in the existing horizontal loop. `publication.rs` validates and
+  reserves the complete scanner token root set before streaming final native
+  token owners. `command_codes.rs` derives switch keys from packed meanings.
+- `src/main_control/semantic/`: concrete source-free typed semantic routines
+  grouped by assignments, registers, fonts, text, paragraph/page state, groups,
+  boxes/builders/leaders, alignment/recovery, math, diagnostics, streams, and
+  PDF. Each routine borrows the actual admitted native owners; no operation
+  union, readiness phase, compatibility executor, or universal payload exists.
+- `src/main_control/semantic_owners.rs`: actual semantic-owner admission and
+  ordered diagnostic, mutation, effect, artifact, and paragraph publication.
+  Observation allocates evidence only when requested. Provider loans return
+  before propagation of semantic failure.
 - `src/main_control/code_table.rs`: the shared TeX82 code-table value bounds,
   diagnostic, and zero-substitution rule. It returns a scanned value to the
   existing hot or cold assignment committer; it owns no command or table state.
-- `src/main_control/command_episode.rs`: the singular stationary
-  `CommandEpisode`, admitted command and delivery cursor, adjacent
-  caller-owned typed cold slot, and borrow-typed hot/cold execution episodes.
-  Resource misses unwind command processing; scanner operands are call-local,
-  with no parked expansion, scanner, or caller-resume frame retained here.
+- `src/main_control/leader_values.rs`: the concrete constructed/register
+  leader payload that the leader-glue scanner consumes.
 - `src/main_control/settlement.rs`: direct-operation evidence ownership,
   begin/commit/halt, resource-need and diagnostic settlement, ordered
   semantic/effect/artifact publication, and exact-cut main-source paragraph
@@ -68,77 +76,21 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   `tex-command` and settlement remains in `settlement.rs`.
 - `src/main_control/executor_facts.rs`: the borrow-scoped live mode and
   effective-tail provider plus the stack-branded checked-save and delivery
-  preparation. A scanner or conditional invokes only the exact fact method it
+  facts. A scanner or conditional invokes only the exact fact method it
   consumes; ordinary delivery writes no mode/tail cache and performs no
-  effective-tail traversal. The caller-owned preparation slot retains only
-  delivery and checked-save state across admitted stages; it contains
-  no command classification. No live fact or provider survives a processor
+  effective-tail traversal. No live fact or provider survives a processor
   episode or enters a host resource-replay request.
-- The resident `CommandEpisode` owns the admitted current command, delivery
-  phase/cursor, source role, and attempt error. Scalar scanners use a local
-  call frame and return typed values synchronously; an adjacent caller-owned
-  typed cold slot owns uncommon leaves without entering the resident command
-  layout.
-  Canonical dispatch applies ordinary character, spacing, paragraph-start,
-  grouping, definition, let, and catcode results directly in one context
-  admitted for the uninterrupted ordinary run. That context commits each
-  operation's command-attempt scope and immediately delivers the next
-  command; no owner journals a per-command rollback unit, because any `Err`
-  or suspension latches `MainControl` halted until a full checkpoint restore; the outer loop regains `Universe` only at a
-  semantic or host boundary. It settles the final `AppliedDirect` without
-  reclassifying or entering `dispatch_typed_operation`. Only a retained cold branch constructs
-  a borrow-typed `ColdExecutionEpisode`; there is no generic prepare/apply
-  readiness mailbox.
-  While TeX82 §1038's unobserved horizontal character loop is active, the same
-  admitted context accepts a command-owned borrowed letter/other run directly
-  into the pending character builder. The executor owns no token cursor or run
-  cache: command delivery journals and advances input, and the builder consumes
-  each `(char, origin)` before the borrow returns. Every semantic or
-  instrumentation boundary remains on scalar dispatch.
-  A resource need unwinds this episode and the host later restores a full
-  checkpoint before calling ordinary delivery again. Do not recreate a nested
-  preflight command, scanner caller phase, generic operation payload,
-  readiness status, or prepare/apply handoff.
-- Executor host facts are demand-only borrows of the authoritative live mode
-  and page state. Conditional mode, auxiliary values, and effective-tail
-  quantities are sampled at their consuming scanner/primitive; scanner
-  continuations never cross a resource-need unwind. Delivery fields remain in
-  the same caller slot and no fact cache, compatibility preparation path, or
-  per-token payload exists.
-- `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
-  in-place semantic handlers for the measured definition, let, catcode, and
-  ordinary-group families. These commands bypass `ColdOperation`; dispatch
-  returns the completed hot operation directly to the admitted caller, which
-  applies it without storing it in `CommandEpisode`. Definition, let,
-  and catcode delivery, expansion, scanning, application, ordered evidence
-  publication, and §1269 `afterassignment` backup share the uninterrupted
-  admitted context; a group transition ends admission before a possible
-  page/host boundary. Detached
-  mutation values and macro-body walks are demand-selected cold evidence.
-  Ordinary `let` carries only the scanned compact meaning and journals/replaces
-  it directly; global escape promotes a local definition span once. Ordinary
-  `def`-family application receives the already-sealed destination-region key
-  and publishes it directly to the meaning cell, with no executor-side body
-  carrier or publication copy.
-- `src/main_control/cold/`: uncommon-command boundary against that same
-  interpreter and semantic state. `operation.rs` owns the typed borrow-barrier
-  values, the small attempt/prepared root fields that change domain in place,
-  and the borrow-scoped promotion writer which preflights the complete root set
-  before writing durable owners directly into those fields without an
-  aggregate receipt; `scan.rs` owns uncommon operand collection and writes
-  completed leaves directly into the borrowed caller slot while returning only
-  compact control outcomes; `apply.rs` mutably borrows the cold branch owned by
-  `ColdExecutionEpisode` and consumes only its semantic leaves. Ordinary cold
-  application admits the borrow-only `CommandContext` directly, lending
-  `Universe`'s semantically separated command stores and returning
-  only detached copy-small settlement facts;
-  `alignment.rs`, `pdf.rs`, and `support.rs` isolate the corresponding complex
-  families without introducing another executor. Residual transaction and
-  cold scanning constructs its admitted `CommandContext` directly and reborrows
-  it through tracked-region projection, main-control entry, and scanner
-  settlement. The admission ends before diagnostic
-  reporting, resource preparation, full-checkpoint replay, semantic apply, or rollback;
-  nested cold execution carries only the already-known tracking bit.
+- `src/main_control/definition_assignments.rs`: direct macro, let, catcode,
+  and ordinary-group mutation helpers. Macro bodies are sealed once into their
+  actual definition owner. Let uses the scanned compact meaning. Provisional
+  shorthand tracing renders the old meaning before replacement releases it.
+- `src/main_control/cold/`: genuine native alignment, PDF, grouping, and
+  recovery helpers shared by the direct engine. `groups.rs` owns live group
+  entry/unsave; `conditions.rs` owns partoken policy and final conditional
+  reporting; `operand_values.rs` contains concrete arithmetic/math operands.
+  `alignment.rs`, `pdf.rs`, and `support.rs` retain the actual builder, PDF,
+  and source-free semantic owners. There is no cold operation scanner,
+  promotion writer, phase wrapper, or cold dispatch authority.
 - `src/canonical_step.rs`: shared bounded-step result protocol and the direct
   caller-owned fixed-chunk output ledger for exact-cut paragraph checkpoint
   publication, exact prior/current settlement, resource fulfillment,
@@ -147,14 +99,6 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   page/PDF projection, and non-clone effects-before-artifacts publication with
   exact suffix retry. Prepared openout replacements move complete artifact
   receipts and share their immutable bytes with the matching PDF page rows.
-- `src/transaction_protocol.rs` and `src/transaction_protocol/tests.rs`:
-  exhaustive uncommon-barrier classification for direct canonical dispatch.
-  Ordinary commands produce no value; the resource and explicit late-failure
-  transaction cases alone materialize a barrier, while the PDF family is a
-  compile-time predicate used to demand-read `\pdfoutput`. Compatibility
-  assertions over exact owner/mark projections, admission variants, and
-  runtime layout are retired; external rollback and parity tests are the
-  migration authority.
 - `src/assignments/`: the `AssignmentCommitter` authority for scoped writes,
   e-TeX redundant-local decisions, tracing, and typed mutation receipts, plus
   primitive registration delegated from `tex-command`'s integrated catalogue.

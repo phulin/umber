@@ -33,6 +33,6 @@ pub use structured::{
     ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily,
     ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec,
     ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment, ScannedSetBoxPath,
-    ScannedVSplit, StructuredProvenance, WriteStreamSelector,
+    ScannedVSplit, StructuredProvenance, TokenRequest, WriteStreamSelector,
 };
 pub use token_list::{ScannedTokenParameterAssignment, ScannedTokenRegisterAssignment};

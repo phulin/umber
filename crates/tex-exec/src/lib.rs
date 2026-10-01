@@ -39,7 +39,6 @@ mod session_api;
 mod shipout;
 mod splitting;
 mod timing;
-pub mod transaction_protocol;
 pub(crate) mod typeset_context;
 mod vertical;
 

@@ -9,42 +9,39 @@ pub struct StructuredProvenance {
 
 /// A balanced token list frozen through the aggregate token store.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedBalancedText {
-    pub tokens: AttemptTokenListId,
+pub struct ScannedBalancedText<T = AttemptTokenListId> {
+    pub tokens: T,
     pub provenance: StructuredProvenance,
 }
 
 /// Attempt-local PDF action identifier. Token text remains in the sole live
 /// command attempt until the executor promotes the completed request.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum PdfActionIdentifier {
-    Name(AttemptTokenListId),
+pub enum PdfActionIdentifier<T = AttemptTokenListId> {
+    Name(T),
     Number(u32),
-    Raw(AttemptTokenListId),
+    Raw(T),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum PdfActionTarget {
-    Page {
-        number: u32,
-        view: AttemptTokenListId,
-    },
-    Destination(PdfActionIdentifier),
+pub enum PdfActionTarget<T = AttemptTokenListId> {
+    Page { number: u32, view: T },
+    Destination(PdfActionIdentifier<T>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct PdfActionDestination {
-    pub file: Option<AttemptTokenListId>,
-    pub structure: Option<PdfActionIdentifier>,
-    pub target: PdfActionTarget,
+pub struct PdfActionDestination<T = AttemptTokenListId> {
+    pub file: Option<T>,
+    pub structure: Option<PdfActionIdentifier<T>>,
+    pub target: PdfActionTarget<T>,
     pub window: tex_state::PdfActionWindow,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum PdfActionSpec {
-    User(AttemptTokenListId),
-    GoTo(PdfActionDestination),
-    Thread(PdfActionDestination),
+pub enum PdfActionSpec<T = AttemptTokenListId> {
+    User(T),
+    GoTo(PdfActionDestination<T>),
+    Thread(PdfActionDestination<T>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

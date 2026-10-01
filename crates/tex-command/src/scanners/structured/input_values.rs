@@ -70,7 +70,7 @@ pub(crate) const FILE_NAME_POOL_CAPACITY: usize = 32_000;
 /// replay only acquires an already-registered immutable resource and mutates
 /// World stream state.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InputStreamRequest {
+pub enum InputStreamRequest<D = AttemptDefinitionId> {
     Open {
         stream: i32,
         /// The unrecovered §435 `scan_int` result for `int_error`.
@@ -101,7 +101,7 @@ pub enum InputStreamRequest {
         /// The parameterless macro definition is the sole mutable attempt
         /// root. Its replacement slice supplies read observation after
         /// publication; no duplicate durable token list is created.
-        definition: AttemptDefinitionId,
+        definition: D,
     },
 }
 
@@ -111,7 +111,7 @@ pub enum InputStreamRequest {
 /// scanning.  In particular, a non-I/O lookahead has already been backed up
 /// when `Continue` is returned, so replay never needs raw input access.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ImmediateExtension {
+pub enum ImmediateExtension<T = AttemptTokenListId> {
     Continue,
     /// The recursive expanded-command lookahead found a PDF-only extension,
     /// whose own pdftex.web case runs `check_pdfoutput` before every operand
@@ -125,14 +125,14 @@ pub enum ImmediateExtension {
     },
     Write {
         stream: WriteStreamSelector,
-        tokens: AttemptTokenListId,
+        tokens: T,
     },
     CloseOut {
         stream: WriteStreamSelector,
     },
-    PdfObject(PdfObjectRequest),
-    PdfForm(PdfFormRequest),
-    PdfImage(PdfImageRequest),
+    PdfObject(PdfObjectRequest<T>),
+    PdfForm(PdfFormRequest<T>),
+    PdfImage(PdfImageRequest<T>),
 }
 
 /// TeX82 §§1342/1350's normalized selector stored in a write whatsit.
