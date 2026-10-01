@@ -248,13 +248,16 @@ All production mutation of live TeX state should pass through `Universe` or simi
   generation-owned reusable output-attempt lane, typed Page/Durable/Scratch
   traversal coordinates and token/node source handles, scalar suffix marks,
   warmed direct-row construction, and compile/runtime escape controls.
-- `src/journal.rs`: Separate compact TeX group saves, direct-cell-serial
-  first-touch and typed chunk-arena named-checkpoint deltas holding one
+- `src/journal.rs`: Separate compact TeX group saves, indexed host-epoch
+  first-touch and owning named-checkpoint deltas holding one
   reversible alternate per written cell, fixed save-stack projections, exact
   capacity-change accounting for constant-time budget reads, and
-  prefix-independent accepted/current suffix settlement. A flat reusable
-  retry transaction retains only assignment inverses; it has no parallel
-  group topology, cell identity, or chunk-arena machinery.
+  prefix-independent accepted/current suffix settlement. Host stamps never
+  enter group or checkpoint preimages.
+- `src/journal/checkpoints.rs`: Plain cold owning dense undo tails, unique
+  branch-valid checkpoint cuts, repeated restoration, accepted/candidate
+  settlement, prefix release and final-root disarm. Dense undo owns no node
+  region, arena lease or fork topology.
 - `src/journal/cell.rs`: Private packed encoding for the typed dense-state
   coordinates stored by narrow journal records.
 - `src/journal/tests.rs`: Split-lifetime rollback, packed-width, fixed-mark,

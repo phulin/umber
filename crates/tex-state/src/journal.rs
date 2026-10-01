@@ -14,7 +14,8 @@ use std::cell::Cell;
 
 use crate::env::group::GroupFrame;
 use crate::env::{StateCell, StateWord};
-use crate::fork_arena::{CheckpointMark, ChunkPool, ForkArena};
+mod checkpoints;
+use checkpoints::{CheckpointCut, CheckpointUndoLog};
 
 #[path = "journal/cell.rs"]
 mod cell;
@@ -36,7 +37,7 @@ const SAVE_CHUNK_SLOTS: usize = 64;
 /// A stable logical cursor in one generation's checkpoint history.
 pub struct JournalCursor<G> {
     owner: u64,
-    checkpoint: CheckpointMark<DenseJournalLane>,
+    checkpoint: CheckpointCut,
     checkpoint_entries: u32,
     group_depth: u32,
     save_stack: SaveStackProjection,
@@ -63,6 +64,9 @@ impl<G> core::fmt::Debug for JournalCursor<G> {
 
 impl<G> PartialEq for JournalCursor<G> {
     fn eq(&self, other: &Self) -> bool {
+        // Equality projects the ordered state-history position. Admission
+        // identity is checked separately by restore/release validation: two
+        // captures at the same position can have different retained lifetimes.
         self.owner == other.owner
             && self.checkpoint_entries == other.checkpoint_entries
             && self.group_depth == other.group_depth
@@ -76,7 +80,7 @@ impl<G> Eq for JournalCursor<G> {}
 impl<G> JournalCursor<G> {
     const fn new(
         owner: u64,
-        checkpoint: CheckpointMark<DenseJournalLane>,
+        checkpoint: CheckpointCut,
         checkpoint_entries: u32,
         group_depth: u32,
         save_stack: SaveStackProjection,
@@ -99,10 +103,6 @@ impl<G> JournalCursor<G> {
         }
     }
 
-    const fn checkpoint_mark(self) -> CheckpointMark<DenseJournalLane> {
-        self.checkpoint
-    }
-
     pub(super) const fn checkpoint_entries(self) -> u32 {
         self.checkpoint_entries
     }
@@ -117,8 +117,6 @@ pub(crate) struct Mutation<G> {
     cell: JournalCell,
     pub(crate) before: StateWord<G>,
     pub(crate) before_level: u32,
-    /// The cell's direct first-write serial before this mutation.
-    pub(crate) before_save_serial: u64,
     /// The TeX group level whose save record this assignment represents.
     /// `None` means TeX would not push a restore record for this write.
     saved_at: u32,
@@ -129,7 +127,6 @@ impl<G> Mutation<G> {
         cell: StateCell,
         before: StateWord<G>,
         before_level: u32,
-        before_save_serial: u64,
         saved_at: Option<u32>,
     ) -> Self {
         debug_assert!(saved_at != Some(0));
@@ -137,7 +134,6 @@ impl<G> Mutation<G> {
             cell: JournalCell::pack(cell),
             before,
             before_level,
-            before_save_serial,
             saved_at: saved_at.unwrap_or(0),
         }
     }
@@ -157,7 +153,6 @@ impl<G> Clone for Mutation<G> {
             cell: self.cell,
             before: self.before.clone(),
             before_level: self.before_level,
-            before_save_serial: self.before_save_serial,
             saved_at: self.saved_at,
         }
     }
@@ -319,25 +314,11 @@ impl<G> SaveSequence<G> {
     }
 }
 
-enum DenseJournalLane {}
-
 /// One compact reversible value retained for a checkpoint interval.
 pub(crate) struct CheckpointDelta<G> {
     pub(crate) cell: StateCell,
     pub(crate) alternate: StateWord<G>,
     pub(crate) alternate_level: u32,
-    pub(crate) alternate_save_serial: u64,
-}
-
-// Checkpoint deltas may own state words, but never a list in their journal lane.
-impl<G> crate::fork_arena::RegionValue<DenseJournalLane> for CheckpointDelta<G> {
-    fn visit_region_lists(
-        &self,
-        _visit: &mut dyn FnMut(crate::fork_arena::ArenaListId<DenseJournalLane>),
-    ) {
-    }
-
-    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
 }
 
 /// Accepted checkpoint material temporarily detached while the current
@@ -399,11 +380,9 @@ pub(crate) struct SaveJournal<G> {
     /// save-record address space.
     active_sequence: SaveSequence<G>,
     active_groups: Vec<GroupMark>,
-    checkpoint_pool: ChunkPool<CheckpointDelta<G>>,
-    checkpoint_arena: ForkArena<CheckpointDelta<G>, DenseJournalLane>,
+    checkpoint_undo: CheckpointUndoLog<G>,
     checkpoint_entries: usize,
-    save_serial: u64,
-    checkpoint_fork: bool,
+    host_epoch: u64,
     save_stack: SaveStackProjection,
     save_position: u32,
     /// Reusable scratch for sparse-array records deferred to the restore
@@ -444,26 +423,23 @@ impl<G> SaveJournal<G> {
                 next.checked_add(1)
             })
             .expect("state journal identity space exhausted");
-        let checkpoint_pool = ChunkPool::default();
-        let checkpoint_capacity_bytes = checkpoint_pool.allocated_heap_bytes();
+
         Self {
             owner,
             active_sequence: SaveSequence::default(),
             active_groups: Vec::new(),
-            checkpoint_pool,
-            checkpoint_arena: ForkArena::new(),
+            checkpoint_undo: CheckpointUndoLog::default(),
             checkpoint_entries: 0,
             // Before the first named checkpoint there is no earlier state to
             // retain. Cells and the journal therefore begin in the same
             // interval; sealing the first checkpoint advances the serial and
             // makes its first subsequent write capture one alternate.
-            save_serial: 0,
-            checkpoint_fork: false,
+            host_epoch: 0,
             save_stack: SaveStackProjection::default(),
             save_position: 0,
             sparse_scratch: Vec::new(),
             group_capacity_bytes: 0,
-            checkpoint_capacity_bytes,
+            checkpoint_capacity_bytes: 0,
             #[cfg(test)]
             first_touch_cell_visits: 0,
             #[cfg(test)]
@@ -486,26 +462,29 @@ impl<G> SaveJournal<G> {
         if group_depth != 0 || !self.active_groups.is_empty() || self.active_sequence.len != 0 {
             return Err(crate::StateError::CheckpointIneligible);
         }
+        self.preflight_epoch_advance(if self.checkpoint_undo.is_candidate() {
+            2
+        } else {
+            1
+        })?;
         let group_depth =
             u32::try_from(group_depth).map_err(|_| crate::StateError::CheckpointEpochExhausted)?;
         // Check epoch exhaustion before sealing the arena so an error leaves
         // every owner untouched.
         let next_serial = self
-            .save_serial
+            .host_epoch
             .checked_add(1)
             .ok_or(crate::StateError::CheckpointEpochExhausted)?;
         let cursor = JournalCursor::new(
             self.owner,
-            self.checkpoint_arena
-                .seal_boundary(&mut self.checkpoint_pool)
-                .and_then(|boundary| self.checkpoint_arena.checkpoint_mark(boundary))
-                .map_err(|_| crate::StateError::InvalidCursor)?,
+            self.checkpoint_undo.capture()?,
             u32::try_from(self.checkpoint_entries).expect("checkpoint journal exceeds u32 entries"),
             group_depth,
             self.save_stack,
         )
         .with_save_position(self.save_position);
-        self.save_serial = next_serial;
+        self.host_epoch = next_serial;
+        self.refresh_checkpoint_capacity_bytes();
         Ok(cursor)
     }
 
@@ -514,34 +493,49 @@ impl<G> SaveJournal<G> {
         self.active_groups.is_empty() && self.active_sequence.len == 0
     }
 
-    pub(crate) fn record_mutation(&mut self, mutation: Mutation<G>) {
+    pub(crate) fn preflight_epoch_advance(&self, advances: u64) -> Result<(), crate::StateError> {
+        self.host_epoch
+            .checked_add(advances)
+            .map(|_| ())
+            .ok_or(crate::StateError::CheckpointEpochExhausted)
+    }
+
+    pub(crate) fn preflight_restore_epoch(&self) -> Result<(), crate::StateError> {
+        // Every cold candidate boundary keeps one epoch available for its
+        // infallible acceptance/rejection. Assignments consume no epochs.
+        self.preflight_epoch_advance(if self.checkpoint_undo.is_candidate() {
+            2
+        } else {
+            1
+        })
+    }
+
+    pub(crate) fn record_assignment(
+        &mut self,
+        cell: StateCell,
+        before: StateWord<G>,
+        before_level: u32,
+        before_host_epoch: u64,
+        saved_at: Option<u32>,
+    ) {
         #[cfg(feature = "profiling")]
-        self.record_profile_mutation(&mutation);
+        self.record_profile_word(&before);
         #[cfg(test)]
         {
             self.first_touch_cell_visits = self.first_touch_cell_visits.saturating_add(1);
         }
-        let cell = mutation.cell();
-        if mutation.before_save_serial != self.save_serial {
+        if self.checkpoint_undo.retained() && before_host_epoch != self.host_epoch {
             #[cfg(feature = "profiling")]
             self.record_profile_growth(
                 self.checkpoint_entries,
-                self.checkpoint_pool.chunk_capacity(),
+                self.checkpoint_undo.capacity(),
                 core::mem::size_of::<CheckpointDelta<G>>(),
             );
-            let mut builder = self
-                .checkpoint_arena
-                .begin_builder(&mut self.checkpoint_pool)
-                .expect("dense journal owns the sole active builder");
-            builder
-                .push(CheckpointDelta {
-                    cell,
-                    alternate: mutation.before.clone(),
-                    alternate_level: mutation.before_level,
-                    alternate_save_serial: mutation.before_save_serial,
-                })
-                .expect("one dense journal cell fits its coarse chunk");
-            let _ = builder.finish();
+            self.checkpoint_undo.push(CheckpointDelta {
+                cell,
+                alternate: before.clone(),
+                alternate_level: before_level,
+            });
             self.checkpoint_entries = self
                 .checkpoint_entries
                 .checked_add(1)
@@ -549,8 +543,8 @@ impl<G> SaveJournal<G> {
             self.refresh_checkpoint_capacity_bytes();
         }
 
-        let saved_at = mutation.saved_at();
         if saved_at.is_some() {
+            let mutation = Mutation::new(cell, before, before_level, saved_at);
             let position = self
                 .active_sequence
                 .len
@@ -597,12 +591,9 @@ impl<G> SaveJournal<G> {
     /// Global/root writes satisfying neither condition replace the dense cell
     /// without constructing a mutation record.
     #[inline(always)]
-    pub(crate) const fn needs_mutation(
-        &self,
-        before_save_serial: u64,
-        saved_at: Option<u32>,
-    ) -> bool {
-        before_save_serial != self.save_serial || saved_at.is_some()
+    pub(crate) fn needs_mutation(&self, before_host_epoch: u64, saved_at: Option<u32>) -> bool {
+        (self.checkpoint_undo.retained() && before_host_epoch != self.host_epoch)
+            || saved_at.is_some()
     }
 
     pub(crate) fn take_sparse_scratch(&mut self) -> Vec<(usize, Mutation<G>)> {
@@ -618,8 +609,8 @@ impl<G> SaveJournal<G> {
     /// The monotonic serial written directly into every cell mutated in the
     /// current checkpoint interval.
     #[inline(always)]
-    pub(crate) const fn save_serial(&self) -> u64 {
-        self.save_serial
+    pub(crate) const fn host_epoch(&self) -> u64 {
+        self.host_epoch
     }
 
     #[cfg(test)]
@@ -710,18 +701,13 @@ impl<G> SaveJournal<G> {
     #[must_use]
     pub(crate) fn retained_len(&self) -> usize {
         self.group_save_len()
-            .saturating_add(self.checkpoint_entries)
+            .saturating_add(self.checkpoint_undo.len())
     }
 
     #[must_use]
     pub(crate) const fn retained_bytes(&self) -> usize {
         self.group_capacity_bytes
             .saturating_add(self.checkpoint_capacity_bytes)
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn checkpoint_counters(&self) -> crate::fork_arena::ForkArenaCounters {
-        self.checkpoint_arena.counters()
     }
 
     /// Direct absolute save-index lookup.  This function deliberately has no
@@ -762,9 +748,7 @@ impl<G> SaveJournal<G> {
         cursor: JournalCursor<G>,
         visit: impl FnMut(&CheckpointDelta<G>),
     ) {
-        self.checkpoint_arena
-            .visit_checkpoint_values(&self.checkpoint_pool, cursor.checkpoint_mark(), visit)
-            .expect("validated dense checkpoint prefix remains live");
+        self.checkpoint_undo.visit_prefix(cursor.checkpoint, visit);
     }
 
     pub(crate) fn visit_checkpoint_suffix(
@@ -772,23 +756,7 @@ impl<G> SaveJournal<G> {
         cursor: JournalCursor<G>,
         visit: impl FnMut(&CheckpointDelta<G>),
     ) {
-        if self.checkpoint_fork {
-            self.checkpoint_arena
-                .visit_current_checkpoint_suffix(
-                    &self.checkpoint_pool,
-                    cursor.checkpoint_mark(),
-                    visit,
-                )
-                .expect("validated dense candidate suffix remains live");
-        } else {
-            self.checkpoint_arena
-                .visit_accepted_checkpoint_suffix(
-                    &self.checkpoint_pool,
-                    cursor.checkpoint_mark(),
-                    visit,
-                )
-                .expect("validated dense checkpoint suffix remains live");
-        }
+        self.checkpoint_undo.visit_suffix(cursor.checkpoint, visit);
     }
 
     pub(crate) fn visit_checkpoint_suffix_mut_reverse(
@@ -796,23 +764,8 @@ impl<G> SaveJournal<G> {
         cursor: JournalCursor<G>,
         visit: impl FnMut(&mut CheckpointDelta<G>),
     ) {
-        if self.checkpoint_fork {
-            self.checkpoint_arena
-                .visit_current_checkpoint_suffix_mut_reverse(
-                    &mut self.checkpoint_pool,
-                    cursor.checkpoint_mark(),
-                    visit,
-                )
-                .expect("validated dense candidate checkpoint suffix rewinds in place");
-        } else {
-            self.checkpoint_arena
-                .visit_accepted_checkpoint_suffix_mut_reverse(
-                    &mut self.checkpoint_pool,
-                    cursor.checkpoint_mark(),
-                    visit,
-                )
-                .expect("validated dense checkpoint suffix rewinds in place");
-        }
+        self.checkpoint_undo
+            .reverse_suffix(cursor.checkpoint, visit);
     }
 
     pub(crate) fn visit_current_suffix_mut_reverse(
@@ -820,19 +773,12 @@ impl<G> SaveJournal<G> {
         cursor: JournalCursor<G>,
         visit: impl FnMut(&mut CheckpointDelta<G>),
     ) {
-        self.checkpoint_arena
-            .visit_current_checkpoint_suffix_mut_reverse(
-                &mut self.checkpoint_pool,
-                cursor.checkpoint_mark(),
-                visit,
-            )
-            .expect("dense candidate suffix undoes in place");
+        self.checkpoint_undo
+            .reverse_suffix(cursor.checkpoint, visit);
     }
 
     pub(crate) fn visit_detached_suffix_mut(&mut self, visit: impl FnMut(&mut CheckpointDelta<G>)) {
-        self.checkpoint_arena
-            .visit_detached_checkpoint_suffix_mut(&mut self.checkpoint_pool, visit)
-            .expect("dense accepted suffix redoes in place");
+        self.checkpoint_undo.forward_accepted(visit);
     }
 
     pub(crate) fn visit_detached_prefix(
@@ -840,13 +786,8 @@ impl<G> SaveJournal<G> {
         cursor: JournalCursor<G>,
         visit: impl FnMut(&CheckpointDelta<G>),
     ) -> bool {
-        self.checkpoint_arena
-            .visit_detached_checkpoint_prefix(
-                &self.checkpoint_pool,
-                cursor.checkpoint_mark(),
-                visit,
-            )
-            .is_ok()
+        self.checkpoint_undo
+            .visit_accepted_prefix(cursor.checkpoint, visit)
     }
 
     /// Detaches the accepted checkpoint-delta suffix and starts a candidate at
@@ -856,7 +797,7 @@ impl<G> SaveJournal<G> {
         &mut self,
         cursor: JournalCursor<G>,
     ) -> Result<AcceptedJournalTail<G>, crate::StateError> {
-        if !self.validate_cursor(cursor) || self.checkpoint_fork {
+        if !self.validate_cursor(cursor) || self.checkpoint_undo.is_candidate() {
             return Err(crate::StateError::InvalidCursor);
         }
         if cursor.group_depth() != 0
@@ -865,29 +806,20 @@ impl<G> SaveJournal<G> {
         {
             return Err(crate::StateError::CheckpointIneligible);
         }
-        if !self
-            .checkpoint_arena
-            .can_begin_checkpoint_candidate(cursor.checkpoint_mark())
-        {
-            return Err(crate::StateError::InvalidCursor);
-        }
         // Candidate setup advances once for the new interval and settlement
         // advances once again when that interval is accepted or rejected.
         // Reserve both epochs before detaching the accepted arena so an
         // exhausted serial cannot leave a half-forked journal behind.
         let candidate_serial = self
-            .save_serial
+            .host_epoch
             .checked_add(1)
             .ok_or(crate::StateError::CheckpointEpochExhausted)?;
         candidate_serial
             .checked_add(1)
             .ok_or(crate::StateError::CheckpointEpochExhausted)?;
         let prior_checkpoint_entries = self.checkpoint_entries;
-        self.checkpoint_arena
-            .begin_checkpoint_candidate(&mut self.checkpoint_pool, cursor.checkpoint_mark())
-            .map_err(|_| crate::StateError::InvalidCursor)?;
+        self.checkpoint_undo.begin_candidate(cursor.checkpoint)?;
         self.checkpoint_entries = cursor.checkpoint_entries() as usize;
-        self.checkpoint_fork = true;
         let tail = AcceptedJournalTail {
             prior_checkpoint_entries,
             save_stack: self.save_stack,
@@ -896,7 +828,7 @@ impl<G> SaveJournal<G> {
         };
         self.save_stack = SaveStackProjection::default();
         self.save_position = 0;
-        self.save_serial = candidate_serial;
+        self.host_epoch = candidate_serial;
         self.refresh_group_capacity_bytes();
         Ok(tail)
     }
@@ -909,34 +841,23 @@ impl<G> SaveJournal<G> {
         self.save_stack = tail.save_stack;
         self.save_position = tail.save_position;
         self.checkpoint_entries = tail.prior_checkpoint_entries;
-        let boundary = self
-            .checkpoint_arena
-            .seal_boundary(&mut self.checkpoint_pool)
-            .expect("dense rejection seals its current suffix");
-        self.checkpoint_arena
-            .reject_checkpoint_candidate(&mut self.checkpoint_pool, boundary)
-            .expect("dense rejection reattaches its prior suffix");
+        self.checkpoint_undo.reject();
         self.refresh_checkpoint_capacity_bytes();
-        self.checkpoint_fork = false;
         self.refresh_group_capacity_bytes();
-        self.advance_save_serial();
+        self.advance_host_epoch();
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self) -> Result<(), crate::StateError> {
-        if !self.checkpoint_fork || !self.active_groups.is_empty() || self.active_sequence.len != 0
+        if !self.checkpoint_undo.is_candidate()
+            || !self.active_groups.is_empty()
+            || self.active_sequence.len != 0
         {
             return Err(crate::StateError::CheckpointIneligible);
         }
-        let boundary = self
-            .checkpoint_arena
-            .seal_boundary(&mut self.checkpoint_pool)
-            .map_err(|_| crate::StateError::InvalidCursor)?;
-        self.checkpoint_arena
-            .accept_checkpoint_candidate(&mut self.checkpoint_pool, boundary)
-            .map_err(|_| crate::StateError::InvalidCursor)?;
+        self.preflight_epoch_advance(1)?;
+        self.checkpoint_undo.accept()?;
         self.refresh_checkpoint_capacity_bytes();
-        self.checkpoint_fork = false;
-        self.advance_save_serial();
+        self.advance_host_epoch();
         Ok(())
     }
 
@@ -945,22 +866,15 @@ impl<G> SaveJournal<G> {
             cursor.owner, self.owner,
             "journal cursor belongs to another state"
         );
-        if self.checkpoint_fork {
-            self.checkpoint_arena
-                .restore_current_checkpoint(&mut self.checkpoint_pool, cursor.checkpoint_mark())
-                .expect("validated dense candidate suffix truncates atomically");
-        } else {
-            self.checkpoint_arena
-                .restore_accepted_checkpoint(&mut self.checkpoint_pool, cursor.checkpoint_mark())
-                .expect("validated dense checkpoint suffix truncates atomically");
-        }
+        self.checkpoint_undo.restore(cursor.checkpoint);
         self.refresh_checkpoint_capacity_bytes();
         self.checkpoint_entries = cursor.checkpoint_entries() as usize;
-        self.advance_save_serial();
+        self.advance_host_epoch();
         self.save_stack = cursor.save_stack;
         self.save_position = cursor.save_position;
     }
 
+    #[cfg(test)]
     pub(crate) fn release_checkpoint_prefix(
         &mut self,
         cursor: JournalCursor<G>,
@@ -968,18 +882,36 @@ impl<G> SaveJournal<G> {
         if !self.validate_release_cursor(cursor) {
             return Err(crate::StateError::InvalidCursor);
         }
-        let released = self
-            .checkpoint_arena
-            .release_accepted_prefix(&mut self.checkpoint_pool, cursor.checkpoint_mark())
-            .map_err(|_| crate::StateError::InvalidCursor)?;
+        let released = self.checkpoint_undo.release_prefix(cursor.checkpoint)?;
         self.refresh_checkpoint_capacity_bytes();
         Ok(released)
+    }
+
+    pub(crate) fn release_checkpoint_root(
+        &mut self,
+        released: JournalCursor<G>,
+        oldest: Option<JournalCursor<G>>,
+    ) -> Result<(), crate::StateError> {
+        if !self.validate_release_cursor(released)
+            || oldest.is_some_and(|cursor| !self.validate_release_cursor(cursor))
+        {
+            return Err(crate::StateError::InvalidCursor);
+        }
+        self.checkpoint_undo
+            .release_root(released.checkpoint, oldest.map(|cursor| cursor.checkpoint))?;
+        self.refresh_checkpoint_capacity_bytes();
+        Ok(())
+    }
+
+    pub(crate) fn release_unretained_capture(&mut self, cursor: JournalCursor<G>) {
+        self.checkpoint_undo.release_capture(cursor.checkpoint);
+        self.refresh_checkpoint_capacity_bytes();
     }
 
     /// Prefix reclamation does not restore state or consume ordinary group
     /// saves. It remains valid during TeX's final cleanup with open groups.
     pub(crate) fn validate_release_cursor(&self, cursor: JournalCursor<G>) -> bool {
-        self.validate_cursor_shape(cursor) && !self.checkpoint_fork
+        self.validate_cursor_shape(cursor) && !self.checkpoint_undo.is_candidate()
     }
 
     #[must_use]
@@ -1000,9 +932,7 @@ impl<G> SaveJournal<G> {
     fn validate_cursor_shape(&self, cursor: JournalCursor<G>) -> bool {
         cursor.owner == self.owner
             && cursor.checkpoint_entries() as usize <= self.checkpoint_entries
-            && self
-                .checkpoint_arena
-                .validates_checkpoint(cursor.checkpoint_mark())
+            && self.checkpoint_undo.validates(cursor.checkpoint)
             && cursor.group_depth() == 0
             && cursor.save_position == 0
     }
@@ -1043,7 +973,7 @@ impl<G> SaveJournal<G> {
     #[cfg(test)]
     fn retained_bytes_census(&self) -> usize {
         self.group_capacity_bytes_census()
-            .saturating_add(self.checkpoint_pool.allocated_heap_bytes())
+            .saturating_add(self.checkpoint_undo.retained_bytes())
     }
 
     #[cfg(test)]
@@ -1079,21 +1009,21 @@ impl<G> SaveJournal<G> {
     }
 
     fn refresh_checkpoint_capacity_bytes(&mut self) {
-        self.checkpoint_capacity_bytes = self.checkpoint_pool.allocated_heap_bytes();
+        self.checkpoint_capacity_bytes = self.checkpoint_undo.retained_bytes();
     }
 
-    fn advance_save_serial(&mut self) {
-        self.save_serial = self
-            .save_serial
+    fn advance_host_epoch(&mut self) {
+        self.host_epoch = self
+            .host_epoch
             .checked_add(1)
             .expect("dense save serial space exhausted");
     }
 
     #[cfg(feature = "profiling")]
-    fn record_profile_mutation(&mut self, mutation: &Mutation<G>) {
+    fn record_profile_word(&mut self, before: &StateWord<G>) {
         self.profile.append_calls = self.profile.append_calls.saturating_add(1);
         self.profile.mutations = self.profile.mutations.saturating_add(1);
-        let word = match &mutation.before {
+        let word = match before {
             StateWord::Meaning(_) => 0,
             StateWord::Integer(_) => 1,
             StateWord::Dimension(_) => 2,
@@ -1152,7 +1082,7 @@ impl<G> Drop for SaveJournal<G> {
             entries: u64::try_from(self.retained_len()).unwrap_or(u64::MAX),
             capacity: u64::try_from(
                 self.group_mutation_capacity()
-                    .saturating_add(self.checkpoint_pool.chunk_capacity()),
+                    .saturating_add(self.checkpoint_undo.capacity()),
             )
             .unwrap_or(u64::MAX),
             peak_entries: u64::try_from(self.profile.peak_entries).unwrap_or(u64::MAX),
@@ -1164,8 +1094,7 @@ impl<G> Drop for SaveJournal<G> {
             group_entry_size: u64::try_from(core::mem::size_of::<Mutation<G>>())
                 .unwrap_or(u64::MAX),
             checkpoint_entries: u64::try_from(self.checkpoint_entries).unwrap_or(u64::MAX),
-            checkpoint_capacity: u64::try_from(self.checkpoint_pool.chunk_capacity())
-                .unwrap_or(u64::MAX),
+            checkpoint_capacity: u64::try_from(self.checkpoint_undo.capacity()).unwrap_or(u64::MAX),
             checkpoint_entry_size: u64::try_from(core::mem::size_of::<CheckpointDelta<G>>())
                 .unwrap_or(u64::MAX),
             mutations: self.profile.mutations,

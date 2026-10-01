@@ -2749,6 +2749,11 @@ impl<G> Universe<G> {
         if !self.checkpoint_eligible() {
             return Err(UniverseError::State(StateError::CheckpointIneligible));
         }
+        self.core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .state()
+            .preflight_checkpoint_capture()?;
         let boundary = self
             .page_region
             .nodes_mut()
@@ -2846,6 +2851,11 @@ impl<G> Universe<G> {
         if !self.checkpoint_eligible() {
             return Err(UniverseError::State(StateError::CheckpointIneligible));
         }
+        self.core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .state()
+            .preflight_checkpoint_capture()?;
         if !(external_page_roots || self.page_region.builder().retains_page_node_handles()) {
             self.release_unretained_page_suffix()?;
         }
@@ -3055,13 +3065,14 @@ impl<G> Universe<G> {
         oldest_retained: Option<&RuntimeCheckpoint<G>>,
     ) -> Result<crate::page::PageRegionReleaseReceipt, UniverseError> {
         self.validate_runtime_checkpoint_release(released, oldest_retained)?;
-        let floor = oldest_retained.unwrap_or(released);
-        let mark = floor.state.mark();
         self.core
             .as_mut()
             .ok_or(UniverseError::Retired)?
             .state_mut()
-            .release_checkpoint_prefix(*mark.journal())?;
+            .release_checkpoint_root(
+                *released.state.mark().journal(),
+                oldest_retained.map(|checkpoint| *checkpoint.state.mark().journal()),
+            )?;
         let oldest_durable = oldest_retained.map(|checkpoint| *checkpoint.state.mark().durable());
         let accepted_durable = self
             .checkpoint_candidate
@@ -3088,6 +3099,11 @@ impl<G> Universe<G> {
         &mut self,
         released: &RuntimeCheckpoint<G>,
     ) -> Result<crate::page::PageRegionReleaseReceipt, UniverseError> {
+        self.core
+            .as_mut()
+            .ok_or(UniverseError::Retired)?
+            .state_mut()
+            .release_unretained_capture(*released.state.mark().journal());
         self.page_region
             .release_checkpoint(released.page)
             .map_err(|_| UniverseError::State(StateError::InvalidCursor))

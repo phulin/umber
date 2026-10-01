@@ -1209,7 +1209,7 @@ impl<G> DenseState<G> {
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
         let index = symbol.raw();
-        let (before_value, before_level, before_save_serial) = self.meanings.row(index)?;
+        let (before_value, before_level, before_host_epoch) = self.meanings.row(index)?;
         let current_level = self.current_level();
         let after_level = match scope {
             AssignmentScope::Global => LEVEL_ONE,
@@ -1219,19 +1219,18 @@ impl<G> DenseState<G> {
             && current_level != LEVEL_ONE
             && before_level != current_level)
             .then_some(current_level);
-        let save_serial = self.journal().save_serial();
-        let needs_mutation = self.journal().needs_mutation(before_save_serial, saved_at);
+        let host_epoch = self.journal().host_epoch();
+        let needs_mutation = self.journal().needs_mutation(before_host_epoch, saved_at);
         if needs_mutation {
-            self.journal_mut().record_mutation(Mutation::new(
+            self.journal_mut().record_assignment(
                 StateCell::Meaning(index),
                 StateWord::Meaning(before_value),
                 before_level,
-                before_save_serial,
+                before_host_epoch,
                 saved_at,
-            ));
+            );
         }
-        self.meanings
-            .write(index, value, after_level, save_serial)?;
+        self.meanings.write(index, value, after_level, host_epoch)?;
         Ok(())
     }
 
@@ -1649,6 +1648,13 @@ impl<G> DenseState<G> {
         self.journal_mut().checkpoint_cursor(group_depth)
     }
 
+    pub(crate) fn preflight_checkpoint_capture(&self) -> Result<(), StateError> {
+        if !self.checkpoint_eligible() {
+            return Err(StateError::CheckpointIneligible);
+        }
+        self.journal().preflight_restore_epoch()
+    }
+
     /// Reports whether this dense state is at the only legal checkpoint
     /// boundary: TeX group depth zero, no group-save records, and no pending
     /// operation undo records.
@@ -1754,16 +1760,9 @@ impl<G> DenseState<G> {
                 BankCell::new(
                     saved.before.clone(),
                     saved.before_level,
-                    self.journal().save_serial(),
+                    self.journal().host_epoch(),
                 ),
             )?;
-            self.journal_mut().record_mutation(Mutation::new(
-                cell,
-                current.value,
-                current.level,
-                current.save_serial,
-                None,
-            ));
             (saved.before.clone(), GroupRestorationOutcome::Restored)
         };
         entries.push(GroupRestorationEntry {
@@ -1814,8 +1813,9 @@ impl<G> DenseState<G> {
             .journal
             .take()
             .expect("dense restore exclusively borrows its journal");
+        let host_epoch = journal.host_epoch();
         journal.visit_checkpoint_suffix_mut_reverse(cursor, |delta| {
-            self.swap_checkpoint_delta(delta)
+            self.swap_checkpoint_delta(delta, host_epoch)
                 .expect("validated dense checkpoint value swaps in place");
         });
         let RestoredGroups::Truncate(len) = if after_replay {
@@ -1840,6 +1840,7 @@ impl<G> DenseState<G> {
             return Err(StateError::CheckpointIneligible);
         }
         self.validate_restore(cursor)?;
+        self.journal().preflight_epoch_advance(2)?;
         if !self.validate_checkpoint_cursor(dense_cursor) {
             return Err(StateError::InvalidCursor);
         }
@@ -1847,8 +1848,9 @@ impl<G> DenseState<G> {
             .journal
             .take()
             .expect("dense fork exclusively borrows its journal");
+        let host_epoch = journal.host_epoch();
         journal.visit_checkpoint_suffix_mut_reverse(cursor, |delta| {
-            self.swap_checkpoint_delta(delta)
+            self.swap_checkpoint_delta(delta, host_epoch)
                 .expect("validated accepted dense value swaps in place");
         });
         let journal_tail = journal.begin_checkpoint_candidate(cursor)?;
@@ -1876,16 +1878,18 @@ impl<G> DenseState<G> {
             .journal
             .take()
             .expect("dense rejection exclusively borrows its journal");
+        let host_epoch = journal.host_epoch();
         journal.visit_current_suffix_mut_reverse(cursor, |delta| {
-            self.swap_checkpoint_delta(delta)
+            self.swap_checkpoint_delta(delta, host_epoch)
                 .expect("validated candidate dense value swaps in place");
         });
         self.font_runtime.reject_checkpoint_candidate(
             dense_cursor.font_runtime_rows as usize,
             tail.font_runtime,
         );
+        let host_epoch = journal.host_epoch();
         journal.visit_detached_suffix_mut(|delta| {
-            self.swap_checkpoint_delta(delta)
+            self.swap_checkpoint_delta(delta, host_epoch)
                 .expect("validated accepted dense value redoes in place");
         });
         // Candidate grouping is intentionally not part of the accepted tail.
@@ -1946,20 +1950,20 @@ impl<G> DenseState<G> {
             && current_level != LEVEL_ONE
             && before.level != current_level)
             .then_some(current_level);
-        let needs_mutation = self.journal().needs_mutation(before.save_serial, saved_at);
-        self.write_cell(
-            cell,
-            BankCell::new(value, after_level, self.journal().save_serial()),
-        )?;
+        let needs_mutation = self.journal().needs_mutation(before.host_epoch, saved_at);
         if needs_mutation {
-            self.journal_mut().record_mutation(Mutation::new(
+            self.journal_mut().record_assignment(
                 cell,
                 before.value,
                 before.level,
-                before.save_serial,
+                before.host_epoch,
                 saved_at,
-            ));
+            );
         }
+        self.write_cell(
+            cell,
+            BankCell::new(value, after_level, self.journal().host_epoch()),
+        )?;
         Ok(())
     }
 
@@ -1970,8 +1974,8 @@ impl<G> DenseState<G> {
     fn read_cell(&self, cell: StateCell) -> Result<BankCell<StateWord<G>>, StateError> {
         let value = match cell {
             StateCell::Meaning(index) => {
-                let (value, level, save_serial) = self.meanings.row(index)?;
-                return Ok(BankCell::new(StateWord::Meaning(value), level, save_serial));
+                let (value, level, host_epoch) = self.meanings.row(index)?;
+                return Ok(BankCell::new(StateWord::Meaning(value), level, host_epoch));
             }
             StateCell::Count(index) => self.counts.get(index)?.map(StateWord::Integer),
             StateCell::Dimension(index) => self.dimensions.get(index)?.map(StateWord::Dimension),
@@ -2021,56 +2025,56 @@ impl<G> DenseState<G> {
         let BankCell {
             value,
             level,
-            save_serial,
+            host_epoch,
         } = value;
         match (cell, value) {
             (StateCell::Meaning(index), StateWord::Meaning(word)) => {
-                self.meanings.write(index, word, level, save_serial)?
+                self.meanings.write(index, word, level, host_epoch)?
             }
             (StateCell::Count(index), StateWord::Integer(word)) => self
                 .counts
-                .write(index, BankCell::new(word, level, save_serial))?,
+                .write(index, BankCell::new(word, level, host_epoch))?,
             (StateCell::Dimension(index), StateWord::Dimension(word)) => self
                 .dimensions
-                .write(index, BankCell::new(word, level, save_serial))?,
+                .write(index, BankCell::new(word, level, host_epoch))?,
             (StateCell::TokenRegister(index), StateWord::TokenList(word)) => {
                 self.token_registers
-                    .write(index, BankCell::new(word, level, save_serial))?
+                    .write(index, BankCell::new(word, level, host_epoch))?
             }
             (StateCell::GlueRegister(index), StateWord::Glue(word)) => self
                 .glue_registers
-                .write(index, BankCell::new(word, level, save_serial))?,
+                .write(index, BankCell::new(word, level, host_epoch))?,
             (StateCell::MuGlueRegister(index), StateWord::Glue(word)) => self
                 .mu_glue_registers
-                .write(index, BankCell::new(word, level, save_serial))?,
+                .write(index, BankCell::new(word, level, host_epoch))?,
             (StateCell::IntegerParameter(index), StateWord::Integer(word)) => self
                 .integer_parameters
-                .write(u32::from(index), BankCell::new(word, level, save_serial))?,
+                .write(u32::from(index), BankCell::new(word, level, host_epoch))?,
             (StateCell::DimensionParameter(index), StateWord::Dimension(word)) => self
                 .dimension_parameters
-                .write(u32::from(index), BankCell::new(word, level, save_serial))?,
+                .write(u32::from(index), BankCell::new(word, level, host_epoch))?,
             (StateCell::TokenParameter(index), StateWord::TokenList(word)) => self
                 .token_parameters
-                .write(u32::from(index), BankCell::new(word, level, save_serial))?,
+                .write(u32::from(index), BankCell::new(word, level, host_epoch))?,
             (StateCell::GlueParameter(index), StateWord::Glue(word)) => self
                 .glue_parameters
-                .write(u32::from(index), BankCell::new(word, level, save_serial))?,
+                .write(u32::from(index), BankCell::new(word, level, host_epoch))?,
             (StateCell::CurrentFont, StateWord::Font(word)) => {
-                self.current_font = BankCell::new(word, level, save_serial)
+                self.current_font = BankCell::new(word, level, host_epoch)
             }
             (StateCell::MathFamilyFont(index), StateWord::Font(word)) => self
                 .math_family_fonts
-                .write(u32::from(index), BankCell::new(word, level, save_serial))?,
+                .write(u32::from(index), BankCell::new(word, level, host_epoch))?,
             (StateCell::Code(kind, index), StateWord::Code(word)) => self
                 .code_bank_mut(kind)
-                .write(index, BankCell::new(word, level, save_serial))?,
+                .write(index, BankCell::new(word, level, host_epoch))?,
             (StateCell::FontRuntime(cell), StateWord::Integer(word)) => self.font_runtime.write(
                 cell,
-                BankCellValue::Integer(BankCell::new(word, level, save_serial)),
+                BankCellValue::Integer(BankCell::new(word, level, host_epoch)),
             )?,
             (StateCell::FontRuntime(cell), StateWord::Dimension(word)) => self.font_runtime.write(
                 cell,
-                BankCellValue::Dimension(BankCell::new(word, level, save_serial)),
+                BankCellValue::Dimension(BankCell::new(word, level, host_epoch)),
             )?,
             _ => return Err(StateError::CellKindMismatch),
         }
@@ -2080,115 +2084,99 @@ impl<G> DenseState<G> {
     fn swap_checkpoint_delta(
         &mut self,
         delta: &mut crate::journal::CheckpointDelta<G>,
+        host_epoch: u64,
     ) -> Result<(), StateError> {
-        fn swap_cell<T>(
-            target: &mut BankCell<T>,
-            value: &mut T,
-            level: &mut u32,
-            save_serial: &mut u64,
-        ) {
+        fn swap_cell<T>(target: &mut BankCell<T>, value: &mut T, level: &mut u32, host_epoch: u64) {
             std::mem::swap(&mut target.value, value);
             std::mem::swap(&mut target.level, level);
-            std::mem::swap(&mut target.save_serial, save_serial);
+            target.host_epoch = host_epoch;
         }
 
         match (delta.cell, &mut delta.alternate) {
-            (StateCell::Meaning(index), StateWord::Meaning(value)) => self.meanings.swap(
-                index,
-                value,
-                &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
-            )?,
+            (StateCell::Meaning(index), StateWord::Meaning(value)) => {
+                self.meanings
+                    .swap(index, value, &mut delta.alternate_level, host_epoch)?
+            }
             (StateCell::Count(index), StateWord::Integer(value)) => swap_cell(
                 self.counts.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
             (StateCell::Dimension(index), StateWord::Dimension(value)) => swap_cell(
                 self.dimensions.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
             (StateCell::TokenRegister(index), StateWord::TokenList(value)) => swap_cell(
                 self.token_registers.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
             (StateCell::GlueRegister(index), StateWord::Glue(value)) => swap_cell(
                 self.glue_registers.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
             (StateCell::MuGlueRegister(index), StateWord::Glue(value)) => swap_cell(
                 self.mu_glue_registers.get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
             (StateCell::IntegerParameter(index), StateWord::Integer(value)) => swap_cell(
                 self.integer_parameters.get_mut(u32::from(index))?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
             (StateCell::DimensionParameter(index), StateWord::Dimension(value)) => swap_cell(
                 self.dimension_parameters.get_mut(u32::from(index))?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
             (StateCell::TokenParameter(index), StateWord::TokenList(value)) => swap_cell(
                 self.token_parameters.get_mut(u32::from(index))?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
             (StateCell::GlueParameter(index), StateWord::Glue(value)) => swap_cell(
                 self.glue_parameters.get_mut(u32::from(index))?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
             (StateCell::CurrentFont, StateWord::Font(value)) => {
                 swap_cell(
                     &mut self.current_font,
                     value,
                     &mut delta.alternate_level,
-                    &mut delta.alternate_save_serial,
+                    host_epoch,
                 );
             }
             (StateCell::MathFamilyFont(index), StateWord::Font(value)) => swap_cell(
                 self.math_family_fonts.get_mut(u32::from(index))?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
             (StateCell::Code(kind, index), StateWord::Code(value)) => swap_cell(
                 self.code_bank_mut(kind).get_mut(index)?,
                 value,
                 &mut delta.alternate_level,
-                &mut delta.alternate_save_serial,
+                host_epoch,
             ),
-            (StateCell::FontRuntime(cell), StateWord::Integer(value)) => {
-                self.font_runtime.swap_integer(
-                    cell,
-                    value,
-                    &mut delta.alternate_level,
-                    &mut delta.alternate_save_serial,
-                )?
-            }
-            (StateCell::FontRuntime(cell), StateWord::Dimension(value)) => {
-                self.font_runtime.swap_dimension(
-                    cell,
-                    value,
-                    &mut delta.alternate_level,
-                    &mut delta.alternate_save_serial,
-                )?
-            }
+            (StateCell::FontRuntime(cell), StateWord::Integer(value)) => self
+                .font_runtime
+                .swap_integer(cell, value, &mut delta.alternate_level, host_epoch)?,
+            (StateCell::FontRuntime(cell), StateWord::Dimension(value)) => self
+                .font_runtime
+                .swap_dimension(cell, value, &mut delta.alternate_level, host_epoch)?,
             _ => return Err(StateError::CellKindMismatch),
         }
         Ok(())
@@ -2213,6 +2201,7 @@ impl<G> DenseState<G> {
         cursor: JournalCursor<G>,
         after_replay: bool,
     ) -> Result<(), StateError> {
+        self.journal().preflight_restore_epoch()?;
         let valid_cursor = if after_replay {
             self.journal().validate_cursor_after_replay(cursor)
         } else {
@@ -2235,11 +2224,24 @@ impl<G> DenseState<G> {
         self.journal().validate_release_cursor(cursor)
     }
 
+    #[cfg(test)]
     pub(crate) fn release_checkpoint_prefix(
         &mut self,
         cursor: JournalCursor<G>,
     ) -> Result<usize, StateError> {
         self.journal_mut().release_checkpoint_prefix(cursor)
+    }
+
+    pub(crate) fn release_checkpoint_root(
+        &mut self,
+        released: JournalCursor<G>,
+        oldest: Option<JournalCursor<G>>,
+    ) -> Result<(), StateError> {
+        self.journal_mut().release_checkpoint_root(released, oldest)
+    }
+
+    pub(crate) fn release_unretained_capture(&mut self, cursor: JournalCursor<G>) {
+        self.journal_mut().release_unretained_capture(cursor);
     }
 
     fn code_bank(&self, kind: CodeTableKind) -> &PagedDenseBank<i64> {
@@ -2273,7 +2275,7 @@ pub(crate) enum DynamicMemoryRoot<G> {
 
 impl<T> BankCell<T> {
     fn map<U>(self, map: impl FnOnce(T) -> U) -> BankCell<U> {
-        BankCell::new(map(self.value), self.level, self.save_serial)
+        BankCell::new(map(self.value), self.level, self.host_epoch)
     }
 }
 

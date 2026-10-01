@@ -96,6 +96,71 @@ fn checkpoint_prefix_release_rejects_foreign_or_unsettled_ownership() {
 }
 
 #[test]
+fn group_and_checkpoint_restore_their_distinct_preimages() {
+    // TeX82 §§275--283: unsave selects the value before the local write;
+    // the retained host restart independently selects the older job value.
+    let mut state = state();
+    let root = state.journal_cursor().expect("root");
+    state
+        .assign_count(0, 1, AssignmentScope::Global)
+        .expect("global");
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_count(0, 2, AssignmentScope::Local)
+        .expect("local");
+    state.end_group(GroupKind::Simple).expect("unsave");
+    assert_eq!(state.count(0).expect("group preimage"), 1);
+    state.restore(root).expect("checkpoint");
+    assert_eq!(state.count(0).expect("checkpoint preimage"), 0);
+    state
+        .assign_count(0, 3, AssignmentScope::Global)
+        .expect("new branch");
+    state.restore(root).expect("repeat checkpoint");
+    assert_eq!(state.count(0).expect("same root"), 0);
+}
+
+#[test]
+fn abandoned_checkpoint_at_reused_position_is_stale() {
+    let mut state = state();
+    let root = state.journal_cursor().expect("root");
+    let abandoned = state
+        .journal_cursor()
+        .expect("same position, distinct root");
+    state.restore(root).expect("rewind");
+    let replacement = state.journal_cursor().expect("replacement root");
+    assert!(state.validate_restore(abandoned).is_err());
+    assert!(state.validate_restore(replacement).is_ok());
+    state
+        .assign_count(0, 4, AssignmentScope::Global)
+        .expect("write");
+    state.restore(replacement).expect("restore replacement");
+    assert_eq!(state.count(0).expect("restored"), 0);
+}
+
+#[test]
+fn releasing_the_final_restart_drops_undo_and_disarms_future_writes() {
+    let mut state = state();
+    let root = state.journal_cursor().expect("root");
+    state
+        .assign_count(0, 4, AssignmentScope::Global)
+        .expect("write");
+    state
+        .release_checkpoint_root(root, None)
+        .expect("last root leaves");
+    assert!(state.validate_restore(root).is_err());
+    state
+        .assign_count(0, 5, AssignmentScope::Global)
+        .expect("unretained write");
+    assert_eq!(state.journal_len(), 0, "no restart owns an undo preimage");
+    let next = state.journal_cursor().expect("fresh restart");
+    state
+        .assign_count(0, 6, AssignmentScope::Global)
+        .expect("retained write");
+    state.restore(next).expect("fresh restart restores");
+    assert_eq!(state.count(0).expect("fresh value"), 5);
+}
+
+#[test]
 fn admitted_meanings_are_direct_dense_slots() {
     let mut names = interner();
     let alpha = names.intern("alpha").expect("intern");
@@ -431,7 +496,6 @@ fn root_checkpoint_suffixes_accept_and_reject_without_copying_metadata_values() 
     assert_eq!(state.count(0).expect("replacement count"), 30);
     assert!(state.validate_restore(early).is_ok());
     assert!(state.validate_restore(surviving_sibling).is_err());
-    assert_eq!(state.journal().checkpoint_counters().source_nodes_copied, 0);
 }
 
 #[test]

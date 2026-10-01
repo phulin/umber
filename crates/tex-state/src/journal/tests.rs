@@ -34,13 +34,13 @@ fn record_saved_count(journal: &mut SaveJournal<TestGeneration>, cell: u16, befo
         .expect("saved mutation has an active group")
         .frame
         .level();
-    journal.record_mutation(Mutation::new(
+    journal.record_assignment(
         StateCell::Count(cell),
         StateWord::Integer(before),
         level,
         0,
         Some(level),
-    ));
+    );
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn reports_journal_component_widths() {
     );
     #[cfg(target_pointer_width = "64")]
     {
-        assert_eq!(core::mem::size_of::<Mutation<TestGeneration>>(), 64);
+        assert_eq!(core::mem::size_of::<Mutation<TestGeneration>>(), 56);
         assert_eq!(core::mem::size_of::<JournalEntry<TestGeneration>>(), 64);
     }
 }
@@ -126,13 +126,7 @@ fn packed_cells_round_trip_every_coordinate_family_at_accepted_bounds() {
 fn cursor_is_an_exact_position_in_ordered_history() {
     let mut journal = SaveJournal::<TestGeneration>::new();
     let start = journal.checkpoint_cursor(0).expect("root checkpoint");
-    journal.record_mutation(Mutation::new(
-        StateCell::Count(7),
-        StateWord::Integer(1),
-        1,
-        0,
-        None,
-    ));
+    journal.record_assignment(StateCell::Count(7), StateWord::Integer(1), 1, 0, None);
     let end = journal.checkpoint_cursor(0).expect("root checkpoint");
     assert_ne!(start, end);
     assert!(journal.validate_cursor(start));
@@ -149,58 +143,64 @@ fn cursor_from_another_state_is_rejected_even_with_the_same_brand() {
 }
 
 #[test]
-fn released_dense_prefix_invalidates_older_marks_and_reuses_pool_pages() {
+fn exhausted_epoch_capture_leaves_the_retained_root_unchanged() {
     let mut journal = SaveJournal::<TestGeneration>::new();
-    let root = journal.checkpoint_cursor(0).expect("root checkpoint");
-    let released_records = journal.checkpoint_pool.chunk_capacity().saturating_mul(16);
-    for index in 0..released_records {
-        journal.record_mutation(Mutation::new(
-            StateCell::Count(index as u16),
-            StateWord::Integer(index as i32),
+    let root = journal.checkpoint_cursor(0).expect("root");
+    journal.host_epoch = u64::MAX;
+    assert_eq!(
+        journal.checkpoint_cursor(0),
+        Err(StateError::CheckpointEpochExhausted)
+    );
+    assert!(journal.validate_cursor(root));
+    assert_eq!(
+        journal.preflight_restore_epoch(),
+        Err(StateError::CheckpointEpochExhausted)
+    );
+    assert_eq!(journal.retained_len(), 0);
+}
+
+#[test]
+fn candidate_capture_keeps_the_epoch_required_for_settlement() {
+    let mut journal = SaveJournal::<TestGeneration>::new();
+    let root = journal.checkpoint_cursor(0).expect("root");
+    journal.host_epoch = u64::MAX - 2;
+    let accepted = journal
+        .begin_checkpoint_candidate(root)
+        .expect("last candidate interval");
+    assert_eq!(
+        journal.checkpoint_cursor(0),
+        Err(StateError::CheckpointEpochExhausted)
+    );
+    journal.reject_checkpoint_candidate(accepted);
+    assert!(journal.validate_cursor(root));
+    assert_eq!(journal.host_epoch(), u64::MAX);
+}
+
+#[test]
+fn released_dense_prefix_invalidates_older_roots_and_preserves_selected_values() {
+    let mut journal = SaveJournal::<TestGeneration>::new();
+    let root = journal.checkpoint_cursor(0).expect("root");
+    for index in 0..512 {
+        journal.record_assignment(
+            StateCell::Count(index),
+            StateWord::Integer(i32::from(index)),
             1,
             0,
             None,
-        ));
+        );
     }
-    let floor = journal.checkpoint_cursor(0).expect("root checkpoint");
-    journal.record_mutation(Mutation::new(
-        StateCell::Count(released_records as u16),
-        StateWord::Integer(released_records as i32),
-        1,
-        0,
-        None,
-    ));
-    let accepted = journal.checkpoint_cursor(0).expect("root checkpoint");
-    let pages = journal.checkpoint_pool.page_count();
-
-    assert!(
-        journal
-            .release_checkpoint_prefix(floor)
-            .expect("dense prefix releases")
-            >= 16,
-        "the complete first payload page is returned to the pool"
-    );
+    let floor = journal.checkpoint_cursor(0).expect("floor");
+    journal.record_assignment(StateCell::Count(512), StateWord::Integer(123), 1, 0, None);
+    let head = journal.checkpoint_cursor(0).expect("head");
+    journal
+        .release_checkpoint_prefix(floor)
+        .expect("release prefix");
     assert!(!journal.validate_cursor(root));
     assert!(journal.validate_cursor(floor));
-    assert!(journal.validate_cursor(accepted));
-    assert_exact_capacity_accounting(&journal);
-
-    for index in released_records + 1..released_records.saturating_mul(2) {
-        journal.record_mutation(Mutation::new(
-            StateCell::Count(index as u16),
-            StateWord::Integer(index as i32),
-            1,
-            0,
-            None,
-        ));
-    }
-    assert_eq!(
-        journal.checkpoint_pool.page_count(),
-        pages,
-        "released dense chunks satisfy the next accepted suffix"
-    );
-    journal.truncate_checkpoint(floor);
-    assert!(journal.validate_cursor(floor));
+    assert!(journal.validate_cursor(head));
+    let mut suffix = Vec::new();
+    journal.visit_checkpoint_suffix(floor, |delta| suffix.push(delta.alternate.clone()));
+    assert_eq!(suffix, vec![StateWord::Integer(123)]);
     assert_exact_capacity_accounting(&journal);
 }
 
@@ -208,41 +208,35 @@ fn released_dense_prefix_invalidates_older_marks_and_reuses_pool_pages() {
 fn checkpoint_intervals_deduplicate_the_first_prior_value() {
     let mut journal = SaveJournal::<TestGeneration>::new();
     let _start = journal.checkpoint_cursor(0).expect("root checkpoint");
-    let interval_serial = journal.save_serial();
-    for (before, before_save_serial) in [(1, 0), (2, interval_serial)] {
-        journal.record_mutation(Mutation::new(
+    let interval_serial = journal.host_epoch();
+    for (before, before_host_epoch) in [(1, 0), (2, interval_serial)] {
+        journal.record_assignment(
             StateCell::Count(7),
             StateWord::Integer(before),
             1,
-            before_save_serial,
+            before_host_epoch,
             None,
-        ));
+        );
     }
     assert_eq!(journal.checkpoint_entries, 1);
     let cursor = journal.checkpoint_cursor(0).expect("root checkpoint");
     let mut checkpoint_values = Vec::new();
     journal.visit_checkpoint_prefix(cursor, |delta| {
-        checkpoint_values.push((
-            delta.cell,
-            delta.alternate.clone(),
-            delta.alternate_level,
-            delta.alternate_save_serial,
-        ));
+        checkpoint_values.push((delta.cell, delta.alternate.clone(), delta.alternate_level));
     });
     assert_eq!(checkpoint_values.len(), 1);
     assert_eq!(checkpoint_values[0].0, StateCell::Count(7));
     assert!(matches!(checkpoint_values[0].1, StateWord::Integer(1)));
     assert_eq!(checkpoint_values[0].2, 1);
-    assert_eq!(checkpoint_values[0].3, 0);
     assert!(journal.active_groups.is_empty());
     let _interval = journal.checkpoint_cursor(0).expect("root checkpoint");
-    journal.record_mutation(Mutation::new(
+    journal.record_assignment(
         StateCell::Count(7),
         StateWord::Integer(3),
         1,
         interval_serial,
         None,
-    ));
+    );
     assert_eq!(journal.checkpoint_entries, 2);
     assert_exact_capacity_accounting(&journal);
 }
@@ -288,45 +282,21 @@ fn exact_capacity_accounting_covers_group_reuse_and_checkpoint_settlement() {
 fn exact_capacity_accounting_covers_checkpoint_fork_accept_reject_and_release() {
     let mut root_journal = SaveJournal::<TestGeneration>::new();
     let root = root_journal.checkpoint_cursor(0).expect("root checkpoint");
-    root_journal.record_mutation(Mutation::new(
-        StateCell::Count(0),
-        StateWord::Integer(0),
-        1,
-        0,
-        None,
-    ));
+    root_journal.record_assignment(StateCell::Count(0), StateWord::Integer(0), 1, 0, None);
     let tail = root_journal
         .begin_checkpoint_candidate(root)
         .expect("root candidate");
-    root_journal.record_mutation(Mutation::new(
-        StateCell::Count(1),
-        StateWord::Integer(1),
-        1,
-        0,
-        None,
-    ));
+    root_journal.record_assignment(StateCell::Count(1), StateWord::Integer(1), 1, 0, None);
     root_journal.reject_checkpoint_candidate(tail);
     assert_exact_capacity_accounting(&root_journal);
 
     let mut journal = SaveJournal::<TestGeneration>::new();
     let root = journal.checkpoint_cursor(0).expect("root checkpoint");
-    journal.record_mutation(Mutation::new(
-        StateCell::Count(0),
-        StateWord::Integer(0),
-        1,
-        0,
-        None,
-    ));
+    journal.record_assignment(StateCell::Count(0), StateWord::Integer(0), 1, 0, None);
     let _tail = journal
         .begin_checkpoint_candidate(root)
         .expect("root candidate");
-    journal.record_mutation(Mutation::new(
-        StateCell::Count(1),
-        StateWord::Integer(1),
-        1,
-        0,
-        None,
-    ));
+    journal.record_assignment(StateCell::Count(1), StateWord::Integer(1), 1, 0, None);
     journal
         .accept_checkpoint_candidate()
         .expect("accept candidate");
@@ -334,13 +304,13 @@ fn exact_capacity_accounting_covers_checkpoint_fork_accept_reject_and_release() 
 
     let root = journal.checkpoint_cursor(0).expect("root checkpoint");
     for cell in 512..768 {
-        journal.record_mutation(Mutation::new(
+        journal.record_assignment(
             StateCell::Count(cell),
             StateWord::Integer(i32::from(cell)),
             1,
             0,
             None,
-        ));
+        );
     }
     let floor = journal.checkpoint_cursor(0).expect("root checkpoint");
     journal
@@ -395,7 +365,6 @@ fn null_token_parameter_uses_tex_restore_zero_word() {
             StateCell::TokenParameter(0),
             StateWord::TokenList(None),
             1,
-            0,
             Some(2),
         )),
         Some(1)

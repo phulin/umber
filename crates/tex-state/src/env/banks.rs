@@ -494,22 +494,22 @@ mod tests;
 
 /// One current value, its TeX assignment level, and its runtime save serial.
 ///
-/// `save_serial` is direct-index first-write metadata for the named-checkpoint
+/// `host_epoch` is direct-index first-write metadata for the named-checkpoint
 /// journal. It is not semantic state and is therefore omitted from format and
-/// checkpoint payloads; inverse records restore it alongside the value.
+/// checkpoint payloads. Restoring a value stamps the current host epoch.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BankCell<T> {
     pub(crate) value: T,
     pub(crate) level: u32,
-    pub(crate) save_serial: u64,
+    pub(crate) host_epoch: u64,
 }
 
 impl<T> BankCell<T> {
-    pub(crate) const fn new(value: T, level: u32, save_serial: u64) -> Self {
+    pub(crate) const fn new(value: T, level: u32, host_epoch: u64) -> Self {
         Self {
             value,
             level,
-            save_serial,
+            host_epoch,
         }
     }
 
@@ -542,7 +542,7 @@ impl<T: Clone> DenseBank<T> {
             BankCell {
                 value: default.clone(),
                 level,
-                save_serial: 0,
+                host_epoch: 0,
             },
         );
         Ok(Self { cells })
@@ -618,7 +618,7 @@ impl<T: Clone> PagedDenseBank<T> {
             || BankCell {
                 value: (self.default)(index),
                 level: self.default_level,
-                save_serial: 0,
+                host_epoch: 0,
             },
             |values| values[offset].clone(),
         ))
@@ -633,7 +633,7 @@ impl<T: Clone> PagedDenseBank<T> {
             let values = array::from_fn(|slot| BankCell {
                 value: default(base + slot as u32),
                 level: default_level,
-                save_serial: 0,
+                host_epoch: 0,
             });
             self.pages[page] = Some(Box::new(values));
         }

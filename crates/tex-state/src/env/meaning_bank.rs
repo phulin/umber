@@ -14,7 +14,7 @@ use super::banks::{BankError, LEVEL_ZERO};
 pub(crate) struct MeaningBank<T: Clone> {
     values: Vec<T>,
     levels: Vec<u32>,
-    save_serials: Vec<u64>,
+    host_epochs: Vec<u64>,
     default: T,
 }
 
@@ -29,14 +29,14 @@ impl<T: Clone> MeaningBank<T> {
         levels
             .try_reserve_exact(capacity)
             .map_err(|_| BankError::AllocationFailed)?;
-        let mut save_serials = Vec::new();
-        save_serials
+        let mut host_epochs = Vec::new();
+        host_epochs
             .try_reserve_exact(capacity)
             .map_err(|_| BankError::AllocationFailed)?;
         Ok(Self {
             values,
             levels,
-            save_serials,
+            host_epochs,
             default,
         })
     }
@@ -54,7 +54,7 @@ impl<T: Clone> MeaningBank<T> {
         let mut bank = Self::new(capacity, default.clone())?;
         bank.values.resize(len, default);
         bank.levels.resize(len, LEVEL_ZERO);
-        bank.save_serials.resize(len, 0);
+        bank.host_epochs.resize(len, 0);
         Ok(bank)
     }
 
@@ -68,7 +68,7 @@ impl<T: Clone> MeaningBank<T> {
             .ok_or(BankError::IndexOutOfBounds)?;
         if required > self.values.capacity()
             || required > self.levels.capacity()
-            || required > self.save_serials.capacity()
+            || required > self.host_epochs.capacity()
         {
             return Err(BankError::IndexOutOfBounds);
         }
@@ -76,10 +76,10 @@ impl<T: Clone> MeaningBank<T> {
             return Ok(());
         }
         debug_assert_eq!(self.values.len(), self.levels.len());
-        debug_assert_eq!(self.values.len(), self.save_serials.len());
+        debug_assert_eq!(self.values.len(), self.host_epochs.len());
         self.values.resize(required, self.default.clone());
         self.levels.resize(required, LEVEL_ZERO);
-        self.save_serials.resize(required, 0);
+        self.host_epochs.resize(required, 0);
         Ok(())
     }
 
@@ -102,7 +102,7 @@ impl<T: Clone> MeaningBank<T> {
                 .ok_or(BankError::IndexOutOfBounds)?,
             *self.levels.get(index).ok_or(BankError::IndexOutOfBounds)?,
             *self
-                .save_serials
+                .host_epochs
                 .get(index)
                 .ok_or(BankError::IndexOutOfBounds)?,
         ))
@@ -116,7 +116,7 @@ impl<T: Clone> MeaningBank<T> {
         index: u32,
         value: T,
         level: u32,
-        save_serial: u64,
+        host_epoch: u64,
     ) -> Result<(), BankError> {
         let index = usize::try_from(index).map_err(|_| BankError::IndexOutOfBounds)?;
         *self
@@ -128,9 +128,9 @@ impl<T: Clone> MeaningBank<T> {
             .get_mut(index)
             .ok_or(BankError::IndexOutOfBounds)? = level;
         *self
-            .save_serials
+            .host_epochs
             .get_mut(index)
-            .ok_or(BankError::IndexOutOfBounds)? = save_serial;
+            .ok_or(BankError::IndexOutOfBounds)? = host_epoch;
         Ok(())
     }
 
@@ -142,7 +142,7 @@ impl<T: Clone> MeaningBank<T> {
         index: u32,
         value: &mut T,
         level: &mut u32,
-        save_serial: &mut u64,
+        host_epoch: u64,
     ) -> Result<(), BankError> {
         let index = usize::try_from(index).map_err(|_| BankError::IndexOutOfBounds)?;
         std::mem::swap(
@@ -157,12 +157,10 @@ impl<T: Clone> MeaningBank<T> {
                 .ok_or(BankError::IndexOutOfBounds)?,
             level,
         );
-        std::mem::swap(
-            self.save_serials
-                .get_mut(index)
-                .ok_or(BankError::IndexOutOfBounds)?,
-            save_serial,
-        );
+        *self
+            .host_epochs
+            .get_mut(index)
+            .ok_or(BankError::IndexOutOfBounds)? = host_epoch;
         Ok(())
     }
 

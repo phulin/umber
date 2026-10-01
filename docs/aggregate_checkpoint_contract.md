@@ -354,6 +354,31 @@ engine. Each implementation must delete its displaced representation and port
 all real consumers in the same logical change. No shim or second engine may
 remain; a design split is for review, not parallel authority.
 
+### Direct-control migration details
+
+The `.6` implementation moves the real local-definition retirement frontier
+into the sole scalar group boundary. Until `.13` replaces the definition
+namespace, popping that boundary still truncates the actual local rows after
+restoration observers have finished. There is no separate definition group
+stack or empty compatibility hook. `.13` removes this frontier together with
+local/global allocation and promotion.
+
+Group close consumes native typed entries one at a time. The admitted state
+context restores a scalar or box binding, invokes the synchronous restoration
+observer while both values are valid, then releases the losing value. A saved
+aftergroup token enters ordinary backup input directly at its pop position.
+The executor's diagnostic renderer therefore needs no retained restoration
+vector or second token vector. Sparse entries use a lazy marker and stack-index
+chain; their chain traversal remains distinct from ordinary reverse popping.
+
+The direct control loop preserves the two TeX fetch labels, current mode,
+prefix flags and pending diagnostics as explicit control facts. It invokes
+ordinary synchronous scanner and application leaves from the same dispatch
+arm. Observation selects evidence production in those leaves, not a different
+executor. Host-resource resolution and actual owned scanner roots remain cold
+boundaries; no immediate-consumption universal command-operation union or
+prepare/apply episode carries them between two dispatch engines.
+
 Required proof cases include the `0 -> global 1 -> local 2` example, nested
 local/global/local suppression, repeated same-level writes, repeated named
 restore, fresh branch epochs, sparse/classic/box tracing order, aftergroup and
