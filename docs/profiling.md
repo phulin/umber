@@ -171,27 +171,31 @@ target/profiling/umber run --profiling-stats \
 ## Interpreter primitive microbenchmark
 
 `scripts/interp-microbench.py` measures the per-primitive cost of the
-interpreter core. Each case runs a preamble loop that calls one snippet (for
-example `\advance\count2 by 1`, `\begingroup\endgroup`, or `\setbox2\hbox{}`)
-inside `\iter`, whose own body is an `\ifnum` test, an `\advance`, and an
-`\expandafter` self-call. The script runs every case at zero and N iterations
-and reports the difference in user-space instructions per iteration, so
-startup and format loading cancel. The `base` row is the loop alone; other rows
-are the snippet's cost above `base`.
+interpreter core and gates it against the per-operation targets in
+[Minimal hot loop](minimal_hot_loop.md). Each case runs an initex job with no
+format that calls one snippet (for example `\advance\count2 by 1`,
+`\begingroup\endgroup`, or `\setbox2\hbox{}`) inside `\iter`, whose own body
+is an `\ifnum` test, an `\advance`, and an `\expandafter` self-call. The script
+runs every case at a short and a long iteration count and reports the
+difference in user-space instructions per iteration, so startup cancels. The
+`base` row is the loop alone; other rows are the snippet's cost above `base`.
 
 ```sh
-python3 scripts/interp-microbench.py --sudo \
-  --umber before=target/bench/umber-before \
-  --umber after=target/profiling/umber --pdftex
+python3 scripts/interp-microbench.py --sudo --cpu 3 \
+  --umber after=target/profiling/umber \
+  --umber before=target/bench/umber-before --pdftex \
+  --json target/minimal-hot-loop/receipt.json
 ```
 
 Repeat `--umber LABEL=PATH` to compare builds; the ratio column divides the
-first engine by the last. `--pdftex` adds the pinned pdfTeX oracle, which makes
-the ratio the distance from TeX's own cost. Distribution and format paths come
-from an arXiv row's `result.json` authority record (`--authority`, defaulting
-to the 500-page book row). Instruction counts are near-deterministic, so they
-remain meaningful on a shared host where wall time is not. `--sudo` runs
-`perf` through `sudo -n` when `perf_event_paranoid` forbids user counting.
+first engine by the last. `--pdftex` adds the pinned clean pdfTeX oracle in
+e-TeX initex mode, which makes the ratio the distance from TeX's own cost. The
+first Umber engine is gated against the targets, and the script exits nonzero
+when a gated case misses. The JSON receipt records the revision, host, engine
+hashes, per-iteration counts, and verdicts. Instruction counts are
+near-deterministic, so they remain meaningful on a shared host where wall time
+is not. `--sudo` runs `perf` through `sudo -n` when `perf_event_paranoid`
+forbids user counting.
 
 ## Main-control hot-core structural census
 

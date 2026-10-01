@@ -2,7 +2,7 @@
 
 Status: proposed architecture. Microbenchmarks use the frozen binary from the
 `23548ce50` full-book profile; the source was read at `ea2b720e6`. Tracking:
-Beads `umber2-efje`.
+Beads `umber2-efje` (design) and `umber2-i0n5` (implementation).
 
 This proposal replaces the input, expansion, and main-control core with a
 machine shaped like TeX's own:
@@ -1144,7 +1144,7 @@ for unported consumers, but it must delete that shim before it closes.
 
 **Stage 0. Harness.**
 
-- Commit the microbenchmark harness. It needs:
+- Commit the microbenchmark harness, `scripts/interp-microbench.py`. It needs:
   - the case table and the oracle environment;
   - a JSON receipt;
   - the per-operation report against the targets above.
