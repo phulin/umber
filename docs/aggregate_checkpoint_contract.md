@@ -337,7 +337,7 @@ payload: packed words, compiled matcher and origin together. They read slices
 without counts or slot lookup per token, and remain valid after the arena
 slot tombstones. Count a frame's actual payload owner, not a separate slot
 root when it never resolves that key again. Ordinary borrowed
-`CurrentCommand`/`HotCommand` keys can outlive no owner mutation unless they
+`CurrentCommand` keys can outlive no owner mutation unless they
 acquire the needed payload first. Cold read/input placeholders must be removed
 with direct dispatch, or become explicit counted owners while they remain.
 There is no second matcher-plan store.

@@ -9,13 +9,10 @@ fn one_and_4096_preflight_expansions_reuse_one_slot_with_exact_linear_work() {
     let many = empty_macro_delivery_evidence(4_096);
 
     for (expansions, evidence) in [(1, one), (4_096, many)] {
-        assert_eq!(evidence.slot_initializations, 0);
-        assert_eq!(evidence.rich_materializations, 1);
         // The first macro and every later activation consume only resolved
         // invocation facts; only the terminal character becomes a command.
         assert_eq!(evidence.resolved_writes, 1);
         assert_eq!(evidence.expanded_classifications, 1);
-        assert_eq!(evidence.command_clones, 0);
         assert_eq!(evidence.token_frame_steps, expansions + 1);
         assert_eq!(evidence.meaning_lookups, expansions);
         assert_eq!(evidence.expanded_deliveries, 1);
@@ -81,7 +78,6 @@ fn expandable_preflight_delivery_uses_one_caller_owned_command_slot() {
         );
         assert_eq!(processor.fuel.burned(), 2);
         let ownership_after = crate::command::command_ownership_counters();
-        assert_eq!(ownership_after.clones - ownership_before.clones, 0);
         assert_eq!(
             ownership_after.resolved_writes - ownership_before.resolved_writes,
             1
@@ -279,7 +275,6 @@ fn unexpandable_preflight_classifies_once_and_reuses_one_slot() {
             &mut diagnostic_effects,
         );
         let mut destination = None;
-        let ownership_before = crate::command::command_ownership_counters();
         let classifications_before = super::super::expanded_classifications();
         assert_eq!(
             processor
@@ -297,16 +292,10 @@ fn unexpandable_preflight_classifies_once_and_reuses_one_slot() {
         );
         assert_eq!(processor.fuel.burned(), 1);
         drop(processor);
-        let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(
             super::super::expanded_classifications() - classifications_before,
             1
         );
-        assert_eq!(
-            ownership_after.slot_initializations - ownership_before.slot_initializations,
-            0
-        );
-        assert_eq!(ownership_after.clones - ownership_before.clones, 0);
     });
 }
 

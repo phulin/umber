@@ -12,7 +12,7 @@ use tex_state::interner::Symbol;
 use tex_state::token::{Catcode, TokenWord, TracedTokenWord};
 
 use crate::attempt::{AttemptDefinitionId, AttemptTokenBufferId, AttemptTokenListId};
-use crate::command::HotCommand;
+use crate::command::CurrentCommand;
 
 /// Per-word rewrite applied only while an escaping general-text collector
 /// writes its final replay owner.
@@ -31,7 +31,7 @@ impl<G> crate::CommandProcessor<'_, '_, G> {
     #[inline(always)]
     pub(crate) fn classify_collector_hot_token(
         &mut self,
-        command: &HotCommand<G>,
+        command: &CurrentCommand<G>,
         paragraph_token: Option<TokenWord>,
     ) -> ClassifiedToken {
         #[cfg(test)]
@@ -64,7 +64,10 @@ impl ClassifiedToken {
     /// delivered spelling, so the hot command remains the sole per-token
     /// owner until a genuine recovery or outward scanner boundary.
     #[inline(always)]
-    pub(crate) fn from_hot<G>(command: &HotCommand<G>, paragraph_token: Option<TokenWord>) -> Self {
+    pub(crate) fn from_hot<G>(
+        command: &CurrentCommand<G>,
+        paragraph_token: Option<TokenWord>,
+    ) -> Self {
         let word = command.spelling();
         Self {
             word,

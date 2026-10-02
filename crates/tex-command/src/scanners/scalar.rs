@@ -13,7 +13,6 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use tex_state::{BoxDimension, PenaltyArrayKind, PrepareMagDiagnostic};
 
-use crate::command::HotCommand;
 use crate::observation::canonical_names::glue_order_name;
 use crate::scanners::RestrictedIntegerClass;
 use crate::{
@@ -77,9 +76,7 @@ impl<G> Clone for DimensionUnitProgress<G> {
             Self::SpecialFilL => Self::SpecialFilL,
             Self::InfiniteSuffix { order } => Self::InfiniteSuffix { order: *order },
             Self::ProbeLeading => Self::ProbeLeading,
-            Self::ProbeInternal { command } => Self::ProbeInternal {
-                command: command.clone(),
-            },
+            Self::ProbeInternal { command } => Self::ProbeInternal { command: *command },
             Self::Keyword {
                 cursor,
                 magnification,
@@ -1068,7 +1065,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut provenance = OriginId::UNKNOWN;
         loop {
             let mut command = None;
-            let delivery = match self.request_expanded_hot_token(&mut command) {
+            let delivery = match self.request_expanded_token(&mut command) {
                 Ok(delivery) => delivery,
                 Err(error) => {
                     return self.finish_scalar_destination_error(error, call);
@@ -1203,7 +1200,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // Keyword letters are classified from the compact delivery; a
             // mismatch backs the same compact command up.
             let mut command = None;
-            let delivery = match self.request_expanded_hot_token(&mut command) {
+            let delivery = match self.request_expanded_token(&mut command) {
                 Ok(delivery) => delivery,
                 Err(error) => {
                     return self.finish_scalar_destination_error(error, call);
@@ -1292,7 +1289,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
     ) -> Result<ScannedScalar<i32>, CommandError> {
         let mut command = None;
-        let delivery = self.request_expanded_hot_token(&mut command)?;
+        let delivery = self.request_expanded_token(&mut command)?;
         match delivery {
             DeliveryStatus::Command => {}
             DeliveryStatus::End => {
@@ -1315,7 +1312,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// must not be backed up before the full scanner resumes.
     pub(crate) fn scan_integer_from_leading_hot(
         &mut self,
-        first: HotCommand<G>,
+        first: CurrentCommand<G>,
     ) -> Result<ScannedScalar<i32>, CommandError> {
         let (mut negative, mut provenance) = (false, OriginId::UNKNOWN);
         let mut command = Some(first);
@@ -1324,7 +1321,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Some(command) => command,
                 None => {
                     let mut destination = None;
-                    let delivery = self.request_expanded_hot_token(&mut destination)?;
+                    let delivery = self.request_expanded_token(&mut destination)?;
                     match delivery {
                         DeliveryStatus::Command => {
                             destination.expect("command delivery initializes destination")
@@ -1361,7 +1358,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn finish_integer_hot(
         &mut self,
-        first: HotCommand<G>,
+        first: CurrentCommand<G>,
         negative: bool,
         provenance: OriginId,
     ) -> Result<ScannedScalar<i32>, CommandError> {
@@ -1375,9 +1372,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let (value, _, _) = self.scan_radix_tail(Some(ch as u8 - b'0'), DECIMAL_RADIX)?;
             return Ok(self.finish_integer(value, negative, provenance, ScalarRecovery::None));
         }
-        Ok(self
-            .complete_integer(first.materialize(), negative, provenance)?
-            .0)
+        Ok(self.complete_integer(first, negative, provenance)?.0)
     }
 
     /// TeX82 §440's `scan_int` body, from the token its
@@ -2357,7 +2352,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // overflow report or the terminator's recovery needs more than
             // the packed character word.
             let mut command = None;
-            let delivery = self.request_expanded_hot_token(&mut command)?;
+            let delivery = self.request_expanded_token(&mut command)?;
             let command = match delivery {
                 DeliveryStatus::Command => {
                     command.expect("command delivery initializes destination")
@@ -2382,8 +2377,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             // `loc`. Later digits remain consumed, but do not
                             // repeat the report (`OK_so_far:=false`).
                             if !overflowed {
-                                let site =
-                                    self.capture_diagnostic_site(Some(&command.materialize()));
+                                let site = self.capture_diagnostic_site(Some(&command));
                                 self.number_too_big_error(Some(site))?;
                                 overflowed = true;
                             }
@@ -2395,7 +2389,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         // §446's `back_error`, which is `back_input; error`
                         // and so keeps even a spacer for the caller's report
                         // to pseudoprint.
-                        let command = command.materialize();
                         missing_site = Some(self.capture_diagnostic_site(Some(&command)));
                         self.back_input(command)?;
                     } else if self.back_hot_input_unless_spacer(command, meaning)? {
@@ -3117,7 +3110,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// `get_x_token; if cur_cmd<>spacer then back_input`.
     fn scan_optional_space(&mut self) -> Result<(), CommandError> {
         let mut command = None;
-        let delivery = self.request_expanded_hot_token(&mut command)?;
+        let delivery = self.request_expanded_token(&mut command)?;
         let command = match delivery {
             DeliveryStatus::Command => command.expect("command delivery initializes destination"),
             DeliveryStatus::End => return Ok(()),
@@ -3131,7 +3124,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// meaning the caller has already decoded.
     fn back_hot_input_unless_spacer(
         &mut self,
-        command: HotCommand<G>,
+        command: CurrentCommand<G>,
         meaning: Option<Meaning>,
     ) -> Result<bool, CommandError> {
         if matches!(
@@ -3536,7 +3529,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         negative: bool,
         call: &mut ScalarCallFrame<InternalScan>,
     ) -> ScalarCallStatus {
-        let command = command.clone();
+        let command = *command;
         let result = self.scan_something_internal_from(command, level, negative);
         publish_scalar_result!(self, call, result)
     }

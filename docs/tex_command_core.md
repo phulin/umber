@@ -200,7 +200,7 @@ templates, recovery, and replay completion use the same transition owner.
 Expanded delivery resolves an interpreted token once into its canonical packed
 meaning and control-sequence identity. An ordinary unobserved macro passes only
 its definition, flags, name, and origin to activation and argument scanning.
-Successful activation constructs neither `HotCommand` nor `CurrentCommand`.
+Successful activation constructs no `CurrentCommand`.
 Only spelling and invocation facts survive synchronous argument matching;
 prefix diagnostics construct their site directly from those facts. Delivery
 geometry does not remain live merely for diagnostics. Macro chains remain
@@ -208,9 +208,12 @@ iterative in one read/interpret loop. Matching's local storage belongs to its
 activation call, outside suspended primitive-expansion frames.
 
 A delivered command, primitive scanner boundary, observation, suppression,
-alignment, or outer recovery materializes `HotCommand` from those already
-resolved facts. It never repeats a dense meaning lookup. Public delivery then
-materializes `CurrentCommand` once into the caller's final destination. Raw
+alignment, or outer recovery writes one native `CurrentCommand` from those
+already resolved facts. It contains the delivered token/site and native command
+word. Raw input, expansion, synchronous scanners and main control retain that
+same value; no separate command type or public-boundary repacking remains.
+Spelling and printed identity are projected only by actual consumers. It never
+repeats a dense meaning lookup. Raw
 callers that request a command use the same reader and settlement authority.
 The matcher retains its existing hot destination for command-sensitive scanning.
 Main-control text instead consumes characters directly; eligible source text
@@ -225,12 +228,11 @@ the host restores an eligible full checkpoint and re-enters delivery, with no
 parked scanner, continuation envelope, or second input owner.
 
 The structural collectors consume that same compact delivery. The
-`\csname`/`\ifcsname` name scan keeps one caller-owned `HotCommand` slot and
+`\csname`/`\ifcsname` name scan keeps one caller-owned `CurrentCommand` slot and
 tests its packed command class or literal character word directly; ordinary
-name characters append to the existing name builder without materializing a
-`CurrentCommand`. An `end_cs_name` command is recognized by its packed
+name characters append to the existing name builder without projecting a decoded meaning. An `end_cs_name` command is recognized by its packed
 meaning, not by source spelling. Only missing-`\endcsname` recovery takes the
-hot value across the established rich `back_error` boundary. The `scan_toks`
+native value across the established `back_error` boundary. The `scan_toks`
 replacement collector selects unexpanded word collection before its loop.
 Literal body tokens append directly with brace and parameter accounting;
 control sequences and active characters resolve once for outer validity.
@@ -321,7 +323,7 @@ Assignment level remains solely in the dense bank, so delivered-command
 ownership does not duplicate journaling or reinterpret a meaning after
 delivery.
 
-`HotCommand::write_resolved_delivery` writes and resolves the resident packed
+`CurrentCommand::write_resolved_delivery` writes and resolves the resident packed
 spelling directly in the frame-owned destination and
 returns only the meaning-lookup and literal-catcode scalars already decided by
 dense resolution. The enclosing `CommandState` transition reclaims its
@@ -2913,12 +2915,11 @@ For an expanded scan it follows the canonical structure:
 7. preserve compact `OutParameter` and escaped-parameter rules; and
 8. stop at the inaccessible collector boundary without reading caller input.
 
-The replacement loop supplies one caller-owned `Option<HotCommand<G>>` as the
+The replacement loop supplies one caller-owned `Option<CurrentCommand<G>>` as the
 delivery destination in both expanded and unexpanded modes. Classification,
 observation, and spelling borrow the resident command, then successful
 progress clears the option in place. Only TeX's real backup path consumes it;
-an outward scanner still materializes `CurrentCommand` at its established
-boundary. A resource miss unwinds the local collector and returns a cold need;
+outward scanners retain that same native value at their established boundary. A resource miss unwinds the local collector and returns a cold need;
 the host later restores a full checkpoint.
 This keeps ordinary collection destination-directed without a returned-command
 handoff, a heap indirection, or generation-long retention.

@@ -378,10 +378,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// spelling and meaning.
     pub(super) fn next_non_space_raw_hot_into(
         &mut self,
-        destination: &mut Option<crate::command::HotCommand<G>>,
+        destination: &mut Option<crate::command::CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         loop {
-            let delivery = self.get_token_hot_into(destination)?;
+            let delivery = self.get_token_into(destination)?;
             if delivery == DeliveryStatus::End {
                 return Ok(DeliveryStatus::End);
             }

@@ -5,7 +5,7 @@ use tex_state::meaning::MeaningFlags;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 use tex_state::{DefinitionRef, ResidentMacroBody};
 
-use crate::command::HotCommand;
+use crate::command::CurrentCommand;
 use crate::execution_scratch::ArgumentRunAdmission;
 use crate::input::{ArgumentCursor, MatchedArguments};
 use crate::processor::status::{
@@ -119,13 +119,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         call: &mut crate::CurrentCommand<G>,
     ) -> Result<bool, CommandError> {
-        let mut hot = crate::command::HotCommand::from_current_ref(call);
+        let mut hot = *call;
         self.macro_call_hot(&mut hot)
     }
 
     pub(crate) fn macro_call_hot(
         &mut self,
-        call: &mut crate::command::HotCommand<G>,
+        call: &mut crate::command::CurrentCommand<G>,
     ) -> Result<bool, CommandError> {
         let Some((flags, definition)) = call.macro_parts() else {
             return Err(CommandError::input_invariant());
@@ -276,12 +276,15 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[inline(always)]
     #[cold]
-    pub(crate) fn report_macro_prefix_mismatch(&mut self, call: &crate::command::HotCommand<G>) {
+    pub(crate) fn report_macro_prefix_mismatch(
+        &mut self,
+        call: &crate::command::CurrentCommand<G>,
+    ) {
         let site = self.capture_hot_diagnostic_site(call);
         self.queue_macro_prefix_mismatch(call.control_sequence().expect("macro name"), site);
         if self.is_observed() {
-            let observed_call = call.materialize();
-            self.observe_command_diagnostic("macro_prefix_mismatch", &observed_call);
+            let observed_call = call;
+            self.observe_command_diagnostic("macro_prefix_mismatch", observed_call);
         }
     }
 
@@ -682,7 +685,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// undelimited and delimited branches of §394's parameter matcher.
     fn recover_extra_right_brace_argument(
         &mut self,
-        delivery: HotCommand<G>,
+        delivery: CurrentCommand<G>,
     ) -> Result<ArgumentCursor, CommandError> {
         self.back_input_hot(delivery)?;
         self.insert_macro_argument_recovery_par()?;
@@ -1032,7 +1035,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn check_argument_paragraph(
         &mut self,
-        delivery: &HotCommand<G>,
+        delivery: &CurrentCommand<G>,
         paragraph_token: Option<TokenWord>,
         flags: MeaningFlags,
         partial: Option<&ArgumentCursor>,

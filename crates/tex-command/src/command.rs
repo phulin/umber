@@ -17,28 +17,20 @@ use tex_state::token::{Catcode, OriginId, PackedCommandTarget, Token, TokenWord,
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CommandOwnershipCounters {
-    pub(crate) clones: u64,
     pub(crate) backup_copies: u64,
     pub(crate) expansion_moves_in: u64,
     pub(crate) expansion_moves_out: u64,
-    pub(crate) slot_initializations: u64,
     pub(crate) resolved_writes: u64,
-    pub(crate) rich_materializations: u64,
-    pub(crate) hot_reconstructions: u64,
 }
 
 #[cfg(test)]
 thread_local! {
     static COMMAND_OWNERSHIP_COUNTERS: core::cell::Cell<CommandOwnershipCounters> =
         const { core::cell::Cell::new(CommandOwnershipCounters {
-            clones: 0,
             backup_copies: 0,
             expansion_moves_in: 0,
             expansion_moves_out: 0,
-            slot_initializations: 0,
             resolved_writes: 0,
-            rich_materializations: 0,
-            hot_reconstructions: 0,
         }) };
 }
 
@@ -297,55 +289,16 @@ pub(crate) struct HotToken {
     site: DeliverySite,
 }
 
-/// Sole compact command owner inside raw and expanded delivery loops.
-#[derive(Debug)]
-pub(crate) struct HotCommand<G> {
-    token: HotToken,
-    command: CommandWord<G>,
-}
-
-impl<G> PartialEq for HotCommand<G> {
-    fn eq(&self, other: &Self) -> bool {
-        self.token == other.token && self.command == other.command
-    }
-}
-
-impl<G> Eq for HotCommand<G> {}
-
-impl<G> core::hash::Hash for HotCommand<G> {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.token.hash(state);
-        self.command.hash(state);
-    }
-}
-
-// `HotCommand` contains only compact coordinates and the manually
-// copyable `CommandWord`; its generation parameter brands opaque definition
-// capabilities but is not itself a runtime field. Keep the copy contract
-// independent of whether the generation marker happens to implement `Copy`.
-impl<G> Copy for HotCommand<G> {}
-
-impl<G> Clone for HotCommand<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-/// One command delivery, equivalent to TeX's `cur_cmd`, `cur_chr`, `cur_cs`,
-/// and `cur_tok`.
+/// The one delivered native token/site and command word.
 ///
-/// This value is normally call-local and remains absent at durable named
-/// checkpoints. A resource miss drops the current command with the unwound
-/// scanner call; its delivery stamp identifies the live cursor transition and
-/// is never reconstructed from token equality.
+/// Raw input, expansion, synchronous scanners and main control use this same
+/// opaque value. Printed spelling, full meaning and diagnostic geometry are
+/// projected only by their consumers. Native fields are copyable coordinates,
+/// not immutable definition owners; backup retains spelling and resolves again.
 #[derive(Debug)]
 pub struct CurrentCommand<G> {
-    spelling: TracedTokenWord,
-    meaning: CommandWord<G>,
-    control_sequence: Option<Symbol>,
-    direct_source_line: u32,
-    alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
-    delivery_flags: CommandDeliveryFlags,
+    token: HotToken,
+    command: CommandWord<G>,
 }
 
 /// Scalar delivery facts shared by the raw, resolved, and recovery phases.
@@ -385,31 +338,17 @@ impl CommandDeliveryFlags {
     }
 }
 
+impl<G> Copy for CurrentCommand<G> {}
+
 impl<G> Clone for CurrentCommand<G> {
     fn clone(&self) -> Self {
-        #[cfg(test)]
-        update_command_ownership_counters(|counters| {
-            counters.clones = counters.clones.saturating_add(1);
-        });
-        Self {
-            spelling: self.spelling,
-            meaning: self.meaning,
-            control_sequence: self.control_sequence,
-            direct_source_line: self.direct_source_line,
-            alignment_adjustment: self.alignment_adjustment,
-            delivery_flags: self.delivery_flags,
-        }
+        *self
     }
 }
 
 impl<G> PartialEq for CurrentCommand<G> {
     fn eq(&self, other: &Self) -> bool {
-        self.spelling == other.spelling
-            && self.meaning == other.meaning
-            && self.control_sequence == other.control_sequence
-            && self.direct_source_line == other.direct_source_line
-            && self.alignment_adjustment == other.alignment_adjustment
-            && self.delivery_flags == other.delivery_flags
+        self.token == other.token && self.command == other.command
     }
 }
 
@@ -417,12 +356,8 @@ impl<G> Eq for CurrentCommand<G> {}
 
 impl<G> core::hash::Hash for CurrentCommand<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.spelling.hash(state);
-        self.meaning.hash(state);
-        self.control_sequence.hash(state);
-        self.direct_source_line.hash(state);
-        self.alignment_adjustment.hash(state);
-        self.delivery_flags.hash(state);
+        self.token.hash(state);
+        self.command.hash(state);
     }
 }
 
@@ -546,34 +481,6 @@ impl CommandIdentity {
             .and_then(XRaySelector::from_primitive)
             .map_or(Self::Ordinary, Self::XRay)
     }
-    fn from_static_meaning(meaning: Meaning) -> Self {
-        match meaning {
-            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::ExpandAfter) => {
-                Self::ExpandAfter
-            }
-            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::CsName) => {
-                Self::CsName
-            }
-            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndCsName) => {
-                Self::EndCsName
-            }
-            Meaning::ExpandablePrimitive(primitive) => {
-                if let Some(selector) = ConvertSelector::from_primitive(primitive) {
-                    Self::Convert(selector)
-                } else {
-                    Self::Ordinary
-                }
-            }
-            Meaning::UnexpandablePrimitive(primitive) => {
-                if let Some(selector) = XRaySelector::from_primitive(primitive) {
-                    Self::XRay(selector)
-                } else {
-                    Self::Ordinary
-                }
-            }
-            _ => Self::Ordinary,
-        }
-    }
 }
 
 impl<G> PackedCommandTarget<G> for CommandWord<G> {
@@ -591,7 +498,7 @@ impl<G> PackedCommandTarget<G> for CommandWord<G> {
     }
 }
 
-impl<G> HotCommand<G> {
+impl<G> CurrentCommand<G> {
     /// Initializes or overwrites a caller that explicitly requests raw command delivery.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
@@ -614,7 +521,7 @@ impl<G> HotCommand<G> {
                 state,
             )
         } else {
-            let (command, resolution) = HotCommand::from_resolved_delivery(
+            let (command, resolution) = CurrentCommand::from_resolved_delivery(
                 word,
                 origin,
                 direct_source,
@@ -628,7 +535,7 @@ impl<G> HotCommand<G> {
     }
 }
 
-impl<G> HotCommand<G> {
+impl<G> CurrentCommand<G> {
     /// Resolves a resident word into a newly-owned hot command without first
     /// constructing an empty destination. The command word is initialized to
     /// a valid value before the packed resolver overwrites it; unlike
@@ -694,6 +601,7 @@ impl<G> HotCommand<G> {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self {
             token: HotToken {
@@ -759,34 +667,8 @@ impl<G> HotCommand<G> {
         self.command.static_meaning()
     }
 
-    /// The command identity selected by the compact delivery loop.
-    pub(crate) fn identity(&self) -> CommandIdentity {
-        if self
-            .token
-            .site
-            .delivery_flags
-            .contains(CommandDeliveryFlags::NOEXPAND_FROZEN_RELAX)
-        {
-            CommandIdentity::NoExpandFrozenRelax
-        } else {
-            match self.command.static_meaning() {
-                Some(meaning) => CommandIdentity::from_static_meaning(meaning),
-                None => CommandIdentity::Ordinary,
-            }
-        }
-    }
-
-    #[allow(dead_code)] // profiling-only direct-delivery harness
-    pub(crate) fn resolved_meaning(&self) -> ResolvedMeaning<G> {
-        self.command.resolved_meaning()
-    }
-
     pub(crate) const fn spelling_word(&self) -> TokenWord {
         self.token.word
-    }
-
-    pub(crate) const fn spelling(&self) -> TracedTokenWord {
-        TracedTokenWord::from_parts(self.token.word, self.token.origin)
     }
 
     /// Returns the category attached to the delivered spelling.  Matcher and
@@ -821,43 +703,13 @@ impl<G> HotCommand<G> {
             .contains(CommandDeliveryFlags::OUTER_RECOVERY_SPACE)
     }
 
-    /// Physical source line retained with a direct source delivery.  The
-    /// compact matcher needs this only when an active alignment turns the
-    /// delivery into a v-template boundary.
-    pub(crate) const fn direct_source_line_number(&self) -> Option<u32> {
-        if self
-            .token
-            .site
-            .delivery_flags
-            .contains(CommandDeliveryFlags::HAS_DIRECT_SOURCE_LINE)
-        {
-            Some(self.token.site.direct_source_line)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) const fn origin(&self) -> OriginId {
-        self.token.origin
-    }
-
     /// Returns a literal character token represented by a compact character
     /// command. The expanded `\csname` and `\ifcsname` drivers use this
-    /// without materializing a rich `CurrentCommand` on every collected
+    /// without projecting a decoded meaning on every collected
     /// character. A `\chardef` value deliberately returns `None`, allowing
     /// the caller to enter TeX82 §25's missing-`\endcsname` recovery.
     pub(crate) fn character_token(&self) -> Option<char> {
         self.command.character_token()
-    }
-
-    pub(crate) const fn control_sequence(&self) -> Option<Symbol> {
-        self.token.site.control_sequence
-    }
-
-    pub(crate) const fn alignment_adjustment(
-        &self,
-    ) -> crate::processor::AlignmentDeliveryAdjustment {
-        self.token.site.alignment_adjustment
     }
 
     pub(crate) fn set_alignment_adjustment(
@@ -865,13 +717,6 @@ impl<G> HotCommand<G> {
         adjustment: crate::processor::AlignmentDeliveryAdjustment,
     ) {
         self.token.site.alignment_adjustment = adjustment;
-    }
-
-    pub(crate) const fn is_direct_source_delivery(&self) -> bool {
-        self.token
-            .site
-            .delivery_flags
-            .contains(CommandDeliveryFlags::DIRECT_SOURCE)
     }
 
     pub(crate) const fn suppresses_expandable_control_sequence(&self) -> bool {
@@ -928,63 +773,6 @@ impl<G> HotCommand<G> {
         self.command = CommandWord::from_static_word(Meaning::END_TEMPLATE_WORD);
         self.token.site.control_sequence = None;
     }
-
-    pub(crate) fn materialize(&self) -> CurrentCommand<G> {
-        #[cfg(test)]
-        update_command_ownership_counters(|counters| {
-            counters.rich_materializations = counters.rich_materializations.saturating_add(1);
-        });
-        CurrentCommand {
-            spelling: TracedTokenWord::from_parts(self.token.word, self.token.origin),
-            meaning: self.command,
-            control_sequence: self.token.site.control_sequence,
-            direct_source_line: self.token.site.direct_source_line,
-            alignment_adjustment: self.token.site.alignment_adjustment,
-            delivery_flags: self.token.site.delivery_flags,
-        }
-    }
-
-    pub(crate) fn from_current(command: CurrentCommand<G>) -> Self {
-        #[cfg(test)]
-        update_command_ownership_counters(|counters| {
-            counters.hot_reconstructions = counters.hot_reconstructions.saturating_add(1);
-        });
-        let command_word = command.meaning;
-        Self {
-            token: HotToken {
-                word: command.spelling.token_word(),
-                origin: command.spelling.origin(),
-                site: DeliverySite {
-                    control_sequence: command.control_sequence,
-                    direct_source_line: command.direct_source_line,
-                    alignment_adjustment: command.alignment_adjustment,
-                    delivery_flags: command.delivery_flags,
-                },
-            },
-            command: command_word,
-        }
-    }
-
-    pub(crate) fn from_current_ref(command: &CurrentCommand<G>) -> Self {
-        #[cfg(test)]
-        update_command_ownership_counters(|counters| {
-            counters.hot_reconstructions = counters.hot_reconstructions.saturating_add(1);
-        });
-        let command_word = command.meaning;
-        Self {
-            token: HotToken {
-                word: command.spelling.token_word(),
-                origin: command.spelling.origin(),
-                site: DeliverySite {
-                    control_sequence: command.control_sequence,
-                    direct_source_line: command.direct_source_line,
-                    alignment_adjustment: command.alignment_adjustment,
-                    delivery_flags: command.delivery_flags,
-                },
-            },
-            command: command_word,
-        }
-    }
 }
 
 impl<G> CurrentCommand<G> {
@@ -1001,49 +789,28 @@ impl<G> CurrentCommand<G> {
         direct_source_line: Option<u32>,
         state: &CommandContext<'_, G>,
     ) -> Self {
-        let mut command = HotCommand::empty();
-        let _ = command.write_resolved_delivery(
+        Self::from_resolved_delivery(
             spelling.token_word(),
             spelling.origin(),
             direct_source,
             direct_source_line,
             false,
             state,
-        );
-        command.materialize()
-    }
-
-    /// Creates the reusable destination value owned by one delivery request.
-    ///
-    /// Raw input overwrites this value before any semantic consumer can
-    /// observe it. Keeping an initialized unresolved meaning avoids unsafe
-    /// partial initialization while adding no second command representation.
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        #[cfg(test)]
-        update_command_ownership_counters(|counters| {
-            counters.slot_initializations = counters.slot_initializations.saturating_add(1);
-        });
-        Self {
-            spelling: TracedTokenWord::INITIALIZED_PLACEHOLDER,
-            meaning: CommandWord::from_static_word(Meaning::UNDEFINED_WORD),
-            control_sequence: None,
-            direct_source_line: 0,
-            alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
-            delivery_flags: CommandDeliveryFlags::default(),
-        }
+        )
+        .0
     }
 
     /// Returns the command-owned identity selected by raw input delivery.
     pub(crate) fn identity(&self) -> CommandIdentity {
         if self
+            .token
+            .site
             .delivery_flags
             .contains(CommandDeliveryFlags::NOEXPAND_FROZEN_RELAX)
         {
             CommandIdentity::NoExpandFrozenRelax
         } else {
-            CommandIdentity::from_command_word(self.meaning)
+            CommandIdentity::from_command_word(self.command)
         }
     }
 
@@ -1057,12 +824,14 @@ impl<G> CurrentCommand<G> {
     /// delivery keeps its `relax`/`no_expand_flag` identity.
     pub(crate) fn no_expand_active_character(&self) -> Option<char> {
         if !self
+            .token
+            .site
             .delivery_flags
             .contains(CommandDeliveryFlags::NOEXPAND_FROZEN_RELAX)
         {
             return None;
         }
-        match self.spelling.semantic_token() {
+        match self.spelling().semantic_token() {
             Token::Char {
                 ch,
                 cat: Catcode::Active,
@@ -1078,18 +847,20 @@ impl<G> CurrentCommand<G> {
         // TeX82 §23 has already retained the original `cur_tok` in backup
         // input. Its live current token is now the synthetic space selected
         // by `cur_cmd := spacer; cur_chr := " "`.
-        self.spelling = TracedTokenWord::pack(
-            Token::Char {
-                ch: ' ',
-                cat: Catcode::Space,
-            },
-            tex_state::token::OriginId::UNKNOWN,
-        );
-        self.meaning = CommandWord::from_static_word(Meaning::char_token_word(' ', Catcode::Space));
-        self.control_sequence = None;
-        self.delivery_flags
+        self.token.word = TokenWord::pack(Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        });
+        self.token.origin = OriginId::UNKNOWN;
+        self.command = CommandWord::from_static_word(Meaning::char_token_word(' ', Catcode::Space));
+        self.token.site.control_sequence = None;
+        self.token
+            .site
+            .delivery_flags
             .set(CommandDeliveryFlags::DIRECT_SOURCE, false);
-        self.delivery_flags
+        self.token
+            .site
+            .delivery_flags
             .set(CommandDeliveryFlags::OUTER_RECOVERY_SPACE, true);
     }
 
@@ -1103,31 +874,26 @@ impl<G> CurrentCommand<G> {
     pub(crate) const fn alignment_adjustment(
         &self,
     ) -> crate::processor::AlignmentDeliveryAdjustment {
-        self.alignment_adjustment
-    }
-
-    /// Whether this delivery is an outer macro command.
-    pub(crate) fn is_outer(&self) -> bool {
-        self.meaning.is_outer()
+        self.token.site.alignment_adjustment
     }
 
     /// Returns the original token spelling, including its delivery origin.
     #[must_use]
     pub const fn spelling(&self) -> TracedTokenWord {
-        self.spelling
+        TracedTokenWord::from_parts(self.token.word, self.token.origin)
     }
 
     /// Returns the effective meaning resolved at this delivery.
     #[must_use]
     pub fn meaning(&self) -> ResolvedMeaning<G> {
-        self.meaning.resolved_meaning()
+        self.command.resolved_meaning()
     }
 
     /// Borrows the delivered packed static word for direct main-control dispatch.
     /// Macro and font capabilities remain in their actual typed command fields.
     #[must_use]
     pub const fn static_word(&self) -> Option<u64> {
-        match self.meaning {
+        match self.command {
             CommandWord::Static { word, .. } => Some(word),
             _ => None,
         }
@@ -1137,7 +903,7 @@ impl<G> CurrentCommand<G> {
     #[must_use]
     #[inline]
     pub fn control_code(&self) -> Option<u64> {
-        match self.meaning {
+        match self.command {
             CommandWord::Static { word, .. } => Some(Meaning::runtime_word_control_code(word)),
             CommandWord::Font(font) => Some(Meaning::runtime_word_control_code(
                 Meaning::Font(font).encode(),
@@ -1150,25 +916,27 @@ impl<G> CurrentCommand<G> {
     /// a control-sequence meaning cell.
     #[must_use]
     pub const fn control_sequence(&self) -> Option<Symbol> {
-        self.control_sequence
+        self.token.site.control_sequence
     }
 
     #[cfg(test)]
     pub(crate) fn clear_control_sequence_for_test(&mut self) {
-        self.control_sequence = None;
+        self.token.site.control_sequence = None;
     }
 
     /// Returns the spelling's diagnostic origin.
     #[must_use]
     pub const fn origin(&self) -> tex_state::token::OriginId {
-        self.spelling.origin()
+        self.token.origin
     }
 
     /// Returns the physical range only when this delivery came directly from
     /// a source level. Replayed tokens retain their range for diagnostics but
     /// must not masquerade as a second physical-source transition.
     pub(crate) const fn is_direct_source_delivery(&self) -> bool {
-        self.delivery_flags
+        self.token
+            .site
+            .delivery_flags
             .contains(CommandDeliveryFlags::DIRECT_SOURCE)
     }
 
@@ -1178,30 +946,25 @@ impl<G> CurrentCommand<G> {
     #[must_use]
     pub const fn direct_source_line_number(&self) -> Option<u32> {
         if self
+            .token
+            .site
             .delivery_flags
             .contains(CommandDeliveryFlags::HAS_DIRECT_SOURCE_LINE)
         {
-            Some(self.direct_source_line)
+            Some(self.token.site.direct_source_line)
         } else {
             None
         }
     }
 
-    /// Makes a fresh copy for the input backup path. `CurrentCommand` itself
-    /// remains deliberately non-`Clone` at the public boundary.
+    /// Makes a fresh copy for the input backup path. native delivery coordinates
+    /// carry no immutable definition ownership.
     pub(crate) fn copy_for_backup(&self) -> Self {
         #[cfg(test)]
         update_command_ownership_counters(|counters| {
             counters.backup_copies = counters.backup_copies.saturating_add(1);
         });
-        Self {
-            spelling: self.spelling,
-            meaning: self.meaning,
-            control_sequence: self.control_sequence,
-            direct_source_line: self.direct_source_line,
-            alignment_adjustment: self.alignment_adjustment,
-            delivery_flags: self.delivery_flags,
-        }
+        *self
     }
 }
 

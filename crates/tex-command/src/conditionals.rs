@@ -8,7 +8,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
-use crate::command::HotCommand;
+use crate::command::CurrentCommand;
 use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::processor::CommandProcessor;
 use crate::processor::status::{
@@ -687,13 +687,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             message.push_str("' before `");
             crate::processor::expand_render::append_print_cmd_chr_text(
                 self.state,
-                crate::processor::expand_render::PrintCommand::from_hot(&next),
+                crate::processor::expand_render::PrintCommand::from_current(&next),
                 &mut message,
             );
             message.push_str("'.");
-            self.observe_hot_command_diagnostic("illegal_unless_operand", &next);
+            self.observe_command_diagnostic("illegal_unless_operand", &next);
             self.back_error_reporting(
-                next.materialize(),
+                next,
                 ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC,
                 message,
                 &["Continue, and I'll forget that it ever happened."],
@@ -704,7 +704,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             && self.state.int_param(IntParam::TRACING_IFS) <= 0
         {
             self.print_unless_command_trace(
-                crate::processor::expand_render::PrintCommand::from_hot(&next),
+                crate::processor::expand_render::PrintCommand::from_current(&next),
             );
         }
         self.expand_conditional_primitive(kind, true)
@@ -1037,19 +1037,19 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn compare_ifx_operands(&mut self) -> Result<bool, CommandError> {
         let mut first = None;
-        if self.get_next_hot_into(&mut first)? != crate::DeliveryStatus::Command {
+        if self.get_next_into(&mut first)? != crate::DeliveryStatus::Command {
             return Err(CommandError::input_invariant());
         }
         let first = first
             .expect("command status initializes destination")
-            .resolved_meaning();
+            .meaning();
         let mut second = None;
-        if self.get_next_hot_into(&mut second)? != crate::DeliveryStatus::Command {
+        if self.get_next_into(&mut second)? != crate::DeliveryStatus::Command {
             return Err(CommandError::input_invariant());
         }
         let second = second
             .expect("command status initializes destination")
-            .resolved_meaning();
+            .meaning();
         Ok(self.ifx_meaning_eq(&first, &second))
     }
 
@@ -1120,8 +1120,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// missing relation token.
     #[inline(never)]
     fn scan_if_relation_hot(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
-        let mut relation: Option<HotCommand<G>> = None;
-        if self.request_expanded_hot_token(&mut relation)? != crate::DeliveryStatus::Command {
+        let mut relation: Option<CurrentCommand<G>> = None;
+        if self.request_expanded_token(&mut relation)? != crate::DeliveryStatus::Command {
             return Err(CommandError::input_invariant());
         }
         let relation = relation.expect("command status initializes hot destination");
@@ -1137,10 +1137,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn back_missing_relation_hot(
         &mut self,
-        relation: HotCommand<G>,
+        relation: CurrentCommand<G>,
         conditional: &str,
     ) -> Result<IfRelation, CommandError> {
-        let relation = relation.materialize();
         // §503's `print_cmd_chr(if_test,this_if)` names the conditional whose
         // relation is missing, so the message ends in the escaped primitive.
         let name = crate::processor::expand_render::print_esc_text(self.state, conditional);
@@ -1287,7 +1286,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// exceptional recovery that backs the exact delivery up.
     pub(crate) fn expand_conditional_delimiter_hot(
         &mut self,
-        command: &HotCommand<G>,
+        command: &CurrentCommand<G>,
         primitive: ExpandablePrimitive,
     ) -> Result<(), CommandError> {
         let delimiter = match primitive {

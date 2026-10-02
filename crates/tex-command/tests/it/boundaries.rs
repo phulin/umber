@@ -3,13 +3,7 @@ use std::{collections::BTreeSet, fs};
 use test_support::{CompileFailDependency, assert_compile_fail};
 
 fn count_outer_validity_entry_calls(source: &str) -> usize {
-    [
-        "self.check_outer_validity_entry(&mut rich)",
-        "processor.check_outer_validity_entry(&mut rich)",
-    ]
-    .into_iter()
-    .map(|call| source.matches(call).count())
-    .sum()
+    source.matches(".check_outer_validity_entry(").count()
 }
 
 fn structured_scanner_sources(manifest_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -297,7 +291,7 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(history.contains("fn pop_resident("));
     assert!(!stack.contains("RetiredInputLevel"));
     assert!(!history.contains("pop_resident_project"));
-    assert!(expansion.contains("HotCommand::write_delivery_into("));
+    assert!(expansion.contains("CurrentCommand::write_delivery_into("));
     let source_reader = reader
         .split("fn advance_source_token<")
         .nth(1)

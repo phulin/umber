@@ -66,13 +66,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// before a recovery path materializes or backs it up.
     pub(crate) fn capture_hot_diagnostic_site(
         &self,
-        command: &crate::command::HotCommand<G>,
+        command: &crate::command::CurrentCommand<G>,
     ) -> tex_state::diagnostic::DiagnosticSite {
         self.capture_spelled_diagnostic_site(
             command.identity(),
             command.spelling(),
             command.control_sequence(),
-            command.resolved_meaning(),
+            command.meaning(),
         )
     }
 

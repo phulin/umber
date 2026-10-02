@@ -232,9 +232,7 @@ fn ifcsname_collects_in_the_shared_delivery_lane() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let ownership_before = crate::command::command_ownership_counters();
         let result = crate::test_harness::expect_expanded_command(&mut processor);
-        let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(
             result.spelling().semantic_token(),
             Token::Char {
@@ -242,11 +240,7 @@ fn ifcsname_collects_in_the_shared_delivery_lane() {
                 cat: Catcode::Letter,
             }
         );
-        assert_eq!(
-            ownership_after.rich_materializations - ownership_before.rich_materializations,
-            1,
-            "only the outward selected branch materializes a rich command",
-        );
+
         drop(processor);
     });
 }

@@ -23,9 +23,7 @@ impl CommandObserver for RecordingObserver {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RetirementHandoffEvidence {
     top_source_checks: u64,
-    slot_initializations: u64,
     resolved_writes: u64,
-    command_clones: u64,
     backup_copies: u64,
     expansion_moves_in: u64,
     expansion_moves_out: u64,
@@ -99,10 +97,7 @@ fn retirement_handoff_evidence(empty_levels: usize) -> RetirementHandoffEvidence
         let after_ownership = crate::command::command_ownership_counters();
         RetirementHandoffEvidence {
             top_source_checks: crate::state::retirement_top_source_checks() - before_checks,
-            slot_initializations: after_ownership.slot_initializations
-                - before_ownership.slot_initializations,
             resolved_writes: after_ownership.resolved_writes - before_ownership.resolved_writes,
-            command_clones: after_ownership.clones - before_ownership.clones,
             backup_copies: after_ownership.backup_copies - before_ownership.backup_copies,
             expansion_moves_in: after_ownership.expansion_moves_in
                 - before_ownership.expansion_moves_in,
@@ -120,9 +115,7 @@ fn one_and_4096_resident_retirements_skip_source_checks_and_reuse_one_command_sl
     assert_eq!(one.top_source_checks, 0);
     assert_eq!(many.top_source_checks, 0);
     for evidence in [one, many] {
-        assert_eq!(evidence.slot_initializations, 0);
         assert_eq!(evidence.resolved_writes, 1);
-        assert_eq!(evidence.command_clones, 0);
         assert_eq!(evidence.backup_copies, 0);
         assert_eq!(evidence.expansion_moves_in, 0);
         assert_eq!(evidence.expansion_moves_out, 0);

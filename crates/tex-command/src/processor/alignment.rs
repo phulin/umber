@@ -433,7 +433,7 @@ impl<G> AlignmentDeliveryState<G> {
     #[inline(always)]
     pub(crate) fn account_literal_brace(
         &mut self,
-        command: &mut crate::command::HotCommand<G>,
+        command: &mut crate::command::CurrentCommand<G>,
         literal_catcode: Option<Catcode>,
     ) -> bool {
         let adjustment = self.account_literal_catcode(literal_catcode);
@@ -463,7 +463,7 @@ impl<G> AlignmentDeliveryState<G> {
     }
 
     /// Performs active-alignment delimiter interception in slow settlement.
-    pub(crate) fn classify_delimiter(&mut self, command: &mut crate::command::HotCommand<G>) {
+    pub(crate) fn classify_delimiter(&mut self, command: &mut crate::command::CurrentCommand<G>) {
         let adjustment = match () {
             _ if self.active_cell.is_some()
                 && self.align_state == CELL_ALIGN_STATE
@@ -543,7 +543,7 @@ impl<G> AlignmentDeliveryState<G> {
 
     pub(crate) fn needs_hot_closing_brace_recovery(
         &self,
-        command: &crate::command::HotCommand<G>,
+        command: &crate::command::CurrentCommand<G>,
     ) -> bool {
         self.active_cell.is_some()
             && self.align_state == -1

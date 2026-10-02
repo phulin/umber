@@ -31,7 +31,12 @@ publication, checkpoint, page-owner rotation or resource boundary runs. An
 error drops the real processor and context before aggregate failure settlement.
 There is no precomputed eligibility classification or parallel command loop.
 The same packed switch selects context-consuming semantics and genuine outer
-owner calls. A diagnostic program cannot cross the next input acquisition:
+owner calls. The delivered native token/site and command word stay in one opaque
+`CurrentCommand` from raw input through expansion and that switch; spelling and
+printed identity are projected only by their actual consumers. There is no
+HotCommand-to-CurrentCommand repacking boundary. Native callbacks branch on
+the real semantic Result before consuming narrow successful settlement facts,
+so a cold error payload is never nested in the common success-fact tuple. A diagnostic program cannot cross the next input acquisition:
 nonempty diagnostics finish through their ordered publication boundary first.
 `scan_*` and `apply_*` files group concrete routines by responsibility;
 `semantic/` holds source-free semantics. The large authoritative switch stays

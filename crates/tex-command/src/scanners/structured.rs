@@ -138,7 +138,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// needs to make that cell addressable. No fuel is charged here.
     fn project_definition_target(
         &mut self,
-        command: &crate::command::HotCommand<G>,
+        command: &crate::command::CurrentCommand<G>,
     ) -> DefinitionTargetProjection {
         match command.spelling().semantic_token() {
             Token::Cs(symbol) => {

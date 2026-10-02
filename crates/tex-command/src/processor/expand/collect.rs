@@ -1,7 +1,7 @@
 //! Direct unexpanded collection from the shared semantic input reader.
 
 use super::ReadSite;
-use crate::command::HotCommand;
+use crate::command::CurrentCommand;
 use crate::execution_scratch::{ArgumentRunAdmission, DefinitionReplacementSink};
 use crate::token_collector::{ClassifiedToken, TokenCollector};
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
@@ -95,7 +95,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     if exceptional {
                         let (meaning, resolution) =
                             meaning.unwrap_or_else(|| processor.resolve_token_word(word));
-                        let mut command = HotCommand::from_delivered_parts(
+                        let mut command = CurrentCommand::from_delivered_parts(
                             word,
                             origin,
                             matches!(site, ReadSite::Source(_)),
@@ -112,7 +112,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             command.alignment_adjustment(),
                             super::super::AlignmentDeliveryAdjustment::Delimiter(_)
                         ) {
-                            processor.begin_scalar_alignment_v_template_hot(&command)?;
+                            processor.begin_scalar_alignment_v_template(&command)?;
                             return Ok(false);
                         }
                         if command.is_outer_recovery_space() {
@@ -153,18 +153,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                             // a literal's meaning is decoded lazily on this error branch.
                             let (meaning, resolution) =
                                 meaning.unwrap_or_else(|| processor.resolve_token_word(word));
-                            let mut command: HotCommand<G> = HotCommand::from_delivered_parts(
-                                word,
-                                origin,
-                                matches!(site, ReadSite::Source(_)),
-                                match site {
-                                    ReadSite::Source(line) => line,
-                                    _ => None,
-                                },
-                                suppress,
-                                meaning,
-                                resolution.control_sequence(),
-                            );
+                            let mut command: CurrentCommand<G> =
+                                CurrentCommand::from_delivered_parts(
+                                    word,
+                                    origin,
+                                    matches!(site, ReadSite::Source(_)),
+                                    match site {
+                                        ReadSite::Source(line) => line,
+                                        _ => None,
+                                    },
+                                    suppress,
+                                    meaning,
+                                    resolution.control_sequence(),
+                                );
                             command.set_alignment_adjustment(adjustment);
                             processor.back_input_hot(command)
                         },

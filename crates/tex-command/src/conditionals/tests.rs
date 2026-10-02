@@ -145,13 +145,8 @@ fn skipped_nested_conditional_materializes_only_the_selected_command() {
             &mut diagnostic_effects,
         );
 
-        let before = crate::command::command_ownership_counters();
         assert_eq!(next_character(&mut processor), 'd');
-        let after = crate::command::command_ownership_counters();
-        assert_eq!(
-            after.rich_materializations - before.rich_materializations,
-            1
-        );
+
         assert_expanded_end(&mut processor);
     });
 }

@@ -176,11 +176,8 @@ fn letter(ch: char) -> Token {
 #[cfg(feature = "profiling")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct OrdinaryDeliveryEvidence {
-    slot_initializations: u64,
-    rich_materializations: u64,
     resolved_writes: u64,
     expanded_classifications: u64,
-    command_clones: u64,
     token_frame_steps: u64,
     meaning_lookups: u64,
     expanded_deliveries: u64,
@@ -289,13 +286,8 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
         let after_ownership = crate::command::command_ownership_counters();
         let work = fuel.work();
         OrdinaryDeliveryEvidence {
-            slot_initializations: after_ownership.slot_initializations
-                - before_ownership.slot_initializations,
-            rich_materializations: after_ownership.rich_materializations
-                - before_ownership.rich_materializations,
             resolved_writes: after_ownership.resolved_writes - before_ownership.resolved_writes,
             expanded_classifications: super::expanded_classifications() - classifications_before,
-            command_clones: after_ownership.clones - before_ownership.clones,
             token_frame_steps: work.token_frame_steps - work_before.token_frame_steps,
             meaning_lookups: work.meaning_lookups - work_before.meaning_lookups,
             expanded_deliveries: work.expanded_deliveries - work_before.expanded_deliveries,

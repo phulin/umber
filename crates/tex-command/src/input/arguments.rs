@@ -5,7 +5,7 @@
 //! writes the final words directly, independently of ordinary backup input.
 
 use super::ArgumentSpan;
-use crate::command::HotCommand;
+use crate::command::CurrentCommand;
 use crate::execution_scratch::{PlainRunSink, ScratchError};
 #[cfg(test)]
 use crate::token_collector::ClassifiedToken;
@@ -215,7 +215,7 @@ impl ArgumentArena {
     pub(crate) fn append_hot_delivery(
         &mut self,
         writer: &mut ArgumentCursor,
-        delivery: &HotCommand<impl Sized>,
+        delivery: &CurrentCommand<impl Sized>,
         paragraph_checked: bool,
         paragraph_token: Option<TokenWord>,
     ) -> Result<u32, ScratchError> {

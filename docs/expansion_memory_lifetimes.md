@@ -25,9 +25,11 @@ resource retry protocol.
 
 The removed `ResidentWord`/`TokenMeaning` chain and duplicated font column must
 not return as adapters. One interpreted token resolves once into the final
-native meaning. Actual recovery, tracing, observation and execution consumers
-construct only the rich command they require. `CurrentCommand` as a cold
-semantic value is not itself an immutable definition root.
+native meaning. The same native `CurrentCommand` remains live through raw input, expansion,
+synchronous scanners and main control. Recovery, tracing and observation
+project spelling, decoded meaning and diagnostic geometry at their actual
+consuming boundary. This request-local value is not itself an immutable
+definition root.
 
 ## Definitions, aliases and memory
 

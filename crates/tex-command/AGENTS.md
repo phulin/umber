@@ -67,7 +67,7 @@ collector (see `src/conditionals.rs`).
   checkpoint rather than promoting scanner state into retained scratch.
 - Ordinary expansion has no parked-expansion owner. The shared reader exposes
   token facts; unobserved macros activate from resolved invocation facts without
-  constructing a command. `HotCommand` and `CurrentCommand` are request-local
+  constructing a command. `CurrentCommand` is the one request-local
   delivery/scanner/observation/recovery values. Resource misses unwind consumers
   before host-owned full-checkpoint replay.
 - `src/scanners/structured/token_requests.rs`: token-field visitation and
@@ -107,8 +107,9 @@ collector (see `src/conditionals.rs`).
   decoded meaning is materialized only at a consuming boundary.
   Command-sensitive boundaries materialize this pair from the reader's facts
   and already-resolved meaning. Ordinary macro activation and unexpanded body
-  collection construct no command record; rich commands remain local to actual
-  execution/scanner, backup, observation, diagnosis, and recovery boundaries.
+  collection construct no command record. The same native value crosses raw,
+  expanded, scanner and execution boundaries; observation and diagnosis project
+  their genuine consuming shape without a second command representation.
   Exact source geometry remains behind the spelling's
   packed origin and is materialized only by cold processor consumers; the hot
   value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through preflight and scanning,
@@ -141,15 +142,16 @@ collector (see `src/conditionals.rs`).
 - `src/processor/expand.rs`: consumer-directed delivery and static primitive
   dispatch. Raw callers, expansion, collectors, and main-control text share one
   input/fuel authority; observation specializes at synchronous entry. Final
-  delivery and exceptional settlement materialize commands at their semantic
-  boundary. Macro chains remain iterative; failure unwinds for host replay.
+  delivery and exceptional settlement retain one native CurrentCommand slot;
+  printed identity and spelling are demanded by their actual consumers.
+  Macro chains remain iterative; failure unwinds for host replay.
 - `src/processor/expand/input.rs`: source reads, borrowed source-character
   admission, and cold line/retirement/recovery transitions. Reads invoke the scalar consumer
   without constructing commands or publishing backup authority. Source
   reads stage a file diagnostic coordinate; settled raw delivery publishes it
   only when §342 reaches a command exit.
 - `src/processor/expand/consume.rs`: one dense meaning resolution, ordinary
-  macro activation from invocation facts, and boundary-only materialization.
+  macro activation from invocation facts, and terminal native command construction.
   One read/interpret loop publishes terminal commands directly. Matching's local
   storage lives in its activation call; prefix diagnostics consume spelling and
   invocation facts without a command or delivery geometry.

@@ -3,7 +3,7 @@
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, TracedTokenWord};
 
-use crate::command::{CurrentCommand, HotCommand};
+use crate::command::CurrentCommand;
 use crate::error::CommandError;
 use crate::input::{
     BackedUpToken, BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
@@ -30,12 +30,15 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// TeX82 §325's `back_input` for a compact scanner-owned delivery.
     ///
-    /// Delimiter scanners retain the terminal `HotCommand` until they have
+    /// Delimiter scanners retain the terminal `CurrentCommand` until they have
     /// classified it. Recovery must reverse that command's exact alignment
     /// adjustment without manufacturing a rich command just to put one
     /// rejected token back on input. Like §326, it also restores a token
     /// saved before a later delivery superseded it.
-    pub(crate) fn back_input_hot(&mut self, command: HotCommand<G>) -> Result<(), CommandError> {
+    pub(crate) fn back_input_hot(
+        &mut self,
+        command: CurrentCommand<G>,
+    ) -> Result<(), CommandError> {
         self.conserve_input_stack_for_descendant()?;
         let previous_align_state = self.command.alignment.align_state;
         let adjustment = command.alignment_adjustment();
@@ -58,7 +61,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
                 kind: RecoveryKind::Backup,
-                tokens: vec![self.observed_hot_command_spelling(&command)],
+                tokens: vec![self.observed_command_spelling(&command)],
             }));
             if self.command.alignment.active_alignment.is_some()
                 && matches!(

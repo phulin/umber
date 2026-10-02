@@ -172,9 +172,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                         }
                         self.control.main_loop_active = false;
                         let $receipts = &mut owned_processor.is_observed().then(Vec::new);
-                        let (result, pending, checked, context_cut) = owned_processor
-                            .apply_completed_command(|$context, $state, $effects, $fuel| {
-                                let result = $apply;
+                        let completed = owned_processor.apply_completed_command(
+                            |$context, $state, $effects, $fuel| {
+                                let applied: Result<ReplayStep, ExecError> = $apply;
+                                let step = applied?;
                                 let checked = MainControl::save_stack_words(
                                     $context,
                                     boxes,
@@ -190,10 +191,46 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     || $context.tracked_region_is_active()
                                     || $context.reported_error_count() > 0
                                     || $context.effect_pos() != self.initial_effect_pos;
-                                (result, pending, checked, context_cut)
-                            });
-                        if result.is_ok()
-                            && !context_cut
+                                Ok::<_, ExecError>((step, pending, checked, context_cut))
+                            },
+                        );
+                        let (step, pending, checked, context_cut) = match completed {
+                            Ok(facts) => facts,
+                            Err(error) => {
+                                self.cursor = Some(owned_processor.delivery_cursor());
+                                self.diagnostics.extend(
+                                    owned_processor
+                                        .take_semantic_diagnostics()
+                                        .into_iter()
+                                        .map(PendingDiagnostic::Command),
+                                );
+                                drop(owned_processor);
+                                self.control.report_scan_in_context(
+                                    &mut admitted_context,
+                                    self.effects,
+                                    std::mem::take(&mut self.diagnostics),
+                                )?;
+                                let checked = MainControl::save_stack_words(
+                                    &admitted_context,
+                                    &self.control.boxes,
+                                    &self.control.command,
+                                    self.control.command.profile(),
+                                );
+                                let pending = PendingPageOutputFacts::capture(&admitted_context);
+                                drop(admitted_context);
+                                return self.control.finish_direct_semantic_step(
+                                    self.stores,
+                                    self.effects,
+                                    self.output_start,
+                                    Err(error),
+                                    pending,
+                                    checked,
+                                    None,
+                                    $receipts.take(),
+                                );
+                            }
+                        };
+                        if !context_cut
                             && !owned_processor.has_pending_reports()
                             && !owned_processor.is_observed()
                             && self.control.active_alignment.is_none()
@@ -220,9 +257,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             self.effects,
                             std::mem::take(&mut self.diagnostics),
                         )?;
-                        if result.is_ok()
-                            && self.control.command.has_pending_named_token_list_pushes()
-                        {
+                        if self.control.command.has_pending_named_token_list_pushes() {
                             publish_named_token_list_pushes(
                                 &mut self.control.command,
                                 &mut admitted_context,
@@ -235,7 +270,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             self.stores,
                             self.effects,
                             self.output_start,
-                            result,
+                            Ok(step),
                             pending,
                             checked,
                             None,

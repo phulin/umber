@@ -12,7 +12,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMea
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::attempt::{AttemptDefinitionId, AttemptError, AttemptMark, AttemptTokenListId};
-use crate::command::{CommandClass, HotCommand};
+use crate::command::{CommandClass, CurrentCommand};
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
 use crate::processor::status::{
     AbsorbingContext, DefinitionContext, ScannerEpisode, ScannerStatus, ScannerStatusVisibility,
@@ -260,7 +260,7 @@ enum CollectorExpansionOutcome {
 }
 
 #[inline(always)]
-fn is_expandable_hot_command<G>(command: &HotCommand<G>) -> bool {
+fn is_expandable_hot_command<G>(command: &CurrentCommand<G>) -> bool {
     match command.command_word().class() {
         CommandClass::Macro => true,
         CommandClass::Expandable => command
@@ -1321,7 +1321,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut malformed_parameter = false;
         let mut destination = None;
         loop {
-            if self.get_token_hot_into(&mut destination)? != crate::DeliveryStatus::Command {
+            if self.get_token_into(&mut destination)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let command = destination
@@ -1378,7 +1378,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.push_scan_toks_word(collector, token.word())?;
                 continue;
             }
-            if self.get_token_hot_into(&mut destination)? != crate::DeliveryStatus::Command {
+            if self.get_token_into(&mut destination)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let follower = destination
@@ -1451,7 +1451,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         route: CollectorExpansionRoute,
         episode: &ScannerEpisode,
         collector: &mut TokenCollector<G>,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<CollectorExpansionOutcome, CommandError> {
         if route == CollectorExpansionRoute::The {
             // TeX82 §478 handles `\the` directly in `scan_toks` instead of
@@ -1542,7 +1542,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut destination = None;
 
         loop {
-            let status = self.get_next_hot_into(&mut destination)?;
+            let status = self.get_next_into(&mut destination)?;
             match status {
                 crate::DeliveryStatus::Command => {}
                 crate::DeliveryStatus::End => return Err(CommandError::input_invariant()),
@@ -1576,7 +1576,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let command = destination
                 .as_ref()
                 .expect("compact command delivery initializes destination");
-            self.observe_expanded_hot_delivery(command);
+            self.observe_expanded_delivery(command);
             let token = self.classify_collector_hot_token(command, None);
 
             // TeX82 §342 has already replaced a delivered `\cr`/`\span`/tab
@@ -1770,10 +1770,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn append_direct_the_toks(
         &mut self,
         collector: &mut TokenCollector<G>,
-        target: &mut Option<HotCommand<G>>,
+        target: &mut Option<CurrentCommand<G>>,
     ) -> Result<bool, CommandError> {
         if target.is_none()
-            && self.request_expanded_hot_token(target)? != crate::DeliveryStatus::Command
+            && self.request_expanded_token(target)? != crate::DeliveryStatus::Command
         {
             return Err(CommandError::input_invariant());
         }
@@ -1782,7 +1782,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         // opener and all ordinary collector tokens compact; materialize only
         // this one target at the existing boundary.
         let target = target.take().expect("target was installed");
-        let target = target.materialize();
         let scan = self.scan_the_internal_value_retained(&target);
         let value = match scan {
             crate::RetainedScalarScan::Complete(value) => value,

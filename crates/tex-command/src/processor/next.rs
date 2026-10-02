@@ -9,7 +9,7 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
-use crate::command::{CurrentCommand, HotCommand};
+use crate::command::CurrentCommand;
 use crate::error::CommandError;
 
 use super::CommandProcessor;
@@ -26,43 +26,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
         loop {
-            match self.raw_next(destination)? {
-                super::DeliveryStatus::ReplayCompleted(_) => continue,
-                super::DeliveryStatus::Command => {
-                    let delimiter = destination.as_ref().is_some_and(|command| {
-                        matches!(
-                            command.alignment_adjustment(),
-                            super::AlignmentDeliveryAdjustment::Delimiter(_)
-                        )
-                    });
-                    if delimiter {
-                        let command = destination
-                            .take()
-                            .ok_or_else(CommandError::input_invariant)?;
-                        self.begin_scalar_alignment_v_template(&command)?;
-                        continue;
-                    }
-                    return Ok(super::DeliveryStatus::Command);
-                }
-                super::DeliveryStatus::End => return Ok(super::DeliveryStatus::End),
-                _ => unreachable!("raw delivery has no character or expanded event"),
-            }
-        }
-    }
-
-    /// Delivers one raw command into the compact slot used by a synchronous
-    /// expanded collector. This is the same `get_next` boundary as
-    /// [`Self::get_next_into`], including replay completion and alignment
-    /// delimiter handling, but keeps ordinary deliveries in `HotCommand`.
-    /// Alignment v-template admission is an actual scanner boundary, so its
-    /// existing rich entry remains the one exceptional materialization here.
-    pub(crate) fn get_next_hot_into(
-        &mut self,
-        destination: &mut Option<HotCommand<G>>,
-    ) -> Result<super::DeliveryStatus, CommandError> {
-        loop {
-            let status = self.raw_next_hot(destination)?;
-            if let Some(status) = self.settle_hot_raw_step(status, destination)? {
+            let status = self.raw_next(destination)?;
+            if let Some(status) = self.settle_raw_step(status, destination)? {
                 return Ok(status);
             }
         }
@@ -72,10 +37,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// from scalar delivery or a resident run's already-advanced boundary.
     /// `None` requests another raw read after replay or alignment admission.
     #[inline(always)]
-    pub(super) fn settle_hot_raw_step(
+    pub(super) fn settle_raw_step(
         &mut self,
         status: super::DeliveryStatus,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<Option<super::DeliveryStatus>, CommandError> {
         match status {
             super::DeliveryStatus::ReplayCompleted(_) => Ok(None),
@@ -90,7 +55,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let command = destination
                         .take()
                         .ok_or_else(CommandError::input_invariant)?;
-                    self.begin_scalar_alignment_v_template_hot(&command)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
                     Ok(None)
                 } else {
                     Ok(Some(super::DeliveryStatus::Command))
@@ -177,9 +142,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// settlement; no matcher-specific delivery wrapper is constructed.
     pub(crate) fn get_macro_match_token(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
-        let delivery = self.get_token_hot_into(destination);
+        let delivery = self.get_token_into(destination);
         #[cfg(test)]
         if matches!(delivery, Ok(super::DeliveryStatus::Command)) {
             // Keep the existing matcher-path metric: one compact
@@ -194,25 +159,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         delivery
     }
-
-    /// Delivers one raw token into compact caller-owned storage.  This is the
-    /// `get_token` counterpart to [`Self::get_next_hot_into`]: control-sequence
-    /// creation is enabled for the duration of the exact same raw loop, while
-    /// the settled hot command remains reusable by the caller.
-    pub(crate) fn get_token_hot_into(
-        &mut self,
-        destination: &mut Option<HotCommand<G>>,
-    ) -> Result<super::DeliveryStatus, CommandError> {
-        debug_assert!(!self.create_source_control_sequences);
-        self.create_source_control_sequences = true;
-        let delivery = self.get_next_hot_into(destination);
-        self.create_source_control_sequences = false;
-        delivery
-    }
     /// Compact resident-command observation.  Delivery
     /// settlement may already own a hot command; observing it in place keeps
     /// the scanner/expansion path free of a rich command projection.
-    pub(super) fn observe_resident_hot_command(&mut self, command: &HotCommand<G>) {
+    pub(super) fn observe_resident_hot_command(&mut self, command: &CurrentCommand<G>) {
         let adjustment = command.alignment_adjustment();
         let previous_align_state = match adjustment {
             crate::processor::AlignmentDeliveryAdjustment::BeginGroup => {
@@ -292,22 +242,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             command.meaning(),
         )
     }
-
-    /// Compact counterpart of [`Self::observed_command_spelling`]. The
-    /// scanner-owned delivery path must retain the same canonical spelling
-    /// rules without first materializing `CurrentCommand`.
-    pub(crate) fn observed_hot_command_spelling(
-        &self,
-        command: &crate::command::HotCommand<G>,
-    ) -> crate::observation::ObservedToken {
-        observed_command_spelling_for(
-            self.state,
-            command.spelling(),
-            command.control_sequence(),
-            command.resolved_meaning(),
-        )
-    }
-    fn observe_raw_hot_delivery(&mut self, command: &HotCommand<G>) {
+    fn observe_raw_hot_delivery(&mut self, command: &CurrentCommand<G>) {
         observe!(self, {
             #[cfg(test)]
             {}
@@ -315,12 +250,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 crate::observation::canonical_delivery_identity_for_profile(
                     self.command.profile(),
                     command.identity(),
-                    command.resolved_meaning(),
+                    command.meaning(),
                 );
-            let spelling = self.observed_hot_command_spelling(command);
+            let spelling = self.observed_command_spelling(command);
             let semantic_operand = crate::observation::canonical_sparse_register_operand(
                 self.command.profile(),
-                command.resolved_meaning(),
+                command.meaning(),
             );
             CommandObservation::Command(CommandDeliveryRecord {
                 boundary: CommandDeliveryBoundary::Raw,
@@ -332,7 +267,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.observed_delivery_coordinate(),
                     self.current_delivery_sequence(),
                     command.origin(),
-                    self.direct_source_provenance_hot(command),
+                    self.direct_source_provenance(command),
                 ),
             })
         });
@@ -340,7 +275,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 }
 
 /// Projects the canonical spelling shared by rich and compact deliveries.
-/// Keeping this at the command boundary avoids materializing a rich command
+/// Keeping this at the command boundary projects only the consuming spelling
 /// merely to retain a cold diagnostic token, while ensuring both delivery
 /// forms apply the same frozen-sentinel rules.
 #[inline]

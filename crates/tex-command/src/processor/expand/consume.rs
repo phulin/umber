@@ -1,7 +1,7 @@
 //! Consumer-side interpretation of the shared input reader.
 
 use super::{ExpandedCommandAction, ExpansionDispatch, ReadSite, classify_hot_command};
-use crate::command::{CommandWord, HotCommand};
+use crate::command::{CommandWord, CurrentCommand};
 use crate::input::InputLevel;
 #[cfg(feature = "profiling")]
 use crate::input::ResidentTokenStorage;
@@ -44,23 +44,23 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// span. Its first exceptional word goes straight to raw settlement.
     pub(crate) fn get_next_skipping_into(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
         nested_conditions: &mut u32,
     ) -> Result<DeliveryStatus, CommandError> {
         if self.is_observed()
             || self.command.delivery_mode.tracing()
             || self.command.delivery_mode.requires_persistent_settlement()
         {
-            return self.get_next_hot_into(destination);
+            return self.get_next_into(destination);
         }
         let result = (|| {
             loop {
                 let Some(InputLevel::Resident(row)) = self.command.roots.input.levels.rows.last()
                 else {
-                    return self.get_next_hot_into(destination);
+                    return self.get_next_into(destination);
                 };
                 if self.fuel.remaining() == 0 {
-                    return self.get_next_hot_into(destination);
+                    return self.get_next_into(destination);
                 }
                 let classify = !row.header.frame.flags().contains(
                     tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
@@ -150,9 +150,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                 };
                 let Some(status) = status else {
-                    return self.get_next_hot_into(destination);
+                    return self.get_next_into(destination);
                 };
-                if let Some(status) = self.settle_hot_raw_step(status, destination)? {
+                if let Some(status) = self.settle_raw_step(status, destination)? {
                     return Ok(status);
                 }
             }
@@ -225,7 +225,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         const PREFLIGHT_FIRST: bool,
     >(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<ExpansionCandidate, CommandError> {
         match self.consume_input(
             self.create_source_control_sequences,
@@ -262,7 +262,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ReadSite::Source(line) => line,
                     _ => None,
                 };
-                let command = destination.insert(HotCommand::from_delivered_parts(
+                let command = destination.insert(CurrentCommand::from_delivered_parts(
                     word,
                     origin,
                     matches!(site, ReadSite::Source(_)),
@@ -315,7 +315,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         const STOP_PROTECTED: bool,
     >(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut expanded = false;
@@ -375,7 +375,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The command has already crossed its raw boundary; returning it here
     /// deliberately skips TeX82's terminal expanded observation.
     #[inline(always)]
-    fn protected_terminal(command: &HotCommand<G>, action: ExpandedCommandAction) -> bool {
+    fn protected_terminal(command: &CurrentCommand<G>, action: ExpandedCommandAction) -> bool {
         matches!(action, ExpandedCommandAction::Return)
             || matches!(
                 action,
@@ -421,7 +421,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn consume_supplied_command<const OBSERVED: bool>(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
         action: Option<ExpandedCommandAction>,
     ) -> Result<Option<DeliveryStatus>, CommandError> {
         let mut command = destination.take().expect("supplied expansion command");
@@ -438,7 +438,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn finish_terminal_expansion<const OBSERVED: bool>(
         &mut self,
-        command: &mut HotCommand<G>,
+        command: &mut CurrentCommand<G>,
         action: ExpandedCommandAction,
         expanded: bool,
     ) -> DeliveryStatus {

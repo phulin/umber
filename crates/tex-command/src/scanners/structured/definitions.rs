@@ -139,17 +139,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         let target = self.scan_definition_target()?;
         let meaning = if future {
             let mut first_destination = None;
-            if self.get_token_hot_into(&mut first_destination)? != DeliveryStatus::Command {
+            if self.get_token_into(&mut first_destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let mut second_destination = None;
-            if self.get_token_hot_into(&mut second_destination)? != DeliveryStatus::Command {
+            if self.get_token_into(&mut second_destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let second = second_destination
                 .take()
                 .ok_or_else(|| CommandError::input_invariant())?;
-            let meaning = second.resolved_meaning();
+            let meaning = second.meaning();
             self.back_input_hot(second)?;
             let first = first_destination
                 .take()
@@ -157,7 +157,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.back_input_hot(first)?;
             meaning
         } else {
-            let is_space = |command: &crate::command::HotCommand<G>| {
+            let is_space = |command: &crate::command::CurrentCommand<G>| {
                 matches!(
                     command.static_meaning(),
                     Some(Meaning::CharToken {
@@ -167,7 +167,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )
             };
             let mut source = loop {
-                if self.get_token_hot_into(&mut destination)? != DeliveryStatus::Command {
+                if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
                     return Err(CommandError::input_invariant());
                 }
                 let source = destination
@@ -184,14 +184,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     cat: Catcode::Other
                 }
             ) {
-                if self.get_token_hot_into(&mut destination)? != DeliveryStatus::Command {
+                if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
                     return Err(CommandError::input_invariant());
                 }
                 source = destination
                     .take()
                     .ok_or_else(|| CommandError::input_invariant())?;
                 if is_space(&source) {
-                    if self.get_token_hot_into(&mut destination)? != DeliveryStatus::Command {
+                    if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
                         return Err(CommandError::input_invariant());
                     }
                     source = destination
@@ -199,7 +199,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .ok_or_else(|| CommandError::input_invariant())?;
                 }
             }
-            source.resolved_meaning()
+            source.meaning()
         };
         Ok((target, meaning))
     }

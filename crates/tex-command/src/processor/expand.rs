@@ -10,9 +10,9 @@ use consume::ExpansionCandidate;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::command::{CommandClass, HotCommand};
+use crate::CommandError;
+use crate::command::{CommandClass, CurrentCommand};
 use crate::input::{InputLevelId, ResidentBoundary};
-use crate::{CommandError, CurrentCommand};
 
 use super::expand_render::format_pdf_date;
 use super::{
@@ -77,7 +77,7 @@ fn expanded_classifications() -> u64 {
 }
 
 #[inline(always)]
-fn classify_hot_command<G>(command: &HotCommand<G>) -> ExpandedCommandAction {
+fn classify_hot_command<G>(command: &CurrentCommand<G>) -> ExpandedCommandAction {
     #[cfg(test)]
     EXPANDED_CLASSIFICATIONS.with(|counter| counter.set(counter.get().saturating_add(1)));
 
@@ -100,7 +100,7 @@ fn classify_hot_command<G>(command: &HotCommand<G>) -> ExpandedCommandAction {
 }
 
 #[inline(always)]
-fn hot_decimal_digit<G>(command: &HotCommand<G>) -> Option<u8> {
+fn hot_decimal_digit<G>(command: &CurrentCommand<G>) -> Option<u8> {
     match command.command_word().static_meaning() {
         Some(Meaning::CharToken {
             ch: ch @ '0'..='9',
@@ -111,7 +111,7 @@ fn hot_decimal_digit<G>(command: &HotCommand<G>) -> Option<u8> {
 }
 
 #[inline(always)]
-fn hot_is_space<G>(command: &HotCommand<G>) -> bool {
+fn hot_is_space<G>(command: &CurrentCommand<G>) -> bool {
     matches!(
         command.command_word().static_meaning(),
         Some(Meaning::CharToken {
@@ -131,13 +131,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         suppress: bool,
         site: ReadSite,
         kind: crate::fuel::RawDeliveryKind,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
     ) -> Option<Catcode> {
         let line = match site {
             ReadSite::Source(line) => line,
             _ => None,
         };
-        let resolution = HotCommand::write_delivery_into(
+        let resolution = CurrentCommand::write_delivery_into(
             destination,
             word,
             origin,
@@ -153,7 +153,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn settle_hot_delivery(
         &mut self,
-        command: &mut HotCommand<G>,
+        command: &mut CurrentCommand<G>,
         literal_catcode: Option<Catcode>,
     ) -> Result<(), CommandError> {
         if self.is_observed() {
@@ -166,7 +166,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn settle_hot_delivery_in<const OBSERVED: bool>(
         &mut self,
-        command: &mut HotCommand<G>,
+        command: &mut CurrentCommand<G>,
         literal_catcode: Option<Catcode>,
     ) -> Result<(), CommandError> {
         // These are token-local facts from the already-decoded compact
@@ -224,15 +224,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let mut hot_destination = None;
-        let result = self.raw_next_hot(&mut hot_destination);
-        self.finish_hot_delivery(destination, &mut hot_destination, result)
+        destination.take();
+        let result = self.raw_next_hot(destination);
+        Self::finish_delivery(destination, result)
     }
 
     #[inline(always)]
     pub(crate) fn raw_next_hot(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         let result = if self.is_observed() {
             self.fetch_hot::<true>(destination)
@@ -255,7 +255,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn fetch_hot<const OBSERVED: bool>(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         match self.consume_input(
             self.create_source_control_sequences,
@@ -287,7 +287,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         suppress: bool,
         site: ReadSite,
         kind: crate::fuel::RawDeliveryKind,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         let literal = self.write_delivered_word(word, origin, suppress, site, kind, destination);
         self.settle_hot_delivery_in::<OBSERVED>(
@@ -335,10 +335,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// Delivers one expanded command through the compact loop and materializes
-    /// only at the caller's rich-command boundary. The scanner-owned callers
-    /// use the hot entry directly, so a terminal delimiter operand never
-    /// crosses this boundary merely to be classified.
+    /// Delivers one expanded command through the shared native slot, clearing
+    /// that actual destination at completion and failure boundaries.
     pub(super) fn expanded_next(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
@@ -351,46 +349,33 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let mut hot_destination = destination.take().map(HotCommand::from_current);
-        let result = self.expanded_next_hot(&mut hot_destination, initial_action);
-        self.finish_hot_delivery(destination, &mut hot_destination, result)
+        let result = self.expanded_next_hot(destination, initial_action);
+        Self::finish_delivery(destination, result)
     }
 
     fn expanded_next_with_preserved_undefined(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let mut hot_destination = destination.take().map(HotCommand::from_current);
-        let result = self.expanded_next_hot_preserving_undefined(&mut hot_destination);
-        self.finish_hot_delivery(destination, &mut hot_destination, result)
+        let result = self.expanded_next_hot_preserving_undefined(destination);
+        Self::finish_delivery(destination, result)
     }
 
-    fn finish_hot_delivery(
-        &mut self,
+    #[inline]
+    fn finish_delivery(
         destination: &mut Option<CurrentCommand<G>>,
-        hot_destination: &mut Option<HotCommand<G>>,
         result: Result<DeliveryStatus, CommandError>,
     ) -> Result<DeliveryStatus, CommandError> {
-        match result {
-            Ok(status) => {
-                if matches!(
-                    status,
-                    DeliveryStatus::End
-                        | DeliveryStatus::ReplayCompleted(_)
-                        | DeliveryStatus::CharacterRun
-                ) {
-                    hot_destination.take();
-                } else {
-                    *destination = hot_destination.take().map(|command| command.materialize());
-                }
-                Ok(status)
-            }
-            Err(error) => {
-                hot_destination.take();
-                destination.take();
-                Err(error)
-            }
+        if matches!(
+            &result,
+            Err(_)
+                | Ok(DeliveryStatus::End
+                    | DeliveryStatus::ReplayCompleted(_)
+                    | DeliveryStatus::CharacterRun)
+        ) {
+            destination.take();
         }
+        result
     }
 
     /// TeX82 §380's synchronous expanded delivery. Observation is fixed for
@@ -398,7 +383,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// wrapper owns depth and failure cleanup outside the expansion back edge.
     fn expanded_next_hot(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.expanded_next_hot_with_mode::<false, false>(destination, initial_action)
@@ -408,7 +393,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn expanded_next_hot_preserving_undefined(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.expanded_next_hot_with_mode::<true, false>(destination, None)
     }
@@ -423,14 +408,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let mut hot_destination = destination.take().map(HotCommand::from_current);
-        let result = self.expanded_next_hot_with_mode::<false, true>(&mut hot_destination, None);
-        self.finish_hot_delivery(destination, &mut hot_destination, result)
+        let result = self.expanded_next_hot_with_mode::<false, true>(destination, None);
+        Self::finish_delivery(destination, result)
     }
 
     fn expanded_next_hot_with_mode<const PRESERVE_UNDEFINED: bool, const STOP_PROTECTED: bool>(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
         let depth = self.command.transient.active_expansion_depth;
@@ -466,7 +450,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn execute_expansion_action(
         &mut self,
-        command: &mut HotCommand<G>,
+        command: &mut CurrentCommand<G>,
         action: ExpansionDispatch,
     ) -> Result<(), CommandError> {
         match action {
@@ -494,7 +478,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn expand_hot_definition_action(
         &mut self,
-        hot_command: &mut HotCommand<G>,
+        hot_command: &mut CurrentCommand<G>,
         action: ExpansionDispatch,
     ) -> Result<(), CommandError> {
         match action {
@@ -545,7 +529,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let literal = self.write_delivered_word(word, origin, suppress, site, kind, &mut command);
         let mut command = command.take().expect("boundary word initializes command");
         self.settle_hot_delivery(&mut command, literal)?;
-        *destination = Some(command.materialize());
+        *destination = Some(command);
         Ok(DeliveryStatus::CharacterRunBoundary)
     }
 
@@ -791,130 +775,70 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.expanded_next_with_action(destination, initial_action)
     }
 
-    /// Main-control lookahead first returns a raw character without expansion;
-    /// non-character commands continue through the x-token entry.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn main_loop_next(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        self.main_action_lookahead(destination, false)
-    }
-
-    #[cold]
+    // Both native main-control fetch labels share this resident command slot.
     #[inline(never)]
     fn main_action_lookahead(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         preflight: bool,
     ) -> Result<DeliveryStatus, CommandError> {
-        let existing = destination.is_some();
-        let mut hot_destination = if existing {
-            destination.as_ref().map(HotCommand::from_current_ref)
-        } else {
-            None
-        };
-        if hot_destination.is_none() {
+        if destination.is_none() {
             if preflight {
                 let candidate = if self.is_observed() {
-                    self.read_expansion_candidate::<true, false, true>(&mut hot_destination)
+                    self.read_expansion_candidate::<true, false, true>(destination)
                 } else {
-                    self.read_expansion_candidate::<false, false, true>(&mut hot_destination)
+                    self.read_expansion_candidate::<false, false, true>(destination)
                 };
                 match candidate {
                     Ok(ExpansionCandidate::ExpandedMacro) => {
-                        let result = self.expanded_next_hot(&mut hot_destination, None);
-                        return self.finish_hot_delivery(destination, &mut hot_destination, result);
+                        let result = self.expanded_next_hot(destination, None);
+                        return Self::finish_delivery(destination, result);
                     }
                     Ok(ExpansionCandidate::Command) => {}
                     Ok(ExpansionCandidate::Finished(status)) => return Ok(status),
                     Err(failure) => {
-                        destination.take();
                         return self.fail_hot_expanded_delivery(
-                            &mut hot_destination,
+                            destination,
                             self.command.transient.active_expansion_depth,
                             failure,
                         );
                     }
                 }
             } else {
-                match self.raw_next_hot(&mut hot_destination)? {
+                match self.raw_next_hot(destination)? {
                     DeliveryStatus::Command => {}
                     status => return Ok(status),
                 }
             }
         }
-        let hot = hot_destination
+        let command = destination
             .as_ref()
             .ok_or_else(CommandError::input_invariant)?;
-        let is_character = hot.command_word().is_main_loop_character();
+        let is_character = command.command_word().is_main_loop_character();
         if is_character && !preflight {
-            if !existing {
-                *destination = hot_destination.take().map(|command| command.materialize());
-            }
             return Ok(DeliveryStatus::Command);
         }
-        let action = classify_hot_command(hot);
+        let action = classify_hot_command(command);
         if matches!(action, ExpandedCommandAction::EndTemplate) {
             if matches!(
-                hot.alignment_adjustment(),
+                command.alignment_adjustment(),
                 crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
             ) {
-                if !existing {
-                    *destination = hot_destination.take().map(|command| command.materialize());
-                }
                 return Ok(DeliveryStatus::AlignmentEndTemplate);
             }
-            hot_destination.take();
             destination.take();
             self.insert_frozen_endv()?;
-            let result = self.expanded_next_hot(&mut hot_destination, None);
-            return self.finish_hot_delivery(destination, &mut hot_destination, result);
+            let result = self.expanded_next_hot(destination, None);
+            return Self::finish_delivery(destination, result);
         }
         if is_character || matches!(action, ExpandedCommandAction::Return) {
-            if existing {
-                self.observe_expanded_delivery(
-                    destination
-                        .as_ref()
-                        .ok_or_else(CommandError::input_invariant)?,
-                );
-            } else {
-                let command = hot_destination
-                    .take()
-                    .ok_or_else(CommandError::input_invariant)?
-                    .materialize();
-                self.observe_expanded_delivery(&command);
-                *destination = Some(command);
+            if self.is_observed() {
+                self.observe_expanded_delivery(command);
             }
             return Ok(DeliveryStatus::Command);
         }
-        let result = self.expanded_next_hot(&mut hot_destination, Some(action));
-        self.finish_hot_delivery(destination, &mut hot_destination, result)
-    }
-
-    /// Main-control preflight owns its first raw fetch and then continues from
-    /// that resident command through ordinary expansion.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn preflight_next(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        loop {
-            match self.main_action_lookahead(destination, true)? {
-                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
-                    return Ok(DeliveryStatus::Command);
-                }
-                DeliveryStatus::AlignmentEndTemplate => {
-                    let command = destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?;
-                    self.begin_scalar_alignment_v_template(&command)?;
-                }
-                result => return Ok(result),
-            }
-        }
+        let result = self.expanded_next_hot(destination, Some(action));
+        Self::finish_delivery(destination, result)
     }
 
     #[cold]
@@ -935,7 +859,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        match self.main_loop_next(destination)? {
+        match self.main_action_lookahead(destination, false)? {
             DeliveryStatus::PendingExpanded => Ok(DeliveryStatus::Command),
             result => Ok(result),
         }
@@ -1024,51 +948,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.get_x_token_into(destination)
     }
 
-    /// Requests one expanded token while retaining the delivery loop's
-    /// compact owner. Synchronous collectors use this entry when their
-    /// ordinary body only needs the packed command class and spelling; the
-    /// rich command remains reserved for an actual scanner or recovery
-    /// boundary. Alignment template admission is such a boundary and keeps
-    /// the established rich handoff.
-    pub(crate) fn request_expanded_hot_token(
-        &mut self,
-        destination: &mut Option<HotCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        loop {
-            match self.expanded_next_hot(destination, None)? {
-                DeliveryStatus::ReplayCompleted(_) => continue,
-                DeliveryStatus::AlignmentEndTemplate => {
-                    self.finish_alignment_end_template_hot(destination)?;
-                }
-                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
-                    return Ok(DeliveryStatus::Command);
-                }
-                status @ (DeliveryStatus::End | DeliveryStatus::Command) => return Ok(status),
-                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
-                    return Err(CommandError::input_invariant());
-                }
-            }
-        }
-    }
-
-    /// Finishes the alignment-only rich boundary of
-    /// [`Self::request_expanded_hot_token`]. Ordinary scalar requests keep
-    /// their compact destination through the shared expanded loop; only the
-    /// active-cell delimiter needs a `CurrentCommand` for the existing
-    /// freshness and delimiter-line checks.
-    #[cold]
-    #[inline(never)]
-    fn finish_alignment_end_template_hot(
-        &mut self,
-        destination: &mut Option<HotCommand<G>>,
-    ) -> Result<(), CommandError> {
-        let command = destination
-            .take()
-            .ok_or_else(CommandError::input_invariant)?
-            .materialize();
-        self.begin_scalar_alignment_v_template(&command)
-    }
-
     /// Requests one already-delivered command's expansion from the same
     /// driver.  This is the only nested expansion request used by structural
     /// scanners; suspension and completion remain represented by the typed
@@ -1080,7 +959,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<(), CommandError> {
         let mut command = destination
             .take()
-            .map(HotCommand::from_current)
             .ok_or_else(CommandError::input_invariant)?;
         let action = classify_hot_command(&command);
         let result = match action {
@@ -1113,7 +991,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // Keep the ordinary rich boundary's recovery contract for
             // callers that inspect or clear the opener after a failed
             // expansion. Successful expansion consumes it below.
-            *destination = Some(command.materialize());
+            *destination = Some(command);
             return result;
         }
         // The expanded opener is consumed by the nested call and cannot
@@ -1127,7 +1005,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// owner available to the caller's existing recovery/unwind path.
     pub(crate) fn request_expansion_hot(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
         report_trace: bool,
     ) -> Result<(), CommandError> {
         let mut command = destination
@@ -1338,7 +1216,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// one delimiter operand from expansion to `scan_delimiter`.
     pub(crate) fn next_non_blank_non_relax_x_token_hot(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         loop {
@@ -1351,8 +1229,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination
                         .take()
-                        .ok_or_else(CommandError::input_invariant)?
-                        .materialize();
+                        .ok_or_else(CommandError::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
                     continue;
                 }
@@ -1492,12 +1369,28 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let result = self.preflight_next(destination)?;
-        debug_assert!(matches!(
-            result,
-            DeliveryStatus::End | DeliveryStatus::Command | DeliveryStatus::ReplayCompleted(_)
-        ));
-        Ok(result)
+        loop {
+            match self.main_action_lookahead(destination, true)? {
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                result => {
+                    debug_assert!(matches!(
+                        result,
+                        DeliveryStatus::End
+                            | DeliveryStatus::Command
+                            | DeliveryStatus::ReplayCompleted(_)
+                    ));
+                    return Ok(result);
+                }
+            }
+        }
     }
 
     /// Delivers one command through TeX82 §1038's `main_loop_lookahead`.
@@ -1519,7 +1412,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         loop {
-            let result = self.main_loop_next(destination)?;
+            let result = self.main_action_lookahead(destination, false)?;
             match result {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination
@@ -1560,7 +1453,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn fail_hot_expanded_delivery(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
         depth: u32,
         failure: CommandError,
     ) -> Result<DeliveryStatus, CommandError> {
@@ -1578,7 +1471,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn settle_exceptional_delivery<const OBSERVED: bool>(
         &mut self,
-        command: &mut HotCommand<G>,
+        command: &mut CurrentCommand<G>,
         suppresses_expandable_control_sequence: bool,
         outer: bool,
     ) -> Result<(), CommandError> {
@@ -1587,9 +1480,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             command.suppress_expandable();
         }
         if mode.scanner_active() && outer {
-            let mut rich = command.materialize();
-            self.check_outer_validity_entry(&mut rich)?;
-            *command = HotCommand::from_current(rich);
+            self.check_outer_validity_entry(command)?;
         } else if mode.alignment_active()
             && matches!(
                 command.alignment_adjustment(),
@@ -1609,13 +1500,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn finish_expanded_command<const OBSERVED: bool>(
         &mut self,
-        command: &HotCommand<G>,
+        command: &CurrentCommand<G>,
         delivery_expanded: bool,
     ) -> DeliveryStatus {
         #[cfg(feature = "profiling")]
         self.record_expanded_delivery();
         if OBSERVED {
-            self.observe_expanded_hot_delivery(command);
+            self.observe_expanded_delivery(command);
         }
         if self
             .command
@@ -1630,53 +1521,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
+    /// Compact observation counterpart for the scanner-owned expanded
+    /// delivery.  The terminal command remains in the hot slot while its
+    /// canonical identity, spelling, and provenance are projected into the
+    /// observer record.
     #[doc(hidden)]
     pub fn observe_expanded_delivery(&mut self, command: &CurrentCommand<G>) {
         observe!(self, {
             #[cfg(test)]
             {}
-            let (command_name, command_operand) =
-                crate::observation::canonical_current_command_identity_for_profile(
-                    self.command.profile(),
-                    command,
-                );
-            let spelling = self.observed_command_spelling(command);
-            let semantic_operand = crate::observation::canonical_sparse_register_operand(
-                self.command.profile(),
-                command.meaning(),
-            );
-            CommandObservation::Command(CommandDeliveryRecord {
-                boundary: CommandDeliveryBoundary::Expanded,
-                spelling,
-                command: command_name,
-                command_operand,
-                semantic_operand,
-                provenance: CommandProvenance::new(
-                    self.observed_delivery_coordinate(),
-                    self.current_delivery_sequence(),
-                    command.origin(),
-                    self.direct_source_provenance(command),
-                ),
-            })
-        });
-    }
-
-    /// Compact observation counterpart for the scanner-owned expanded
-    /// delivery.  The terminal command remains in the hot slot while its
-    /// canonical identity, spelling, and provenance are projected into the
-    /// observer record.
-    pub(crate) fn observe_expanded_hot_delivery(&mut self, command: &HotCommand<G>) {
-        observe!(self, {
-            #[cfg(test)]
-            {}
-            let meaning = command.resolved_meaning();
+            let meaning = command.meaning();
             let (command_name, command_operand) =
                 crate::observation::canonical_delivery_identity_for_profile(
                     self.command.profile(),
                     command.identity(),
                     meaning,
                 );
-            let spelling = self.observed_hot_command_spelling(command);
+            let spelling = self.observed_command_spelling(command);
             let semantic_operand = crate::observation::canonical_sparse_register_operand(
                 self.command.profile(),
                 meaning,
@@ -1691,7 +1552,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.observed_delivery_coordinate(),
                     self.current_delivery_sequence(),
                     command.origin(),
-                    self.direct_source_provenance_hot(command),
+                    self.direct_source_provenance(command),
                 ),
             })
         });
@@ -1725,9 +1586,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// observer-only path outside ordinary scanner recursion.
     #[cold]
     #[inline(never)]
-    fn trace_hot_conditional(&mut self, command: &HotCommand<G>) {
+    fn trace_hot_conditional(&mut self, command: &CurrentCommand<G>) {
         if self.command.delivery_mode.tracing() {
-            self.print_hot_command_trace(command);
+            self.print_command_trace(crate::PrintCommand::from_current(command));
         }
     }
 
@@ -1769,7 +1630,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn expand_compact_occupied(
         &mut self,
-        command: &mut HotCommand<G>,
+        command: &mut CurrentCommand<G>,
         primitive: ExpandablePrimitive,
         report_trace: bool,
     ) -> Result<(), CommandError> {
@@ -1781,7 +1642,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn expand_compact_occupied_in(
         &mut self,
-        command: &mut HotCommand<G>,
+        command: &mut CurrentCommand<G>,
         primitive: ExpandablePrimitive,
         report_trace: bool,
     ) -> Result<(), CommandError> {
@@ -1802,7 +1663,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             && primitive != ExpandablePrimitive::EndTemplate
             && self.command.delivery_mode.tracing()
         {
-            self.print_hot_command_trace(command);
+            self.print_command_trace(crate::PrintCommand::from_current(command));
         }
 
         let origin = command.origin();
@@ -1842,7 +1703,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn expand_compact_occupied_nonconditional(
         &mut self,
-        command: &mut HotCommand<G>,
+        command: &mut CurrentCommand<G>,
         primitive: ExpandablePrimitive,
         origin: OriginId,
     ) -> Result<(), CommandError> {
@@ -1987,7 +1848,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn expand_undefined_hot(
         &mut self,
-        command: &HotCommand<G>,
+        command: &CurrentCommand<G>,
         report_trace: bool,
     ) -> Result<(), CommandError> {
         self.with_expansion_depth(|processor| {
@@ -1998,11 +1859,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn expand_undefined_hot_in(
         &mut self,
-        command: &HotCommand<G>,
+        command: &CurrentCommand<G>,
         report_trace: bool,
     ) -> Result<(), CommandError> {
         if report_trace && self.command.delivery_mode.tracing() {
-            self.print_hot_command_trace(command);
+            self.print_command_trace(crate::PrintCommand::from_current(command));
         }
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_undefined_expansion();
@@ -2012,7 +1873,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::UndefinedControlSequence { context, site });
         if !self.command.profile().capabilities().supports_etex() {
-            self.observe_hot_command_diagnostic("undefined_control_sequence", command);
+            self.observe_command_diagnostic("undefined_control_sequence", command);
         }
         Ok(())
     }

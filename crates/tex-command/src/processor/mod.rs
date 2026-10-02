@@ -420,23 +420,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             .flatten()
     }
 
-    /// Compact counterpart of [`Self::direct_source_provenance`].  A hot
-    /// delivery keeps only its origin until an observation or diagnostic
-    /// boundary needs the source range, so resolve that range directly from
-    /// the origin without materializing `CurrentCommand`.
-    pub(crate) fn direct_source_provenance_hot(
-        &self,
-        command: &crate::command::HotCommand<G>,
-    ) -> Option<crate::SourceProvenance> {
-        if !command.is_direct_source_delivery() {
-            return None;
-        }
-        let range = self.state.origin_source_range(command.origin())?;
-        Some(crate::SourceProvenance::from_range(
-            crate::SourceRange::new(range.source(), range.start(), range.end()),
-        ))
-    }
-
     /// Returns the immutable command dialect and character mode for this job.
     #[must_use]
     pub fn profile(&self) -> crate::CommandProfile {
@@ -539,18 +522,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     /// This must run before operand scanning because restricted scanners can
     /// report recoverable errors of their own before the command completes.
     pub fn print_command_trace(&mut self, command: PrintCommand<G>) {
-        let conditional_suffix = self.command_trace_conditional_suffix(command.meaning());
-        let mut command_text = String::new();
-        expand_render::append_print_cmd_chr_text(self.state, command, &mut command_text);
-        self.print_command_trace_text(command_text, conditional_suffix);
-    }
-
-    /// Prints a command trace from the compact delivery owner.  This is the
-    /// hot counterpart of [`Self::print_command_trace`]; ordinary expansion
-    /// must not materialize a rich command merely for TeX82 §367's observer
-    /// text.
-    pub(crate) fn print_hot_command_trace(&mut self, command: &crate::command::HotCommand<G>) {
-        let command = PrintCommand::from_hot(command);
         let conditional_suffix = self.command_trace_conditional_suffix(command.meaning());
         let mut command_text = String::new();
         expand_render::append_print_cmd_chr_text(self.state, command, &mut command_text);

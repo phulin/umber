@@ -3,7 +3,8 @@
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
-use crate::command::{CommandClass, HotCommand};
+use crate::CommandError;
+use crate::command::{CommandClass, CurrentCommand};
 use crate::execution_scratch::{ArgumentRunAdmission, CsnameNameSink};
 use crate::input::{
     BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior,
@@ -12,7 +13,6 @@ use crate::observation::{
     CommandObservation, InputReason, InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
 };
 use crate::processor::status::{ScannerStatus, ScannerStatusVisibility};
-use crate::{CommandError, CurrentCommand};
 
 use super::expand_render::print_esc_text;
 use super::{CommandProcessor, DeliveryStatus};
@@ -66,7 +66,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // TeX82 §368 only compares `cur_cmd` with `max_command`, so both
         // tokens stay in their compact deliveries.
         let mut first = None;
-        match self.get_token_hot_into(&mut first)? {
+        match self.get_token_into(&mut first)? {
             DeliveryStatus::End => return Err(CommandError::input_invariant()),
             DeliveryStatus::Command => {}
             _ => unreachable!("ordinary token delivery returns only commands"),
@@ -75,7 +75,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .take()
             .expect("command status initializes destination");
         let mut second = None;
-        match self.get_token_hot_into(&mut second)? {
+        match self.get_token_into(&mut second)? {
             DeliveryStatus::End => return Err(CommandError::input_invariant()),
             DeliveryStatus::Command => {}
             _ => unreachable!("ordinary token delivery returns only commands"),
@@ -110,7 +110,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if !self.is_observed() && self.consume_csname_run(&mut name)? {
                     continue;
                 }
-                let status = self.request_expanded_hot_token(&mut destination)?;
+                let status = self.request_expanded_token(&mut destination)?;
                 match status {
                     DeliveryStatus::End => return Err(CommandError::input_invariant()),
                     DeliveryStatus::Command => {}
@@ -132,8 +132,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let rendered = print_esc_text(self.state, "endcsname");
                 let command = destination
                     .take()
-                    .expect("csname recovery consumes the delivered command")
-                    .materialize();
+                    .expect("csname recovery consumes the delivered command");
                 self.back_error_reporting(
                     command,
                     MISSING_ENDCSNAME_DIAGNOSTIC,
@@ -186,7 +185,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), opener))
     }
 
-    fn replay_expandafter_first(&mut self, command: HotCommand<G>) -> Result<(), CommandError> {
+    fn replay_expandafter_first(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
         self.conserve_input_stack_for_descendant()?;
         self.command
             .alignment
@@ -211,7 +210,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
                 kind: RecoveryKind::Backup,
-                tokens: vec![self.observed_hot_command_spelling(&command)],
+                tokens: vec![self.observed_command_spelling(&command)],
             }));
         }
         Ok(())
@@ -221,7 +220,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 /// TeX82 §366's `cur_cmd>max_command` test on a compact delivery, matching
 /// [`super::expand::is_expandable_command`]: `\endcsname` is unexpandable, while an
 /// undefined control sequence expands into its error.
-fn is_expandable_hot_command<G>(command: &HotCommand<G>) -> bool {
+fn is_expandable_hot_command<G>(command: &CurrentCommand<G>) -> bool {
     let word = command.command_word();
     match word.class() {
         CommandClass::Macro => true,

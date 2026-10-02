@@ -3,7 +3,7 @@
 use tex_state::env::banks::IntParam;
 use tex_state::token::{Token, TracedTokenWord};
 
-use crate::command::HotCommand;
+use crate::command::CurrentCommand;
 use crate::input::{
     BackedUpToken, BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
     TokenBehavior,
@@ -94,7 +94,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// path instead of constructing a rich command first.
     pub(super) fn expand_input_hot(
         &mut self,
-        opener: &mut HotCommand<G>,
+        opener: &mut CurrentCommand<G>,
     ) -> Result<(), CommandError> {
         let opener_origin = opener.origin();
         if self.command.name_in_progress() {

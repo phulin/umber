@@ -5,7 +5,7 @@ use tex_state::meaning::{
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use super::{CommandClass, CommandWord, CurrentCommand, HotCommand};
+use super::{CommandClass, CommandWord, CurrentCommand};
 
 #[test]
 fn command_delivery_layout_stays_compact() {
@@ -32,7 +32,7 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
                 AssignmentScope::Global,
             )
             .expect("meaning");
-        let mut hot = HotCommand::empty();
+        let mut hot = CurrentCommand::empty();
         let context = universe.command_context().expect("command context");
         hot.write_resolved_delivery(
             TokenWord::pack(Token::Cs(symbol.symbol())),
@@ -46,7 +46,7 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
         assert_eq!(hot.command_word().flags(), MeaningFlags::LONG);
         assert_eq!(hot.macro_parts(), Some((MeaningFlags::LONG, definition)));
         assert_eq!(
-            hot.materialize().meaning(),
+            hot.meaning(),
             ResolvedMeaning::Macro {
                 flags: MeaningFlags::LONG,
                 definition,
@@ -167,9 +167,9 @@ fn ordinary_character_is_resolved_without_a_state_handle() {
 }
 
 #[test]
-fn packed_input_resolution_materializes_only_at_execution() {
+fn packed_input_resolution_preserves_the_consumed_native_slot() {
     crate::test_harness::with_universe(|universe| {
-        let mut command = HotCommand::empty();
+        let mut command = CurrentCommand::empty();
         let spelling = TracedTokenWord::pack(
             Token::Char {
                 ch: 'x',
@@ -191,7 +191,7 @@ fn packed_input_resolution_materializes_only_at_execution() {
         assert_eq!(resolution.literal_catcode(), Some(Catcode::Letter));
         assert_eq!(core::ptr::from_ref(&command), slot);
 
-        let command = command.materialize();
+        let command = command;
         assert_eq!(
             (&command.meaning()),
             &ResolvedMeaning::Static(Meaning::CharToken {
@@ -203,19 +203,19 @@ fn packed_input_resolution_materializes_only_at_execution() {
 }
 
 #[test]
-fn compact_font_command_preserves_opaque_runtime_identity() {
+fn native_font_command_preserves_opaque_runtime_identity() {
     let font = tex_state::ids::FontId::testing_from_words([0x5a17_0042, 7, 11, 23])
         .expect("valid branded font identity");
     let mut rich = CurrentCommand::<()>::empty();
-    rich.meaning = CommandWord::Font(font);
+    rich.command = CommandWord::Font(font);
 
-    let hot = HotCommand::from_current(rich);
+    let hot = rich;
 
     assert_eq!(hot.command_word().class(), CommandClass::Font);
     assert_eq!(
-        hot.materialize().meaning(),
+        hot.meaning(),
         ResolvedMeaning::Static(Meaning::Font(font)),
-        "materialization must not reconstruct a FontId from its dense slot"
+        "consumer projection preserves the full branded font identity"
     );
 }
 
@@ -230,7 +230,7 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
                 AssignmentScope::Global,
             )
             .expect("meaning");
-        let mut command = HotCommand::empty();
+        let mut command = CurrentCommand::empty();
         let slot = core::ptr::from_ref(&command);
         let context = universe.command_context().expect("command context");
         #[cfg(feature = "profiling")]
@@ -259,7 +259,7 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
                 0
             );
         }
-        let command = command.materialize();
+        let command = command;
         assert_eq!(command.meaning(), Meaning::CountRegister(32_767));
         assert_eq!(command.control_sequence(), Some(symbol.symbol()));
     });
@@ -342,7 +342,7 @@ fn packed_input_resolution_replaces_the_destination_with_the_new_meaning() {
             )
             .expect("macro meaning");
 
-        let mut command = HotCommand::empty();
+        let mut command = CurrentCommand::empty();
 
         let context = universe.command_context().expect("command context");
         let _ = command.write_resolved_delivery(

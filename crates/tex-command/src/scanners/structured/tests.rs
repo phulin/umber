@@ -153,16 +153,11 @@ fn math_delimiter_consumes_one_expanded_command_before_adjacent_source() {
             &mut diagnostic_effects,
         );
         let expected_code = processor.state.delcode('.') as u32;
-        let ownership_before = crate::command::command_ownership_counters();
         let scanned = processor
             .scan_math_delimiter_boundary(super::MathDelimiterBoundaryKind::Left)
             .expect("macro delimiter boundary");
-        let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(scanned.delimiter.code, expected_code);
-        assert_eq!(
-            ownership_after.rich_materializations, ownership_before.rich_materializations,
-            "compact delimiter delivery must not materialize its operand"
-        );
+
         let mut destination = None;
         assert_eq!(
             processor
@@ -342,37 +337,27 @@ fn definition_target_projection_uses_spelling_and_active_map() {
         );
 
         assert_eq!(
-            processor.project_definition_target(&crate::command::HotCommand::from_current_ref(
-                &ordinary_without_metadata
-            )),
+            processor.project_definition_target(&ordinary_without_metadata),
             super::DefinitionTargetProjection::Target(target)
         );
         assert_eq!(
-            processor.project_definition_target(&crate::command::HotCommand::from_current_ref(
-                &active_with_metadata
-            )),
+            processor.project_definition_target(&active_with_metadata),
             super::DefinitionTargetProjection::Target(active_existing)
         );
         assert_eq!(processor.state.active_character_symbol('^'), None);
-        let first = processor.project_definition_target(
-            &crate::command::HotCommand::from_current_ref(&active_without_metadata),
-        );
+        let first = processor.project_definition_target(&active_without_metadata);
         let active_interned = processor
             .state
             .active_character_symbol('^')
             .expect("active target is interned");
-        let second = processor.project_definition_target(
-            &crate::command::HotCommand::from_current_ref(&active_without_metadata),
-        );
+        let second = processor.project_definition_target(&active_without_metadata);
         assert_eq!(
             first,
             super::DefinitionTargetProjection::Target(active_interned)
         );
         assert_eq!(second, first, "active target is reused after first intern");
         assert_eq!(
-            processor.project_definition_target(&crate::command::HotCommand::from_current_ref(
-                &malformed
-            )),
+            processor.project_definition_target(&malformed),
             super::DefinitionTargetProjection::Malformed
         );
     });
