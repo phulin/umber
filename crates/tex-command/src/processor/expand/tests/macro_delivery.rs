@@ -410,3 +410,73 @@ fn expandafter_replays_first_token_when_undefined_second_is_compact() {
         assert_eq!(collect_expanded_characters(universe, &mut command), "AZ");
     });
 }
+
+#[test]
+fn expandafter_retains_native_operands_and_preserves_brace_backup() {
+    for observed in [false, true] {
+        crate::test_harness::with_universe(|universe| {
+            let publication = universe.allocate_definition(&[], &[]).expect("empty macro");
+            let symbol = universe.intern("empty_second_operand").expect("symbol");
+            universe
+                .assign_meaning(
+                    symbol,
+                    MeaningWord::macro_definition(MeaningFlags::PROTECTED, publication.reference()),
+                    AssignmentScope::Global,
+                )
+                .expect("protected empty macro");
+            let left = Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            };
+            let right = Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            };
+            let mut command = CommandState::default();
+            crate::test_harness::push(&mut command, [left, Token::Cs(symbol.symbol()), right]);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut observer = RecordingObserver::default();
+            let mut context = universe.command_context().expect("context");
+            let processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut processor = if observed {
+                processor.with_observer(&mut observer)
+            } else {
+                processor
+            };
+            let align = processor.command.alignment.align_state;
+            let before = crate::command::command_ownership_counters();
+            processor.expand_expandafter().expect("single expansion");
+            let after = crate::command::command_ownership_counters();
+            assert_eq!(
+                after.resolved_writes - before.resolved_writes,
+                if observed { 2 } else { 0 },
+                "observations alone require commands for these two raw operands",
+            );
+            assert_eq!(processor.fuel.burned(), 2);
+            assert_eq!(processor.command.alignment.align_state, align);
+            assert_eq!(
+                crate::test_harness::expect_raw_command(&mut processor)
+                    .spelling()
+                    .semantic_token(),
+                left
+            );
+            assert_eq!(processor.command.alignment.align_state, align + 1);
+            assert_eq!(
+                crate::test_harness::expect_raw_command(&mut processor)
+                    .spelling()
+                    .semantic_token(),
+                right
+            );
+            assert_eq!(processor.command.alignment.align_state, align);
+            assert_eq!(processor.fuel.burned(), 4);
+        });
+    }
+}

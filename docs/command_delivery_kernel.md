@@ -170,6 +170,33 @@ owned by the shared reader and the actual scanner episode. The separate
 expanded collection loop and its routing/result adapters are deleted at the
 cutover; unexpanded collection keeps its existing native-word grammar.
 
+## Deferred raw operands and single expansion
+
+TeX82 §368’s `\expandafter` keeps its first operand only as a token for a
+later backup. It consumes that operand through the same raw-spelling reader as
+macro matching, with source control-sequence creation, outer validation, brace
+accounting and alignment admission intact. Its synchronous caller retains the
+actual spelling and original alignment adjustment. Observation materializes
+only the eventual backup record’s token spelling while the observed command is
+borrowed; no full command survives the second expansion.
+
+The second operand is a single-expansion consumer of the canonical expansion
+reader. An unobserved macro activates from the resolved invocation facts,
+under the existing expansion-capacity guard, then completes immediately. The
+reader must not fetch a terminal from the replacement or swallow a failed match.
+Ordinary expandable primitives keep their native implementation; an unexpandable
+operand is backed up once. The saved first token is backed up only after the
+second operand completes successfully, including the original conservation,
+brace correction and observation order. An expansion failure unwinds these
+actual operands for full-checkpoint replay.
+
+The consumer’s expansion completion and recovery actions specialize statically.
+Ordinary expansion continues, expanded collection continues under its scanner
+episode, and single expansion completes after precisely one action. There is
+no second expansion reader, optional command owned solely for macro activation,
+expandable-classification adapter, retained expansion phase, or compatibility
+entry for the replaced operand path.
+
 ## Native completion and exceptional ownership
 
 Each scalar consumer returns its own native completion: a raw delivery status,

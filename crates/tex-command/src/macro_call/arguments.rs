@@ -36,7 +36,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.back_macro_argument_word(word, command)?;
         self.insert_macro_argument_recovery_par()?;
         self.report_extra_right_brace_argument();
-        self.consume_macro_match_word(&mut |processor, par, command| {
+        self.consume_token_spelling(&mut |processor, par, command| {
             processor.back_macro_argument_word(par, command)
         })?
         .ok_or(CommandError::ParagraphInMacroArgument)?;
@@ -65,7 +65,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
             let appended = self
-                .consume_macro_match_word(&mut |processor, word, command| {
+                .consume_token_spelling(&mut |processor, word, command| {
                     if command.is_some_and(CurrentCommand::is_outer_recovery_space) {
                         // §23's returned spacer is not linked into the argument.
                         return Ok(false);
@@ -161,7 +161,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
             let completed = self
-                .consume_macro_match_word(&mut |processor, word, command| {
+                .consume_token_spelling(&mut |processor, word, command| {
                     if command.is_some_and(CurrentCommand::is_outer_recovery_space) {
                         return Ok(false);
                     }

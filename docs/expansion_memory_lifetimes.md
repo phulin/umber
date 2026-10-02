@@ -132,6 +132,12 @@ protected retention and outer recovery run synchronously, and alignment-template
 entry stays at its raw semantic boundary. No collection routing/result adapter
 or second expansion loop exists.
 
+`expandafter` retains its first operand's spelling, native alignment adjustment
+and demanded backup-observation token only. Its second operand is a single-action
+consumer of the same reader: native macro activation constructs no command,
+failed matching propagates before first-token replay, and no replacement terminal
+is fetched merely to complete this operation. All these operands are call-local.
+
 A resource miss unwinds all those locals, matching holdback, builders and
 borrowed contexts. The host restores the full aggregate, not the immediate
 collector mark. Verified readiness belongs to the host/VFS outside rollback.

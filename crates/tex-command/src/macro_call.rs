@@ -438,7 +438,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .parameter_word(index)
                 .ok_or_else(CommandError::input_invariant)?;
             let matched =
-                self.consume_macro_match_word(&mut |_, word, _| Ok(word.token_word() == expected))?;
+                self.consume_token_spelling(&mut |_, word, _| Ok(word.token_word() == expected))?;
             if matched != Some(true) {
                 // TeX82 §391 tests every compulsory parameter-text token
                 // after raw delivery has completed §336 recovery. An outer

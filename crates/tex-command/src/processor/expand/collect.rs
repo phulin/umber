@@ -10,9 +10,9 @@ use tex_state::interner::Symbol;
 use tex_state::token::{Catcode, TracedTokenWord};
 
 impl<G> CommandProcessor<'_, '_, G> {
-    /// Gives the macro grammar final spelling, borrowing a command only at a
+    /// Gives a raw-token consumer final spelling, borrowing a command only at a
     /// real semantic settlement or recovery boundary.
-    pub(crate) fn consume_macro_match_word<R>(
+    pub(crate) fn consume_token_spelling<R>(
         &mut self,
         consume: &mut impl FnMut(
             &mut Self,
@@ -23,15 +23,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         debug_assert!(!self.create_source_control_sequences);
         self.create_source_control_sequences = true;
         let result = if self.is_observed() {
-            self.consume_macro_match_spelling::<true, R>(consume)
+            self.consume_raw_spelling::<true, R>(consume)
         } else {
-            self.consume_macro_match_spelling::<false, R>(consume)
+            self.consume_raw_spelling::<false, R>(consume)
         };
         self.create_source_control_sequences = false;
         result
     }
 
-    fn consume_macro_match_spelling<const OBSERVED: bool, R>(
+    fn consume_raw_spelling<const OBSERVED: bool, R>(
         &mut self,
         consume: &mut impl FnMut(
             &mut Self,

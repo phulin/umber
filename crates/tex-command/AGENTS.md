@@ -190,12 +190,17 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   One read/interpret loop publishes terminal commands directly. Matching's local
   storage lives in its activation call; prefix diagnostics consume spelling and
   invocation facts without a command or delivery geometry.
-- `src/processor/expand/collect.rs`: native macro-matching and unexpanded
-  replacement-word consumers. They
-  shares input and exceptional settlement, appends through the existing
-  collector grammar, and constructs a command only for observation, semantic
-  exceptions, recovery, or actual backup. Macro grammar receives final spelling
-  and origin, with a command borrowed only at those demanded cold boundaries.
+- `src/processor/expand/once.rs`: TeX82 §368's single-expansion consumer of
+  the same reader. It creates source names while reading its operand, restores
+  normal delivery before nesting, activates ordinary macros without a command,
+  and returns after one expansion or one unexpandable-token backup. Matcher
+  failure unwinds before the deferred first operand is replayed.
+- `src/processor/expand/collect.rs`: raw-spelling consumers for macro matching,
+  deferred operands and unexpanded replacement words. They share input and
+  exceptional settlement, append through the existing collector grammar, and
+  construct a command only for observation, semantic exceptions, recovery or
+  actual backup. Raw-token consumers receive final spelling and origin, with a
+  command borrowed only at those demanded cold boundaries.
 - `src/processor/expand_structural.rs`, `src/processor/expand_input.rs`, and
   `src/processor/expand_convert.rs`: direct/static structural, source, and
   TeX/e-TeX conversion primitive families. They borrow the one processor and

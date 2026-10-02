@@ -1335,7 +1335,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !expansion.is_expanded() {
             return self.collect_unexpanded_replacement(macro_parameters, collector);
         }
-        self.consume_expanded_collection(&mut expanded::ReplacementConsumer {
+        self.consume_raw_expansion::<true>(&mut expanded::ReplacementConsumer {
             macro_parameters,
             episode,
             collector,

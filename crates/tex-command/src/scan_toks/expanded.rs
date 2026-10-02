@@ -15,7 +15,7 @@ pub(super) struct ReplacementConsumer<'a, G> {
 }
 
 impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for ReplacementConsumer<'_, G> {
-    const COLLECTING: bool = true;
+    const RAW_TOKEN: bool = true;
 
     fn expand(
         &mut self,

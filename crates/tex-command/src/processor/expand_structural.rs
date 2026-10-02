@@ -4,7 +4,7 @@ use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::CommandError;
-use crate::command::{CommandClass, CurrentCommand};
+use crate::command::CurrentCommand;
 use crate::execution_scratch::{ArgumentRunAdmission, CsnameNameSink};
 use crate::input::{BackupTreatment, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::observation::{
@@ -61,33 +61,28 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// input. The first delivery is intentionally replayed through an
     /// explicit backed-up level because it is no longer the latest delivery.
     pub(super) fn expand_expandafter(&mut self) -> Result<(), CommandError> {
-        // TeX82 §368 only compares `cur_cmd` with `max_command`, so both
-        // tokens stay in their compact deliveries.
-        let mut first = None;
-        match self.get_token_into(&mut first)? {
-            DeliveryStatus::End => return Err(CommandError::input_invariant()),
-            DeliveryStatus::Command => {}
-            _ => unreachable!("ordinary token delivery returns only commands"),
-        }
-        let first = first
-            .take()
-            .expect("command status initializes destination");
-        let mut second = None;
-        match self.get_token_into(&mut second)? {
-            DeliveryStatus::End => return Err(CommandError::input_invariant()),
-            DeliveryStatus::Command => {}
-            _ => unreachable!("ordinary token delivery returns only commands"),
-        }
-        if second.as_ref().is_none_or(is_expandable_hot_command) {
-            self.request_expansion_hot(&mut second, true)?;
-        } else {
-            self.back_input(
-                second
-                    .take()
-                    .expect("unexpandable second command remains in its destination"),
-            )?;
-        }
-        self.replay_expandafter_first(first)
+        let mut adjustment = super::AlignmentDeliveryAdjustment::None;
+        let mut observed_spelling = None;
+        let first = self
+            .consume_token_spelling(&mut |processor, word, command| {
+                adjustment = command.map_or_else(
+                    || {
+                        super::alignment::AlignmentDeliveryState::<G>::back_input_adjustment(
+                            word.semantic_token(),
+                        )
+                    },
+                    CurrentCommand::alignment_adjustment,
+                );
+                if processor.is_observed() {
+                    observed_spelling = Some(processor.observed_command_spelling(
+                        command.expect("observed raw token has a command"),
+                    ));
+                }
+                Ok(word)
+            })?
+            .ok_or_else(CommandError::input_invariant)?;
+        self.expand_next_token()?;
+        self.replay_expandafter_first(first, adjustment, observed_spelling)
     }
 
     /// Collects TeX82 §372's expanded character list through `\\endcsname`.
@@ -181,18 +176,21 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), opener))
     }
 
-    fn replay_expandafter_first(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
+    fn replay_expandafter_first(
+        &mut self,
+        spelling: TracedTokenWord,
+        adjustment: super::AlignmentDeliveryAdjustment,
+        observed_spelling: Option<crate::observation::ObservedToken>,
+    ) -> Result<(), CommandError> {
         self.conserve_input_stack_for_descendant()?;
-        self.command
-            .alignment
-            .undo_delivery(command.alignment_adjustment());
+        self.command.alignment.undo_delivery(adjustment);
         let level = self.command.push_token_level(
-            command.spelling(),
+            spelling,
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        if self.is_observed() {
+        if let Some(observed_spelling) = observed_spelling {
             // TeX82 §25's `back_input` is part of the expandafter lifecycle:
             // after expanding its second token, the saved first token must be
             // a visible ordinary backup before raw delivery resumes.
@@ -206,24 +204,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
                 kind: RecoveryKind::Backup,
-                tokens: vec![self.observed_command_spelling(&command)],
+                tokens: vec![observed_spelling],
             }));
         }
         Ok(())
-    }
-}
-
-/// TeX82 §366's `cur_cmd>max_command` test on a compact delivery, matching
-/// [`super::expand::is_expandable_command`]: `\endcsname` is unexpandable, while an
-/// undefined control sequence expands into its error.
-fn is_expandable_hot_command<G>(command: &CurrentCommand<G>) -> bool {
-    let word = command;
-    match word.class() {
-        CommandClass::Macro => true,
-        CommandClass::Expandable => {
-            word.expandable_primitive() != Some(ExpandablePrimitive::EndCsName)
-        }
-        CommandClass::Undefined => !matches!(command.spelling().semantic_token(), Token::Param(_)),
-        _ => false,
     }
 }

@@ -292,7 +292,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         let name = resolution
                             .control_sequence()
                             .ok_or_else(CommandError::input_invariant)?;
-                        let result = if Consumer::COLLECTING {
+                        terminal.before_action(processor);
+                        let result = if Consumer::RAW_TOKEN {
                             processor.with_expansion_depth(|processor| {
                                 processor.activate_read_macro(word, origin, flags, definition, name)
                             })
@@ -303,7 +304,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             terminal.recover(processor, failure)?;
                         }
                         expanded = true;
-                        return Ok(ControlFlow::Continue(()));
+                        return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                     }
                     let line = match site {
                         ReadSite::Source(line) => line,
@@ -322,7 +323,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         command,
                         resolution.literal_catcode(),
                     )?;
-                    if Consumer::COLLECTING
+                    if Consumer::RAW_TOKEN
                         && matches!(
                             command.alignment_adjustment(),
                             crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
@@ -332,6 +333,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         processor.begin_scalar_alignment_v_template(&command)?;
                         return Ok(ControlFlow::Continue(()));
                     }
+                    terminal.before_action(processor);
                     let action = classify_hot_command(command);
                     let terminal_status = if STOP_PROTECTED
                         && Self::protected_terminal(command, action)
@@ -341,13 +343,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                         match terminal.expand(processor, command, action) {
                             Ok(true) => {
                                 expanded = true;
-                                return Ok(ControlFlow::Continue(()));
+                                return Ok(terminal
+                                    .expanded()
+                                    .map_break(|()| DeliveryStatus::Command));
                             }
                             Ok(false) => {}
                             Err(failure) => {
                                 terminal.recover(processor, failure)?;
                                 expanded = true;
-                                return Ok(ControlFlow::Continue(()));
+                                return Ok(terminal
+                                    .expanded()
+                                    .map_break(|()| DeliveryStatus::Command));
                             }
                         }
                         if !(PRESERVE_UNDEFINED
@@ -359,7 +365,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         {
                             processor.execute_expansion_action(command, dispatch)?;
                             expanded = true;
-                            return Ok(ControlFlow::Continue(()));
+                            return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                         }
                         if role == ExpandedReaderRole::MainControl
                             && !expanded
@@ -373,7 +379,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             processor.insert_frozen_endv()?;
                             return Ok(ControlFlow::Continue(()));
                         }
-                        if Consumer::COLLECTING {
+                        if Consumer::RAW_TOKEN {
                             DeliveryStatus::Command
                         } else {
                             processor
@@ -391,7 +397,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             },
             |status| {
-                if Consumer::COLLECTING && matches!(status, DeliveryStatus::ReplayCompleted(_)) {
+                if Consumer::RAW_TOKEN && matches!(status, DeliveryStatus::ReplayCompleted(_)) {
                     Ok(ControlFlow::Continue(()))
                 } else {
                     Ok(ControlFlow::Break(status))

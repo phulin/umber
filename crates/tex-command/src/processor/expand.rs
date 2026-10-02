@@ -3,6 +3,7 @@
 mod collect;
 mod consume;
 mod input;
+mod once;
 mod resident;
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
@@ -29,7 +30,14 @@ type ExpandedCommandConsumer<'a, Processor, G> = dyn FnMut(&mut Processor, &Curr
 /// disappear in its static reader specialization; collection borrows its final
 /// output and scanner episode for the duration of this call only.
 pub(crate) trait ExpandedReaderConsumer<Processor, G> {
-    const COLLECTING: bool = false;
+    /// Read each operand with get_token/get_next alignment and capacity semantics.
+    const RAW_TOKEN: bool = false;
+
+    fn before_action(&mut self, _processor: &mut Processor) {}
+
+    fn expanded(&mut self) -> std::ops::ControlFlow<()> {
+        std::ops::ControlFlow::Continue(())
+    }
 
     fn terminal(
         &mut self,
@@ -445,22 +453,22 @@ impl<G> CommandProcessor<'_, '_, G> {
         )
     }
 
-    /// `scan_toks` owns replacement grammar, not a second expansion loop.
-    /// Its semantic expansion calls retain their own capacity accounting.
-    pub(crate) fn consume_expanded_collection(
+    /// Raw-token expansion consumers share the canonical reader. Their actual
+    /// expansion actions retain native capacity and completion semantics.
+    pub(crate) fn consume_raw_expansion<const STOP_PROTECTED: bool>(
         &mut self,
         consumer: &mut impl ExpandedReaderConsumer<Self, G>,
     ) -> Result<(), CommandError> {
         let mut destination = None;
         let result = if self.is_observed() {
-            self.expanded_delivery_loop::<true, false, true, _>(
+            self.expanded_delivery_loop::<true, false, STOP_PROTECTED, _>(
                 &mut destination,
                 None,
                 ExpandedReaderRole::Scanner,
                 consumer,
             )
         } else {
-            self.expanded_delivery_loop::<false, false, true, _>(
+            self.expanded_delivery_loop::<false, false, STOP_PROTECTED, _>(
                 &mut destination,
                 None,
                 ExpandedReaderRole::Scanner,
@@ -1095,26 +1103,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         // The expanded opener is consumed by the nested call and cannot
         // become the scanner's next operand.
-        Ok(())
-    }
-
-    /// Expands one already-delivered hot command in place. This is the
-    /// already-read structural expansion operand: successful expansion consumes
-    /// the opener, while an error leaves it available for recovery or unwind.
-    pub(crate) fn request_expansion_hot(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-        report_trace: bool,
-    ) -> Result<(), CommandError> {
-        let mut command = destination
-            .take()
-            .ok_or_else(CommandError::input_invariant)?;
-        let action = classify_hot_command(&command);
-        let result = self.expand_delivered_action(&mut command, action, report_trace);
-        if result.is_err() {
-            *destination = Some(command);
-            return result;
-        }
         Ok(())
     }
 
