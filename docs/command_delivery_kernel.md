@@ -390,3 +390,13 @@ while the actual processor borrows their owners. Admission reads them once for
 that loan; a native semantic call cannot mutate those borrowed owners. Settlement
 continues to check live reports, effects, input pushes, afterassignment, and the
 caller budget after every completed command. No fact survives an owner return.
+
+## Macro activation call frames
+
+A parameterless macro admits its actual replacement owner and activates it
+without entering the parameter matcher's call frame. Only an actual parameter
+pattern or exceptional observed/traced invocation calls the matcher helper.
+That helper owns scanner status, bounded argument ranges, mismatch reporting,
+and their error cleanup. Definition admission, simple activation, and matching
+share the same native input retirement and body publication authorities. An
+empty ordinary replacement retains no exhausted input row or argument owner.

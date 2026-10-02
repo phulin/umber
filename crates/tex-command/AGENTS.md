@@ -471,7 +471,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   actual cold settlement and error backup own the demanded command. One scratch
   writer retains argument holdback and source origins until activation transfers
   them to the input stack; focused tests cover scalar recovery, overlap, group
-  trimming, nested replay, and source-origin forwarding.
+  trimming, nested replay, and source-origin forwarding. Ordinary parameterless activation never enters the scanner/matcher call frame; only the actual pattern or exceptional invocation owns that frame and its cleanup.
 - `src/conditionals.rs`: private independent condition-stack machine; also
   renders e-TeX 2.6's `\tracingifs` `{...}` trace lines at conditional entry
   and at each `\or`/`\else`/`\fi` delimiter resolution, printed directly
@@ -500,13 +500,13 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   only `ClassifiedToken`; its purpose-built writer and generation-owned words
   live in `execution_scratch.rs`, with no generic destination dispatch.
 - `src/macro_call.rs`, `src/input/levels.rs`, and `src/execution_scratch.rs`:
-  macro invocation borrows the definition synchronously. Activation appends
-  the matched arguments, pushes their spans onto the parameter stack (TeX82's
-  `param_stack`), appends the definition's parameter text and replacement, and
-  pushes one `MacroBody` row over the replacement. Retiring that row
-  truncates the token stack and parameter stack back to the activation's
-  marks. An out-parameter word pushes a `MacroArgument` row over its span.
-  Parameterless macros create no matcher or argument state.
+  activation retains the final definition body and transfers the invocation's
+  already-written argument region. The parameter stack holds at most nine
+  ranges into that region. A `MacroBody` row borrows the sealed replacement;
+  body retirement returns the region and truncates the parameter ranges.
+  An out-parameter word pushes a `MacroArgument` row over its range.
+  Parameterless macros create no matcher or argument state, and ordinary
+  empty replacements retain no exhausted input row.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses

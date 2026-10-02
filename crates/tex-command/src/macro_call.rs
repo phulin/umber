@@ -139,6 +139,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         })
     }
 
+    #[inline(always)]
     pub(crate) fn macro_call_parts(
         &mut self,
         flags: MeaningFlags,
@@ -172,6 +173,31 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         };
         record_macro_activation_class(activation);
+        self.match_macro_definition(
+            flags,
+            definition,
+            macro_name,
+            call_site,
+            activation,
+            body,
+            report_prefix_mismatch,
+        )
+    }
+
+    // The scanner and its cleanup frame exist only for a real matcher or an
+    // exceptional activation, never for an ordinary parameterless macro.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)] // actual admitted definition and invocation facts
+    fn match_macro_definition(
+        &mut self,
+        flags: MeaningFlags,
+        definition: tex_state::DefinitionRef<G>,
+        macro_name: tex_state::interner::Symbol,
+        call_site: OriginId,
+        activation: MacroActivationClass,
+        body: tex_state::ResidentMacroBody<G>,
+        report_prefix_mismatch: impl FnOnce(&mut Self),
+    ) -> Result<bool, CommandError> {
         self.trace_macro_invocation(macro_name, &definition);
         // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
