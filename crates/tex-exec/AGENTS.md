@@ -57,7 +57,8 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   source spans in the existing horizontal loop. `publication.rs` validates and
   reserves the complete scanner token root set in the already-admitted context before streaming final native
   token owners and committing token assignments. Scalar and glue scans execute directly in their selected switch arm; no separate scanner admission or assignment application wrapper remains for these state-only writes. `command_codes.rs` derives switch keys from packed meanings;
-  `paragraph_start.rs` selects the native §1090 vertical cases with those keys.
+  Native §1090 vertical cases use those keys directly in the switch.
+  Brace ownership, math-family selection and vertical paragraph entry are actual packed switch arms; unrelated commands perform none of their owner tests.
   The startup prologue admits once; scalar page/save queries borrow their real
   stores without generation admission, and host settlement has one page fire-up
   seam with demand-only named-list publication.

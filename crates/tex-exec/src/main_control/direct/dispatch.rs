@@ -76,6 +76,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                     ),
                 }
             }
+            // Mode owners cannot change while this processor borrows their facts.
+            let pending_hchars = self.control.modes.current_list().pending_hchars().is_some();
             let mut host_facts = ExecutorHostFacts {
                 modes: &self.control.modes,
                 pdf_ignore_depth: self.control.pdf_ignore_depth,
@@ -109,6 +111,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                 owned_processor.resume_delivery_cursor(cursor);
             }
             let mut observation_receipts = owned_processor.is_observed().then(Vec::new);
+            // These demands are fixed for this actual processor loan. The
+            // retained semantic calls mutate only its admitted native owners.
+            let retain_commands = observation_receipts.is_none()
+                && self.control.active_alignment.is_none()
+                && !self.control.page_region_succession_pending
+                && !self.control.paragraph_checkpoint_cut;
             'processor: loop {
                 let main_loop_active = self.control.main_loop_active;
                 let processor: &mut CommandProcessor<'_, '_, G> = &mut owned_processor;
@@ -182,10 +190,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             );
                             let can_continue = completed.is_ok()
                                 && !owned_processor.has_pending_reports()
-                                && !owned_processor.is_observed()
-                                && self.control.active_alignment.is_none()
-                                && !self.control.page_region_succession_pending
-                                && !self.control.paragraph_checkpoint_cut
+                                && retain_commands
                                 && self.completed_operations + 1 < self.remaining_operations;
                             if can_continue
                                 && semantic_owners::settle_retained_native_command(
@@ -641,21 +646,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // independently consulting live state at a later seam.
                     self.suppress_left_boundary = suppress_left_boundary;
 
-                    let family_size = match command_code {
-                        Some(codes::PRIMITIVE_TEXT_FONT) => Some(tex_command::MathFamilySize::Text),
-                        Some(codes::PRIMITIVE_SCRIPT_FONT) => {
-                            Some(tex_command::MathFamilySize::Script)
-                        }
-                        Some(codes::PRIMITIVE_SCRIPT_SCRIPT_FONT) => {
-                            Some(tex_command::MathFamilySize::ScriptScript)
-                        }
-                        _ => None,
-                    };
-                    if let Some(size) = family_size {
-                        let global =
-                            effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
-                        return finish_scan!(self.scan_math_family_assignment(size, global));
-                    }
                     // Math operands are scanned exclusively by `tex-command`.  The replay
                     // driver receives a typed scalar request and schedules any opaque field
                     // episode only after this processor borrow has ended.
@@ -729,235 +719,105 @@ impl<G> DirectDispatch<'_, '_, G> {
                         };
                     }
 
-                    if boxes.output_routine_opening_pending
-                        && matches!(
-                            command.meaning(),
-                            ResolvedMeaning::Static(Meaning::CharToken {
-                                cat: Catcode::BeginGroup,
-                                ..
-                            })
-                        )
-                    {
-                        return finish_scan!(self.execute_output_routine_opening_brace());
-                    }
-                    // `align_error`'s inserted brace is an actual execution group, even when
-                    // it appears inside a replayed box body.  It must therefore win over the
-                    // box body's brace-depth bookkeeping so §1131 can observe it at end-v.
-                    if boxes.recovery_simple_group_pending
-                        && matches!(
-                            command.meaning(),
-                            ResolvedMeaning::Static(Meaning::CharToken {
-                                cat: Catcode::BeginGroup,
-                                ..
-                            })
-                        )
-                    {
-                        return finish_scan!(self.execute_begin_simple_group());
-                    }
-                    if boxes.recovery_simple_group_open
-                        && matches!(
-                            command.meaning(),
-                            ResolvedMeaning::Static(Meaning::CharToken {
-                                cat: Catcode::EndGroup,
-                                ..
-                            })
-                        )
-                    {
-                        return finish_scan!(self.execute_end_simple_group());
-                    }
-                    // TeX82 §1068 dispatches a right brace from the current `cur_group`.
-                    // An ancestor simple group must not make a nested box's body closer look
-                    // like an ordinary group closer.
-                    if command_code == Some(codes::CHAR_END_GROUP)
-                        && processor.apply_completed_command(|context, _, _, _, _observer| {
-                            context.innermost_group_kind()
-                        }) == Some(GroupKind::Simple)
-                    {
-                        return {
-                            let (direct_arg0, direct_arg1) =
-                                (GroupKind::Simple, "ordinary simple group");
-                            if self.control.modes.current_list().pending_hchars().is_some()
-                                || processor.has_pending_reports()
-                            {
-                                native_semantic!(
-                                    receipts,
-                                    self.control.apply_native_group_leave(
-                                        &mut admitted_context,
-                                        self.effects,
-                                        direct_arg0,
-                                        direct_arg1,
-                                    )
-                                )
-                            } else {
-                                let group_result = apply_groups::finish_native_group_leave(
-                                    processor,
-                                    direct_arg0,
-                                    direct_arg1,
-                                );
-                                retained_semantic!(
-                                    receipts,
-                                    |_native_context,
-                                     _native_state,
-                                     _native_effects,
-                                     _native_fuel,
-                                     _native_observer| {
-                                        group_result
-                                    }
-                                )
-                            }
-                        };
-                    }
-                    // TeX82 §1186's `math_group` arm of `handle_right_brace` (the brace that
-                    // closes a subformula scanned by §1151's `scan_math`) and §1174's
-                    // `math_choice_group` arm (the brace that closes one `\mathchoice`
-                    // branch). §1153 and §1172/§1174 opened these levels with `push_math`,
-                    // so each pair really does bracket a save-stack level and its closer must
-                    // not fall through to the ordinary or box brace arms below.
-                    if command_code == Some(codes::CHAR_END_GROUP)
-                        && let Some(kind @ (GroupKind::Math | GroupKind::MathChoice)) = processor
-                            .apply_completed_command(|context, _, _, _, _observer| {
-                                context.innermost_group_kind()
-                            })
-                    {
-                        return {
-                            let (direct_arg0,) = (kind,);
-                            finish_scan!(self.execute_end_math_group(direct_arg0))
-                        };
-                    }
-                    if command_code == Some(codes::CHAR_END_GROUP)
-                        && processor.apply_completed_command(|context, _, _, _, _observer| {
-                            context.innermost_group_kind()
-                        }) == Some(GroupKind::Disc)
-                    {
-                        return finish_scan!(self.execute_discretionary_part_end());
-                    }
-                    // TeX82 §1150's `mmode+left_brace`: a bare explicit brace encountered
-                    // directly in math mode starts a subformula that becomes the nucleus of a
-                    // freshly appended noad -- `tail_append(new_noad); back_input;
-                    // scan_math(nucleus(tail))` -- rather than an ordinary `simple_group`
-                    // scope. This must be checked before the general brace arms below: a math
-                    // formula nested inside an active box body (for example plain.tex's
-                    // `\maketable` macro, which replays its whole `\halign` argument inside
-                    // `\setbox1=\vbox{#2}`) otherwise had its bare `{`/`}` swallowed with no
-                    // noad ever appended, so a following `^`/`_` incorrectly saw the
-                    // *enclosing* list's last node (an ordinary character, from *outside*
-                    // the formula) as its attachment target instead of a fresh empty
-                    // nucleus. Reusing the existing `TextField(Ord)` request (the same
-                    // completed-field plumbing `\mathord{...}` already drives) is exact:
-                    // `scan_math`'s brace case and `\mathord`'s explicit field scan both
-                    // bottom out in one §1153 `math_group`/`fin_mlist` cycle, and an
-                    // Ord-classified noad is what an unornamented brace group produces. A
-                    // box's own mandatory opening brace never reaches this dispatch at all:
-                    // `scan_left_brace` (TeX82 §403) consumed it while the construction was
-                    // still being scanned.
-                    if matches!(mode, Mode::Math | Mode::DisplayMath)
-                        && let ResolvedMeaning::Static(Meaning::CharToken {
-                            cat: Catcode::BeginGroup,
-                            ..
-                        }) = command.meaning()
-                    {
-                        (processor.back_input(*command).map_err(command_error))
-                            .map_err(|error| scan_error(error, scan_origin))?;
-                        return {
-                            let (direct_arg0,) = (MathRequest::TextField(MathTextFieldKind::Ord),);
-                            finish_scan!(self.execute_math(direct_arg0))
-                        };
-                    }
-                    // TeX82 §1068's `handle_right_brace` dispatches purely on `cur_group`, so
-                    // a box body's own closing brace is exactly the one delivered while the
-                    // innermost group is still the group `scan_spec`/`begin_insert_or_adjust`
-                    // opened for that body. Braces nested inside the body opened ordinary
-                    // `simple_group` levels of their own (§1063), and §1069's `simple_group:
-                    // unsave` -- reached through the `EndOrdinaryGroup` arm above -- closes
-                    // those. No separate brace-depth count is kept: the save stack already
-                    // holds every open level, and counting braces instead silently skipped
-                    // `unsave`, losing both the nested group's local restores and the
-                    // `\aftergroup` tokens §282 backs up when it pops.
-                    if command_code == Some(codes::CHAR_END_GROUP)
-                        && let Some(box_state) = boxes.active_boxes.last()
-                        && processor.apply_completed_command(|context, _, _, _, _observer| {
-                            context.innermost_group_kind()
-                        }) == Some(box_state.group_kind)
-                    {
-                        let threshold = match box_state.kind {
-                            ReplayBoxKind::VBox | ReplayBoxKind::VTop | ReplayBoxKind::VCenter => 1,
-                            ReplayBoxKind::Insert(..) => 2,
-                            ReplayBoxKind::HBox => 0,
-                        };
-                        if threshold != 0 && partoken_context_replays(processor, mode, threshold) {
-                            (processor
-                                .insert_partoken_before(*command)
-                                .map_err(command_error))
-                            .map_err(|error| scan_error(error, scan_origin))?;
-                            return finish_scan!(self.execute_continue());
-                        }
-                        return {
-                            let (direct_arg0, direct_arg1) = (
-                                box_state.shipout_region.is_some(),
-                                i32::try_from(processor.current_file_line_number())
-                                    .unwrap_or(i32::MAX),
-                            );
-                            finish_scan!(self.execute_box_end_group(direct_arg0, direct_arg1))
-                        };
-                    }
-                    // TeX82 §1016 opens `output_group` before replaying the braced output
-                    // token list. A box body nested in that list owns its closing brace first;
-                    // only the live output group can close the enclosing output routine.
-                    if command_code == Some(codes::CHAR_END_GROUP)
-                        && boxes.output_routine_active
-                        && processor.apply_completed_command(|context, _, _, _, _observer| {
-                            context.innermost_group_kind()
-                        }) == Some(GroupKind::Output)
-                    {
-                        if partoken_context_replays(processor, mode, 2) {
-                            (processor
-                                .insert_partoken_before(*command)
-                                .map_err(command_error))
-                            .map_err(|error| scan_error(error, scan_origin))?;
-                            return finish_scan!(self.execute_continue());
-                        }
-                        return finish_scan!(self.execute_end_output_routine());
-                    }
-                    // TeX82 §1090's `@<Cases of |main_control| that build boxes and lists@>`
-                    // opens with one shared vertical-mode case, not thirteen separate ones:
-                    //
-                    //     vmode+letter,vmode+other_char,vmode+char_num,vmode+char_given,
-                    //     vmode+math_shift,vmode+un_hbox,vmode+vrule,
-                    //     vmode+accent,vmode+discretionary,vmode+hskip,vmode+valign,
-                    //     vmode+ex_space,vmode+no_boundary:
-                    //       begin back_input; new_graf(true); end;
-                    //
-                    // Every member takes the same two actions in the same order, *before* any
-                    // operand of its own is looked at: the triggering command is pushed back
-                    // (§325 `back_input`, which opens a `backed_up` input level), and §1091
-                    // `new_graf` then opens the paragraph and pushes `\everypar`. The backed-up
-                    // command is redelivered afterwards and dispatched again, now in horizontal
-                    // mode, where it scans its operand.
-                    //
-                    // Scanning the operand here instead -- `\char`'s character number,
-                    // `\hskip`'s glue, `\vrule`'s rule spec, `\accent`'s accent number and base
-                    // character, `\discretionary`'s three lists -- reads it in vertical mode,
-                    // before `\everypar` has run and before the paragraph's horizontal list
-                    // exists, and skips the backup level and redelivery entirely.
-                    if matches!(mode, Mode::Vertical | Mode::InternalVertical)
-                        && paragraph_start::starts_paragraph_in_vertical_mode(command_code)
-                    {
-                        (processor.back_input(*command).map_err(command_error))
-                            .map_err(|error| scan_error(error, scan_origin))?;
-                        return finish_scan!(self.execute_paragraph_start());
-                    }
-
                     return {
                         match (
                             mode,
                             command_code
                                 .expect("expanded delivery selected a static or font command"),
                         ) {
+                            (
+                                _,
+                                code @ (codes::PRIMITIVE_TEXT_FONT
+                                | codes::PRIMITIVE_SCRIPT_FONT
+                                | codes::PRIMITIVE_SCRIPT_SCRIPT_FONT),
+                            ) => {
+                                let size = match code {
+                                    codes::PRIMITIVE_TEXT_FONT => tex_command::MathFamilySize::Text,
+                                    codes::PRIMITIVE_SCRIPT_FONT => {
+                                        tex_command::MathFamilySize::Script
+                                    }
+                                    _ => tex_command::MathFamilySize::ScriptScript,
+                                };
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
+                                finish_scan!(self.scan_math_family_assignment(size, global))
+                            }
+                            // §1090 backs up the selected command before everypar or operand scanning.
+                            (
+                                Mode::Vertical | Mode::InternalVertical,
+                                codes::CHAR_LETTER
+                                | codes::CHAR_OTHER
+                                | codes::CHAR_MATH_SHIFT
+                                | codes::CHAR_GIVEN
+                                | codes::PRIMITIVE_CHAR
+                                | codes::PRIMITIVE_UN_H_BOX
+                                | codes::PRIMITIVE_UN_H_COPY
+                                | codes::PRIMITIVE_V_RULE
+                                | codes::PRIMITIVE_ACCENT
+                                | codes::PRIMITIVE_DISCRETIONARY
+                                | codes::PRIMITIVE_DISCRETIONARY_HYPHEN
+                                | codes::PRIMITIVE_H_SKIP
+                                | codes::PRIMITIVE_H_FIL
+                                | codes::PRIMITIVE_H_FILL
+                                | codes::PRIMITIVE_H_SS
+                                | codes::PRIMITIVE_H_FIL_NEG
+                                | codes::PRIMITIVE_V_ALIGN
+                                | codes::PRIMITIVE_BEGIN_L
+                                | codes::PRIMITIVE_END_L
+                                | codes::PRIMITIVE_BEGIN_R
+                                | codes::PRIMITIVE_END_R
+                                | codes::PRIMITIVE_CONTROL_SPACE
+                                | codes::PRIMITIVE_NO_BOUNDARY,
+                            ) => {
+                                (processor.back_input(*command).map_err(command_error))
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                return finish_scan!(self.execute_paragraph_start());
+                            }
                             (_, codes::CHAR_BEGIN_GROUP) => {
+                                if boxes.output_routine_opening_pending {
+                                    return finish_scan!(
+                                        self.execute_output_routine_opening_brace()
+                                    );
+                                }
+                                // `align_error`'s inserted brace is an actual execution group, even when
+                                // it appears inside a replayed box body.  It must therefore win over the
+                                // box body's brace-depth bookkeeping so §1131 can observe it at end-v.
+                                if boxes.recovery_simple_group_pending {
+                                    return finish_scan!(self.execute_begin_simple_group());
+                                }
+                                // TeX82 §1150's `mmode+left_brace`: a bare explicit brace encountered
+                                // directly in math mode starts a subformula that becomes the nucleus of a
+                                // freshly appended noad -- `tail_append(new_noad); back_input;
+                                // scan_math(nucleus(tail))` -- rather than an ordinary `simple_group`
+                                // scope. This must be checked before the general brace arms below: a math
+                                // formula nested inside an active box body (for example plain.tex's
+                                // `\maketable` macro, which replays its whole `\halign` argument inside
+                                // `\setbox1=\vbox{#2}`) otherwise had its bare `{`/`}` swallowed with no
+                                // noad ever appended, so a following `^`/`_` incorrectly saw the
+                                // *enclosing* list's last node (an ordinary character, from *outside*
+                                // the formula) as its attachment target instead of a fresh empty
+                                // nucleus. Reusing the existing `TextField(Ord)` request (the same
+                                // completed-field plumbing `\mathord{...}` already drives) is exact:
+                                // `scan_math`'s brace case and `\mathord`'s explicit field scan both
+                                // bottom out in one §1153 `math_group`/`fin_mlist` cycle, and an
+                                // Ord-classified noad is what an unornamented brace group produces. A
+                                // box's own mandatory opening brace never reaches this dispatch at all:
+                                // `scan_left_brace` (TeX82 §403) consumed it while the construction was
+                                // still being scanned.
+                                if matches!(mode, Mode::Math | Mode::DisplayMath) {
+                                    (processor.back_input(*command).map_err(command_error))
+                                        .map_err(|error| scan_error(error, scan_origin))?;
+                                    return {
+                                        let (direct_arg0,) =
+                                            (MathRequest::TextField(MathTextFieldKind::Ord),);
+                                        finish_scan!(self.execute_math(direct_arg0))
+                                    };
+                                }
                                 return {
                                     let (direct_arg0,) = (GroupKind::Simple,);
-                                    if self.control.modes.current_list().pending_hchars().is_some()
-                                    {
+                                    if pending_hchars {
                                         native_semantic!(
                                             receipts,
                                             self.control.apply_native_group_enter(
@@ -977,8 +837,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             (_, codes::PRIMITIVE_BEGIN_GROUP) => {
                                 return {
                                     let (direct_arg0,) = (GroupKind::SemiSimple,);
-                                    if self.control.modes.current_list().pending_hchars().is_some()
-                                    {
+                                    if pending_hchars {
                                         native_semantic!(
                                             receipts,
                                             self.control.apply_native_group_enter(
@@ -1003,9 +862,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 return {
                                     let (direct_arg0, direct_arg1) =
                                         (GroupKind::SemiSimple, "semi simple group");
-                                    if self.control.modes.current_list().pending_hchars().is_some()
-                                        || processor.has_pending_reports()
-                                    {
+                                    if pending_hchars || processor.has_pending_reports() {
                                         native_semantic!(
                                             receipts,
                                             self.control.apply_native_group_leave(
@@ -1128,31 +985,27 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     )
                                     .map_err(command_error)
                                     .map_err(|error| scan_error(error, scan_origin))?;
-                                let step =
-                                    if self.control.modes.current_list().pending_hchars().is_some()
-                                    {
-                                        native_semantic!(receipts, {
-                                            crate::box_runtime::flush_pending_hchars_with_fuel(
-                                                &mut self.control.modes,
+                                let step = if pending_hchars {
+                                    native_semantic!(receipts, {
+                                        crate::box_runtime::flush_pending_hchars_with_fuel(
+                                            &mut self.control.modes,
+                                            &mut admitted_context,
+                                            self.effects,
+                                            self.control.fuel.fuel_mut(),
+                                        )
+                                        .and_then(|()| {
+                                            definition_assignments::apply_let(
+                                                target,
+                                                meaning,
+                                                global,
                                                 &mut admitted_context,
                                                 self.effects,
-                                                self.control.fuel.fuel_mut(),
-                                            )
-                                            .and_then(
-                                                |()| {
-                                                    definition_assignments::apply_let(
-                                                        target,
-                                                        meaning,
-                                                        global,
-                                                        &mut admitted_context,
-                                                        self.effects,
-                                                        receipts,
-                                                    )
-                                                },
+                                                receipts,
                                             )
                                         })
-                                    } else {
-                                        retained_semantic!(
+                                    })
+                                } else {
+                                    retained_semantic!(
                                         receipts,
                                         |native_context,
                                          _native_state,
@@ -1169,12 +1022,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             )
                                         }
                                     )
-                                    }?;
+                                }?;
                                 self.schedule_assignment_token()?;
                                 Ok(step)
                             }
                             (_, codes::RELAX) => {
-                                if self.control.modes.current_list().pending_hchars().is_some() {
+                                if pending_hchars {
                                     native_semantic!(
                                         receipts,
                                         semantic::execute_relax(
@@ -1203,6 +1056,143 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::CHAR_END_GROUP) => {
+                                if boxes.recovery_simple_group_open {
+                                    return finish_scan!(self.execute_end_simple_group());
+                                }
+                                // TeX82 §1068 dispatches a right brace from the current `cur_group`.
+                                // An ancestor simple group must not make a nested box's body closer look
+                                // like an ordinary group closer.
+                                if processor.apply_completed_command(
+                                    |context, _, _, _, _observer| context.innermost_group_kind(),
+                                ) == Some(GroupKind::Simple)
+                                {
+                                    return {
+                                        let (direct_arg0, direct_arg1) =
+                                            (GroupKind::Simple, "ordinary simple group");
+                                        if self
+                                            .control
+                                            .modes
+                                            .current_list()
+                                            .pending_hchars()
+                                            .is_some()
+                                            || processor.has_pending_reports()
+                                        {
+                                            native_semantic!(
+                                                receipts,
+                                                self.control.apply_native_group_leave(
+                                                    &mut admitted_context,
+                                                    self.effects,
+                                                    direct_arg0,
+                                                    direct_arg1,
+                                                )
+                                            )
+                                        } else {
+                                            let group_result =
+                                                apply_groups::finish_native_group_leave(
+                                                    processor,
+                                                    direct_arg0,
+                                                    direct_arg1,
+                                                );
+                                            retained_semantic!(
+                                    receipts,
+                                    |_native_context,
+                                     _native_state,
+                                     _native_effects,
+                                     _native_fuel,
+                                     _native_observer| {
+                                        group_result
+                                    }
+                                )
+                                        }
+                                    };
+                                }
+                                // TeX82 §1186's `math_group` arm of `handle_right_brace` (the brace that
+                                // closes a subformula scanned by §1151's `scan_math`) and §1174's
+                                // `math_choice_group` arm (the brace that closes one `\mathchoice`
+                                // branch). §1153 and §1172/§1174 opened these levels with `push_math`,
+                                // so each pair really does bracket a save-stack level and its closer must
+                                // not fall through to the ordinary or box brace arms below.
+                                if let Some(kind @ (GroupKind::Math | GroupKind::MathChoice)) =
+                                    processor.apply_completed_command(
+                                        |context, _, _, _, _observer| {
+                                            context.innermost_group_kind()
+                                        },
+                                    )
+                                {
+                                    return {
+                                        let (direct_arg0,) = (kind,);
+                                        finish_scan!(self.execute_end_math_group(direct_arg0))
+                                    };
+                                }
+                                if processor.apply_completed_command(
+                                    |context, _, _, _, _observer| context.innermost_group_kind(),
+                                ) == Some(GroupKind::Disc)
+                                {
+                                    return finish_scan!(self.execute_discretionary_part_end());
+                                }
+                                // TeX82 §1068's `handle_right_brace` dispatches purely on `cur_group`, so
+                                // a box body's own closing brace is exactly the one delivered while the
+                                // innermost group is still the group `scan_spec`/`begin_insert_or_adjust`
+                                // opened for that body. Braces nested inside the body opened ordinary
+                                // `simple_group` levels of their own (§1063), and §1069's `simple_group:
+                                // unsave` -- reached through the `EndOrdinaryGroup` arm above -- closes
+                                // those. No separate brace-depth count is kept: the save stack already
+                                // holds every open level, and counting braces instead silently skipped
+                                // `unsave`, losing both the nested group's local restores and the
+                                // `\aftergroup` tokens §282 backs up when it pops.
+                                if let Some(box_state) = boxes.active_boxes.last()
+                                    && processor.apply_completed_command(
+                                        |context, _, _, _, _observer| {
+                                            context.innermost_group_kind()
+                                        },
+                                    ) == Some(box_state.group_kind)
+                                {
+                                    let threshold = match box_state.kind {
+                                        ReplayBoxKind::VBox
+                                        | ReplayBoxKind::VTop
+                                        | ReplayBoxKind::VCenter => 1,
+                                        ReplayBoxKind::Insert(..) => 2,
+                                        ReplayBoxKind::HBox => 0,
+                                    };
+                                    if threshold != 0
+                                        && partoken_context_replays(processor, mode, threshold)
+                                    {
+                                        (processor
+                                            .insert_partoken_before(*command)
+                                            .map_err(command_error))
+                                        .map_err(|error| scan_error(error, scan_origin))?;
+                                        return finish_scan!(self.execute_continue());
+                                    }
+                                    return {
+                                        let (direct_arg0, direct_arg1) = (
+                                            box_state.shipout_region.is_some(),
+                                            i32::try_from(processor.current_file_line_number())
+                                                .unwrap_or(i32::MAX),
+                                        );
+                                        finish_scan!(
+                                            self.execute_box_end_group(direct_arg0, direct_arg1)
+                                        )
+                                    };
+                                }
+                                // TeX82 §1016 opens `output_group` before replaying the braced output
+                                // token list. A box body nested in that list owns its closing brace first;
+                                // only the live output group can close the enclosing output routine.
+                                if boxes.output_routine_active
+                                    && processor.apply_completed_command(
+                                        |context, _, _, _, _observer| {
+                                            context.innermost_group_kind()
+                                        },
+                                    ) == Some(GroupKind::Output)
+                                {
+                                    if partoken_context_replays(processor, mode, 2) {
+                                        (processor
+                                            .insert_partoken_before(*command)
+                                            .map_err(command_error))
+                                        .map_err(|error| scan_error(error, scan_origin))?;
+                                        return finish_scan!(self.execute_continue());
+                                    }
+                                    return finish_scan!(self.execute_end_output_routine());
+                                }
                                 let (direct_arg0,) = (
                                     match processor.apply_completed_command(
                                         |context, _, _, _, _observer| {

@@ -78,24 +78,6 @@ fn trip_valign_row_uses_raw_main_loop_lookahead_before_assignment() {
     });
 }
 #[test]
-fn etex_direction_meanings_share_valigns_vertical_mode_paragraph_entry() {
-    // TeX82 §1090 keys this transition by the `valign` command code, and
-    // e-TeX 2.6 [53a.3826--3883] assigns that code to all four directions.
-    for primitive in [
-        UnexpandablePrimitive::VAlign,
-        UnexpandablePrimitive::BeginL,
-        UnexpandablePrimitive::EndL,
-        UnexpandablePrimitive::BeginR,
-        UnexpandablePrimitive::EndR,
-    ] {
-        assert!(direct::paragraph_start::starts_paragraph_in_vertical_mode(
-            Some(Meaning::runtime_word_control_code(
-                Meaning::UnexpandablePrimitive(primitive).encode()
-            ),)
-        ));
-    }
-}
-#[test]
 fn preamble_span_expands_one_token_and_preserves_later_template_meaning() {
     // TeX82 §759 expands exactly the token after each preamble `\span`.
     // Here \A is \relax while the preamble is scanned, then becomes a 3pt

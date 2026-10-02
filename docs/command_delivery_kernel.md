@@ -26,11 +26,10 @@ Some canonical command checks happen before operand scanning and return a
 recoverable error when the current engine mode is unsuitable. PDFTeX's
 `check_pdfoutput` and the link-mode check are such boundaries (pdftex.web
 §§1535, 1542, 1544, 1548--1552, 1561, 1563, 1601--1607). The cold scanner
-backs up the delivered command before returning that error. The operation mark
-can then roll back TeX state, mode, node, and attempt changes while the input
-stack retains the backed-up command and the source cursor still precedes its
-operands. ErrorStop may change `\pdfoutput` or the mode, and the next step
-re-enters the complete command through ordinary delivery.
+backs up the delivered command before returning that error. The backed-up command remains on the actual input stack, with its source cursor
+still preceding the operands. ErrorStop may change `\pdfoutput` or the mode,
+and the next step re-enters the complete command through ordinary delivery.
+There is no per-command rollback owner or operation snapshot.
 
 This is command recovery, separate from host-resource replay. It does not
 retain a scanner, expansion frame, or direct-operation mark across a resource
@@ -373,3 +372,21 @@ identity; it cannot revive coordinates from the halted command.
 
 Semantic routines borrow `CommandContext` directly. A state-free dereference
 facade adds no authority and is deleted.
+
+## Select exceptional semantics at dispatch
+
+The native mode and packed command switch selects brace ownership, math-family
+assignments, and vertical paragraph entry directly. Those semantics do not run
+as a sequence of candidate tests before unrelated commands. A right brace alone
+consults the live group and box owners; a left brace alone resolves output,
+recovery, and math group precedence. Vertical paragraph entry is a switch case
+before operand scanning, preserving the original backup and everypar order.
+Ordinary retained commands therefore share the same input and settlement loop
+without constructing a semantic projection for irrelevant cases. There is no
+second dispatcher, eligibility cache, or alternate execution path.
+
+The mode list and outer observer, alignment, and checkpoint demands are fixed
+while the actual processor borrows their owners. Admission reads them once for
+that loan; a native semantic call cannot mutate those borrowed owners. Settlement
+continues to check live reports, effects, input pushes, afterassignment, and the
+caller budget after every completed command. No fact survives an owner return.
