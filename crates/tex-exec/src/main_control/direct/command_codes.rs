@@ -606,8 +606,8 @@ pub(super) const PRIMITIVE_HYPHENATION: u64 = Meaning::runtime_word_control_code
 );
 pub(super) const UNEXPANDABLE_MIN: u64 = Meaning::runtime_word_control_code(
     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Def).encode(),
-) & 0xff00_0000_0000_0000;
-pub(super) const UNEXPANDABLE_MAX: u64 = UNEXPANDABLE_MIN | 0x0000_ffff_ffff_ffff;
+);
+pub(super) const UNEXPANDABLE_MAX: u64 = UNEXPANDABLE_MIN + u16::MAX as u64;
 
 pub(super) const PRIMITIVE_GLOBAL: u64 = Meaning::runtime_word_control_code(
     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global).encode(),

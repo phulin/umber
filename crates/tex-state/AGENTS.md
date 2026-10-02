@@ -282,8 +282,11 @@ expose substores or introduce another arena.
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed compact
   macro definition keys and the canonical dense-row writer which decodes one
   borrowed row directly into its caller's final native meaning. Outer validity
-  inspects this native tag/operand without a derived command class.
-- `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
+  inspects this native tag/operand without a derived command class. Main-control
+  switch keys project disjoint small scalar/catcode/primitive ranges from the
+  actual word; stored words and capabilities retain their native encodings.
+- `src/meaning/tests.rs`: Static codec, primitive, typed macro-meaning, and
+  complete native selector/family non-aliasing tests.
 - `src/measurement.rs`, `src/measurement/hot_core.rs`, and
   `src/measurement/box_fallback.rs`: Profiling-feature-only
   allocation attribution, structural dispatch census, coarse retained

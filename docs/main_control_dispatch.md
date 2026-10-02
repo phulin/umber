@@ -11,6 +11,14 @@ character loop, and §1211's prefix loop. Ordinary, observed, tracked,
 diagnostic, nested math/accent/alignment, PDF, and resource consumers enter
 these same arms.
 
+The switch key is a demanded projection of the native word. Scalar opcode
+tags occupy one byte’s range, followed by the sixteen literal catcodes,
+expandable byte selectors and unexpandable sixteen-bit selectors. These
+disjoint small ranges permit ordinary indexed branching; retaining the
+opcode in bit 56 would create a sparse 64-bit switch for the same semantics.
+The key is local to dispatch. Stored meaning words, font/definition
+capabilities, formats and checkpoint records retain their native encodings.
+
 Expanded fetching and raw horizontal lookahead retain their distinct TeX
 labels. Borrowed source spans enter the actual horizontal material consumer.
 Prefixes and replacement commands dispatch in place without redelivery. The reswitch label derives one local packed switch key from its actual current command, refreshing it when a prefix or replacement fetch changes that command. Scalar scan scratch belongs only to the native arms that scan scalars. Each assignment arm resolves its effective global flag once before scanning; unrelated commands read no GLOBAL_DEFS. Brace and math consumers query the live group only when that semantic case needs it. Disabled tracing prepares and reports no command evidence. Each

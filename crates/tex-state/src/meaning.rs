@@ -1325,7 +1325,7 @@ impl Meaning {
         }
     }
 
-    /// TeX main-control command family and modifier, without decoding operands.
+    /// Small TeX main-control family/selector key, without decoding values.
     /// Primitive selectors and literal catcodes distinguish control cases;
     /// register indices, character values, and other scanned operands do not.
     #[doc(hidden)]
@@ -1333,12 +1333,18 @@ impl Meaning {
     #[inline]
     pub const fn runtime_word_control_code(word: u64) -> u64 {
         let opcode = (word >> OPCODE_SHIFT) as u8;
-        let modifier = match opcode {
-            OP_EXPANDABLE_PRIMITIVE | OP_UNEXPANDABLE_PRIMITIVE => word & OPERAND_MASK,
-            OP_CHAR_TOKEN => word & 15,
-            _ => 0,
-        };
-        ((opcode as u64) << OPCODE_SHIFT) | modifier
+        // Disjoint native selector ranges let main control use an indexed
+        // switch instead of comparing sparse bit-56 opcode keys. The stored
+        // word and its complete operand/capability remain unchanged.
+        const CHAR_BASE: u64 = u8::MAX as u64 + 1;
+        const EXPANDABLE_BASE: u64 = CHAR_BASE + 16;
+        const UNEXPANDABLE_BASE: u64 = EXPANDABLE_BASE + u8::MAX as u64 + 1;
+        match opcode {
+            OP_EXPANDABLE_PRIMITIVE => EXPANDABLE_BASE + (word & OPERAND_MASK),
+            OP_UNEXPANDABLE_PRIMITIVE => UNEXPANDABLE_BASE + (word & OPERAND_MASK),
+            OP_CHAR_TOKEN => CHAR_BASE + (word & 15),
+            _ => opcode as u64,
+        }
     }
 
     /// Returns the operand of a validated runtime word without semantic decode.

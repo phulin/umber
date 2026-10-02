@@ -21,7 +21,9 @@ word, font capability or macro flags/key directly, without constructing a
 second command-word type or storing a derived class. Macro grammar, definition
 collection and conditional skipping inspect those actual tags and operands;
 the delivered command computes class, primitive and scalar projections only
-where its consumer needs them. The delivered snapshot still precedes operand
+where its consumer needs them. Dispatch projects a small, disjoint
+family/selector key locally instead of branching on sparse bit-56 opcode
+values; it stores no derived classification. The delivered snapshot still precedes operand
 reads, so later assignments cannot change it. Font and definition capabilities
 keep their complete identities, and raw recovery, alignment, tracing and
 observation retain their existing settlement chronology.

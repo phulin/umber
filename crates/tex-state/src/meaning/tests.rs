@@ -272,3 +272,76 @@ fn invalid_known_meaning_preserves_reserved_flags() {
     assert_eq!(raw.flags(), flags);
     assert_eq!(Meaning::Unknown(raw).encode(), word);
 }
+
+#[test]
+fn control_dispatch_keys_distinguish_all_native_families_and_selectors() {
+    let mut keys = std::collections::HashSet::new();
+    for meaning in [
+        Meaning::Undefined,
+        Meaning::Relax,
+        Meaning::CharGiven('x'),
+        Meaning::MathCharGiven(1),
+        Meaning::CountRegister(1),
+        Meaning::DimenRegister(1),
+        Meaning::SkipRegister(1),
+        Meaning::MuskipRegister(1),
+        Meaning::ToksRegister(1),
+        Meaning::IntParam(1),
+        Meaning::DimenParam(1),
+        Meaning::GlueParam(1),
+        Meaning::MuGlueParam(1),
+        Meaning::TokParam(1),
+        Meaning::PageDimension(PageDimension::Goal),
+        Meaning::PageInteger(PageInteger::DeadCycles),
+        Meaning::InternalInteger(InternalInteger::from_operand(0).expect("internal integer")),
+        Meaning::Font(FontId::new(0)),
+        Meaning::EndV,
+        Meaning::Unknown(RawMeaning::testing_new(u8::MAX, OPERAND_MASK)),
+    ] {
+        assert!(
+            keys.insert(Meaning::runtime_word_control_code(meaning.encode())),
+            "{meaning:?}"
+        );
+    }
+    for cat in 0..16 {
+        let word =
+            Meaning::char_token_word('x', crate::token::Catcode::from_raw(cat).expect("catcode"));
+        assert!(
+            keys.insert(Meaning::runtime_word_control_code(word)),
+            "catcode {cat}"
+        );
+    }
+    for operand in 0..=u8::MAX {
+        if let Some(primitive) = ExpandablePrimitive::from_operand(u64::from(operand)) {
+            let word = Meaning::ExpandablePrimitive(primitive).encode();
+            assert!(
+                keys.insert(Meaning::runtime_word_control_code(word)),
+                "{primitive:?}"
+            );
+        }
+    }
+    for operand in 0..=u16::MAX {
+        if let Some(primitive) = UnexpandablePrimitive::from_operand(u64::from(operand)) {
+            let word = Meaning::UnexpandablePrimitive(primitive).encode();
+            assert!(
+                keys.insert(Meaning::runtime_word_control_code(word)),
+                "{primitive:?}"
+            );
+        }
+    }
+    for (left, right) in [
+        (Meaning::CountRegister(0), Meaning::CountRegister(u16::MAX)),
+        (Meaning::MathCharGiven(0), Meaning::MathCharGiven(u16::MAX)),
+        (Meaning::CharGiven('x'), Meaning::CharGiven(char::MAX)),
+        (
+            Meaning::Font(FontId::new(0)),
+            Meaning::Font(FontId::new(u32::MAX)),
+        ),
+    ] {
+        assert_eq!(
+            Meaning::runtime_word_control_code(left.encode()),
+            Meaning::runtime_word_control_code(right.encode()),
+            "values belong to their semantic consumers"
+        );
+    }
+}

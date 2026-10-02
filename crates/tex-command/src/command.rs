@@ -525,7 +525,7 @@ impl<G> CurrentCommand<G> {
         }
     }
 
-    /// Native packed command family and modifier for mode/command dispatch.
+    /// Small native family/selector key for the sole mode/command switch.
     #[must_use]
     #[inline]
     pub fn control_code(&self) -> Option<u64> {
