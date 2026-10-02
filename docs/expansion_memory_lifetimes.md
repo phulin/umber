@@ -1,6 +1,6 @@
 # Expansion memory lifetimes
 
-Status: current source map, 2026-10-01.
+Status: current source map, 2026-10-02.
 
 [Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
 is the authority for checkpoint/group/candidate and definition ownership.

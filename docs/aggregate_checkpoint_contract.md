@@ -1,8 +1,8 @@
 # Full checkpoints and TeX group ownership
 
-Status: implemented ownership contract, 2026-10-01.
+Status: implemented ownership contract, 2026-10-02.
 The source mapping below names the owning implementations and their proof
-responsibilities; Beads tracks remaining profile work separately.
+responsibilities; Beads records revision-scoped performance evidence separately.
 
 ## One authority and one mutable generation
 

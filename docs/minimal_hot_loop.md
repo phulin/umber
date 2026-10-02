@@ -1,6 +1,6 @@
 # Minimal hot loop
 
-Status: implemented core and selected remaining work, 2026-10-01.
+Status: implemented redesign, 2026-10-02.
 Tracking: Beads `umber2-i0n5`. The selected storage and lifecycle authority is
 [Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md).
 [Main-control dispatch](main_control_dispatch.md) maps the direct interpreter.
@@ -183,7 +183,7 @@ maintains no per-command census to preserve legacy counts. Duplicate local
 retry/dispatch and always-zero savepoint projections are deleted. Native logs,
 WASM wire metrics and census consumers use these actual units.
 
-## Retired experiments and remaining profile work
+## Specialized owners and optimization evidence
 
 The original 16-byte input frame, register-only return, universal arena/no-`Rc`
 law, two-ended token heap, reference-count undo/quarantine, sparse-origin
@@ -194,10 +194,16 @@ They do not authorize a compatibility lane or a second machine. Layout changes
 need evidence against current symbols and workloads; a frame rewrite or allocator
 replacement requires an actual remaining cost, not conformity to pseudocode.
 
-The 64 KiB hot-set goal, PGO, symbol ordering and node-memory changes belong to
-`.7`/`.8` profile work. They are possible measured optimizations, not prerequisite
-closure gates. Node/page/box/PDF storage changes preserve their specialized
-contracts. No verified production read/write/group/save ratio exists: the
+The node/PDF owner audit found no duplicate allocator or history to remove.
+Page material, box roots, PDF objects and shipping transactions retain their
+specialized ownership and root-before-payload contracts. A fresh full-book
+profile attributes less than one percent of self samples to most individual
+node/PDF ownership methods; it does not justify replacing those owners merely
+to enforce a universal arena rule. Beads `umber2-i0n5.8` records that disposition.
+
+The 64 KiB hot-set goal, PGO and symbol ordering are possible measured
+optimizations, not implementation requirements or closure gates. No verified
+production read/write/group/save ratio exists: the
 588-page profile had detail counters disabled, and historical command counts
 lack a revision-scoped census receipt. Qualitative workload reasoning must not
 be reported as a measured percentage.
@@ -225,9 +231,14 @@ and 17 root sites, exit 1 with `VERDICT: DIVERGED`; preserve the entire ordered
 worklist for semantics-preserving work. `PARTIAL` totals cannot attest equality.
 See [Canonical divergence workflow](canonical_divergence_workflow.md).
 
-Performance receipts, original budgets and full-book auxiliary/text/raster
-comparisons remain evidence for profile work. They are not implementation
-completion or stage-closure blockers. Targets below are unchanged.
+Revision-scoped release receipts and profiles in Beads `umber2-i0n5.7` compare
+the completed engine with the frozen pre-redesign binary. They include all 22
+microbenchmarks and the unrepaired 588-page book, with exact PDF and auxiliary
+hashes, fixed CPU/build/format inputs and separate sampling runs. The book,
+empty groups and token-list assignments improve, while several terminal and
+small-macro cases still regress against that binary. The redesign is not a
+claim of uniform speedup or pdfTeX instruction parity. Historical targets below
+remain informative; they do not supersede the implemented ownership contract.
 
 ## Historical measured baseline
 
