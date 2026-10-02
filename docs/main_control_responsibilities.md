@@ -62,3 +62,13 @@ Deferred output observations have a demanded owner. Only an observed output
 routine creates its buffer; settlement consumes that buffer in the established
 shipout/effect order and checks the same evidence bounds. Unobserved ordinary
 commands own no empty page-output receipt and perform no reset of one.
+
+The persistent interpreter owns canonical command state. Its processor method
+returns the real `CommandProcessor` directly; Rust's mutable borrow enforces
+exclusive access. No lifecycle facade or per-command entry/completion/live
+counters duplicate that proof. The processor's actual drop still unwinds
+scanner scratch and ends delivery mode. Native prefix, ignore-space, font-bank,
+and paragraph-start selection read the delivered packed key, reconstructing a
+meaning only when a genuine operand or diagnostic consumes it. These reads
+use the current command after each fetch or reswitch and store no second
+meaning column.

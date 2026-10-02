@@ -44,7 +44,8 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   shared settlement tail. It owns no operation value or continuation. `characters.rs` consumes borrowed
   source spans in the existing horizontal loop. `publication.rs` validates and
   reserves the complete scanner token root set before streaming final native
-  token owners. `command_codes.rs` derives switch keys from packed meanings.
+  token owners. `command_codes.rs` derives switch keys from packed meanings;
+  `paragraph_start.rs` selects the native §1090 vertical cases with those keys.
   The startup prologue admits once; scalar page/save queries borrow their real
   stores without generation admission, and host settlement has one page fire-up
   seam with demand-only named-list publication.
@@ -201,9 +202,9 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   capture or render an input-stack error context.
 - `src/retained_resource.rs` and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts. PDF image requests are defined by `tex-command` and passed through this host boundary directly.
 - `src/interpreter.rs`: session-lived canonical command-state ownership,
-  generation-typed processor facades borrowing one stable call-local admitted
-  context in place, and assertion-bearing interpreter lifecycle accounting
-  across semantic and host barriers.
+  returning the real generation-typed command processor for an exclusive
+  call-local admitted-context borrow. Real processor drop owns scanner cleanup;
+  no lifecycle facade or per-command counters duplicate that borrow proof.
 - `src/retained_generation.rs`: Non-generic move-only external-store slot
   lease, universally generic admitted engine episodes, host-owned
   full-checkpoint replay for resource needs, the canonical packed reusable-row

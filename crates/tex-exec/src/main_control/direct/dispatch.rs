@@ -296,19 +296,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                         );
                     }
                 }
-                match command.meaning() {
-                    ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Global,
-                    )) => global = true,
-                    ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Long,
-                    )) => flags = flags | MeaningFlags::LONG,
-                    ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Outer,
-                    )) => flags = flags | MeaningFlags::OUTER,
-                    ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Protected,
-                    )) => flags = flags | MeaningFlags::PROTECTED,
+                match command.control_code() {
+                    Some(codes::PRIMITIVE_GLOBAL) => global = true,
+                    Some(codes::PRIMITIVE_LONG) => flags = flags | MeaningFlags::LONG,
+                    Some(codes::PRIMITIVE_OUTER) => flags = flags | MeaningFlags::OUTER,
+                    Some(codes::PRIMITIVE_PROTECTED) => flags = flags | MeaningFlags::PROTECTED,
                     _ => break,
                 }
                 let mut destination = None;
@@ -356,12 +348,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             // push a backup level, emit a recovery record, and deliver that
             // command a second time, none of which TeX82 does
             // (`umber2-johp.196`).
-            if matches!(
-                command.meaning(),
-                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                    UnexpandablePrimitive::IgnoreSpaces
-                ))
-            ) {
+            if command.control_code() == Some(codes::PRIMITIVE_IGNORE_SPACES) {
                 let next =
                     if let Some(alignment) = alignment {
                         let mut destination = None;
@@ -500,27 +487,23 @@ impl<G> DirectDispatch<'_, '_, G> {
                 processor.int_param(IntParam::GLOBAL_DEFS),
                 global
                     || matches!(
-                        command.meaning(),
-                        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                            UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
-                        ))
+                        command.control_code(),
+                        Some(codes::PRIMITIVE_GDEF | codes::PRIMITIVE_XDEF)
                     ),
             );
 
             self.suppress_left_boundary = suppress_left_boundary;
 
-            if let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                primitive @ (UnexpandablePrimitive::TextFont
-                | UnexpandablePrimitive::ScriptFont
-                | UnexpandablePrimitive::ScriptScriptFont),
-            )) = command.meaning()
-            {
-                let size = tex_command::MathFamilySize::of_primitive(primitive)
-                    .expect("the outer match restricts this to `def_family`");
-                return {
-                    let (direct_arg0, direct_arg1) = (size, global);
-                    finish_scan!(self.scan_math_family_assignment(direct_arg0, direct_arg1))
-                };
+            let family_size = match command.control_code() {
+                Some(codes::PRIMITIVE_TEXT_FONT) => Some(tex_command::MathFamilySize::Text),
+                Some(codes::PRIMITIVE_SCRIPT_FONT) => Some(tex_command::MathFamilySize::Script),
+                Some(codes::PRIMITIVE_SCRIPT_SCRIPT_FONT) => {
+                    Some(tex_command::MathFamilySize::ScriptScript)
+                }
+                _ => None,
+            };
+            if let Some(size) = family_size {
+                return finish_scan!(self.scan_math_family_assignment(size, global));
             }
             // Math operands are scanned exclusively by `tex-command`.  The replay
             // driver receives a typed scalar request and schedules any opaque field
@@ -793,7 +776,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             // before `\everypar` has run and before the paragraph's horizontal list
             // exists, and skips the backup level and redelivery entirely.
             if matches!(mode, Mode::Vertical | Mode::InternalVertical)
-                && starts_paragraph_in_vertical_mode(command.meaning())
+                && paragraph_start::starts_paragraph_in_vertical_mode(command.control_code())
             {
                 (processor.back_input(command).map_err(command_error))
                     .map_err(|error| scan_error(error, scan_origin))?;

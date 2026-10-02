@@ -189,7 +189,7 @@ pub(in crate::main_control) fn warn_cross_file_group_close<G>(
     };
     let mut processor = command.processor(stores);
     processor.warn_cross_file_group_close(level, frame.kind().group_text(), frame.entered_line());
-    processor.retire();
+    drop(processor);
 }
 
 /// Releases the single pending after-assignment token only after the typed

@@ -120,7 +120,7 @@ pub(in crate::main_control) fn execute_end_output_routine<G>(
             let result = processor
                 .finish_selected_output_routine()
                 .map_err(command_error);
-            processor.retire();
+            drop(processor);
             result?
         };
         if unbalanced {

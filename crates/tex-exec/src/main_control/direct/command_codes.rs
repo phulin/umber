@@ -608,3 +608,54 @@ pub(super) const UNEXPANDABLE_MIN: u64 = Meaning::runtime_word_control_code(
     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Def).encode(),
 ) & 0xff00_0000_0000_0000;
 pub(super) const UNEXPANDABLE_MAX: u64 = UNEXPANDABLE_MIN | 0x0000_ffff_ffff_ffff;
+
+pub(super) const PRIMITIVE_GLOBAL: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global).encode(),
+);
+
+pub(super) const PRIMITIVE_LONG: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Long).encode(),
+);
+
+pub(super) const PRIMITIVE_OUTER: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Outer).encode(),
+);
+
+pub(super) const PRIMITIVE_PROTECTED: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected).encode(),
+);
+
+pub(super) const PRIMITIVE_IGNORE_SPACES: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::IgnoreSpaces).encode(),
+);
+
+pub(super) const PRIMITIVE_TEXT_FONT: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::TextFont).encode(),
+);
+
+pub(super) const PRIMITIVE_SCRIPT_FONT: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ScriptFont).encode(),
+);
+
+pub(super) const PRIMITIVE_SCRIPT_SCRIPT_FONT: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ScriptScriptFont).encode(),
+);
+
+pub(super) const PRIMITIVE_BEGIN_L: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginL).encode(),
+);
+
+pub(super) const PRIMITIVE_END_L: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndL).encode(),
+);
+
+pub(super) const PRIMITIVE_BEGIN_R: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginR).encode(),
+);
+
+pub(super) const PRIMITIVE_END_R: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndR).encode(),
+);
+
+pub(super) const CHAR_GIVEN: u64 =
+    Meaning::runtime_word_control_code(Meaning::CharGiven('\0').encode());

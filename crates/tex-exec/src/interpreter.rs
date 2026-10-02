@@ -1,10 +1,9 @@
 //! Persistent ownership and borrow-scoped access for canonical command work.
 //!
 //! The command interpreter is a session object. A [`CommandProcessor`] is
-//! only its temporary borrow facade over the matching [`Universe`] command
-//! context; semantic apply drops that facade so the stomach can borrow the
-//! rest of `Universe`. Keeping that distinction explicit prevents a facade
-//! construction from becoming a second command-state owner.
+//! its temporary exclusive borrow over the matching admitted command context.
+//! Dropping the real processor releases scanner access and cleans actual
+//! command scratch; no lifecycle wrapper or counters duplicate Rust's loan.
 
 use std::ops::{Deref, DerefMut};
 
@@ -18,25 +17,6 @@ use tex_state::CommandContext;
 #[derive(Debug)]
 pub(crate) struct PersistentInterpreter<G> {
     state: CommandState<G>,
-    lifecycle: InterpreterLifecycle,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct InterpreterLifecycle {
-    processor_entries: u64,
-    processor_completions: u64,
-    live_processors: u8,
-    maximum_live_processors: u8,
-}
-
-/// Assertion-bearing lifecycle evidence for focused architecture controls.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct InterpreterLifecycleStats {
-    pub processor_entries: u64,
-    pub processor_completions: u64,
-    pub live_processors: u8,
-    pub maximum_live_processors: u8,
 }
 
 impl<G> Default for PersistentInterpreter<G> {
@@ -56,15 +36,11 @@ impl<G> PersistentInterpreter<G> {
         );
         Self {
             state: CommandState::new(profile),
-            lifecycle: InterpreterLifecycle::default(),
         }
     }
 
     pub(crate) fn from_state(state: CommandState<G>) -> Self {
-        Self {
-            state,
-            lifecycle: InterpreterLifecycle::default(),
-        }
+        Self { state }
     }
 
     pub(crate) fn into_state(self) -> CommandState<G> {
@@ -79,12 +55,7 @@ impl<G> PersistentInterpreter<G> {
         &mut self.state
     }
 
-    /// Borrows the persistent interpreter for one uninterrupted command
-    /// delivery/scanner scope.
-    ///
-    /// Rust prevents overlapping mutable borrows. The explicit lifecycle
-    /// assertion additionally makes that invariant measurable and ensures
-    /// every facade is retired before a semantic, rollback, or host barrier.
+    /// Exclusively borrows the persistent command state and admitted owners.
     pub(crate) fn processor<'episode, 'admission>(
         &'episode mut self,
         state: &'episode mut CommandContext<'admission, G>,
@@ -92,46 +63,21 @@ impl<G> PersistentInterpreter<G> {
         fuel: &'episode mut CommandFuel,
         observer: Option<&'episode mut dyn CommandObserver>,
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
-    ) -> InterpreterProcessor<'episode, 'admission, G> {
+    ) -> CommandProcessor<'episode, 'admission, G> {
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_interpreter_operation_entry();
         #[cfg(feature = "profiling")]
         let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
             tex_state::measurement::HotCoreAllocationOwner::InterpreterBorrow,
         );
-        let Self {
-            state: command,
-            lifecycle,
-        } = self;
-        assert_eq!(
-            lifecycle.live_processors, 0,
-            "canonical interpreter processor borrows cannot overlap"
-        );
-        lifecycle.processor_entries = lifecycle.processor_entries.saturating_add(1);
-        lifecycle.live_processors = 1;
-        lifecycle.maximum_live_processors = lifecycle.maximum_live_processors.max(1);
-
-        InterpreterProcessor {
-            processor: CommandProcessor::new(
-                command,
-                state,
-                host,
-                fuel,
-                observer,
-                diagnostic_effects,
-            ),
-            lifecycle,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn lifecycle_stats(&self) -> InterpreterLifecycleStats {
-        InterpreterLifecycleStats {
-            processor_entries: self.lifecycle.processor_entries,
-            processor_completions: self.lifecycle.processor_completions,
-            live_processors: self.lifecycle.live_processors,
-            maximum_live_processors: self.lifecycle.maximum_live_processors,
-        }
+        CommandProcessor::new(
+            &mut self.state,
+            state,
+            host,
+            fuel,
+            observer,
+            diagnostic_effects,
+        )
     }
 }
 
@@ -149,52 +95,6 @@ impl<G> DerefMut for PersistentInterpreter<G> {
     }
 }
 
-/// One borrow-scoped facade over the persistent canonical interpreter.
-pub(crate) struct InterpreterProcessor<'episode, 'admission, G> {
-    processor: CommandProcessor<'episode, 'admission, G>,
-    lifecycle: &'episode mut InterpreterLifecycle,
-}
-
-impl<'episode, 'admission, G> InterpreterProcessor<'episode, 'admission, G> {
-    /// Retires the processor before its caller resumes state-only work through
-    /// the stable admitted context that the facade borrowed.
-    pub(crate) fn retire(mut self) {
-        self.complete();
-    }
-
-    fn complete(&mut self) {
-        assert_eq!(
-            self.lifecycle.live_processors, 1,
-            "canonical interpreter processor lifecycle is unbalanced"
-        );
-        self.lifecycle.live_processors = 0;
-        self.lifecycle.processor_completions =
-            self.lifecycle.processor_completions.saturating_add(1);
-    }
-}
-
-impl<'episode, 'admission, G> Deref for InterpreterProcessor<'episode, 'admission, G> {
-    type Target = CommandProcessor<'episode, 'admission, G>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.processor
-    }
-}
-
-impl<G> DerefMut for InterpreterProcessor<'_, '_, G> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.processor
-    }
-}
-
-impl<G> Drop for InterpreterProcessor<'_, '_, G> {
-    fn drop(&mut self) {
-        if self.lifecycle.live_processors != 0 {
-            self.complete();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,15 +107,13 @@ mod tests {
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        interpreter
-            .processor(
-                context,
-                CommandHostContext::new(&mut capabilities),
-                fuel.fuel_mut(),
-                None,
-                &mut diagnostic_effects,
-            )
-            .retire();
+        let _processor = interpreter.processor(
+            context,
+            CommandHostContext::new(&mut capabilities),
+            fuel.fuel_mut(),
+            None,
+            &mut diagnostic_effects,
+        );
     }
 
     #[test]
@@ -226,16 +124,8 @@ mod tests {
             round_trip_context(&mut interpreter, &mut context);
 
             assert_eq!(context.execution_group_depth(), 0);
-            drop(context);
-            assert_eq!(
-                interpreter.lifecycle_stats(),
-                InterpreterLifecycleStats {
-                    processor_entries: 1,
-                    processor_completions: 1,
-                    live_processors: 0,
-                    maximum_live_processors: 1,
-                }
-            );
+            round_trip_context(&mut interpreter, &mut context);
+            assert_eq!(context.execution_group_depth(), 0);
         });
     }
 }

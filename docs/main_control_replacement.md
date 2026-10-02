@@ -667,15 +667,15 @@ while budget remains {
 }
 ```
 
-The first ownership cutover is active: `MainControl` owns one
-`PersistentInterpreter` for the complete engine session. `CommandProcessor`
-is now only a borrow-scoped facade over that owner and the matching `Universe`
-command context. Processor facades may end at semantic-apply or host barriers,
-but they do not reconstruct, clone, or replace command state. Assertion-bearing
-lifecycle accounting rejects overlapping facades and proves that group and
-resource transitions retire every borrow before semantic mutation, rollback,
-or host fulfillment. Later dispatch fusion can lengthen those borrows without
-introducing another executor or state owner.
+`MainControl` owns one `PersistentInterpreter` for the complete engine session.
+It lends the actual `CommandProcessor` directly over canonical command state
+and the admitted context. Rust's exclusive mutable borrow enforces access;
+there is no interpreter-processor wrapper or per-command lifecycle accounting.
+The real processor's drop unwinds scanner scratch and ends delivery mode.
+Scanner consumers and native semantic owners retire only their actual loans;
+RELAX retains its admitted context through the authoritative character flush.
+The current single-engine dispatch and settlement contract is documented in
+[Main-control dispatch](main_control_dispatch.md).
 
 Expansion and scanners are methods over the same input and state views.
 Common primitives scan operands and apply their mutation directly. They do not

@@ -43,6 +43,7 @@ mod scan_scalars;
 mod scan_shapes;
 mod scan_streams;
 use command_codes as codes;
+pub(super) mod paragraph_start;
 mod publication;
 
 struct DirectDispatch<'call, 'provider, G> {

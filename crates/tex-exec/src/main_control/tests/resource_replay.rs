@@ -369,12 +369,6 @@ fn production_batch_keeps_ordinary_prefix_and_rejects_direct_retry() {
         );
         let suspended = control.advance_telemetry();
         assert_eq!(suspended.resource_halts, 1);
-        let suspended_interpreter = control.command.lifecycle_stats();
-        assert_eq!(
-            suspended_interpreter.processor_entries, suspended_interpreter.processor_completions,
-            "resource suspension retires the interpreter facade"
-        );
-        assert_eq!(suspended_interpreter.live_processors, 0);
 
         control.capabilities_mut().register_input(
             "child.tex",
@@ -386,13 +380,6 @@ fn production_batch_keeps_ordinary_prefix_and_rejects_direct_retry() {
         ));
         assert_eq!(stores.count(0).expect("count register"), 11);
         let telemetry = control.advance_telemetry();
-        let after_rejection = control.command.lifecycle_stats();
-        assert_eq!(
-            after_rejection.processor_entries, suspended_interpreter.processor_entries,
-            "a rejected direct retry must not re-enter the discarded interpreter"
-        );
-        assert_eq!(after_rejection.live_processors, 0);
-        assert_eq!(after_rejection.maximum_live_processors, 1);
         assert_eq!(telemetry.resource_halts, 1);
     });
 }

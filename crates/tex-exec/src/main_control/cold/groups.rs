@@ -23,7 +23,7 @@ pub(in crate::main_control) fn unsave_group<G>(
     let level = u32::try_from(stores.execution_group_depth()).unwrap_or(u32::MAX);
     let mut processor = command.processor(stores);
     let result = processor.end_group(kind, crate::assignments::tracing::trace_group_restoration);
-    processor.retire();
+    drop(processor);
     let frame = result?;
     stores.trace_group_leave(
         command.diagnostic_effects,

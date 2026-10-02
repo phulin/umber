@@ -88,8 +88,10 @@ fn etex_direction_meanings_share_valigns_vertical_mode_paragraph_entry() {
         UnexpandablePrimitive::BeginR,
         UnexpandablePrimitive::EndR,
     ] {
-        assert!(starts_paragraph_in_vertical_mode::<()>(
-            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive))
+        assert!(direct::paragraph_start::starts_paragraph_in_vertical_mode(
+            Some(Meaning::runtime_word_control_code(
+                Meaning::UnexpandablePrimitive(primitive).encode()
+            ),)
         ));
     }
 }
@@ -1238,41 +1240,6 @@ fn misplaced_alignment_commands_route_exact_help_and_continue() {
             );
         });
     }
-}
-#[test]
-fn ranked_assignments_use_one_processor_borrow_each() {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        register_source(&mut control, br"\def\a{A}\let\b=\a\catcode65=11 ");
-
-        for operation in 0..3 {
-            let before = control.command.lifecycle_stats();
-            assert_eq!(
-                control
-                    .advance(stores)
-                    .expect("ranked assignment completes"),
-                StepResult::Progress(ReplayStep::Continue)
-            );
-            let after = control.command.lifecycle_stats();
-            assert_eq!(
-                after.processor_entries,
-                before.processor_entries + 1,
-                "operation {operation} must deliver, expand, and scan in one borrow: {after:?}"
-            );
-            assert_eq!(after.processor_entries, after.processor_completions);
-            assert_eq!(after.live_processors, 0);
-            assert_eq!(after.maximum_live_processors, 1);
-        }
-
-        let lifecycle = control.command.lifecycle_stats();
-        assert_eq!(lifecycle.processor_entries, 3);
-        assert_eq!(
-            lifecycle.processor_entries, lifecycle.processor_completions,
-            "every command facade retires before the episode barrier"
-        );
-        assert_eq!(lifecycle.live_processors, 0);
-        assert_eq!(lifecycle.maximum_live_processors, 1);
-    });
 }
 #[test]
 fn settled_alignment_scanner_has_one_exact_operation_destination() {

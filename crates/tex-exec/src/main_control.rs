@@ -60,7 +60,7 @@ use crate::font_support::{
     FontLoadFailure, GlyphToUnicodeParse, parse_glyph_to_unicode, report_font_capacity,
     report_font_not_loadable_with_context, warn_pdf_destination_duplicate,
 };
-use crate::interpreter::{InterpreterProcessor, PersistentInterpreter};
+use crate::interpreter::PersistentInterpreter;
 use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::vertical::is_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
@@ -899,7 +899,7 @@ impl<G> CommandMachine<'_, '_, G> {
         &mut self,
         context: &mut tex_state::CommandContext<'_, G>,
         modes: &ModeNest,
-        use_processor: impl FnOnce(&mut InterpreterProcessor<'_, '_, G>) -> R,
+        use_processor: impl FnOnce(&mut CommandProcessor<'_, '_, G>) -> R,
     ) -> R {
         let Self {
             state,
@@ -969,7 +969,7 @@ impl<G> CommandMachine<'_, '_, G> {
         context: &mut tex_state::CommandContext<'_, G>,
         modes: &ModeNest,
         diagnostic_effects: &mut DiagnosticEffects,
-        use_processor: impl FnOnce(&mut InterpreterProcessor<'_, '_, G>) -> R,
+        use_processor: impl FnOnce(&mut CommandProcessor<'_, '_, G>) -> R,
     ) -> R {
         let Self {
             state,
@@ -1053,7 +1053,7 @@ impl<G> CommandMachine<'_, '_, G> {
     fn processor<'episode, 'admission>(
         &'episode mut self,
         context: &'episode mut tex_state::CommandContext<'admission, G>,
-    ) -> InterpreterProcessor<'episode, 'admission, G> {
+    ) -> CommandProcessor<'episode, 'admission, G> {
         let observer = self
             .observations
             .as_mut()
@@ -1130,7 +1130,7 @@ fn command_processor<'episode, 'admission, G>(
     observations: &'episode mut ObservationSlot,
     diagnostic_effects: &'episode mut DiagnosticEffects,
     stores: &'episode mut CommandContext<'admission, G>,
-) -> InterpreterProcessor<'episode, 'admission, G> {
+) -> CommandProcessor<'episode, 'admission, G> {
     let observer = observations
         .as_mut()
         .map(|buffer| buffer as &mut dyn CommandObserver);
@@ -1154,7 +1154,7 @@ fn command_processor_with_resource_provider<'episode, 'admission, G>(
     observations: &'episode mut ObservationSlot,
     diagnostic_effects: &'episode mut DiagnosticEffects,
     stores: &'episode mut CommandContext<'admission, G>,
-) -> InterpreterProcessor<'episode, 'admission, G> {
+) -> CommandProcessor<'episode, 'admission, G> {
     let observer = observations
         .as_mut()
         .map(|buffer| buffer as &mut dyn CommandObserver);
@@ -1478,7 +1478,7 @@ impl<G> MainControl<G> {
             &mut command_context,
         );
         let context = processor.error_context();
-        processor.retire();
+        drop(processor);
         let result = crate::error_report::report_error(
             &mut command_context,
             &mut diagnostic_effects,

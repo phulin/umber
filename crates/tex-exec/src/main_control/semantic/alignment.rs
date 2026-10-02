@@ -295,7 +295,7 @@ pub(in crate::main_control) fn execute_alignment_cell_finish<G>(
         let finished = processor
             .finish_alignment_cell(*alignment)
             .map_err(command_error);
-        processor.retire();
+        drop(processor);
         let finished = finished?;
         begin_next_replay_alignment_cell(
             *alignment,
