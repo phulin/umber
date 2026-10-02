@@ -597,7 +597,9 @@ Initial processors use the zero-sized initial TeX facts directly. Executor
 processors borrow their actual provider, which can own mutable mode access.
 Scalar scans and expansion read the provider’s live fact methods. Synchronous
 semantic application reborrows that provider alongside the actual state,
-command, fuel, diagnostic and observer owners. It creates no mode snapshot,
+command, fuel, diagnostic and observer owners. This straight-line owner
+projection always inlines, so the selected arm does not construct a callback
+environment solely to pass those owners through another callable thunk. It creates no mode snapshot,
 parallel current-command cache or deferred operation. The execution switch
 remains the sole authority for opcode, prefix and mode ordering.
 

@@ -632,6 +632,7 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
     /// The observer is reborrowed alongside the actual semantic owners, so
     /// demanded evidence can commit without reconstructing an execution machine.
     /// No processor or native owner leaves this exclusive borrow.
+    #[inline(always)] // a pure owner projection must not construct a callback handoff
     pub fn apply_completed_command<R>(
         &mut self,
         apply: impl FnOnce(
