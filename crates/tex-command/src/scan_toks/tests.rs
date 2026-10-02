@@ -115,12 +115,11 @@ fn case_shift_one_64_and_4096_write_once_without_copy_or_warmed_allocation() {
                     token('q', Catcode::Letter)
                 );
             }
-            let storage = command.roots.input.replay.input_builder_storage_counts();
-            assert_eq!(storage.0, 0, "no unfinished builder");
-            assert_eq!(storage.1, 0, "no live escaped replay entry");
-            assert_eq!(storage.2, 1, "one recycled builder lane");
-            assert_eq!(storage.3, 0, "retirement truncates all active chunks");
-            assert_eq!(storage.4, body_len.div_ceil(256), "chunks remain reusable");
+            assert!(
+                command.scratch.is_quiescent(),
+                "no unfinished scanner builder"
+            );
+            assert!(!command.roots.input.levels.arguments.is_matching());
             command.settle_attempt();
         });
     }

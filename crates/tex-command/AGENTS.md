@@ -344,6 +344,8 @@ collector (see `src/conditionals.rs`).
   canonical alignment state; it never reclassifies input in the executor.
 - `src/processor/tests.rs`: tracked command-root publication and fail-closed
   unsupported-boundary coverage.
+  Profiling consumers use actual input/scratch owners; the retired matched-word
+  read projection and namespace-promotion allocation/layout tests are absent.
 - `src/processor/alignment.rs`, `src/processor/alignment/tests.rs`: canonical
   alignment-delivery state and focused stack, brace-depth, template, and omit
   lifecycle tests.

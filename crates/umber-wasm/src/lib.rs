@@ -1,5 +1,8 @@
 //! Binary-safe WebAssembly representation adapter for Umber.
 
+#[cfg(all(test, target_arch = "wasm32"))]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
 mod catalog_boundary;
 mod options;
 mod result;

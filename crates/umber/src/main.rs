@@ -242,8 +242,7 @@ impl Drop for HotCoreProfilingReport {
                     journal
                         .checkpoint_entries
                         .saturating_mul(journal.checkpoint_entry_size)
-                )
-
+                ),
             journal
                 .group_capacity
                 .saturating_sub(journal.group_entries)
@@ -253,8 +252,7 @@ impl Drop for HotCoreProfilingReport {
                         .checkpoint_capacity
                         .saturating_sub(journal.checkpoint_entries)
                         .saturating_mul(journal.checkpoint_entry_size)
-                )
-
+                ),
             journal.group_entries,
             journal.group_capacity,
             journal.group_entry_size,

@@ -282,7 +282,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 }
                 #[cfg(feature = "profiling")]
                 {
-                    let meaning = (&command.meaning());
+                    let meaning = &command.meaning();
                     tex_state::measurement::record_hot_core_command_family(
                         hot_core_command_family(meaning),
                     );

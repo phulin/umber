@@ -76,7 +76,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   three `check-latex-*.sh` entry points: explicit opt-in checks built on
   `optional-check-runner.sh`. `check-tools.sh profiling-command-tests` compiles
   `tex-command`'s complete feature-only unit-test target and runs its focused
-  resident-input fixture, while
+  current resident-source owner-validation fixture, while
   `check-tools.sh profiling-cli` builds and tests the feature-gated Umber CLI
   under the real optimized profiling profile;
   `check-tools.sh copy-attribution` compiles the profiling-only public-copy
@@ -122,6 +122,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   `test-selected-rust-suites.py`: grouped nonbibliography Rust suite index,
   Cargo/libtest discovery gate for ignored host tests, optional target/feature
   resolution checks, and negative inventory contracts. The routine stage
+  recognizes library crate-type sets and declared child-module WASM tests;
   discovers ignored tests without executing them or compiling optional
   profiling/WASM configurations.
 - `test-gate-verdicts.sh`: hermetic mocked-stage contracts for combined and

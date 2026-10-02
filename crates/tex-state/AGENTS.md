@@ -370,12 +370,15 @@ expose substores or introduce another arena.
 - `src/page_node_arena/output_carrier.rs`: Current PageBuilder output-box
   consumption, independent survivor-root projection, paired whole-region
   durable loan, and exact command rollback before page-journal restoration.
+  Profiling visits borrowed mark slices without cloning singleton carriers.
 - `src/page_node_arena/fallback_profile.rs`: Profiling-only classification of
   built-box immediate children after a construction-mark transfer rejects;
   this observation never grants move authority.
 - `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
   the four checked `PageListSpan` PageBuilder roots, scalar state, reversible
   same-region journal, and private owner-relative checkpoint rows; active
+  capture preflights boundary/frame serial headroom and paired node/annex
+  readiness before sealing or reclaiming rootless material;
   insertion classes and sparse mark classes retain canonical iteration order
   beside dense direct lookup indexes. One fixed-chunk prior/current journal
   owns every reversible alternate; duplicate insertion/mark mutation lanes and

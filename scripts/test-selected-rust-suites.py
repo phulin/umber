@@ -61,5 +61,9 @@ rejects(lambda: module.reconcile_ignored([row("tests::", "prefix"), declared], a
 rejects(lambda: module.reconcile_ignored([row("tests::stale")], actual), "found 0")
 rejects(lambda: module.reconcile_ignored([declared], {}), "stale inventory selector")
 assert module.test_names("tests::manual: test\n1 test, 0 benchmarks\n") == {"tests::manual"}
+assert module.cargo_target_matches({"kind": ["cdylib", "rlib"], "name": "umber_wasm"}, "lib")
+assert not module.cargo_target_matches({"kind": ["bin"], "name": "umber_wasm"}, "lib")
+assert module.cargo_target_matches({"kind": ["test"], "name": "it"}, "test:it")
+assert not module.cargo_target_matches({"kind": ["test"], "name": "other"}, "test:it")
 
 print("selected Rust suite inventory contracts: PASS")

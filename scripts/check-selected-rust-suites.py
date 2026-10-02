@@ -116,16 +116,21 @@ def metadata() -> dict:
     return json.loads(result.stdout)
 
 
+def cargo_target_matches(target: dict, selector: str) -> bool:
+    kind, _, name = selector.partition(":")
+    if kind == "lib":
+        return bool(set(target["kind"]) & {"lib", "rlib", "cdylib", "dylib", "staticlib", "proc-macro"})
+    return kind in target["kind"] and target["name"] == name
+
+
 def validate_optional_rows(rows: list[Suite], packages: dict[str, dict]) -> None:
     for row in rows:
         package = packages.get(row.package)
         if package is None:
             raise ValueError(f"{row.package}: inventory names no Cargo package")
         kind, _, name = row.target.partition(":")
-        if not any(
-            kind in target["kind"] and (kind == "lib" or target["name"] == name)
-            for target in package["targets"]
-        ):
+        targets = [target for target in package["targets"] if cargo_target_matches(target, row.target)]
+        if not targets:
             raise ValueError(f"{row.package} {row.target}: Cargo target is absent")
         if row.mode == "feature" and row.feature not in package["features"]:
             raise ValueError(f"{row.package}: feature {row.feature} is absent")
@@ -150,15 +155,14 @@ def validate_optional_rows(rows: list[Suite], packages: dict[str, dict]) -> None
             package_dir = Path(package["manifest_path"]).parent
             if package_dir.relative_to(ROOT).as_posix() not in script:
                 raise ValueError(f"{row.package}: WASM step does not select its package")
-            target_source = next(
-                target["src_path"] for target in package["targets"]
-                if kind in target["kind"] and (kind == "lib" or target["name"] == name)
-            )
-            source = Path(target_source)
+            source = Path(targets[0]["src_path"])
             source_text = source.read_text()
-            if kind == "lib" and "mod wasm_tests;" in source_text:
-                source_text += source.with_name("wasm_tests.rs").read_text()
-            if "#[wasm_bindgen_test]" not in source_text:
+            if kind == "lib":
+                for module_name in re.findall(r"\bmod\s+(\w+)\s*;", source_text):
+                    child = source.with_name(module_name + ".rs")
+                    if child.is_file():
+                        source_text += child.read_text()
+            if not re.search(r"#\[wasm_bindgen_test(?:::wasm_bindgen_test)?\]", source_text):
                 raise ValueError(f"{row.package} {row.target}: no WASM test in selected target")
 
 

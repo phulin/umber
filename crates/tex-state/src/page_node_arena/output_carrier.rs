@@ -228,16 +228,18 @@ impl PageMaterialArena<'_> {
         let output_semantic_nodes = semantic_nodes(self, [output])?;
         let all_roots_semantic_nodes = semantic_nodes(self, [output].into_iter().chain(survivors))?;
         let mut moved_envelope_nodes = 0_u64;
-        self.region
-            .pub_arena
-            .visit_interval_values(&self.pool.chunks, &[nodes.clone()], |_| {
+        self.region.pub_arena.visit_interval_values(
+            &self.pool.chunks,
+            std::slice::from_ref(nodes),
+            |_| {
                 moved_envelope_nodes = moved_envelope_nodes.saturating_add(1);
                 Ok(())
-            })?;
+            },
+        )?;
         let mut moved_envelope_annex_words = 0_u64;
         self.region.annex_arena.visit_interval_values(
             &self.pool.annex_chunks,
-            &[annex.clone()],
+            std::slice::from_ref(annex),
             |_| {
                 moved_envelope_annex_words = moved_envelope_annex_words.saturating_add(1);
                 Ok(())

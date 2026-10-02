@@ -539,6 +539,7 @@ fn run_cold_memo_policy(
     Ok(())
 }
 
+#[allow(clippy::disallowed_methods)] // Host-side profiling timer; no engine fact observes it.
 fn run_incremental_path(
     options: &Options,
     template: &ProfileTemplate,

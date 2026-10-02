@@ -26,6 +26,8 @@ deleted-status contract.
 ## Directory map
 
 - `src/lib.rs`: exported persistent `CompilerSession`, low-level `advance`/`provideResources`/`applyPatch` boundary, revision metrics, and TypeScript surface.
+  Its library tests explicitly select the owning Firefox browser tier, so
+  wire/DTO unit tests execute alongside the integration targets.
 - `src/catalog_boundary.rs`: persistent synchronous `CatalogSession` exports
   for canonical root validation, packed shard-byte admission and retention,
   request partitioning, exact lookup, and ordered selection plans owned by

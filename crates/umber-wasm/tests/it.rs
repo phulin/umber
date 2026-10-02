@@ -1472,25 +1472,30 @@ fn unavailable_file_response_crosses_the_wire_and_counts_as_progress() {
 }
 
 #[wasm_bindgen_test]
-fn schema_twelve_formats_load_and_plain_asset_is_available() {
+fn schema_thirteen_formats_load_and_plain_asset_is_available() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
-    const EXPECTED_FORMAT_SCHEMA: u32 = 12;
+    const EXPECTED_FORMAT_SCHEMA: u32 = 13;
     assert_eq!(format_schema_version(), EXPECTED_FORMAT_SCHEMA);
     let plain_format = include_bytes!("../assets/plain.fmt");
     assert_eq!(
         u32::from_le_bytes(plain_format[8..12].try_into().unwrap()),
         EXPECTED_FORMAT_SCHEMA
     );
+    const EXPECTED_SOURCE_DISTRIBUTION: &str = "texlive-2025";
     assert!(
         include_str!("../assets/plain-source.lock")
-            .contains(&format!("format_schema {EXPECTED_FORMAT_SCHEMA}")),
-        "reproducible source lock must match the runtime schema"
+            .contains(&format!("distribution {EXPECTED_SOURCE_DISTRIBUTION}")),
+        "source authentication is independent of the runtime format version"
     );
     let metadata: serde_json::Value =
         serde_json::from_str(include_str!("../assets/plain-format.json"))
             .expect("parse packaged Plain-format metadata");
     assert_eq!(metadata["schema"].as_u64(), Some(3));
     assert_eq!(metadata["name"].as_str(), Some("plain"));
+    assert_eq!(
+        metadata["sourceDistribution"].as_str(),
+        Some(EXPECTED_SOURCE_DISTRIBUTION)
+    );
     assert_eq!(
         metadata["formatSchema"].as_u64(),
         Some(u64::from(EXPECTED_FORMAT_SCHEMA))
@@ -1543,7 +1548,7 @@ fn schema_twelve_formats_load_and_plain_asset_is_available() {
     wrong_magic[..8].copy_from_slice(b"plaintex");
     assert_format_error(&wrong_magic, "not an Umber format file");
 
-    for incompatible in [8_u32, 9, 10, 11, 13] {
+    for incompatible in [8_u32, 9, 10, 11, 12, 14] {
         let mut wrong_schema = minimal_format.clone();
         wrong_schema[8..12].copy_from_slice(&incompatible.to_le_bytes());
         assert_format_error(

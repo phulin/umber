@@ -80,7 +80,7 @@ optional_check_step_requiring "cargo" texlive-wasm-publish \
 profiling_command_tests() {
   python3 scripts/check-selected-rust-suites.py --verify-feature tex-command &&
     cargo test -q --tests -p tex-command --features profiling \
-      one_and_4096_deliveries_derive_ordinary_freshness_without_a_coordinate_mirror
+      resident_source_delivery_skips_owner_validation_at_one_and_4096_operations
 }
 
 optional_check_step_requiring "cargo python3" profiling-command-tests \
