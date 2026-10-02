@@ -211,7 +211,15 @@ where the run stopped.
 ## Admitted-run settlement
 
 Main control applies consecutive ordinary commands inside one admitted command
-context. Its fetch/reswitch loop borrows the initialized caller-owned command
+context. The actual command slot stays resident across native continuation: a
+completed command clears its tag before the next fetch rather than moving an
+empty caller option through another local destination. A supplied settled
+command skips fetching once; a real character-reader boundary still passes
+through the original main-loop lookahead and tracing boundary. Observation
+receipts are demand-owned at this processor loan: unobserved native commands
+reuse the absent owner, while observed commands return at their real evidence
+cut. No per-command empty receipt constructor or destructor is needed. Its
+fetch/reswitch loop borrows the initialized caller-owned command
 destination itself, rather than moving every delivered command into a second
 local. Prefix and reswitch replacements overwrite that same value. A scalar
 scanner, backup, diagnostic, or publication consumer copies only its selected

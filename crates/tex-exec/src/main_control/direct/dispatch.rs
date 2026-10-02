@@ -3,7 +3,7 @@ use super::*;
 impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn run_command(
         &mut self,
-        mut settled: Option<tex_command::CurrentCommand<G>>,
+        mut command_slot: Option<tex_command::CurrentCommand<G>>,
         alignment: Option<AlignmentIdentity>,
         set_box_allowed: bool,
         mut initial_prefix: Option<(bool, MeaningFlags)>,
@@ -17,7 +17,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             let boxes = &self.control.boxes;
             let main_loop_active = self.control.main_loop_active;
             let mut source_command = None;
-            if settled.is_none()
+            if command_slot.is_none()
                 && main_loop_active
                 && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
                 && self.control.active_alignment.is_none()
@@ -108,6 +108,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             if let Some(cursor) = self.cursor {
                 owned_processor.resume_delivery_cursor(cursor);
             }
+            let mut observation_receipts = owned_processor.is_observed().then(Vec::new);
             'processor: loop {
                 let main_loop_active = self.control.main_loop_active;
                 let processor: &mut CommandProcessor<'_, '_, G> = &mut owned_processor;
@@ -148,6 +149,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 {
                                     self.completed_operations += 1;
                                     self.current_origin = None;
+                                    command_slot = None;
                                     continue 'native;
                                 }
                             }
@@ -174,7 +176,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             })
                         } else {
                             self.control.main_loop_active = false;
-                            let $receipts = &mut owned_processor.is_observed().then(Vec::new);
+                            let $receipts = &mut observation_receipts;
                             let completed = owned_processor.apply_completed_command(
                                 |$context, $state, $effects, $fuel, $observer| $apply,
                             );
@@ -195,6 +197,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             {
                                 self.completed_operations += 1;
                                 self.current_origin = None;
+                                command_slot = None;
                                 continue 'processor;
                             }
                             self.cursor = Some(owned_processor.delivery_cursor());
@@ -245,9 +248,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                 let shown_mode = &mut self.control.shown_mode;
                 let diagnostics = &mut self.diagnostics;
                 let mut scan_origin = self.current_origin;
-                let mut command_slot = settled.take();
                 if command_slot.is_none() {
-                    command_slot = source_command.take();
+                    if source_command.is_some() {
+                        command_slot = source_command.take();
+                    }
                     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
                     // `get_x_token`; §1034's inner character loop instead re-enters at
                     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a

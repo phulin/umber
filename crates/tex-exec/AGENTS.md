@@ -49,8 +49,10 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   the final typed operand in that same processor; target selection and invalid-target
   diagnostics remain in the actual switch arm. Scalar scans consume typed values
   without generic frame publication/projection. Fetch/reswitch borrows the one
-  initialized command slot, copying only values needed across real input overwrites
-  and cold ownership boundaries. Register scans likewise stay in their native
+  initialized command slot, clearing its tag only at successful continuation and
+  copying only values needed across real input overwrites
+  and cold ownership boundaries. Native observation receipts have one demanded
+  owner per processor loan; ordinary commands do not create/drop absent receipts. Register scans likewise stay in their native
   switch arms. These paths own no operation value or continuation. `characters.rs` consumes borrowed
   source spans in the existing horizontal loop. `publication.rs` validates and
   reserves the complete scanner token root set before streaming final native
