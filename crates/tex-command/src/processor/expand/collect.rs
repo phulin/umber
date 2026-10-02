@@ -10,6 +10,129 @@ use tex_state::interner::Symbol;
 use tex_state::token::{Catcode, TracedTokenWord};
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Gives the macro grammar final spelling, borrowing a command only at a
+    /// real semantic settlement or recovery boundary.
+    pub(crate) fn consume_macro_match_word<R>(
+        &mut self,
+        consume: &mut impl FnMut(
+            &mut Self,
+            TracedTokenWord,
+            Option<&CurrentCommand<G>>,
+        ) -> Result<R, CommandError>,
+    ) -> Result<Option<R>, CommandError> {
+        debug_assert!(!self.create_source_control_sequences);
+        self.create_source_control_sequences = true;
+        let result = if self.is_observed() {
+            self.consume_macro_match_spelling::<true, R>(consume)
+        } else {
+            self.consume_macro_match_spelling::<false, R>(consume)
+        };
+        self.create_source_control_sequences = false;
+        result
+    }
+
+    fn consume_macro_match_spelling<const OBSERVED: bool, R>(
+        &mut self,
+        consume: &mut impl FnMut(
+            &mut Self,
+            TracedTokenWord,
+            Option<&CurrentCommand<G>>,
+        ) -> Result<R, CommandError>,
+    ) -> Result<Option<R>, CommandError> {
+        loop {
+            self.create_source_control_sequences = true;
+            let selected = self.consume_input(
+                true,
+                &mut |processor, word, origin, suppress, site, kind| {
+                    let literal = word.literal_catcode();
+                    let mut meaning = None;
+                    let mut lookup = false;
+                    let outer = if literal.is_some_and(|cat| cat != Catcode::Active) && !OBSERVED {
+                        false
+                    } else {
+                        let (resolved, resolution) = processor.resolve_token_word(word);
+                        lookup = resolution.meaning_lookup();
+                        let outer = resolved.is_outer();
+                        meaning = Some((resolved, resolution));
+                        outer
+                    };
+                    processor.record_consumed_word(kind, lookup);
+                    let exceptional = OBSERVED
+                        || processor.outer_recovered_while_matching
+                        || processor.eof_recovered_while_matching
+                        || processor
+                            .command
+                            .delivery_mode
+                            .requires_semantic_settlement(suppress, outer);
+                    if exceptional {
+                        let (meaning, resolution) =
+                            meaning.unwrap_or_else(|| processor.resolve_token_word(word));
+                        let mut command = CurrentCommand::from_delivered_parts(
+                            word,
+                            origin,
+                            matches!(site, ReadSite::Source(_)),
+                            match site {
+                                ReadSite::Source(line) => line,
+                                _ => None,
+                            },
+                            suppress,
+                            meaning,
+                            resolution.control_sequence(),
+                        );
+                        processor.settle_hot_delivery_in::<OBSERVED>(&mut command, literal)?;
+                        if matches!(
+                            command.alignment_adjustment(),
+                            super::super::AlignmentDeliveryAdjustment::Delimiter(_)
+                        ) {
+                            processor.begin_scalar_alignment_v_template(&command)?;
+                            return Ok(ControlFlow::Continue(None));
+                        }
+                        #[cfg(test)]
+                        {
+                            processor
+                                .command
+                                .token_collector_path_counters
+                                .raw_classifications += 1;
+                        }
+                        processor.create_source_control_sequences = false;
+                        return consume(processor, command.spelling(), Some(&command))
+                            .map(|value| ControlFlow::Continue(Some(value)));
+                    }
+                    if matches!(site, ReadSite::Source(_))
+                        && let Some(location) = processor.pending_diagnostic_location.take()
+                    {
+                        processor
+                            .command
+                            .set_last_diagnostic_location(Some(location));
+                    }
+                    processor
+                        .command
+                        .roots
+                        .alignment
+                        .account_literal_catcode(literal);
+                    #[cfg(test)]
+                    {
+                        processor
+                            .command
+                            .token_collector_path_counters
+                            .raw_classifications += 1;
+                    }
+                    processor.create_source_control_sequences = false;
+                    consume(processor, TracedTokenWord::from_parts(word, origin), None)
+                        .map(|value| ControlFlow::Continue(Some(value)))
+                },
+                ControlFlow::Break,
+            )?;
+            match selected {
+                ControlFlow::Continue(Some(value)) => return Ok(Some(value)),
+                ControlFlow::Continue(None)
+                | ControlFlow::Break(DeliveryStatus::ReplayCompleted(_)) => {}
+                ControlFlow::Break(DeliveryStatus::End) => return Ok(None),
+                ControlFlow::Break(_) => unreachable!("raw spelling has no expanded event"),
+            }
+        }
+    }
+
     pub(crate) fn collect_unexpanded_replacement(
         &mut self,
         parameters: Option<(u8, Option<Symbol>)>,

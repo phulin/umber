@@ -1589,8 +1589,8 @@ fn direct_macro_prefix_diagnostics_match_delivered_command_diagnostics() {
                 - before.resolved_writes;
             if !observed {
                 assert_eq!(
-                    writes, 2,
-                    "only the mismatching argument and terminal need commands"
+                    writes, 1,
+                    "the mismatch consumes spelling; only the terminal needs a command"
                 );
             }
             assert_eq!(processor.fuel.burned(), 3);

@@ -671,25 +671,12 @@ impl<G> CurrentCommand<G> {
         self.token.word
     }
 
-    /// Returns the category attached to the delivered spelling.  Matcher and
-    /// raw token-list scans use this compact fact; it is deliberately distinct
-    /// from the effective command class in `CommandWord`.
-    #[inline(always)]
-    pub(crate) const fn literal_catcode(&self) -> Option<Catcode> {
-        self.token.word.literal_catcode()
-    }
-
     /// Whether the settled effective meaning is TeX's paragraph command.
     /// This is kept on the compact command so the matcher does not project a
     /// `ResolvedMeaning` merely to identify `\par`.
     #[inline(always)]
     pub(crate) fn is_effective_paragraph(&self) -> bool {
         self.command.unexpandable_primitive() == Some(UnexpandablePrimitive::Par)
-    }
-
-    #[inline(always)]
-    pub(crate) fn is_paragraph_spelling(&self, paragraph: Option<TokenWord>) -> bool {
-        matches!(paragraph, Some(token) if token == self.token.word)
     }
 
     /// Whether this compact delivery was replaced by TeX82 §23's temporary

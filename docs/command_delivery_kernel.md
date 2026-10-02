@@ -165,6 +165,24 @@ This is separate from the routine tests of exact boundary accounting.
 
 ## Native word completion and cold input ownership
 
+Macro matching consumes final packed spelling and origin directly in its existing
+argument grammar. Ordinary accepted words do not construct `CurrentCommand`
+merely to project those two fields. The canonical reader still charges each
+word, creates source names only within the matching call, publishes source
+position before brace settlement, and owns parameter, retirement, EOF and replay
+transitions. A synchronous grammar callback consumes each admitted word before
+another read can overwrite input state.
+
+Actual outer restrictions, alignment interception, suppression, observation and
+scanner recovery construct one command at their cold settlement boundary. That
+owner remains borrowed through the same grammar callback when its recovery facts
+are needed. Delimiters are intercepted before argument grammar, exactly as in
+raw delivery. Paragraph and extra-right-brace errors back up the actual cold
+command, or construct a command only for that backup when ordinary delivery had
+needed none. Literal brace adjustment, origins, partial argument text, and
+backup-before-error chronology stay intact. No alternate matcher grammar or
+token descriptor is retained.
+
 The unobserved macro activation shortcut tests its actual macro meaning before
 checking whether suppression, an outer restriction or a persistent delivery mode
 requires settlement. Other meanings reach their one ordinary settlement call

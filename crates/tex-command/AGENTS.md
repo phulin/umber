@@ -169,10 +169,12 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   One read/interpret loop publishes terminal commands directly. Matching's local
   storage lives in its activation call; prefix diagnostics consume spelling and
   invocation facts without a command or delivery geometry.
-- `src/processor/expand/collect.rs`: unexpanded replacement-word consumer. It
+- `src/processor/expand/collect.rs`: native macro-matching and unexpanded
+  replacement-word consumers. They
   shares input and exceptional settlement, appends through the existing
   collector grammar, and constructs a command only for observation, semantic
-  exceptions, or illegal-parameter backup.
+  exceptions, recovery, or actual backup. Macro grammar receives final spelling
+  and origin, with a command borrowed only at those demanded cold boundaries.
 - `src/processor/expand_structural.rs`, `src/processor/expand_input.rs`, and
   `src/processor/expand_convert.rs`: direct/static structural, source, and
   TeX/e-TeX conversion primitive families. They borrow the one processor and
@@ -457,9 +459,13 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   `\openin`/`\closein`, and every `extension` primitive are excluded, so a
   caller that starts from a broader notion and subtracts them by hand is
   re-deriving this predicate one exception at a time.
-- `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
-  macro matcher borrowing the definition-owned parameter pattern and delimiter
-  failure links. Calls construct no `MacroPlan` or failure table. One scratch
+- `src/macro_call.rs`, `src/macro_call/arguments.rs`,
+  `src/macro_call/diagnostics.rs`, and `src/macro_call/tests.rs`: native macro
+  activation, the canonical argument grammar, and actual tracing/recovery
+  diagnostics. The matcher borrows definition-owned parameter patterns and
+  delimiter failure links. Calls construct no `MacroPlan` or failure table.
+  Ordinary words enter the grammar directly without a command projection;
+  actual cold settlement and error backup own the demanded command. One scratch
   writer retains argument holdback and source origins until activation transfers
   them to the input stack; focused tests cover scalar recovery, overlap, group
   trimming, nested replay, and source-origin forwarding.

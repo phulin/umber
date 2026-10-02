@@ -5,7 +5,6 @@
 //! writes the final words directly, independently of ordinary backup input.
 
 use super::ArgumentSpan;
-use crate::command::CurrentCommand;
 use crate::execution_scratch::{PlainRunSink, ScratchError};
 #[cfg(test)]
 use crate::token_collector::ClassifiedToken;
@@ -210,25 +209,23 @@ impl ArgumentArena {
         Ok(writer.cursor.settle_argument(token, paragraph_checked))
     }
 
-    /// Appends one compact raw delivery directly to the pending argument.
+    /// Appends final spelling directly to the pending argument.
     #[inline(always)]
-    pub(crate) fn append_hot_delivery(
+    pub(crate) fn append_argument_word(
         &mut self,
         writer: &mut ArgumentCursor,
-        delivery: &CurrentCommand<impl Sized>,
+        spelling: TracedTokenWord,
         paragraph_checked: bool,
         paragraph_token: Option<TokenWord>,
     ) -> Result<u32, ScratchError> {
         if writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let spelling = delivery.spelling();
-        debug_assert_eq!(spelling.origin(), delivery.origin());
         self.region_mut(writer.region).push(spelling);
         writer.visible_end = self.tail(writer.region);
         Ok(writer.cursor.settle_argument_word(
-            delivery.spelling_word(),
-            paragraph_checked && delivery.is_paragraph_spelling(paragraph_token),
+            spelling.token_word(),
+            paragraph_checked && Some(spelling.token_word()) == paragraph_token,
         ))
     }
 

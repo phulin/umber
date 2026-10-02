@@ -25,8 +25,11 @@ resource retry protocol.
 
 The removed `ResidentWord`/`TokenMeaning` chain and duplicated font column must
 not return as adapters. One interpreted token resolves once into the final
-native meaning. The same native `CurrentCommand` remains live through raw input, expansion,
-synchronous scanners and main control. Recovery, tracing and observation
+native meaning. The same native `CurrentCommand` remains live through interpreted
+raw input, expansion, synchronous scanners and main control. Raw macro matching
+and unexpanded replacement grammar consume final spelling and origin directly;
+their ordinary accepted words construct no command merely to project those fields.
+Recovery, tracing and observation
 project spelling, decoded meaning and diagnostic geometry at their actual
 consuming boundary. This request-local value is not itself an immutable
 definition root.

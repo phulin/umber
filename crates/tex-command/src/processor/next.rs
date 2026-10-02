@@ -136,29 +136,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         delivery
     }
 
-    /// Delivers one raw token for TeX82 §394's macro matcher into the same
-    /// caller-owned compact slot used by the other synchronous collectors.
-    /// The canonical source/resident reader still owns tokenization and
-    /// settlement; no matcher-specific delivery wrapper is constructed.
-    pub(crate) fn get_macro_match_token(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<super::DeliveryStatus, CommandError> {
-        let delivery = self.get_token_into(destination);
-        #[cfg(test)]
-        if matches!(delivery, Ok(super::DeliveryStatus::Command)) {
-            // Keep the existing matcher-path metric: one compact
-            // classification per raw token accepted by the scalar matcher.
-            self.command
-                .token_collector_path_counters
-                .raw_classifications = self
-                .command
-                .token_collector_path_counters
-                .raw_classifications
-                .saturating_add(1);
-        }
-        delivery
-    }
     /// Compact resident-command observation.  Delivery
     /// settlement may already own a hot command; observing it in place keeps
     /// the scanner/expansion path free of a rich command projection.

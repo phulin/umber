@@ -205,6 +205,10 @@ meaning and control-sequence identity. An ordinary unobserved macro passes only
 its definition, flags, name, and origin to activation and argument scanning.
 Successful activation constructs no `CurrentCommand`.
 Only spelling and invocation facts survive synchronous argument matching;
+the argument grammar consumes accepted raw words directly without constructing
+and then projecting a command. Actual outer, alignment, suppression, observation
+and recovery settlement borrows its command through that same grammar. Error
+backup alone constructs a command when ordinary spelling admission needed none.
 prefix diagnostics construct their site directly from those facts. Delivery
 geometry does not remain live merely for diagnostics. Macro chains remain
 iterative in one read/interpret loop. Matching's local storage belongs to its
