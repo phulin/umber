@@ -62,21 +62,6 @@ pub enum CheckpointOwnerFamily {
     Core,
 }
 
-/// The single order used to validate, rewind, and promote aggregate owners.
-/// Rejection undoes the current suffix in the reverse of this order and then
-/// redoes the saved accepted suffix in this order.
-pub(crate) const CANDIDATE_OWNER_ORDER: [CheckpointOwnerFamily; 9] = [
-    CheckpointOwnerFamily::Core,
-    CheckpointOwnerFamily::Command,
-    CheckpointOwnerFamily::Mode,
-    CheckpointOwnerFamily::Page,
-    CheckpointOwnerFamily::Hyphenation,
-    CheckpointOwnerFamily::Pdf,
-    CheckpointOwnerFamily::World,
-    CheckpointOwnerFamily::Dependency,
-    CheckpointOwnerFamily::SourceFont,
-];
-
 /// Opaque identity of one process-local owner participating in retention.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CheckpointOwnerKey(CheckpointOwnerKeyInner);
@@ -158,7 +143,6 @@ impl CheckpointRetention {
         modes: &ModeCheckpoint,
         runtime: tex_state::RuntimeCheckpointRetention,
     ) -> Self {
-        debug_assert_eq!(CANDIDATE_OWNER_ORDER.len(), 9);
         Self {
             shared_owners: [
                 CheckpointOwnerCharge::new(
@@ -428,7 +412,7 @@ pub struct EngineCheckpoint<G> {
     pub(crate) budget_counters: crate::ExecutionBudgetCounters,
 }
 
-struct PreparedCheckpointReplay<G> {
+pub(crate) struct PreparedCheckpointReplay<G> {
     command: PreparedCommandRestore<G>,
     mode: crate::mode::PreparedModeReplayRestore,
     runtime: PreparedRuntimeCheckpointReplay<G>,
@@ -733,6 +717,13 @@ impl<G> EngineCheckpoint<G> {
         wants_reachable_state_identity: bool,
     ) -> Result<Self, CommandSummaryError> {
         eligibility.validate(universe)?;
+        if !nest.restart_checkpoint_is_quiescent() {
+            return Err(CommandSummaryError::CheckpointIneligible);
+        }
+        command.preflight_summary(universe)?;
+        universe
+            .preflight_runtime_checkpoint()
+            .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
         let boundary = eligibility.boundary();
         let command = command.publish_summary(universe)?;
         let root_anchor = command
@@ -748,7 +739,7 @@ impl<G> EngineCheckpoint<G> {
                 modes.retains_page_node_handles(),
                 wants_reachable_state_identity,
             )
-            .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
+            .expect("aggregate capture preflight retained every runtime owner");
         let reachable_state_identity = wants_reachable_state_identity
             .then(|| ReachableStateRoots::capture(&command, &modes, &runtime).complete())
             .flatten();
@@ -857,12 +848,28 @@ impl<G> EngineCheckpoint<G> {
         self.root_anchor
     }
 
-    /// Restores every aggregate root atomically.
-    ///
-    /// Command, mode, and runtime validation finishes before mutation. During
-    /// application, command and mode roots transfer after dense state but
-    /// before durable, page, source, and font suffix truncation.
+    /// Restores the complete named aggregate, including its output prefix.
+    /// Every component validates before mutation; prepared application cannot
+    /// return a semantic error after a destructive restore has begun.
     pub fn restore_state(
+        &self,
+        command: &mut CommandState<G>,
+        nest: &mut ModeNest,
+        universe: &mut Universe<G>,
+        output: &mut crate::OutputLedger,
+    ) -> Result<(), CheckpointRestoreError> {
+        if !universe.checkpoint_eligible() {
+            return Err(CheckpointRestoreError::Runtime(
+                tex_state::UniverseError::State(tex_state::StateError::CheckpointIneligible),
+            ));
+        }
+        self.restore_state_after_replay(command, nest, universe, output)
+    }
+
+    /// Component-only fixture seam. Production named restore always includes
+    /// its ledger; test fixtures may own only semantic state.
+    #[cfg(test)]
+    pub(crate) fn restore_semantic_state(
         &self,
         command: &mut CommandState<G>,
         nest: &mut ModeNest,
@@ -895,10 +902,11 @@ impl<G> EngineCheckpoint<G> {
         output: &mut crate::OutputLedger,
     ) -> Result<(), CheckpointRestoreError> {
         let prepared = self.prepare_state_after_replay(command, nest, universe, output)?;
-        self.apply_prepared_state_after_replay(command, nest, universe, output, prepared)
+        self.apply_prepared_state_after_replay(command, nest, universe, output, prepared);
+        Ok(())
     }
 
-    fn prepare_state_after_replay(
+    pub(crate) fn prepare_state_after_replay(
         &self,
         command: &CommandState<G>,
         nest: &ModeNest,
@@ -930,14 +938,14 @@ impl<G> EngineCheckpoint<G> {
         })
     }
 
-    fn apply_prepared_state_after_replay(
+    pub(crate) fn apply_prepared_state_after_replay(
         &self,
         command: &mut CommandState<G>,
         nest: &mut ModeNest,
         universe: &mut Universe<G>,
         output: &mut crate::OutputLedger,
         prepared: PreparedCheckpointReplay<G>,
-    ) -> Result<(), CheckpointRestoreError> {
+    ) {
         let PreparedCheckpointReplay {
             command: prepared_command,
             mode: prepared_mode,
@@ -957,13 +965,12 @@ impl<G> EngineCheckpoint<G> {
                 // an observed high-water.
                 nest.retain_maximum_saved_depth(maximum_saved_depth);
             })
-            .map_err(CheckpointRestoreError::Runtime)?;
-        output
-            .apply_prepared_replay_restore(prepared_output)
-            .map_err(CheckpointRestoreError::Output)
+            .expect("aggregate replay preflight retained every runtime owner");
+        output.apply_prepared_replay_restore(prepared_output);
     }
 }
 
+#[cfg(test)]
 fn restore_validated_roots<G>(
     command: &mut CommandState<G>,
     nest: &mut ModeNest,

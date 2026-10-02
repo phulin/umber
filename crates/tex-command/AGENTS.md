@@ -542,7 +542,8 @@ collector (see `src/conditionals.rs`).
   accept drops them. Restore abandons the halted operation and clears the
   attempt arena, because every capture is taken while it is empty. Validation
   never mutates the runtime, aggregate command roots are not `Clone`, and
-  capture requires quiescent execution scratch.
+  capture requires quiescent execution scratch. Its read-only preflight checks
+  publication serial and generation admission before aggregate runtime capture.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
   Character/input integration coverage binds the exact shared-domain tokenizer
   to the pinned TeX82 fixture and compile-fail gates profile immutability.

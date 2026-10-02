@@ -208,7 +208,7 @@ impl<G> CommandState<G> {
             .checkpoints
             .position(restore.serial)
             .expect("command candidate base was prevalidated");
-        self.abandon_attempt_after_checkpoint_restore();
+        self.abandon_checkpoint_attempt();
         let detached = self.checkpoints.captures.split_off(index + 1);
         let candidate = self.roots.candidate_session();
         let accepted = core::mem::replace(&mut self.roots, candidate);
@@ -233,7 +233,7 @@ impl<G> CommandState<G> {
             .fork
             .take()
             .expect("command rejection requires a candidate fork");
-        self.abandon_attempt_after_checkpoint_restore();
+        self.abandon_checkpoint_attempt();
         let base = self
             .checkpoints
             .position(fork.base)
@@ -267,13 +267,10 @@ impl<G> CommandState<G> {
         &mut self,
         universe: &Universe<G>,
     ) -> Result<CommandSummary<G>, CommandSummaryError> {
-        self.validate_summary_quiescence()?;
-        if !universe.checkpoint_eligible() {
-            return Err(CommandSummaryError::CheckpointIneligible);
-        }
+        self.preflight_summary(universe)?;
         let generation = universe
             .generation_owner()
-            .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
+            .expect("command capture generation was preflighted");
         let root_source_anchor = self.input.levels.iter().find_map(|level| {
             let crate::input::InputLevel::Source(source) = level else {
                 return None;
@@ -284,7 +281,10 @@ impl<G> CommandState<G> {
         let retained_owner_bytes = capture.retained_bytes();
         let profile_fingerprint = self.checkpoint_profile_fingerprint().get();
         let reachable_state_identity_root = self.reachable_state_identity_root();
-        let serial = self.checkpoints.push(capture)?;
+        let serial = self
+            .checkpoints
+            .push(capture)
+            .expect("command publication serial was preflighted");
         Ok(CommandSummary {
             generation,
             owner: self.checkpoints.owner,
@@ -294,6 +294,23 @@ impl<G> CommandState<G> {
             reachable_state_identity_root,
             retained_owner_bytes,
         })
+    }
+
+    /// Checks named capture admission without publishing a command row.
+    #[doc(hidden)]
+    pub fn preflight_summary(&self, universe: &Universe<G>) -> Result<(), CommandSummaryError> {
+        self.validate_summary_quiescence()?;
+        if !universe.checkpoint_eligible() {
+            return Err(CommandSummaryError::CheckpointIneligible);
+        }
+        universe
+            .generation_owner()
+            .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
+        self.checkpoints
+            .next_serial
+            .checked_add(1)
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        Ok(())
     }
 
     /// Enables bounded command-root publication before incremental execution.
@@ -359,7 +376,7 @@ impl<G> CommandState<G> {
         if !self.checkpoints.restorable(restore.serial) {
             return Err(CommandRestoreError::InvalidCursor);
         }
-        self.abandon_attempt_after_checkpoint_restore();
+        self.abandon_checkpoint_attempt();
         let capture = self.checkpoints.truncate_after(restore.serial);
         self.roots.install_capture(capture);
         self.synchronize_delivery_mode_roots();

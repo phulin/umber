@@ -37,14 +37,15 @@ impl<G> CommandState<G> {
         self.attempt.close_child_scope(scope)
     }
 
-    /// Drops the attempt rows of a halted command after an aggregate
-    /// checkpoint has already restored its command roots.
+    /// Drops halted command scratch at the aggregate checkpoint boundary.
+    /// The executor invokes this before destructive backing restore; command
+    /// installation also enforces the empty scratch shape.
     ///
     /// No command is ever rolled back in place: a failed or suspended
     /// command halts, and checkpoint replay is the one coarse transaction
     /// that restores the aggregate command cursor.
     #[doc(hidden)]
-    pub fn abandon_attempt_after_checkpoint_restore(&mut self) {
+    pub fn abandon_checkpoint_attempt(&mut self) {
         // Captures are taken only at command boundaries, where the attempt
         // arena is clear. Clear it and replace the scratch owner so no stale
         // row or scanner builder can make the restored boundary appear

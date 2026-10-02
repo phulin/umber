@@ -1407,6 +1407,8 @@ fn with_etex<R>(
     })
 }
 
+#[path = "tests/aggregate_restore.rs"]
+mod aggregate_restore;
 #[path = "tests/alignment.rs"]
 mod alignment;
 #[path = "tests/assignments.rs"]

@@ -389,7 +389,7 @@ fn retained_checkpoint_restores_command_tokens_and_scalar_mode_state() {
         );
         modes.current_list_mutation().set_prev_graf(9);
         checkpoint
-            .restore_state(&mut command, &mut modes, universe)
+            .restore_semantic_state(&mut command, &mut modes, universe)
             .expect("retained checkpoint restores into its owning timeline");
 
         let mut capabilities = CommandHostCapabilities::default();
@@ -445,7 +445,7 @@ fn retained_checkpoint_rejects_a_fresh_command_timeline_before_mutation() {
         let mode_fingerprint_before = modes.summary().semantic_fingerprint(universe);
 
         assert!(matches!(
-            checkpoint.restore_state(&mut command, &mut modes, universe),
+            checkpoint.restore_semantic_state(&mut command, &mut modes, universe),
             Err(CheckpointRestoreError::Command(
                 CommandRestoreError::ForeignGeneration
             ))
@@ -488,7 +488,7 @@ fn command_validation_failure_leaves_runtime_and_mode_unchanged() {
         let mut modes = ModeNest::new();
 
         assert!(matches!(
-            checkpoint.restore_state(&mut command, &mut modes, universe),
+            checkpoint.restore_semantic_state(&mut command, &mut modes, universe),
             Err(CheckpointRestoreError::Command(_))
         ));
         assert_eq!(command.profile(), CommandProfile::PDFTEX14029);
@@ -589,7 +589,7 @@ fn checkpoint_restore_does_not_refund_nest_high_water() {
             .expect("later nested mode");
         assert_eq!(modes.maximum_saved_depth(), 2);
         checkpoint
-            .restore_state(&mut command, &mut modes, universe)
+            .restore_semantic_state(&mut command, &mut modes, universe)
             .expect("checkpoint restores");
         assert_eq!(modes.depth(), 1, "semantic mode summary rolled back");
         assert_eq!(

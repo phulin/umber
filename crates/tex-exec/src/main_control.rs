@@ -1762,15 +1762,21 @@ impl<G> MainControl<G> {
         stores.enable_reachable_state_identity();
     }
 
-    /// Restores a named checkpoint into this command processor.  The
-    /// checkpoint is quiescent, so command-owned replay episodes are reset
-    /// rather than serialized into a durable format or editor boundary.
+    /// Restores a complete named checkpoint and its visible output prefix.
+    /// Current ordinary state must be quiescent; interrupted resource calls
+    /// use `restore_resource_replay` after their Rust frames have unwound.
     pub fn restore_checkpoint(
         &mut self,
         checkpoint: &crate::EngineCheckpoint<G>,
         stores: &mut Universe<G>,
+        output: &mut crate::OutputLedger,
     ) -> Result<(), crate::CheckpointRestoreError> {
-        self.restore_checkpoint_roots(checkpoint, stores)
+        if !stores.checkpoint_eligible() {
+            return Err(crate::CheckpointRestoreError::Runtime(
+                tex_state::UniverseError::State(tex_state::StateError::CheckpointIneligible),
+            ));
+        }
+        self.restore_checkpoint_after_replay(checkpoint, stores, output)
     }
 
     pub(crate) fn restore_checkpoint_after_replay(
@@ -1779,25 +1785,25 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         output: &mut crate::OutputLedger,
     ) -> Result<(), crate::CheckpointRestoreError> {
-        checkpoint.restore_state_after_replay(
+        let prepared =
+            checkpoint.prepare_state_after_replay(&self.command, &self.modes, stores, output)?;
+        // No selected component can fail now. Drop interrupted executor
+        // owners while their generation/page/PDF backing remains attached;
+        // neither aftergroup tokens nor ordinary unsave diagnostics run.
+        self.reset_checkpoint_replay_runtime(checkpoint.boundary());
+        checkpoint.apply_prepared_state_after_replay(
             &mut self.command,
             &mut self.modes,
             stores,
             output,
-        )?;
-        self.active_alignment = None;
-        self.boxes = ReplayBoxes::default();
-        self.paragraph_checkpoint_demand = None;
-        self.paragraph_checkpoint_cut = false;
-        self.error_operation_committed = false;
-        self.fatal = None;
-        self.captured_fatal_origin = None;
+            prepared,
+        );
         Ok(())
     }
 
     /// Restores a full aggregate checkpoint after a resource operation has
-    /// unwound, then clears all executor-owned scratch that belonged to the
-    /// discarded operation. The next call starts ordinary main control from
+    /// unwound. Preflight precedes interrupted-owner destruction and backing
+    /// restore. The next call starts ordinary main control from
     /// the restored command, mode, World, and output roots.
     pub fn restore_resource_replay(
         &mut self,
@@ -1806,16 +1812,16 @@ impl<G> MainControl<G> {
         output: &mut crate::OutputLedger,
     ) -> Result<(), crate::CheckpointRestoreError> {
         self.restore_checkpoint_after_replay(checkpoint, stores, output)?;
-        self.reset_checkpoint_replay_runtime(checkpoint.boundary());
         Ok(())
     }
 
-    fn restore_checkpoint_roots(
+    #[cfg(test)]
+    fn restore_semantic_checkpoint(
         &mut self,
         checkpoint: &crate::EngineCheckpoint<G>,
         stores: &mut Universe<G>,
     ) -> Result<(), crate::CheckpointRestoreError> {
-        checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
+        checkpoint.restore_semantic_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.paragraph_checkpoint_demand = None;
@@ -1826,19 +1832,16 @@ impl<G> MainControl<G> {
         Ok(())
     }
 
-    /// Clears executor-side continuation state after aggregate roots have
-    /// returned to a named full checkpoint. These fields are deliberately not
+    /// Clears interrupted executor owners before destructive aggregate restore. These fields are deliberately not
     /// part of `EngineCheckpoint`: a fork constructs them from defaults, and
     /// an in-place resource replay must establish the same quiescent shape.
     pub(crate) fn reset_checkpoint_replay_runtime(&mut self, boundary: crate::EngineBoundary) {
         let root_main_source = (boundary != crate::EngineBoundary::JobStart)
             .then_some(self.root_main_source)
             .flatten();
-        // Aggregate restore has replaced the command/input roots. The
-        // discarded direct operation's scratch coordinates therefore cannot
-        // be resumed against the restored arena; clear that linear owner
-        // before the fresh replay operation begins.
-        self.command.abandon_attempt_after_checkpoint_restore();
+        // The interrupted command's scratch cannot cross backing restoration.
+        // Retire its linear owner while the current generation is attached.
+        self.command.abandon_checkpoint_attempt();
         // Host capabilities are the monotonic admission registry for this
         // retained run.  They intentionally live outside the checkpoint:
         // restoring the parser/runtime/output roots must not discard inputs

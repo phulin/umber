@@ -2711,7 +2711,7 @@ mod tests {
                 .downcast_mut::<RestartFixture<G>>()
                 .expect("restart fixture type");
             checkpoint
-                .restore_state(&mut fixture.command, &mut fixture.modes, admitted.universe)
+                .restore_semantic_state(&mut fixture.command, &mut fixture.modes, admitted.universe)
                 .expect("surviving checkpoint restores");
             admitted
                 .universe

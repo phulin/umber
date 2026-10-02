@@ -1208,7 +1208,7 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
         let first_output = terminal_text(stores);
 
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("incompatible unbox source restores");
         run_to_end(&mut control, stores);
         let replayed_vbox = stores.copy_box_to_page(0).expect("vbox remains nonvoid");

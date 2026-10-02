@@ -195,7 +195,7 @@ impl OutputLedger {
         checkpoint: OutputLedgerCheckpoint,
     ) -> Result<PreparedOutputReplayRestore, tex_state::fork_arena::ForkArenaError> {
         let mark_valid = if self.accepted_head_count.is_some() {
-            self.pages.validates_checkpoint(checkpoint.mark)
+            self.pages.can_restore_current_checkpoint(checkpoint.mark)
         } else {
             self.pages.can_begin_checkpoint_candidate(checkpoint.mark)
         };
@@ -208,14 +208,17 @@ impl OutputLedger {
         })
     }
 
-    pub(crate) fn apply_prepared_replay_restore(
-        &mut self,
-        prepared: PreparedOutputReplayRestore,
-    ) -> Result<(), tex_state::fork_arena::ForkArenaError> {
-        if prepared.ledger != std::ptr::from_ref(self) as usize {
-            return Err(tex_state::fork_arena::ForkArenaError::InvalidCheckpoint);
-        }
+    pub(crate) fn apply_prepared_replay_restore(&mut self, prepared: PreparedOutputReplayRestore) {
+        assert_eq!(
+            prepared.ledger,
+            std::ptr::from_ref(self) as usize,
+            "prepared output restore belongs to this exclusive ledger"
+        );
+        // The pool and arena are private and never move independently. Page
+        // collection finishes its synchronous builder before driver capture;
+        // aggregate runtime restore cannot mutate this owner after preflight.
         self.rewind(prepared.checkpoint)
+            .expect("output preflight retained a ready lineage in its private pool");
     }
 
     pub(crate) fn checkpoint(&mut self) -> OutputLedgerCheckpoint {

@@ -72,6 +72,55 @@ fn output_box_scalar_edit_keeps_page_closure() {
     assert_eq!(arena.durable_transition_counters(), copies);
 }
 
+#[test]
+fn exhausted_page_capture_admission_preserves_rootless_material() {
+    // An ineligible cold admission cannot reclaim the rootless suffix before
+    // reporting exhaustion. Retry still sees the same semantic material.
+    for page_journal in [false, true] {
+        crate::universe::with_universe(
+            crate::interner::InternerBudget::new(32, 32, 1024).expect("test budget"),
+            |universe| {
+                let root = {
+                    let mut nodes = universe.page_region.nodes_mut();
+                    publish_nodes(&mut nodes, [kern(47)])
+                };
+                let current = universe
+                    .page_region
+                    .regions
+                    .last_mut()
+                    .expect("current region");
+                if page_journal {
+                    current.builder.checkpoint_journal.next_frame = u64::MAX;
+                } else {
+                    current.next_boundary = u64::MAX;
+                }
+                assert!(universe.runtime_checkpoint().is_err());
+                assert_eq!(
+                    list_nodes(&universe.page_region.nodes_mut(), root),
+                    vec![kern(47)]
+                );
+                assert!(
+                    universe
+                        .page_region
+                        .regions
+                        .last()
+                        .expect("current")
+                        .checkpoints
+                        .is_empty()
+                );
+                let current = universe.page_region.regions.last_mut().expect("current");
+                current.next_boundary = 1;
+                current.builder.checkpoint_journal.next_frame = 1;
+                assert!(
+                    universe.runtime_checkpoint().is_ok(),
+                    "failed admission remains retryable"
+                );
+            },
+        )
+        .expect("test universe");
+    }
+}
+
 fn tokens(tokens: &[Token]) -> NodeTokenKey {
     let serial = tokens
         .iter()

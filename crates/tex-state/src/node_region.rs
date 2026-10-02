@@ -500,13 +500,20 @@ impl<Role> NodeRegion<Role> {
         }
     }
 
+    pub(crate) fn preflight_checkpoint_boundary(
+        &self,
+        pool: &NodePool,
+    ) -> Result<(), ForkArenaError> {
+        pool.validate_region(self)?;
+        self.pub_arena.can_seal_boundary(&pool.chunks)?;
+        self.annex_arena.can_seal_boundary(&pool.annex_chunks)
+    }
+
     pub(crate) fn seal_checkpoint_boundary(
         &mut self,
         pool: &mut NodePool,
     ) -> Result<NodeSealedBoundary, ForkArenaError> {
-        pool.validate_region(self)?;
-        self.pub_arena.can_seal_boundary(&pool.chunks)?;
-        self.annex_arena.can_seal_boundary(&pool.annex_chunks)?;
+        self.preflight_checkpoint_boundary(pool)?;
         let nodes = self
             .pub_arena
             .seal_boundary(&mut pool.chunks)

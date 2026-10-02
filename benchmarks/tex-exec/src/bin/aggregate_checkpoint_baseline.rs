@@ -148,6 +148,7 @@ fn main() {
                                 command.as_mut().expect("accepted command owner"),
                                 &mut modes,
                                 universe,
+                                &mut output,
                             )
                             .expect("same-generation restore");
                         checksum ^= modes.depth() as u64 ^ checkpoint.root_anchor() as u64;

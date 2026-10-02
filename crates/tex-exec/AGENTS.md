@@ -61,9 +61,8 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
 - `src/main_control/settlement.rs`: direct-operation evidence ownership,
   begin/commit/halt, resource-need and diagnostic settlement, ordered
   semantic/effect/artifact publication, and exact-cut main-source paragraph
-  checkpoint sealing. Shipout contributes only output-ledger evidence. Its direct-operation mark
-  moves only tex-command's opaque lifecycle edge; the authoritative ordinary
-  attempt coordinate remains in `CommandState`.
+  checkpoint intent. Shipout contributes only output-ledger evidence. Native
+  scratch settlement has no direct-operation mark or lifecycle carrier.
 - `src/main_control/resources.rs`: typed host-resource resolution and
   installation for fonts, input streams, and PDF images. It borrows the same
   `MainControl` and `Universe` owners and preserves checkpoint-replay errors.
@@ -164,7 +163,12 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   outer-paragraph boundaries, editor forks with post-restore root-source registration,
   move-only aggregate checkpoint restore, budgets, bounded command/mode roots,
   profiling-only aggregate lifecycle probes, and retained token/glue-root
-  restoration coverage.
+  restoration coverage. Capture preflights command/runtime admission before
+  publication; public named restore requires the output ledger and prepared
+  application is infallible. Component-only fixture restoration is test-local.
+- `src/main_control/tests/aggregate_restore.rs`: repeated full public output
+  restore and resource replay after shipout/effects inside an interrupted group
+  and box builder, with no abandoned aftergroup delivery or fuel refund.
 - `src/dispatch.rs`: dispatch result, execution statistics, and prepared-page contract.
 - `src/execution_receipt.rs` and `src/execution_receipt/tests.rs`: crate-private
   typed operation receipts assembled, consumed, and reset in place by the

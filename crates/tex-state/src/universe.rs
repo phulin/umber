@@ -2858,14 +2858,7 @@ impl<G> Universe<G> {
         external_page_roots: bool,
         wants_reachable_state_identity: bool,
     ) -> Result<RuntimeCheckpoint<G>, UniverseError> {
-        if !self.checkpoint_eligible() {
-            return Err(UniverseError::State(StateError::CheckpointIneligible));
-        }
-        self.core
-            .as_ref()
-            .ok_or(UniverseError::Retired)?
-            .state()
-            .preflight_checkpoint_capture()?;
+        self.preflight_runtime_checkpoint()?;
         if !(external_page_roots || self.page_region.builder().retains_page_node_handles()) {
             self.release_unretained_page_suffix()?;
         }
@@ -3016,6 +3009,23 @@ impl<G> Universe<G> {
         Ok(checkpoint)
     }
 
+    /// Validates all fallible runtime capture boundaries before the aggregate
+    /// publishes command roots or releases a rootless page suffix.
+    #[doc(hidden)]
+    pub fn preflight_runtime_checkpoint(&self) -> Result<(), UniverseError> {
+        if !self.checkpoint_eligible() {
+            return Err(UniverseError::State(StateError::CheckpointIneligible));
+        }
+        self.core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .state()
+            .preflight_checkpoint_capture()?;
+        self.page_region
+            .preflight_checkpoint()
+            .map_err(|_| UniverseError::State(StateError::InvalidCursor))
+    }
+
     /// Releases the private runtime rows owned solely by one outer restart
     /// checkpoint.
     ///
@@ -3142,9 +3152,8 @@ impl<G> Universe<G> {
         Ok(true)
     }
 
-    /// Validates and restores a complete runtime checkpoint while allowing
-    /// the executor to transfer command and mode roots before any state,
-    /// source, or font arena suffix is truncated.
+    /// Validates a complete runtime checkpoint, installs external command and
+    /// mode roots, then restores state before backing suffixes are reclaimed.
     pub fn restore_runtime_checkpoint_with_roots(
         &mut self,
         checkpoint: &RuntimeCheckpoint<G>,
@@ -3202,7 +3211,7 @@ impl<G> Universe<G> {
     /// attempt has already been discarded.  The current candidate may still
     /// contain semantic group/page suffixes from nested scanning; those are
     /// precisely the roots this replay restore replaces.  No live operation
-    /// may enter this seam: callers must first unwind their direct mark.
+    /// may enter this seam: callers must first unwind their synchronous call.
     pub fn restore_runtime_checkpoint_after_replay_with_roots(
         &mut self,
         checkpoint: &RuntimeCheckpoint<G>,
@@ -3239,7 +3248,12 @@ impl<G> Universe<G> {
         if !roots_ready {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
-        self.activate_checkpoint_state(checkpoint, after_direct_replay_discard)?;
+        // Named command/mode captures have no page/PDF roots. Replace the
+        // interrupted external owners while their backing is still attached,
+        // before generation, page, PDF, source or font suffix reclamation.
+        transfer_external_roots();
+        self.activate_checkpoint_state(checkpoint, after_direct_replay_discard)
+            .expect("runtime restore prevalidated dense roots and epoch headroom");
         self.page_region
             .restore_checkpoint(checkpoint.page)
             .expect("runtime restore prevalidated the page-region checkpoint");
@@ -3276,7 +3290,6 @@ impl<G> Universe<G> {
         self.command_retained
             .engine_usage
             .restore_checkpoint(checkpoint.engine_usage);
-        transfer_external_roots();
         self.command_retained.fonts.truncate_to(checkpoint.fonts);
         self.command_retained
             .sources

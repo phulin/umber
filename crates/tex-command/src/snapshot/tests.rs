@@ -93,6 +93,26 @@ fn summary_rejection_names_suspended_attempts_separately() {
 }
 
 #[test]
+fn exhausted_capture_serial_preserves_command_roots_and_is_retryable() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        set_afterassignment(&mut command, universe, 'Q');
+        command.checkpoints.next_serial = u64::MAX;
+        assert!(matches!(
+            command.publish_summary(universe),
+            Err(CommandSummaryError::TimelineCapacity)
+        ));
+        assert_eq!(afterassignment(&mut command, universe), Some('Q'));
+        assert!(command.checkpoints.captures.is_empty());
+        command.checkpoints.next_serial = 0;
+        let summary = command.publish_summary(universe).expect("retry capture");
+        set_afterassignment(&mut command, universe, 'R');
+        restore(&mut command, &summary, universe).expect("retained command root");
+        assert_eq!(afterassignment(&mut command, universe), Some('Q'));
+    });
+}
+
+#[test]
 fn terminal_format_close_discards_macro_replay_without_weakening_named_boundaries() {
     let mut command = CommandState::<()>::default();
     command.transient.active_expansion_depth = 1;

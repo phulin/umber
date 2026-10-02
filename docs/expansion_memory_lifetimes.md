@@ -1,6 +1,6 @@
 # Expansion memory lifetimes
 
-Status: current source map and required migration, 2026-10-01.
+Status: current source map, 2026-10-01.
 
 [Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
 is the authority for checkpoint/group/candidate and definition ownership.
@@ -183,9 +183,12 @@ explicit metadata, not a permanent decoded runtime. See
 A definition payload, stored list, input backing or diagnostic result ends at
 its final real owner. Reusable vector/build/stack capacity can remain at high
 water without retaining dead payloads. Dynamic tombstone metadata remains
-stable and is charged separately. Current append-only global definition
-payloads are the explicit `.13` gap; command snapshot copies are legitimate
-cold retention, not per-token activation history.
+stable and is charged separately. Counted definitions release dead payloads promptly; command snapshot copies
+are legitimate cold retention, not per-token activation history. Aggregate
+admission now preflights command/runtime publication, and public full restore
+includes output. Interrupted executor/input/mode owners retire before backing
+suffixes, after every selected component passes preflight. Production capture
+occurs only after the synchronous driver returns and rechecks quiescence.
 
 Page/box/node/PDF lifetimes remain their specialized exclusive region and
 version-root contracts. `.6` deletes redundant group protocols and `.15` deletes operation protocols while

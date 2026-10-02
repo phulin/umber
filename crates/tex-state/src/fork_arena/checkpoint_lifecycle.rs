@@ -75,6 +75,14 @@ impl<T, Lane> ForkArena<T, Lane> {
             && self.validates_checkpoint(mark)
     }
 
+    /// Read-only admission for restoring the sole current candidate lineage.
+    pub fn can_restore_current_checkpoint(&self, mark: CheckpointMark<Lane>) -> bool {
+        !self.active_builder
+            && self.pending_batch.is_none()
+            && matches!(self.ownership, ForkOwnership::Forked { .. })
+            && self.validates_checkpoint(mark)
+    }
+
     pub fn visit_checkpoint_values(
         &self,
         pool: &ChunkPool<T>,
@@ -424,11 +432,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         mark: CheckpointMark<Lane>,
     ) -> Result<(), ForkArenaError> {
         self.bind_pool(pool)?;
-        if self.active_builder
-            || self.pending_batch.is_some()
-            || !matches!(self.ownership, ForkOwnership::Forked { .. })
-            || !self.validates_checkpoint(mark)
-        {
+        if !self.can_restore_current_checkpoint(mark) {
             return Err(ForkArenaError::InvalidCheckpoint);
         }
         // A retained prefix release rebases the arena at the floor's whole

@@ -1,8 +1,8 @@
 # Full checkpoints and TeX group ownership
 
-Status: selected implementation contract for `umber2-i0n5.14`, 2026-10-01.
-This document specifies the target; the source mapping below names remaining
-implementation work. Documentation approval does not mean that work has landed.
+Status: implemented ownership contract, 2026-10-01.
+The source mapping below names the owning implementations and their proof
+responsibilities; Beads tracks remaining profile work separately.
 
 ## One authority and one mutable generation
 
@@ -160,7 +160,8 @@ owner needs it; ordinary groups alone do not pin current boxes. See
 
 `EngineCheckpoint` is the aggregate restart authority. Component marks cannot
 be restored or settled independently. Existing legal boundaries remain
-`JobStart`, eligible `OuterParagraphEnd`, and outermost `ShipoutComplete`.
+`JobStart` and eligible main-source `OuterParagraphEnd`. Shipout publishes
+output evidence and no restart root.
 Admission requires no active group, macro, scanner/build/attempt, alignment,
 replay completion, pending diagnostic, or unfinished output operation, and one
 empty outer vertical mode. Root-document/include source-role policy remains.
@@ -203,26 +204,69 @@ old-format compatibility reader.
 
 ## Restore, repeated roots, and candidates
 
-Preflight every component and reserve required cold storage before mutation.
+### Aggregate admission and commit
+
+Capture preflights both the command publication serial and the runtime epoch,
+page boundary identity, paired node/annex lanes and page journal before either
+owner publishes a mark or releases a rootless suffix. The synchronous aggregate
+call cannot change those owners between admission and publication. Allocation
+failure follows the process allocator policy; it is not a recoverable semantic
+error after partial publication.
+
+Public named restore includes the output ledger. Component-only restoration is
+test-local and cannot publish an editor restart. Output preflight verifies its
+selected lineage, whole-chunk mark and absence of an active builder or batch.
+Its private pool never escapes the ledger. Prepared output application is
+infallible under that exclusive owner invariant.
+
+Repeatable restart roots require the existing retained World session mode.
+`WorldSnapshot` owns bounded lineage marks, not another effect payload copy.
+An eager host publication can retire a captured prefix and legitimately make
+that root inadmissible; an exported retained session is likewise sealed against
+rollback. Admission rejects those roots before mutating any aggregate owner.
+
+The executor discards interrupted builder and diagnostic owners after every
+component passes preflight. Command/input and rootless mode installation then
+precede runtime suffix reclamation. Interrupted native group saves are retired
+by the dense restore without normal unsave, aftergroup delivery or diagnostics.
+The selected page/PDF/World roots retain their own backing through their
+specialized restore; no selected command or mode capture names page/PDF nodes.
+Source/font truncation follows installation of all external roots.
+
+Production capture occurs only after the bounded driver returns. A paragraph
+cut is an intent, not a capture inside a scanner, publication, character flush
+or semantic application. `take_paragraph_checkpoint` rechecks command,
+executor, mode and runtime quiescence to produce eligibility. The ledger then
+collects prepared pages; cold capture rechecks command, mode and runtime
+admission before publication.
+Borrowed core loans independently prevent runtime checkpoint admission. No
+per-command continuation flag or publication-root census is needed.
+
+Incremental work telemetry counts completed bounded driver chunks. It must not
+label those chunks as tokens or TeX commands; deterministic command fuel keeps
+its existing work unit and remains outside rollback.
+
+Preflight every fallible component admission before mutation.
 A failed preflight leaves the aggregate unchanged. First unwind interrupted
 Rust calls; their scanners, collectors, borrowed contexts, and temporary
 commands cannot cross restore. Abandon interrupted group state without
 executing its aftergroup tokens or rendering ordinary group-exit diagnostics.
 
-Restore proceeds in two phases under one transaction:
+Restore has one aggregate admission followed by owner-specific commits:
 
-1. Restore/swap dense values, box bindings/scalars, command/input, mode, page,
-   hyphenation, PDF, World, dependency, source/font logical roots and output
-   prefix while both replaced and selected backing owners remain available.
-2. After every restored root is installed, reclaim abandoned command,
-   definition, provenance, node/page/form, source/font, effect/artifact and
-   output suffixes in dependency order. No fallible semantic action or
-   external publication occurs between these phases.
+1. Discard interrupted executor scratch while its backing remains attached;
+   install command/input and the empty selected outer mode.
+2. Restore dense values and native group history, then page, PDF/forms, World,
+   hyphenation, dependency and execution-usage state. Each specialized owner
+   preserves its selected roots before reclaiming its own losing suffix.
+3. Truncate logical source/font suffixes after external roots are installed;
+   commit the prepared output rewind. No fallible semantic action or external
+   publication occurs after aggregate admission.
 
-The existing `validate -> acquire -> restore dense -> transfer roots ->
-truncate -> release` state seam remains useful. It must extend to _all_
-aggregate owners; a source/font or definition suffix cannot drop before a
-restored input, diagnostic, node, or meaning transfers its root. Identity
+The aggregate uses `validate -> discard interrupted executor owners -> install
+external roots -> restore dense/specialized roots -> release suffixes`.
+A source/font or definition suffix cannot drop before a restored input,
+diagnostic, node, or meaning transfers its root. Identity
 metadata follows the selected semantic roots; host epochs do not.
 
 A normal named restore reverses undo entries to the root and drops the

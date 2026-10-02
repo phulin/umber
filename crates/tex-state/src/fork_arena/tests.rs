@@ -2738,6 +2738,46 @@ fn open_active_builder_blocks_checkpoint_sealing_and_rolls_back_partial_tail() {
 }
 
 #[test]
+fn candidate_restore_admission_rejects_an_active_builder_before_mutation() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let prior = list(&mut arena, &mut pool, [1, 2]);
+    let boundary = arena.seal_boundary(&mut pool).expect("accepted boundary");
+    let mark = arena.checkpoint_mark(boundary).expect("retained mark");
+    arena
+        .begin_checkpoint_candidate(&mut pool, mark)
+        .expect("candidate");
+    assert!(arena.can_restore_current_checkpoint(mark));
+    let mut builder = ActiveListBuilder::vacant();
+    arena
+        .open_active_list(&pool, &mut builder)
+        .expect("active builder");
+    arena
+        .push_active_list(&mut pool, &mut builder, 3)
+        .expect("partial tail");
+    assert!(
+        arena.validates_checkpoint(mark),
+        "coordinate alone is insufficient"
+    );
+    assert!(!arena.can_restore_current_checkpoint(mark));
+    assert_eq!(
+        arena.restore_current_checkpoint(&mut pool, mark),
+        Err(ForkArenaError::InvalidCheckpoint)
+    );
+    arena
+        .rollback_active_list(&mut pool, &mut builder)
+        .expect("discard builder");
+    assert!(arena.can_restore_current_checkpoint(mark));
+    arena
+        .restore_current_checkpoint(&mut pool, mark)
+        .expect("prepared restore");
+    assert_eq!(
+        arena.list(&pool, prior).expect("retained output").get(1),
+        Some(&2)
+    );
+}
+
+#[test]
 fn shared_active_append_copies_explicitly_and_keeps_the_source_stable() {
     let mut pool = ChunkPool::<Node>::with_chunk_bytes(128);
     let mut arena = ForkArena::<Node, super::PageMaterialLane>::new();

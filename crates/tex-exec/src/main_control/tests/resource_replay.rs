@@ -211,7 +211,7 @@ fn etex_raw_font_character_enquiry_checkpoint_retry_is_atomic() {
         assert!(first_output.contains("You can't use `\\fontcharwd' in vertical mode"));
 
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("raw font enquiry state restores");
         assert_eq!(
             control
@@ -252,7 +252,7 @@ fn etex_parshape_enquiry_checkpoint_retry_is_atomic() {
         assert!(first_output.contains("You can't use `\\parshapelength' in vertical mode"));
 
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("raw parshape enquiry state restores");
         assert_eq!(
             control
@@ -1182,7 +1182,7 @@ fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
         let assigned_hash = stores.journal_cursor().expect("state cursor");
 
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("penalty array state restores");
         assert!(
             admitted!(stores, |context| context
@@ -1279,7 +1279,7 @@ fn hot_definition_checkpoint_restore_replays_one_atomic_mutation() {
         );
         assert_eq!(macro_character_text(stores, "target"), "new");
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("hot definition checkpoint restores");
         admitted!(stores, |context| {
             let target = context.intern_control_sequence("target");
@@ -1359,7 +1359,7 @@ fn etex_showbox_invalid_register_checkpoint_retry_recovers_to_zero() {
         assert!(first_output.contains("> \\box0="), "{first_output}");
 
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("showbox state restores");
         assert_eq!(
             control
@@ -1426,7 +1426,7 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
         assert!(first_output.contains("You can't use `\\pagegoal' after \\advance"));
 
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("frozen page checkpoint restores");
         run_to_end(&mut control, stores);
         assert_eq!(

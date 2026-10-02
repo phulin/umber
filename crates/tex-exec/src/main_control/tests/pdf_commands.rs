@@ -1564,7 +1564,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
         ));
 
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("destination state restores");
         assert!(current_list_owner_vec(&control, stores).is_empty());
         for label in [
@@ -1719,7 +1719,7 @@ fn pdf_outline_checkpoint_restore_replays_identical_ledger_state() {
         );
         let first_hash = stores.journal_cursor().expect("state cursor");
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("outline state restores");
         assert_eq!(
             control.advance(stores).expect("retried outline"),
@@ -1881,7 +1881,7 @@ fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
             StepResult::Progress(MainControlStep::Continue)
         );
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("snapping state restores");
         assert_eq!(
             control.advance(stores).expect("retried reference point"),
@@ -2184,7 +2184,7 @@ fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
             StepResult::Progress(MainControlStep::Continue)
         );
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("toggle state restores");
         assert_eq!(
             control.advance(stores).expect("first toggle retries"),
@@ -2347,7 +2347,7 @@ fn pdfrunninglink_checkpoint_restore_retries_without_duplicate_whatsits() {
             StepResult::Progress(MainControlStep::Continue)
         );
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("running-link toggle restores");
         assert_eq!(
             control.advance(stores).expect("first toggle retries"),
@@ -2498,7 +2498,7 @@ fn pdfspacefont_checkpoint_restore_retries_the_global_selection_atomically() {
         let selected = stores.journal_cursor().expect("selected state cursor");
 
         control
-            .restore_checkpoint(&checkpoint, stores)
+            .restore_semantic_checkpoint(&checkpoint, stores)
             .expect("space-font state restores");
         assert_eq!(
             control.advance(stores).expect("second selection retries"),

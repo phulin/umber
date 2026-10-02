@@ -34,6 +34,9 @@ group-stack, assignment, candidate and definition-root ownership contract. It
 maps actual aggregate owners, cold capture costs, first-touch epochs, ordered
 saves, one mutable generation, counted stable definitions, source deletions,
 frequency-evidence limits and the implementation sequence.
+Capture preflight, full public output restore, interrupted-owner destruction,
+retained World admission and driver-only capture proofs are part of this
+implemented contract.
 
 `profiling.md` documents the persistent in-process Gentle profiler, its
 Samply wrapper, prerequisites, counters, measurement controls, and capture

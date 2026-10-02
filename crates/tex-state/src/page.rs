@@ -1180,6 +1180,13 @@ impl PageRegionHistory {
         (arena, &mut current.builder)
     }
 
+    pub(crate) fn preflight_checkpoint(&self) -> Result<(), ForkArenaError> {
+        self.regions
+            .last()
+            .expect("page history always has a current region")
+            .preflight_checkpoint(&self.pool)
+    }
+
     pub(crate) fn seal_checkpoint(&mut self) -> Result<PageRegionCheckpointKey, ForkArenaError> {
         let current = self
             .regions
@@ -1698,10 +1705,19 @@ impl PageRegion {
         &mut self.builder
     }
 
+    fn preflight_checkpoint(&self, pool: &NodePool) -> Result<(), ForkArenaError> {
+        self.next_boundary
+            .checked_add(1)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        self.nodes.preflight_checkpoint_boundary(pool)?;
+        self.builder.preflight_checkpoint()
+    }
+
     pub(crate) fn seal_checkpoint(
         &mut self,
         pool: &mut NodePool,
     ) -> Result<PageRegionCheckpointKey, ForkArenaError> {
+        self.preflight_checkpoint(pool)?;
         let mut nodes = PageMaterialArena::new(pool, &mut self.nodes);
         let boundary = nodes.seal_boundary()?;
         let node_mark = nodes.checkpoint_mark(boundary)?;
@@ -1713,7 +1729,7 @@ impl PageRegion {
         self.next_boundary = self
             .next_boundary
             .checked_add(1)
-            .ok_or(ForkArenaError::CapacityOverflow)?;
+            .expect("page boundary serial was preflighted");
         self.checkpoints.push(PageRegionCheckpoint {
             key,
             nodes: node_mark,
@@ -2811,6 +2827,16 @@ impl PageBuilderState {
         self.semantic_roots.insertions.hash(&mut hasher);
         self.semantic_roots.marks.hash(&mut hasher);
         Some(hasher.finish())
+    }
+
+    fn preflight_checkpoint(&self) -> Result<(), ForkArenaError> {
+        self.checkpoint_journal
+            .next_frame
+            .checked_add(1)
+            .ok_or(ForkArenaError::CapacityOverflow)?;
+        self.checkpoint_journal
+            .inverses
+            .can_seal_boundary(&self.checkpoint_journal.inverse_pool)
     }
 
     pub(crate) fn checkpoint_mark(&mut self) -> PageCheckpointMark {

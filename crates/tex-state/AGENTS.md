@@ -434,7 +434,8 @@ expose substores or introduce another arena.
   payload is explicitly `Node<PageListId>` so the replacement topology cannot
   retain child coordinates from the superseded row arena during migration.
 - `src/page/tests.rs`: Page snapshot value isolation, mark-value, and semantic
-  hash rollback tests.
+  hash rollback tests, including exhausted cold capture counters preserving
+  rootless material for retry.
 - `src/print.rs`: tex.web §54's print `selector`, §§57--65's print primitives, §73's `print_err`, and §82's `error` report channel.
 - `src/primitive.rs`: generation-typed packed handles into a completely
   constructed immutable primitive registry; handles validate the registry
@@ -507,6 +508,8 @@ expose substores or introduce another arena.
   cursors, semantically separate session, retained-generation, durable-node,
   operation-scratch, and page-region owners lent directly to admitted
   command/execution episodes, borrow-only pure-memo capability,
+  complete runtime capture preflight and external-root installation before
+  destructive restore of generation/page/PDF/World/source/font suffixes,
   root-before-suffix shipout transactions (a failed shipout halts and is
   rewound by checkpoint restore), and whole-session retirement.
 - `src/universe/tests.rs`: Session/generation admission, rollback-independent

@@ -997,6 +997,13 @@ pub(crate) enum PageOutputHistoryProbe {
 }
 
 impl PageMaterialRegion {
+    pub(crate) fn preflight_checkpoint_boundary(
+        &self,
+        pool: &NodePool,
+    ) -> Result<(), ForkArenaError> {
+        self.region.preflight_checkpoint_boundary(pool)
+    }
+
     pub fn new(pool: &mut NodePool) -> Self {
         let region = pool
             .start_region()
