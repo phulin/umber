@@ -207,7 +207,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             _ => return Err(CommandError::input_invariant()),
         };
         let Some(amount) = self.state.box_margin_kern(index, side) else {
-            return Err(CommandError::PdfNavigation(
+            return Err(CommandError::pdf_navigation(
                 "pdfTeX error (marginkern): a non-empty hbox expected",
             ));
         };

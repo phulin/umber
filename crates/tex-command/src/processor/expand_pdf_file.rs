@@ -153,7 +153,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         provider_settled = true;
                     }
                     Some(crate::ResourceInstallOutcome::Declined) => {
-                        return Err(CommandError::MissingInputProbe(request.clone()));
+                        return Err(CommandError::MissingInputProbe(Box::new(request.clone())));
                     }
                     None => {}
                     Some(crate::ResourceInstallOutcome::Failed(_)) => {
@@ -175,7 +175,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     return Ok(None);
                 }
-                return Err(CommandError::MissingInputProbe(request.clone()));
+                return Err(CommandError::MissingInputProbe(Box::new(request.clone())));
             };
             let actual = self
                 .state

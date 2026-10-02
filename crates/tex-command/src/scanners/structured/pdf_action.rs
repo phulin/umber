@@ -47,7 +47,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfActionScalarPhase::ThreadKeyword => {
                     let result = self.scan_keyword_retained("thread");
                     if !result.into_result()?.value {
-                        return Err(CommandError::PdfNavigation(
+                        return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): action type missing",
                         ));
                     }
@@ -71,7 +71,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .goto
                             .ok_or_else(|| CommandError::input_invariant())?;
                         if !goto {
-                            return Err(CommandError::PdfNavigation(
+                            return Err(CommandError::pdf_navigation(
                                 "pdfTeX error (ext1): only GoTo action can be used with `struct'",
                             ));
                         }
@@ -104,7 +104,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfActionScalarPhase::StructureNumberKeyword => {
                     let result = self.scan_keyword_retained("num");
                     if !result.into_result()?.value {
-                        return Err(CommandError::PdfNavigation(
+                        return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
                     }
@@ -125,7 +125,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .goto
                             .ok_or_else(|| CommandError::input_invariant())?
                         {
-                            return Err(CommandError::PdfNavigation(
+                            return Err(CommandError::pdf_navigation(
                                 "pdfTeX error (ext1): only GoTo action can be used with `page'",
                             ));
                         }
@@ -166,7 +166,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfActionScalarPhase::NumberKeyword => {
                     let result = self.scan_keyword_retained("num");
                     if !result.into_result()?.value {
-                        return Err(CommandError::PdfNavigation(
+                        return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
                     }
@@ -174,7 +174,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .goto
                         .ok_or_else(|| CommandError::input_invariant())?;
                     if goto && progress.file.is_some() {
-                        return Err(CommandError::PdfNavigation(
+                        return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): `goto' option cannot be used with both `file' and `num'",
                         ));
                     }
@@ -226,7 +226,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .goto
             .ok_or_else(|| CommandError::input_invariant())?;
         if window != tex_state::PdfActionWindow::Unspecified && (!goto || progress.file.is_none()) {
-            return Err(CommandError::PdfNavigation(
+            return Err(CommandError::pdf_navigation(
                 "pdfTeX error (ext1): `newwindow'/`nonewwindow' must be used with `goto' and `file' option",
             ));
         }

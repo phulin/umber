@@ -104,7 +104,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Some(Meaning::CharToken { ch, .. }) => {
                     character_count += 1;
                     if character_count > FILE_NAME_POOL_CAPACITY {
-                        return Err(CommandError::Fatal(crate::FatalError::overflow(
+                        return Err(CommandError::fatal(crate::FatalError::overflow(
                             "pool size",
                             FILE_NAME_POOL_CAPACITY as i32,
                         )));
@@ -285,10 +285,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             if unresolved {
                 self.command.retain_pending_input_open(retry_file_name);
-                return Err(CommandError::MissingInput {
-                    name: packed_name,
-                    original_name,
-                });
+                return Err(CommandError::missing_input(packed_name, original_name));
             }
             file_name = self.prompt_for_input_file_name(&file_name)?;
         }
@@ -315,7 +312,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let mut report = self.state.print_err("Emergency stop");
             report.help(&[help]).context(context);
             report.succumb();
-            return Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+            return Err(CommandError::fatal(crate::FatalError::emergency_stop(
                 "job aborted, file error in nonstop mode",
             )));
         }
@@ -328,7 +325,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let mut report = self.state.print_err("Emergency stop");
             report.help(&[help]).context(context);
             report.succumb();
-            return Err(CommandError::Fatal(crate::FatalError::emergency_stop(help)));
+            return Err(CommandError::fatal(crate::FatalError::emergency_stop(help)));
         };
         self.file_name_from_terminal_line(&line)
     }
@@ -350,7 +347,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             character_count += 1;
             if character_count > FILE_NAME_POOL_CAPACITY {
-                return Err(CommandError::Fatal(crate::FatalError::overflow(
+                return Err(CommandError::fatal(crate::FatalError::overflow(
                     "pool size",
                     FILE_NAME_POOL_CAPACITY as i32,
                 )));

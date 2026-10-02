@@ -1545,18 +1545,17 @@ impl<'a, G> CommandHostContext<'a, G> {
         self.capabilities
             .install_resource_resolution(need, resolution, register_texinputs_alias)
             .map(Some)
-            .map_err(|_| crate::CommandError::ResourceFailure {
-                need: Box::new(need.clone()),
-                failure: Box::new(crate::ResourceFailure::message(
-                    "resource provider returned a mismatched typed answer",
-                )),
+            .map_err(|_| {
+                crate::CommandError::resource_failure(
+                    need.clone(),
+                    crate::ResourceFailure::message(
+                        "resource provider returned a mismatched typed answer",
+                    ),
+                )
             })
             .and_then(|outcome| match outcome {
                 Some(ResourceInstallOutcome::Failed(failure)) => {
-                    Err(crate::CommandError::ResourceFailure {
-                        need: Box::new(need.clone()),
-                        failure: Box::new(failure),
-                    })
+                    Err(crate::CommandError::resource_failure(need.clone(), failure))
                 }
                 other => Ok(other),
             })

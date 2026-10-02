@@ -16,8 +16,8 @@ use tex_command::{
 };
 use tex_exec::{
     CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointSink, DiagnosticStep,
-    DiagnosticStepResult, MainControl, ResourceFailure, ResourceFulfillment, ResourceHost,
-    ResourceHostProvider, ResourceNeed, ResourceOutcome, ResourceWorld,
+    DiagnosticStepResult, MainControl, ResourceFulfillment, ResourceHost, ResourceHostProvider,
+    ResourceNeed, ResourceOutcome, ResourceWorld,
 };
 use tex_out::dvi::DviStreamWriter;
 use tex_state::print::{Printer, Selector};
@@ -27,22 +27,16 @@ use crate::{RunResult, TexRunStatus};
 
 fn map_step_failure(error: CanonicalStepFailure) -> SessionError {
     match error {
-        CanonicalStepFailure::Execution(tex_exec::ExecError::ResourceFailure { need, failure }) => {
-            SessionError::ResourceFailure {
-                need,
-                failure: *failure,
-            }
+        CanonicalStepFailure::Execution(tex_exec::ExecError::ResourceFailure(resource)) => {
+            SessionError::ResourceFailure(resource)
         }
         CanonicalStepFailure::Execution(tex_exec::ExecError::Captured {
             error,
             site,
             frozen,
         }) => match *error {
-            tex_exec::ExecError::ResourceFailure { need, failure } => {
-                SessionError::ResourceFailure {
-                    need,
-                    failure: *failure,
-                }
+            tex_exec::ExecError::ResourceFailure(resource) => {
+                SessionError::ResourceFailure(resource)
             }
             error => SessionError::Execution(tex_exec::ExecError::Captured {
                 error: Box::new(error),
@@ -312,10 +306,7 @@ pub enum SessionError {
         need: Box<ResourceNeed>,
         fulfillment: Box<ResourceFulfillment>,
     },
-    ResourceFailure {
-        need: Box<ResourceNeed>,
-        failure: ResourceFailure,
-    },
+    ResourceFailure(Box<tex_command::ResourceFailureDiagnostic>),
     ReplayCheckpointUnavailable {
         need: Box<ResourceNeed>,
     },
@@ -348,8 +339,12 @@ impl fmt::Display for SessionError {
                 formatter,
                 "resource fulfillment {fulfillment:?} does not answer pending need {need:?}"
             ),
-            Self::ResourceFailure { need, failure } => {
-                write!(formatter, "resource {need:?} failed: {failure}")
+            Self::ResourceFailure(resource) => {
+                write!(
+                    formatter,
+                    "resource {:?} failed: {}",
+                    resource.need, resource.failure
+                )
             }
             Self::ReplayCheckpointUnavailable { need } => write!(
                 formatter,
@@ -381,7 +376,7 @@ impl fmt::Display for SessionError {
 impl std::error::Error for SessionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::ResourceFailure { failure, .. } => Some(failure),
+            Self::ResourceFailure(resource) => Some(&resource.failure),
             Self::CheckpointRestore(error) => Some(error),
             _ => None,
         }
@@ -811,10 +806,12 @@ impl<'a, G> EngineSession<'a, G> {
                 host.fulfill(&mut world, &need)
             };
             if let ResourceOutcome::Failed(failure) = &outcome {
-                return Err(SessionError::ResourceFailure {
-                    need: Box::new(need),
-                    failure: failure.clone(),
-                });
+                return Err(SessionError::ResourceFailure(Box::new(
+                    tex_command::ResourceFailureDiagnostic {
+                        need,
+                        failure: failure.clone(),
+                    },
+                )));
             }
             if let ResourceOutcome::Fulfilled(fulfillment) = outcome {
                 let ResourceFulfillment::Input {
@@ -1279,10 +1276,12 @@ impl<'a, G> EngineSession<'a, G> {
             (outcome, effects)
         };
         if let ResourceOutcome::Failed(failure) = &outcome {
-            return Err(SessionError::ResourceFailure {
-                need: Box::new(need.clone()),
-                failure: failure.clone(),
-            });
+            return Err(SessionError::ResourceFailure(Box::new(
+                tex_command::ResourceFailureDiagnostic {
+                    need: need.clone(),
+                    failure: failure.clone(),
+                },
+            )));
         }
         if let ResourceOutcome::Fulfilled(fulfillment) = &outcome
             && !fulfillment_matches_need(need, fulfillment)
@@ -1632,7 +1631,9 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use tex_command::{CommandObservation, CommandObserver, FontResource, PdfImageResource};
+    use tex_command::{
+        CommandObservation, CommandObserver, FontResource, PdfImageResource, ResourceFailure,
+    };
     use tex_exec::{EngineBoundary, canonical_font_resource_path};
     use tex_state::World;
 
@@ -2012,11 +2013,8 @@ mod tests {
 
             assert!(matches!(
                 error,
-                SessionError::ResourceFailure {
-                    need,
-                    failure: ResourceFailure::Message(message),
-                } if matches!(need.as_ref(), ResourceNeed::Input { name, .. } if name == "child.tex")
-                    && message == "diagnostic input failed"
+                SessionError::ResourceFailure(resource) if matches!(&resource.need, ResourceNeed::Input { name, .. } if name == "child.tex")
+                    && matches!(&resource.failure, ResourceFailure::Message(message) if message == "diagnostic input failed")
             ));
             assert_eq!(host.calls, 1, "failed diagnostic resources are not retried");
         });
@@ -3114,11 +3112,8 @@ mod tests {
                 .expect_err("host failure must surface immediately");
             assert!(matches!(
                 error,
-                SessionError::ResourceFailure {
-                    need,
-                    failure: ResourceFailure::Message(message),
-                } if matches!(need.as_ref(), ResourceNeed::Input { name, .. } if name == "never.tex")
-                    && message == "read never.tex: input/output error"
+                SessionError::ResourceFailure(resource) if matches!(&resource.need, ResourceNeed::Input { name, .. } if name == "never.tex")
+                    && matches!(&resource.failure, ResourceFailure::Message(message) if message == "read never.tex: input/output error")
             ));
             assert_eq!(host.calls, 1, "failed resources are not retried");
         });
@@ -3602,12 +3597,8 @@ mod tests {
             assert!(matches!(
                 error,
                 SessionError::Execution(tex_exec::ExecError::Command(
-                    tex_command::CommandError::FuelExhausted {
-                        limit: 19,
-                        burned: 19,
-                        ..
-                    }
-                ))
+                    tex_command::CommandError::FuelExhausted(fuel)
+                )) if fuel.limit == 19 && fuel.burned == 19
             ));
         }
         assert_eq!(unobserved_burned, 19);

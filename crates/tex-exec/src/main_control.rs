@@ -5898,7 +5898,7 @@ fn execution_error_is_fuel(error: &ExecError) -> bool {
     match error {
         ExecError::Captured { error, .. } => execution_error_is_fuel(error),
         ExecError::CumulativeFuelExceeded { .. }
-        | ExecError::Command(CommandError::FuelExhausted { .. }) => true,
+        | ExecError::Command(CommandError::FuelExhausted(_)) => true,
         _ => false,
     }
 }

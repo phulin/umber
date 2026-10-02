@@ -213,12 +213,8 @@ impl CommandFuel {
     #[cold]
     #[inline(never)]
     fn exhausted_error(&self) -> crate::CommandError {
-        let work = Box::new(self.work());
-        crate::CommandError::FuelExhausted {
-            limit: self.limit,
-            burned: work.fuel_charges,
-            work,
-        }
+        let work = self.work();
+        crate::CommandError::fuel_exhausted(self.limit, work.fuel_charges, work)
     }
 
     /// Commits the exact work produced by one resolved raw delivery.

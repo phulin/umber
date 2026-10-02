@@ -127,3 +127,6 @@ See the diagnosis order in
 for why ad hoc probes and the retired Umber engine are excluded, and
 [Testing Infrastructure](../../docs/testing_infrastructure.md) for each
 tool's exact commands and output shapes.
+
+Typed resource failures retain the same boxed need/cause packet from command
+and executor through the session error. Do not unpack and rebox its fields.

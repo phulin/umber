@@ -8,14 +8,14 @@ fn exact_limit_funds_exactly_that_many_actions() {
     assert!(fuel.charge().is_ok());
     assert_eq!(
         fuel.charge(),
-        Err(crate::CommandError::FuelExhausted {
-            limit: 3,
-            burned: 3,
-            work: Box::new(CommandWorkCounters {
+        Err(crate::CommandError::fuel_exhausted(
+            3,
+            3,
+            CommandWorkCounters {
                 fuel_charges: 3,
                 ..CommandWorkCounters::default()
-            }),
-        })
+            }
+        ))
     );
     assert_eq!(fuel.burned(), 3);
 }
@@ -32,14 +32,14 @@ fn authority_scale_limits_publish_exact_terminal_counts() {
         }
         assert_eq!(
             fuel.charge(),
-            Err(crate::CommandError::FuelExhausted {
+            Err(crate::CommandError::fuel_exhausted(
                 limit,
-                burned: limit,
-                work: Box::new(CommandWorkCounters {
+                limit,
+                CommandWorkCounters {
                     fuel_charges: limit,
                     ..CommandWorkCounters::default()
-                }),
-            })
+                }
+            ))
         );
     }
 }

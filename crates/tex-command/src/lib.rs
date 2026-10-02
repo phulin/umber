@@ -84,7 +84,10 @@ mod tracing_nesting;
 mod test_harness;
 
 pub use command::CurrentCommand;
-pub use error::{CommandError, DimensionDiagnostic, InsertedUnit};
+pub use error::{
+    CommandError, CommandErrorOrigin, DimensionDiagnostic, FuelExhaustion, InsertedUnit,
+    MissingInputDiagnostic, ResourceFailureDiagnostic,
+};
 pub use fatal::{FATAL_SEVERITY, FatalError};
 pub use fuel::{
     CommandFuel, CommandFuelLedger, CommandFuelLimitError, CommandWorkCounters,

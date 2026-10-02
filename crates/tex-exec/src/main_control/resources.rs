@@ -22,21 +22,25 @@ impl<G> MainControl<G> {
         self.capabilities
             .install_resource_resolution(need, resolution, register_texinputs_alias)
             .map(Some)
-            .map_err(|_| ExecError::ResourceFailure {
-                need: Box::new(need.clone()),
-                failure: Box::new(tex_command::ResourceFailure::message(
-                    "resource provider returned a mismatched typed answer",
-                )),
+            .map_err(|_| {
+                ExecError::ResourceFailure(Box::new(tex_command::ResourceFailureDiagnostic {
+                    need: need.clone(),
+                    failure: tex_command::ResourceFailure::message(
+                        "resource provider returned a mismatched typed answer",
+                    ),
+                }))
             })
             .and_then(|outcome| match outcome {
                 Some(ResourceInstallOutcome::Declined) => {
                     self.declined_resource_attempt = Some(need.clone());
                     Ok(Some(ResourceInstallOutcome::Declined))
                 }
-                Some(ResourceInstallOutcome::Failed(failure)) => Err(ExecError::ResourceFailure {
-                    need: Box::new(need.clone()),
-                    failure: Box::new(failure),
-                }),
+                Some(ResourceInstallOutcome::Failed(failure)) => Err(ExecError::ResourceFailure(
+                    Box::new(tex_command::ResourceFailureDiagnostic {
+                        need: need.clone(),
+                        failure,
+                    }),
+                )),
                 other => Ok(other),
             })
     }
@@ -59,7 +63,7 @@ impl<G> MainControl<G> {
                     .command_context()
                     .expect("font resource admission")
                     .with_input_read_state(|input| retained.actual_use(input, &dependencies))
-                    .map_err(ExecError::World)?;
+                    .map_err(ExecError::from)?;
                 let Some(actual) = actual else {
                     self.capabilities.invalidate_font_resource(&path);
                     continue;
@@ -92,7 +96,7 @@ impl<G> MainControl<G> {
                 }
                 Some(ResourceInstallOutcome::Declined) | None => {
                     return Err(ExecError::MissingFont {
-                        request: request.clone(),
+                        request: Box::new(request.clone()),
                     });
                 }
                 Some(ResourceInstallOutcome::Failed(_)) => {
@@ -133,7 +137,7 @@ impl<G> MainControl<G> {
                             .command_context()
                             .expect("openin probe admission")
                             .with_input_read_state(|input| retained.actual_use(input))
-                            .map_err(ExecError::World)?;
+                            .map_err(ExecError::from)?;
                         let Some(actual) = actual else {
                             self.capabilities
                                 .invalidate_input_probe_resource(&packed_name);
@@ -247,7 +251,7 @@ impl<G> MainControl<G> {
                     }
                     Some(ResourceInstallOutcome::Declined) | None => {
                         return Err(ExecError::MissingPdfImage {
-                            request: host_request,
+                            request: Box::new(host_request),
                         });
                     }
                     Some(ResourceInstallOutcome::Failed(_)) => {
@@ -300,7 +304,7 @@ impl<G> MainControl<G> {
         let origin = stores
             .world()
             .same_run_output_hash(path)
-            .map_err(ExecError::World)?
+            .map_err(ExecError::from)?
             .map_or(tex_state::InputOrigin::External, |_| {
                 tex_state::InputOrigin::SameRunGenerated
             });
@@ -327,7 +331,7 @@ impl<G> MainControl<G> {
             if let Some(hash) = stores
                 .world()
                 .same_run_output_hash(dependency.path())
-                .map_err(ExecError::World)?
+                .map_err(ExecError::from)?
             {
                 return Ok(Some((dependency.path().to_owned(), hash)));
             }
@@ -335,7 +339,7 @@ impl<G> MainControl<G> {
         stores
             .world()
             .same_run_output_hash(selected_path)
-            .map_err(ExecError::World)
+            .map_err(ExecError::from)
             .map(|hash| hash.map(|hash| (selected_path.to_owned(), hash)))
     }
 
@@ -359,6 +363,6 @@ impl<G> MainControl<G> {
             .command_context()
             .expect("live generation")
             .record_input_dependencies(dependencies)
-            .map_err(ExecError::World)
+            .map_err(ExecError::from)
     }
 }

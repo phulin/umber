@@ -254,3 +254,7 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
 Run `cargo test -q --tests -p tex-exec` after local changes. For CLI-visible behavior or shipout effects, also run the relevant `umber` integration or corpus checks. Run the whole routine suite with `cargo test -q --tests`, then use `scripts/check.sh` for dprint, Biome, rustfmt, and clippy.
 
 Working a canonical-command semantic or DVI divergence that touches main-control dispatch requires reading [Canonical Divergence Working Contract](../../docs/canonical_divergence_workflow.md) first.
+
+Native execution errors box missing-font, missing-image and World payloads only
+when raised. Resource failures move the same command-owned need/cause packet
+through executor and session; successful results construct no failure payload.

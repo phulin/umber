@@ -126,7 +126,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         }
         if !found {
-            return Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+            return Err(CommandError::fatal(crate::FatalError::emergency_stop(
                 "(interwoven alignment preambles are not allowed)",
             )));
         }
@@ -134,7 +134,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // proof: another preamble may leave the expected exhausted frame in
         // place while its brace sentinel is interwoven with the active cell.
         if self.command.alignment.align_state < 500_000 {
-            return Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+            return Err(CommandError::fatal(crate::FatalError::emergency_stop(
                 "(interwoven alignment preambles are not allowed)",
             )));
         }

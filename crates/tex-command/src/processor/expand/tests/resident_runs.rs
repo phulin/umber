@@ -154,7 +154,7 @@ fn skipped_resident_run_stops_before_the_over_budget_word() {
             let mut destination = None;
             assert!(matches!(
                 processor.get_next_skipping_into(&mut destination, &mut 0),
-                Err(crate::CommandError::FuelExhausted { .. })
+                Err(crate::CommandError::FuelExhausted(_))
             ));
             assert!(destination.is_none());
             drop(processor);

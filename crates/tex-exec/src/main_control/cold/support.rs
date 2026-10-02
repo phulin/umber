@@ -2017,25 +2017,22 @@ pub(in crate::main_control) fn font_identifier_for_definition<G>(
 /// until it is explicitly handled.
 pub(in crate::main_control) fn command_error(error: CommandError) -> ExecError {
     match error {
-        CommandError::AtOrigin { error, origin } => {
-            command_error(*error).capture_command_origin(origin)
+        CommandError::AtOrigin(annotated) => {
+            command_error(annotated.error).capture_command_origin(annotated.origin)
         }
-        CommandError::MissingInput {
-            name,
-            original_name,
-        } => ExecError::MissingInput {
-            name,
-            original_name,
+        CommandError::MissingInput(input) => ExecError::MissingInput {
+            name: input.name,
+            original_name: input.original_name,
         },
-        CommandError::MissingInputProbe(request) => ExecError::MissingInputProbe { request },
-        CommandError::ResourceFailure { need, failure } => {
-            ExecError::ResourceFailure { need, failure }
+        CommandError::MissingInputProbe(request) => {
+            ExecError::MissingInputProbe { request: *request }
         }
-        CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),
+        CommandError::ResourceFailure(resource) => ExecError::ResourceFailure(resource),
+        CommandError::PdfNavigation(message) => ExecError::PdfNavigation(*message),
         // §93 `succumb` is not a command failure to be re-described; it keeps
         // its own identity all the way up to the driver.
-        CommandError::Fatal(fatal) => ExecError::Fatal(fatal),
-        CommandError::FuelExhausted { .. }
+        CommandError::Fatal(fatal) => ExecError::Fatal(*fatal),
+        CommandError::FuelExhausted(_)
         | CommandError::InputInvariant(_)
         | CommandError::StaleDiagnosticContext
         | CommandError::MacroPrefixMismatch

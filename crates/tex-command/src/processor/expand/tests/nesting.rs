@@ -145,11 +145,11 @@ fn check(family: Family, depth: usize, parent_depth: u32, should_overflow: bool,
         if should_overflow {
             assert!(
                 matches!(
-                    failure,
-                    Some(CommandError::Fatal(FatalError::CapacityExceeded {
+                    failure.as_ref(),
+                    Some(CommandError::Fatal(fatal)) if matches!(**fatal, FatalError::CapacityExceeded {
                         resource: "expansion depth",
                         amount: 10_000,
-                    }))
+                    })
                 ),
                 "{family:?} at depth {depth}: {failure:?}"
             );
@@ -321,7 +321,7 @@ fn failed_nested_operand_scan_restores_shared_expansion_capacity() {
             let mut destination = None;
             assert!(matches!(
                 processor.get_x_token_into(&mut destination),
-                Err(CommandError::FuelExhausted { .. })
+                Err(CommandError::FuelExhausted(_))
             ));
             assert!(destination.is_none());
             assert_eq!(processor.expansion_depth, 0);

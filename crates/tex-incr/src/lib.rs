@@ -3964,22 +3964,16 @@ fn drive_synchronous_candidate(
 fn map_step_failure(error: CanonicalStepFailure) -> SessionError {
     match error {
         CanonicalStepFailure::Execution(error) => match error {
-            tex_exec::ExecError::ResourceFailure { need, failure } => {
-                SessionError::ResourceFailure {
-                    need,
-                    failure: *failure,
-                }
+            tex_exec::ExecError::ResourceFailure(resource) => {
+                SessionError::ResourceFailure(resource)
             }
             tex_exec::ExecError::Captured {
                 error,
                 site,
                 frozen,
             } => match *error {
-                tex_exec::ExecError::ResourceFailure { need, failure } => {
-                    SessionError::ResourceFailure {
-                        need,
-                        failure: *failure,
-                    }
+                tex_exec::ExecError::ResourceFailure(resource) => {
+                    SessionError::ResourceFailure(resource)
                 }
                 error => SessionError::Execute(tex_exec::ExecError::Captured {
                     error: Box::new(error),
@@ -4296,10 +4290,7 @@ pub enum SessionError {
     ResourceNoProgress {
         need: Box<ResourceNeed>,
     },
-    ResourceFailure {
-        need: Box<ResourceNeed>,
-        failure: ResourceFailure,
-    },
+    ResourceFailure(Box<tex_command::ResourceFailureDiagnostic>),
     SourceRegistration(SourceRegistrationError),
     CommandSummary(tex_command::CommandSummaryError),
     Execute(tex_exec::ExecError),
@@ -4353,8 +4344,12 @@ impl fmt::Display for SessionError {
             Self::ResourceNoProgress { need, .. } => {
                 write!(f, "resource replay made no progress for {need:?}")
             }
-            Self::ResourceFailure { need, failure } => {
-                write!(f, "resource {need:?} failed: {failure}")
+            Self::ResourceFailure(resource) => {
+                write!(
+                    f,
+                    "resource {:?} failed: {}",
+                    resource.need, resource.failure
+                )
             }
             Self::SourceRegistration(error) => write!(f, "source registration failed: {error}"),
             Self::CommandSummary(error) => write!(f, "checkpoint failed: {error}"),
@@ -4385,7 +4380,7 @@ impl fmt::Display for SessionError {
 impl std::error::Error for SessionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::ResourceFailure { failure, .. } => Some(failure),
+            Self::ResourceFailure(resource) => Some(&resource.failure),
             _ => None,
         }
     }

@@ -1354,11 +1354,11 @@ fn alignment_preamble_span_expansion_abort_releases_its_resource_child() {
         assert!(
             matches!(
                 &aborted,
-                Err(ExecError::Command(CommandError::FuelExhausted { .. }))
+                Err(ExecError::Command(CommandError::FuelExhausted(_)))
             ) || matches!(
                 &aborted,
                 Err(ExecError::Captured { error, .. })
-                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted { .. }))
+                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted(_)))
             ),
             "unexpected preamble abort: {aborted:?}"
         );

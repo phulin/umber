@@ -209,9 +209,11 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   volume from the singular command-work ledger, so the resident loop does not
   maintain a parallel ownership census. Genuine backup copies remain separately
   counted because they are not implied by the raw-delivery vector.
-- `src/error.rs`: command error and resource-need representation plus the
-  shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
-  and canonical scanner paths.
+- `src/error.rs`: compact native command failure identities. Fuel work,
+  filenames, resource failure and source annotation each have one cold payload
+  owner allocated only when raised; resource packets move through executor and
+  session without repacking. It also owns the shared dimension-scanner recovery
+  diagnostic vocabulary for the sole canonical scanners.
 - `src/fuel.rs` and `src/fuel/tests.rs`: checked finite command-work limits,
   one exact remaining-budget countdown, profiling-only non-fuel work
   counters, terminal/publication-time consumed-fuel and raw-frame derivation

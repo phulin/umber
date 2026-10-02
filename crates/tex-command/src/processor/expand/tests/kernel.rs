@@ -91,7 +91,7 @@ fn nested_readers(observed: bool, main_control: bool, limit: u64) -> (String, u6
                     };
                     output.push(ch);
                 }
-                Err(crate::CommandError::FuelExhausted { .. }) => {
+                Err(crate::CommandError::FuelExhausted(_)) => {
                     assert!(destination.is_none());
                     assert_eq!(processor.command.transient.active_expansion_depth, 0);
                     assert_eq!(processor.expansion_depth, 0);
@@ -285,10 +285,7 @@ fn reused_raw_destination_is_cleared_at_eof_and_fuel_failure() {
             }
             let result = processor.raw_next_hot(&mut destination);
             if limit == 2 {
-                assert!(matches!(
-                    result,
-                    Err(crate::CommandError::FuelExhausted { .. })
-                ));
+                assert!(matches!(result, Err(crate::CommandError::FuelExhausted(_))));
             } else {
                 assert_eq!(result.expect("EOF"), crate::DeliveryStatus::End);
             }

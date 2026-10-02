@@ -148,7 +148,7 @@ pub enum ExecError {
         site: DiagnosticSite,
         frozen: Option<Box<FrozenDiagnosticEvidence>>,
     },
-    World(WorldError),
+    World(Box<WorldError>),
     FontParse(tex_fonts::ParseError),
     PdfFontMap(tex_fonts::PdfFontMapError),
     PdfGlyphToUnicode(String),
@@ -281,17 +281,14 @@ pub enum ExecError {
     /// A font definition completed scanning, but its transient
     /// host capability has not supplied the immutable resource yet.
     MissingFont {
-        request: tex_command::FontLoadRequest,
+        request: Box<tex_command::FontLoadRequest>,
     },
     MissingPdfImage {
-        request: tex_command::PdfImageRequest,
+        request: Box<tex_command::PdfImageRequest>,
     },
     /// A synchronous retained-resource provider failed. This is distinct
     /// from all missing-resource variants and must not enter replay.
-    ResourceFailure {
-        need: Box<tex_command::ResourceNeed>,
-        failure: Box<tex_command::ResourceFailure>,
-    },
+    ResourceFailure(Box<tex_command::ResourceFailureDiagnostic>),
     MissingTracedToken {
         context: TracedTokenWord,
     },
@@ -394,7 +391,8 @@ impl ExecError {
     #[must_use]
     pub fn as_fatal(&self) -> Option<FatalError> {
         match self {
-            Self::Fatal(fatal) | Self::Command(CommandError::Fatal(fatal)) => Some(*fatal),
+            Self::Fatal(fatal) => Some(*fatal),
+            Self::Command(CommandError::Fatal(fatal)) => Some(**fatal),
             Self::Captured { error, .. } => error.as_fatal(),
             _ => None,
         }
@@ -549,8 +547,8 @@ impl fmt::Display for ExecError {
             Self::MissingPdfImage { request } => {
                 write!(f, "image resource `{}` is unavailable", request.name)
             }
-            Self::ResourceFailure { failure, .. } => {
-                write!(f, "resource resolution failed: {failure}")
+            Self::ResourceFailure(resource) => {
+                write!(f, "resource resolution failed: {}", resource.failure)
             }
             Self::MissingTracedToken { .. } => f.write_str("missing token while scanning input"),
             Self::Command(err) => write!(f, "{err}"),
@@ -698,11 +696,11 @@ impl std::error::Error for ExecError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Captured { error, .. } => Some(error),
-            Self::World(err) => Some(err),
+            Self::World(err) => Some(err.as_ref()),
             Self::FontParse(err) => Some(err),
             Self::PdfFontMap(err) => Some(err),
             Self::Command(err) => Some(err),
-            Self::ResourceFailure { failure, .. } => Some(failure),
+            Self::ResourceFailure(resource) => Some(&resource.failure),
             Self::ExecutionAlreadyTerminated
             | Self::Halted
             | Self::ExecutionCancelled
@@ -849,7 +847,7 @@ impl ExecError {
             | Self::MissingInputProbe { .. }
             | Self::MissingFont { .. }
             | Self::MissingPdfImage { .. }
-            | Self::ResourceFailure { .. }
+            | Self::ResourceFailure(_)
             | Self::Fatal(_)
             | Self::Command(_)
             | Self::UnsupportedAssignmentTarget
@@ -1094,7 +1092,7 @@ impl From<tex_state::print::JumpOut> for ExecError {
 
 impl From<WorldError> for ExecError {
     fn from(value: WorldError) -> Self {
-        Self::World(value)
+        Self::World(Box::new(value))
     }
 }
 

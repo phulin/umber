@@ -105,18 +105,41 @@ impl PartialEq for InputInvariantOrigin {
 
 impl Eq for InputInvariantOrigin {}
 
+/// Cold work snapshot retained only after fuel exhaustion.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FuelExhaustion {
+    pub limit: u64,
+    pub burned: u64,
+    pub work: crate::CommandWorkCounters,
+}
+
+/// Owned filenames at a missing-input replay boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissingInputDiagnostic {
+    pub name: String,
+    pub original_name: String,
+}
+
+/// The original resource need and its owned failure cause.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceFailureDiagnostic {
+    pub need: crate::ResourceNeed,
+    pub failure: crate::ResourceFailure,
+}
+
+/// One actual command failure and its cold source annotation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandErrorOrigin {
+    pub error: CommandError,
+    pub origin: OriginId,
+}
+
 /// A command-core operation could not preserve its input-state invariant.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommandError {
     /// The command-owned resource ledger cannot fund another canonical
     /// delivery action.
-    FuelExhausted {
-        limit: u64,
-        burned: u64,
-        /// Fuel diagnostics are cold; keep their detailed snapshot out of
-        /// every hot `Result<_, CommandError>` carrier.
-        work: Box<crate::CommandWorkCounters>,
-    },
+    FuelExhausted(Box<FuelExhaustion>),
     /// A stale or malformed input-level transition was observed.
     InputInvariant(InputInvariantOrigin),
     /// A captured diagnostic context no longer names the live input.
@@ -129,40 +152,34 @@ pub enum CommandError {
     OuterInMacroArgument,
     /// The installed input capability has no immutable backing for a
     /// requested logical filename.
-    MissingInput { name: String, original_name: String },
+    MissingInput(Box<MissingInputDiagnostic>),
     /// A non-opening file enquiry has no retained bytes or authoritative
     /// absence yet and requests a typed host probe.
-    MissingInputProbe(crate::FileEnquiryRequest),
+    MissingInputProbe(Box<crate::FileEnquiryRequest>),
     /// A synchronous resource provider failed while resolving a typed need.
     /// The original need and owned cause remain intact so the executor does
     /// not misclassify a real failure as an authoritative absence.
-    ResourceFailure {
-        need: Box<crate::ResourceNeed>,
-        failure: Box<crate::ResourceFailure>,
-    },
+    ResourceFailure(Box<ResourceFailureDiagnostic>),
     /// An otherwise-originless command failure annotated by the expandable
     /// delivery which triggered it. Typed resource needs deliberately remain
     /// unwrapped so the host can replay them.
-    AtOrigin {
-        error: Box<CommandError>,
-        origin: OriginId,
-    },
+    AtOrigin(Box<CommandErrorOrigin>),
     /// This expansion slice has not installed the primitive's canonical
     /// scalar handler yet.
     UnsupportedExpandablePrimitive(tex_state::meaning::ExpandablePrimitive),
     /// A pdfTeX navigation scanner rejected an action, identifier, or view.
-    PdfNavigation(&'static str),
+    PdfNavigation(Box<&'static str>),
     /// TeX82 §93 `succumb`: the job is over. This is not a recoverable command
     /// failure; it is §81 `jump_out` unwinding to the driver, which latches the
     /// terminal state and ends the job.
-    Fatal(crate::FatalError),
+    Fatal(Box<crate::FatalError>),
 }
 
 impl From<tex_state::print::JumpOut> for CommandError {
     /// Carries §81's non-local exit from the processor-owned interaction
     /// transition to the driver.
     fn from(jump: tex_state::print::JumpOut) -> Self {
-        Self::Fatal(jump.into())
+        Self::fatal(jump.into())
     }
 }
 
@@ -173,6 +190,45 @@ impl From<crate::execution_scratch::ScratchError> for CommandError {
 }
 
 impl CommandError {
+    #[cold]
+    pub(crate) fn fuel_exhausted(
+        limit: u64,
+        burned: u64,
+        work: crate::CommandWorkCounters,
+    ) -> Self {
+        Self::FuelExhausted(Box::new(FuelExhaustion {
+            limit,
+            burned,
+            work,
+        }))
+    }
+
+    #[cold]
+    pub(crate) fn missing_input(name: String, original_name: String) -> Self {
+        Self::MissingInput(Box::new(MissingInputDiagnostic {
+            name,
+            original_name,
+        }))
+    }
+
+    #[cold]
+    pub(crate) fn resource_failure(
+        need: crate::ResourceNeed,
+        failure: crate::ResourceFailure,
+    ) -> Self {
+        Self::ResourceFailure(Box::new(ResourceFailureDiagnostic { need, failure }))
+    }
+
+    #[cold]
+    pub(crate) fn pdf_navigation(message: &'static str) -> Self {
+        Self::PdfNavigation(Box::new(message))
+    }
+
+    #[cold]
+    pub(crate) fn fatal(fatal: crate::FatalError) -> Self {
+        Self::Fatal(Box::new(fatal))
+    }
+
     /// Constructs [`CommandError::InputInvariant`], capturing the Rust
     /// call site that raised it so a canonical divergence names its true
     /// origin instead of the shared, otherwise-unresolvable sentinel.
@@ -182,20 +238,20 @@ impl CommandError {
     }
 
     pub(crate) const fn is_resource_suspension(&self) -> bool {
-        matches!(self, Self::MissingInput { .. } | Self::MissingInputProbe(_))
+        matches!(self, Self::MissingInput(_) | Self::MissingInputProbe(_))
     }
 
     pub(crate) fn at_origin_unless_resource(self, origin: OriginId) -> Self {
         if matches!(
             self,
-            Self::MissingInput { .. } | Self::MissingInputProbe(_) | Self::AtOrigin { .. }
+            Self::MissingInput(_) | Self::MissingInputProbe(_) | Self::AtOrigin(_)
         ) {
             self
         } else {
-            Self::AtOrigin {
-                error: Box::new(self),
+            Self::AtOrigin(Box::new(CommandErrorOrigin {
+                error: self,
                 origin,
-            }
+            }))
         }
     }
 }
@@ -203,11 +259,12 @@ impl CommandError {
 impl std::fmt::Display for CommandError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FuelExhausted {
-                limit,
-                burned,
-                work,
-            } => {
+            Self::FuelExhausted(fuel) => {
+                let FuelExhaustion {
+                    limit,
+                    burned,
+                    work,
+                } = fuel.as_ref();
                 write!(
                     formatter,
                     "canonical command fuel exhausted after {burned} actions (limit {limit}); command work: fuel_charges={} token_frame_steps={} expanded_deliveries={} meaning_lookups={} scanner_tokens={} write_expansions={}",
@@ -247,16 +304,20 @@ impl std::fmt::Display for CommandError {
             Self::OuterInMacroArgument => {
                 formatter.write_str("outer token found while scanning macro argument")
             }
-            Self::MissingInput { name, .. } => {
-                write!(formatter, "input source `{name}` is unavailable")
+            Self::MissingInput(input) => {
+                write!(formatter, "input source `{}` is unavailable", input.name)
             }
             Self::MissingInputProbe(request) => {
                 write!(formatter, "input enquiry `{}` is unresolved", request.name)
             }
-            Self::ResourceFailure { failure, .. } => {
-                write!(formatter, "resource resolution failed: {failure}")
+            Self::ResourceFailure(resource) => {
+                write!(
+                    formatter,
+                    "resource resolution failed: {}",
+                    resource.failure
+                )
             }
-            Self::AtOrigin { error, .. } => std::fmt::Display::fmt(error, formatter),
+            Self::AtOrigin(annotated) => std::fmt::Display::fmt(&annotated.error, formatter),
             Self::UnsupportedExpandablePrimitive(primitive) => {
                 write!(
                     formatter,

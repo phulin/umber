@@ -758,11 +758,11 @@ fn preloaded_resource_fuel_abort_releases_its_scanner_child() {
         assert!(
             matches!(
                 &aborted,
-                Err(ExecError::Command(CommandError::FuelExhausted { .. }))
+                Err(ExecError::Command(CommandError::FuelExhausted(_)))
             ) || matches!(
                 &aborted,
                 Err(ExecError::Captured { error, .. })
-                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted { .. }))
+                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted(_)))
             ),
             "unexpected scalar abort: {aborted:?}"
         );
@@ -783,11 +783,11 @@ fn preloaded_scalar_operation_fuel_abort_releases_parent_and_deepest_child() {
         assert!(
             matches!(
                 &aborted,
-                Err(ExecError::Command(CommandError::FuelExhausted { .. }))
+                Err(ExecError::Command(CommandError::FuelExhausted(_)))
             ) || matches!(
                 &aborted,
                 Err(ExecError::Captured { error, .. })
-                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted { .. }))
+                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted(_)))
             ),
             "unexpected scalar operation abort: {aborted:?}"
         );
@@ -926,11 +926,11 @@ fn prefixed_definition_scanner_fuel_abort_releases_its_operation_child() {
         assert!(
             matches!(
                 &aborted,
-                Err(ExecError::Command(CommandError::FuelExhausted { .. }))
+                Err(ExecError::Command(CommandError::FuelExhausted(_)))
             ) || matches!(
                 &aborted,
                 Err(ExecError::Captured { error, .. })
-                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted { .. }))
+                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted(_)))
             ),
             "unexpected prefixed-definition abort: {aborted:?}"
         );

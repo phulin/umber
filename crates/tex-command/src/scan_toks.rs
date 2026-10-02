@@ -2010,7 +2010,7 @@ fn reset_runaway_render_count() {
 
 pub(crate) fn attempt_command_error(error: AttemptError) -> CommandError {
     match error {
-        AttemptError::CapacityOverflow | AttemptError::AllocationFailed => CommandError::Fatal(
+        AttemptError::CapacityOverflow | AttemptError::AllocationFailed => CommandError::fatal(
             crate::FatalError::overflow("scanner token storage", i32::MAX),
         ),
         AttemptError::ForeignAttempt | AttemptError::InvalidCoordinate => {
@@ -2025,7 +2025,7 @@ fn definition_allocation_command_error(
     match error {
         tex_state::DefinitionAllocationError::AllocationFailed
         | tex_state::DefinitionAllocationError::CapacityOverflow => {
-            CommandError::Fatal(crate::FatalError::overflow("definition arena", i32::MAX))
+            CommandError::fatal(crate::FatalError::overflow("definition arena", i32::MAX))
         }
         tex_state::DefinitionAllocationError::InvalidDefinition => CommandError::input_invariant(),
     }
@@ -2035,7 +2035,7 @@ fn definition_build_command_error(error: tex_state::DefinitionBuildError) -> Com
     match error {
         tex_state::DefinitionBuildError::AllocationFailed
         | tex_state::DefinitionBuildError::CapacityOverflow => {
-            CommandError::Fatal(crate::FatalError::overflow("definition arena", i32::MAX))
+            CommandError::fatal(crate::FatalError::overflow("definition arena", i32::MAX))
         }
         tex_state::DefinitionBuildError::InvalidPhase
         | tex_state::DefinitionBuildError::InvalidProgram(_) => CommandError::input_invariant(),
@@ -2045,7 +2045,7 @@ fn definition_build_command_error(error: tex_state::DefinitionBuildError) -> Com
 pub(crate) fn scratch_command_error(error: crate::execution_scratch::ScratchError) -> CommandError {
     match error {
         crate::execution_scratch::ScratchError::CapacityOverflow
-        | crate::execution_scratch::ScratchError::AllocationFailed => CommandError::Fatal(
+        | crate::execution_scratch::ScratchError::AllocationFailed => CommandError::fatal(
             crate::FatalError::overflow("scanner continuation storage", i32::MAX),
         ),
         crate::execution_scratch::ScratchError::InvalidCoordinate => {
@@ -2418,7 +2418,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // prompt_input("") else begin wake_up_terminal; print_ln; sprint_cs(r);
         // prompt_input("="); n:=-1; end else fatal_error(...)`.
         if !self.state.interaction_permits_terminal_input() {
-            return Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+            return Err(CommandError::fatal(crate::FatalError::emergency_stop(
                 "job aborted, file error in nonstop mode",
             )));
         }

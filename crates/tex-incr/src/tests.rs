@@ -1065,11 +1065,8 @@ fn resource_failure_surfaces_without_replay_or_retry() {
         .expect_err("resource failure must reject the candidate immediately");
     assert!(matches!(
         error,
-        SessionError::ResourceFailure {
-            need,
-            failure: ResourceFailure::Message(message),
-        } if matches!(need.as_ref(), ResourceNeed::Input { name, .. } if name == "child.tex")
-            && message == "read child.tex: permission denied"
+        SessionError::ResourceFailure(resource) if matches!(&resource.need, ResourceNeed::Input { name, .. } if name == "child.tex")
+                    && matches!(&resource.failure, ResourceFailure::Message(message) if message == "read child.tex: permission denied")
     ));
     assert_eq!(host.calls, 1, "failed resources are not retried internally");
     assert!(

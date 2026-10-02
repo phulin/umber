@@ -55,7 +55,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 true,
             )?)
         } else {
-            return Err(CommandError::PdfNavigation(
+            return Err(CommandError::pdf_navigation(
                 "pdfTeX error (ext4): thread identifier type missing",
             ));
         };
@@ -310,7 +310,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfNavigationScalarPhase::DestinationNumber => {
                     let result = self.scan_keyword_retained("num");
                     if !result.into_result()?.value {
-                        return Err(CommandError::PdfNavigation(
+                        return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
                     }
@@ -346,7 +346,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let result = self.scan_integer_retained();
                     let zoom = result.into_result()?.value;
                     if zoom > 1_073_741_823 {
-                        return Err(CommandError::PdfNavigation(
+                        return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): number too big",
                         ));
                     }
@@ -407,7 +407,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             );
                         }
                     } else if progress.phase == PdfNavigationScalarPhase::DestinationFit {
-                        return Err(CommandError::PdfNavigation(
+                        return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): destination type missing",
                         ));
                     } else {
@@ -438,14 +438,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         bounded_by_halfword: bool,
     ) -> Result<u32, CommandError> {
         if value <= 0 {
-            return Err(CommandError::PdfNavigation(match kind {
+            return Err(CommandError::pdf_navigation(match kind {
                 "struct identifier" => "pdfTeX error (ext1): struct identifier must be positive",
                 "page number" => "pdfTeX error (ext1): page number must be positive",
                 _ => "pdfTeX error (ext1): num identifier must be positive",
             }));
         }
         if bounded_by_halfword && value > 1_073_741_823 {
-            return Err(CommandError::PdfNavigation(
+            return Err(CommandError::pdf_navigation(
                 "pdfTeX error (ext1): number too big",
             ));
         }

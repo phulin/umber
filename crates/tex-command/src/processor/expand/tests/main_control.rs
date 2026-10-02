@@ -256,10 +256,7 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                             processor.get_x_token_into(&mut destination)
                         };
                         if fuel_cut {
-                            assert!(matches!(
-                                result,
-                                Err(crate::CommandError::FuelExhausted { .. })
-                            ));
+                            assert!(matches!(result, Err(crate::CommandError::FuelExhausted(_))));
                             assert!(destination.is_none());
                         } else {
                             assert_eq!(

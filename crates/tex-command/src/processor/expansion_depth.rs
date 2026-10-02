@@ -32,6 +32,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             i32::try_from(EXPANSION_DEPTH_LIMIT).expect("expansion depth fits i32"),
         );
         self.observe(CommandObservation::Diagnostic(fatal.record()));
-        CommandError::Fatal(fatal)
+        CommandError::fatal(fatal)
     }
 }

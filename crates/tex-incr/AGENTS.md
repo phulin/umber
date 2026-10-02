@@ -63,3 +63,6 @@ run the explicit 1,000-edit tier with
 `cargo test --tests -p tex-incr tests::thousand_edit_scripted_fuzz_matches_cold_every_revision -- --ignored --exact`
 as well. Long-session semantic changes also run
 `cargo test -q -j 1 --tests -p tex-incr tests::long_session::long_session_thousands_match_clean_at_equal_work_milestones -- --ignored --exact --test-threads=1`.
+
+Typed resource failures retain the same boxed need/cause packet from command
+and executor through the session error. Do not unpack and rebox its fields.

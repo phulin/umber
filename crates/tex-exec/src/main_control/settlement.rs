@@ -741,13 +741,13 @@ impl<G> MainControl<G> {
                 ExecError::MissingFont { request } => {
                     self.pending_resource_site = site.primary_origin();
                     Ok(self.observed_suspension(
-                        declined_need.unwrap_or(ResourceNeed::Font { request }),
+                        declined_need.unwrap_or(ResourceNeed::Font { request: *request }),
                     ))
                 }
                 ExecError::MissingPdfImage { request } => {
                     self.pending_resource_site = site.primary_origin();
                     Ok(self.observed_suspension(
-                        declined_need.unwrap_or(ResourceNeed::PdfImage { request }),
+                        declined_need.unwrap_or(ResourceNeed::PdfImage { request: *request }),
                     ))
                 }
                 error => Err(ExecError::Captured {
@@ -768,12 +768,12 @@ impl<G> MainControl<G> {
             ExecError::MissingInputProbe { request } => Ok(self.observed_suspension(
                 declined_need.unwrap_or(ResourceNeed::InputProbe { request }),
             )),
-            ExecError::MissingFont { request } => {
-                Ok(self
-                    .observed_suspension(declined_need.unwrap_or(ResourceNeed::Font { request })))
-            }
-            ExecError::MissingPdfImage { request } => Ok(self
-                .observed_suspension(declined_need.unwrap_or(ResourceNeed::PdfImage { request }))),
+            ExecError::MissingFont { request } => Ok(self.observed_suspension(
+                declined_need.unwrap_or(ResourceNeed::Font { request: *request }),
+            )),
+            ExecError::MissingPdfImage { request } => Ok(self.observed_suspension(
+                declined_need.unwrap_or(ResourceNeed::PdfImage { request: *request }),
+            )),
             error => Err(error),
         }
     }

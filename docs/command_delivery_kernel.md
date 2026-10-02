@@ -401,3 +401,20 @@ That helper owns scanner status, bounded argument ranges, mismatch reporting,
 and their error cleanup. Definition admission, simple activation, and matching
 share the same native input retirement and body publication authorities. An
 empty ordinary replacement retains no exhausted input row or argument owner.
+
+## Cold failure owners in native results
+
+A successful reader or scalar scanner carries its native completion or value.
+It does not carry inline filename strings, resource requests, diagnostic work
+snapshots, or annotated failure bodies. Command failures keep their small
+identity and native scalar variants; every larger payload has one cold boxed
+owner, allocated only when that failure is raised. Fuel work, resource failure,
+and origin annotation consolidate their previously boxed subfields into that
+single payload. Formatting, resource replay, and final fatal conversion consume
+the same payload through the actual error boundary. There is no second error
+protocol or compatibility constructor.
+
+Execution likewise boxes actual missing-font, missing-image, and World failure
+payloads only when raising them. Completed font/image operands stay native and
+unboxed. This removes cold request data from every main-control result without
+adding bookkeeping, allocation, or a result adapter on the successful path.
