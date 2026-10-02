@@ -3,10 +3,7 @@ use tex_state::meaning::Meaning;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 
-use crate::{
-    CommandHostCapabilities, CommandState, ScalarScanFrame, ScalarScanStatus,
-    processor::DeliveryStatus,
-};
+use crate::{CommandHostCapabilities, CommandState, processor::DeliveryStatus};
 
 #[test]
 fn scalar_call_frame_separates_compact_status_value_and_error() {
@@ -67,12 +64,11 @@ fn integer_scanner_preserves_signs_and_backs_up_the_nonspace_terminator() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut scalar = ScalarScanFrame::default();
-        assert_eq!(
-            processor.scan_integer_into(&mut scalar),
-            ScalarScanStatus::Complete
-        );
-        let integer = scalar.take_integer();
+        let scalar_result = match processor.scan_integer_retained() {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        };
+        let integer = scalar_result;
         assert_eq!(integer.value, -42);
         let mut terminator = None;
         assert_eq!(
@@ -110,12 +106,11 @@ fn integer_scanner_preserves_the_frozen_conditional_recovery_terminator() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut scalar = ScalarScanFrame::default();
-        assert_eq!(
-            processor.scan_integer_into(&mut scalar),
-            ScalarScanStatus::Complete
-        );
-        assert_eq!(scalar.take_integer().value, 42);
+        let scalar_result = match processor.scan_integer_retained() {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        };
+        assert_eq!(scalar_result.value, 42);
         // TeX82 §§379 and 444: the inserted sentinel is still the next
         // command after scanning the integer; only a spacer is absorbed.
         for expected in [Token::frozen_relax(), other('X')] {
@@ -150,17 +145,16 @@ fn optional_equals_consumes_spaces_but_leaves_the_following_operand() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut scalar = ScalarScanFrame::default();
-        assert_eq!(
-            processor.scan_optional_equals_into(&mut scalar),
-            ScalarScanStatus::Complete
-        );
-        assert!(scalar.take_boolean().value);
-        assert_eq!(
-            processor.scan_integer_into(&mut scalar),
-            ScalarScanStatus::Complete
-        );
-        let integer = scalar.take_integer();
+        let scalar_result = match processor.scan_optional_equals_retained() {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        };
+        assert!(scalar_result.value);
+        let scalar_result = match processor.scan_integer_retained() {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        };
+        let integer = scalar_result;
         assert_eq!(integer.value, 7);
     });
 }
@@ -223,12 +217,11 @@ fn warmed_keyword_success_path_allocates_zero_heap() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut scalar = ScalarScanFrame::default();
-        assert_eq!(
-            processor.scan_keyword_into("dimension", &mut scalar),
-            ScalarScanStatus::Complete
-        );
-        let warm = scalar.take_boolean();
+        let scalar_result = match processor.scan_keyword_retained("dimension") {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        };
+        let warm = scalar_result;
         assert!(warm.value);
 
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
@@ -236,11 +229,13 @@ fn warmed_keyword_success_path_allocates_zero_heap() {
         {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
             for _ in 1..SCANS {
-                assert_eq!(
-                    processor.scan_keyword_into("dimension", &mut scalar),
-                    ScalarScanStatus::Complete
-                );
-                let scanned = scalar.take_boolean();
+                let scalar_result = match processor.scan_keyword_retained("dimension") {
+                    crate::RetainedScalarScan::Complete(value) => value,
+                    crate::RetainedScalarScan::Failed(error) => {
+                        panic!("scalar scan failed: {error:?}")
+                    }
+                };
+                let scanned = scalar_result;
                 assert!(scanned.value);
             }
         }
@@ -271,14 +266,12 @@ fn warmed_keyword_failed_prefix_path_allocates_zero_heap() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut scalar = ScalarScanFrame::default();
-        let run = |processor: &mut crate::CommandProcessor<'_, '_, _>,
-                   scalar: &mut ScalarScanFrame| {
-            assert_eq!(
-                processor.scan_keyword_into("dimension", scalar),
-                ScalarScanStatus::Complete
-            );
-            let scanned = scalar.take_boolean();
+        let run = |processor: &mut crate::CommandProcessor<'_, '_, _>| {
+            let scalar_result = match processor.scan_keyword_retained("dimension") {
+                crate::RetainedScalarScan::Complete(value) => value,
+                crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+            };
+            let scanned = scalar_result;
             assert!(!scanned.value);
             for _ in 0..9 {
                 let mut replayed = None;
@@ -291,14 +284,14 @@ fn warmed_keyword_failed_prefix_path_allocates_zero_heap() {
                 replayed.expect("replayed token");
             }
         };
-        run(&mut processor, &mut scalar);
+        run(&mut processor);
 
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
         {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
             for _ in 1..SCANS {
-                run(&mut processor, &mut scalar);
+                run(&mut processor);
             }
         }
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
@@ -333,14 +326,12 @@ fn dimension_scanner_preserves_fractional_points_and_following_input() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-
-        let mut scalar = ScalarScanFrame::default();
+        let scalar_result = match processor.scan_dimension_retained() {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        };
         assert_eq!(
-            processor.scan_dimension_into(&mut scalar),
-            ScalarScanStatus::Complete
-        );
-        assert_eq!(
-            scalar.take_dimension().value,
+            scalar_result.value,
             Scaled::from_raw(Scaled::UNITY + Scaled::UNITY / 2)
         );
         let mut terminator = None;
@@ -385,14 +376,12 @@ fn glue_scanner_preserves_width_stretch_shrink_and_orders() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-
-        let mut scalar = ScalarScanFrame::default();
+        let scalar_result = match processor.scan_glue_retained(false) {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        };
         assert_eq!(
-            processor.scan_glue_into(false, &mut scalar),
-            ScalarScanStatus::Complete
-        );
-        assert_eq!(
-            scalar.take_glue().value,
+            scalar_result.value,
             GlueSpec {
                 width: Scaled::from_raw(Scaled::UNITY),
                 stretch: Scaled::from_raw(2 * Scaled::UNITY),

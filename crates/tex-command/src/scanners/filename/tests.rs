@@ -31,12 +31,11 @@ fn filename_scan_stops_at_space_and_keeps_area_name_and_extension() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut scalar = crate::ScalarScanFrame::default();
-        assert_eq!(
-            processor.scan_file_name_into(&mut scalar),
-            crate::ScalarScanStatus::Complete
-        );
-        let scanned = scalar.take_file_name();
+        let scalar_result = match processor.scan_file_name_retained() {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        };
+        let scanned = scalar_result;
 
         assert_eq!(scanned.packed(), "dir/job.tex");
         assert_eq!(scanned.components.area, "dir/");

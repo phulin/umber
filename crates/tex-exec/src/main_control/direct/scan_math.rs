@@ -53,18 +53,13 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
         let scan = processor.scan_math_family_retained(size);
         let family = (retain_operation_child(processor, scan))
             .map_err(|error| scan_error(error, scan_origin))?;
-        let status = processor.scan_optional_equals_into(scalar);
-        let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
-        let status = processor.scan_font_selector_into(scalar);
-        let font = take_control_scalar!(scalar, status, take_font, scan_origin);
+        let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
+        let font = take_native_scalar!(processor.scan_font_selector_retained(), scan_origin);
         {
             let (direct_arg0, direct_arg1, direct_arg2) = (family, font, global);
             finish_scan!(self.execute_math_family(direct_arg0, direct_arg1, direct_arg2))

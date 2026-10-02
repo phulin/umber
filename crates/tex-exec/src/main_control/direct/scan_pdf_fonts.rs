@@ -52,21 +52,17 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
-        let status = processor.scan_font_selector_into(scalar);
-        let font = take_control_scalar!(scalar, status, take_font, scan_origin);
-        let status =
-            processor.scan_restricted_integer_into(RestrictedIntegerClass::CharacterCode, scalar);
-        let character = take_control_scalar!(scalar, status, take_restricted, scan_origin).value;
+        let font = take_native_scalar!(processor.scan_font_selector_retained(), scan_origin);
+        let character = take_native_scalar!(
+            processor.scan_restricted_integer_retained(RestrictedIntegerClass::CharacterCode),
+            scan_origin
+        )
+        .value;
         let character = u8::try_from(character).expect("pdfTeX character scanner is byte bounded");
-        let status = processor.scan_optional_equals_into(scalar);
-        let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
-        let status = processor.scan_integer_into(scalar);
-        let value = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
+        let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
+        let value = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
         {
             let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) =
                 (pdf_font_code_table(primitive), font, character, value);
@@ -127,23 +123,15 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
-        let status = processor.scan_font_selector_into(scalar);
-        let font = take_control_scalar!(scalar, status, take_font, scan_origin);
-        let status = processor.scan_optional_equals_into(scalar);
-        let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
-        let status = processor.scan_integer_into(scalar);
-        let stretch = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-        let status = processor.scan_integer_into(scalar);
-        let shrink = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-        let status = processor.scan_integer_into(scalar);
-        let step = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-        let status = processor.scan_keyword_into("autoexpand", scalar);
-        let auto_expand = take_control_scalar!(scalar, status, take_boolean, scan_origin).value;
+        let font = take_native_scalar!(processor.scan_font_selector_retained(), scan_origin);
+        let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
+        let stretch = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+        let shrink = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+        let step = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+        let auto_expand =
+            take_native_scalar!(processor.scan_keyword_retained("autoexpand"), scan_origin).value;
         let spec =
             (tex_typeset::expansion::FontExpansionSpec::new(stretch, shrink, step, auto_expand))
                 .map_err(|error| scan_error(error, scan_origin))?;

@@ -12,8 +12,7 @@ pub(crate) use expression::ExpressionFrame;
 pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
 pub use scalar::{
-    InternalValue, RetainedScalarScan, ScalarProvenance, ScalarRecovery, ScalarScanFrame,
-    ScalarScanStatus, ScannedScalar,
+    InternalValue, RetainedScalarScan, ScalarProvenance, ScalarRecovery, ScannedScalar,
 };
 pub use structured::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,

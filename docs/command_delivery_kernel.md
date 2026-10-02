@@ -211,7 +211,19 @@ where the run stopped.
 ## Admitted-run settlement
 
 Main control applies consecutive ordinary commands inside one admitted command
-context. A command settles in place, and the run continues, when it cannot
+context. Its fetch/reswitch loop borrows the initialized caller-owned command
+destination itself, rather than moving every delivered command into a second
+local. Prefix and reswitch replacements overwrite that same value. A scalar
+scanner, backup, diagnostic, or publication consumer copies only its selected
+operand when it must survive a subsequent fetch; no reference into input
+storage survives a stack mutation. Scalar assignment families consume their
+typed scanner outcomes directly instead of staging them through a generic
+scalar frame and repeated tuple moves. All synchronous executor scalar families
+consume their actual typed scan products; the generic `ScalarScanFrame` union,
+status, publication adapters and projections are removed. Nested scanner calls
+keep only their own typed value and cold error slots where their actual call
+boundary avoids moving the error payload on successful nested reads. Those
+slots neither classify products nor retain a scanner continuation. A command settles in place, and the run continues, when it cannot
 contribute page material or publish a host effect: the definition, `\let`,
 and catcode arms; simple and semi-simple group transitions; §1045's `\relax`;
 and rootless scalar assignments (count, dimen, integer, dimension, and glue

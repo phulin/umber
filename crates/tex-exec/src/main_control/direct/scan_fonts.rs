@@ -49,21 +49,14 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
-        let status = processor.scan_integer_into(scalar);
-        let number = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-        let status = processor.scan_font_selector_into(scalar);
-        let font = take_control_scalar!(scalar, status, take_font, scan_origin);
+        let number = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+        let font = take_native_scalar!(processor.scan_font_selector_retained(), scan_origin);
         let recovery_context =
             (!processor.font_dimen_writable(font, number)).then(|| processor.error_context());
-        let status = processor.scan_optional_equals_into(scalar);
-        let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
-        let status = processor.scan_dimension_into(scalar);
-        let value = take_control_scalar!(scalar, status, take_dimension, scan_origin);
+        let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
+        let value = take_native_scalar!(processor.scan_dimension_retained(), scan_origin);
         {
             let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) =
                 (font, number, value.value, recovery_context);
@@ -127,17 +120,11 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
-        let status = processor.scan_font_selector_into(scalar);
-        let font = take_control_scalar!(scalar, status, take_font, scan_origin);
-        let status = processor.scan_optional_equals_into(scalar);
-        let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
-        let status = processor.scan_integer_into(scalar);
-        let value = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
+        let font = take_native_scalar!(processor.scan_font_selector_retained(), scan_origin);
+        let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
+        let value = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
         {
             let (direct_arg0, direct_arg1, direct_arg2) =
                 (font, primitive == UnexpandablePrimitive::SkewChar, value);
@@ -196,13 +183,9 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
-        let status = processor.scan_font_selector_into(scalar);
-        let font = take_control_scalar!(scalar, status, take_font, scan_origin);
+        let font = take_native_scalar!(processor.scan_font_selector_retained(), scan_origin);
         match meaning {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfNoLigatures) => {
                 let (direct_arg0,) = (font,);

@@ -54,9 +54,6 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
         let has_optional_equals = matches!(
@@ -72,145 +69,96 @@ impl<G> DirectDispatch<'_, '_, G> {
                 | Meaning::PageInteger(_)
         );
         if has_optional_equals {
-            let status = processor.scan_optional_equals_into(scalar);
-            let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
+            let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
         }
         match meaning {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HSkip) => {
-                let status = processor.scan_glue_into(false, scalar);
-                let value = take_control_scalar!(scalar, status, take_glue, scan_origin).value;
+                let value =
+                    take_native_scalar!(processor.scan_glue_retained(false), scan_origin).value;
                 // pdftex.web §§454, 485, 1003, 1236: an internal zero glue
                 // quantity retains the shared `zero_glue` pointer when appended.
                 // Scanned literal zero glue and negated internal glue are fresh.
                 let shared_zero_glue = processor.scanned_glue_shared_zero();
-                {
-                    let (direct_arg0, direct_arg1) = (value, shared_zero_glue);
-                    finish_scan!(self.execute_horizontal_skip(direct_arg0, direct_arg1))
-                }
+                finish_scan!(self.execute_horizontal_skip(value, shared_zero_glue))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSkip) => {
-                let status = processor.scan_glue_into(false, scalar);
-                let value = take_control_scalar!(scalar, status, take_glue, scan_origin).value;
+                let value =
+                    take_native_scalar!(processor.scan_glue_retained(false), scan_origin).value;
                 let shared_zero_glue = processor.scanned_glue_shared_zero();
-                {
-                    let (direct_arg0, direct_arg1) = (value, shared_zero_glue);
-                    finish_scan!(self.execute_vertical_skip(direct_arg0, direct_arg1))
-                }
+                finish_scan!(self.execute_vertical_skip(value, shared_zero_glue))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Kern) => {
-                let status = processor.scan_dimension_into(scalar);
                 let amount =
-                    take_control_scalar!(scalar, status, take_dimension, scan_origin).value;
-                {
-                    let (direct_arg0,) = (amount,);
-                    finish_scan!(self.execute_kern(direct_arg0))
-                }
+                    take_native_scalar!(processor.scan_dimension_retained(), scan_origin).value;
+                finish_scan!(self.execute_kern(amount))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
-                let status = processor.scan_dimension_into(scalar);
-                let value = take_control_scalar!(scalar, status, take_dimension, scan_origin).value;
-                {
-                    let (direct_arg0,) = (value,);
-                    finish_scan!(self.execute_prev_depth(direct_arg0))
-                }
+                let value =
+                    take_native_scalar!(processor.scan_dimension_retained(), scan_origin).value;
+                finish_scan!(self.execute_prev_depth(value))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Penalty) => {
-                let status = processor.scan_integer_into(scalar);
-                let amount = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-                {
-                    let (direct_arg0,) = (amount,);
-                    finish_scan!(self.execute_penalty(direct_arg0))
-                }
+                let amount =
+                    take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+                finish_scan!(self.execute_penalty(amount))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfRefXImage) => {
-                let status = processor.scan_integer_into(scalar);
-                let object = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-                {
-                    let (direct_arg0,) = (object,);
-                    finish_scan!(self.execute_pdf_ref_x_image(direct_arg0))
-                }
+                let object =
+                    take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+                finish_scan!(self.execute_pdf_ref_x_image(object))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSetRandomSeed) => {
-                let status = processor.scan_integer_into(scalar);
-                let seed = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-                {
-                    let (direct_arg0,) = (seed.saturating_abs(),);
-                    finish_scan!(self.execute_pdf_set_random_seed(direct_arg0))
-                }
+                let seed =
+                    take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+                finish_scan!(self.execute_pdf_set_random_seed(seed.saturating_abs()))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetLanguage) => {
-                let status = processor.scan_integer_into(scalar);
                 let language =
-                    take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-                {
-                    let (direct_arg0,) = (language,);
-                    finish_scan!(self.execute_set_language(direct_arg0))
-                }
+                    take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+                finish_scan!(self.execute_set_language(language))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode) => {
-                let status = processor.scan_integer_into(scalar);
-                let value = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
+                let value =
+                    take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
                 {
-                    let (direct_arg0, direct_arg1) =
-                        (value, processor.diagnostic_context_coordinate());
-                    finish_scan!(self.execute_set_interaction_mode_value(direct_arg0, direct_arg1))
+                    let context = processor.diagnostic_context_coordinate();
+                    finish_scan!(self.execute_set_interaction_mode_value(value, context))
                 }
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
-                let status = processor.scan_integer_into(scalar);
-                let value = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-                {
-                    let (direct_arg0,) = (value,);
-                    finish_scan!(self.execute_space_factor(direct_arg0))
-                }
+                let value =
+                    take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+                finish_scan!(self.execute_space_factor(value))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevGraf) => {
-                let status = processor.scan_integer_into(scalar);
-                let value = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-                {
-                    let (direct_arg0,) = (value,);
-                    finish_scan!(self.execute_prev_graf(direct_arg0))
-                }
+                let value =
+                    take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+                finish_scan!(self.execute_prev_graf(value))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
-                let status = processor.scan_integer_into(scalar);
-                let value = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-                {
-                    let (direct_arg0, direct_arg1, direct_arg2) = (value, origin, false);
-                    finish_scan!(self.execute_character_code(direct_arg0, direct_arg1, direct_arg2))
-                }
+                let value =
+                    take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+                finish_scan!(self.execute_character_code(value, origin, false))
             }
             Meaning::IntParam(index) => {
-                let status = processor.scan_integer_into(scalar);
-                let value = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-                {
-                    let (direct_arg0, direct_arg1, direct_arg2) = (index, value, global);
-                    finish_scan!(self.execute_int_param(direct_arg0, direct_arg1, direct_arg2))
-                }
+                let value =
+                    take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+                finish_scan!(self.execute_int_param(index, value, global))
             }
             Meaning::DimenParam(index) => {
-                let status = processor.scan_dimension_into(scalar);
-                let value = take_control_scalar!(scalar, status, take_dimension, scan_origin).value;
-                {
-                    let (direct_arg0, direct_arg1, direct_arg2) = (index, value, global);
-                    finish_scan!(self.execute_dimen_param(direct_arg0, direct_arg1, direct_arg2))
-                }
+                let value =
+                    take_native_scalar!(processor.scan_dimension_retained(), scan_origin).value;
+                finish_scan!(self.execute_dimen_param(index, value, global))
             }
             Meaning::PageDimension(dimension) => {
-                let status = processor.scan_dimension_into(scalar);
-                let value = take_control_scalar!(scalar, status, take_dimension, scan_origin).value;
-                {
-                    let (direct_arg0, direct_arg1) = (dimension, value);
-                    finish_scan!(self.execute_page_dimension(direct_arg0, direct_arg1))
-                }
+                let value =
+                    take_native_scalar!(processor.scan_dimension_retained(), scan_origin).value;
+                finish_scan!(self.execute_page_dimension(dimension, value))
             }
             Meaning::PageInteger(integer) => {
-                let status = processor.scan_integer_into(scalar);
-                let value = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
-                {
-                    let (direct_arg0, direct_arg1) = (integer, value);
-                    finish_scan!(self.execute_page_integer(direct_arg0, direct_arg1))
-                }
+                let value =
+                    take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+                finish_scan!(self.execute_page_integer(integer, value))
             }
             _ => unreachable!("unary scalar descriptor restricts command meanings"),
         }

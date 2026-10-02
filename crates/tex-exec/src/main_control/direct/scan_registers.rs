@@ -54,24 +54,21 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
         let index = match index {
             Some(index) => index,
             None => {
-                let status = processor.scan_profile_register_index_into(scalar);
-                take_control_scalar!(scalar, status, take_register, scan_origin)
+                take_native_scalar!(
+                    processor.scan_profile_register_index_retained(),
+                    scan_origin
+                )
             }
         };
         {
-            let status = processor.scan_optional_equals_into(scalar);
-            let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
+            let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
         }
-        let status = processor.scan_glue_into(mu, scalar);
-        let value = take_control_scalar!(scalar, status, take_glue, scan_origin).value;
+        let value = take_native_scalar!(processor.scan_glue_retained(mu), scan_origin).value;
         let source_identity = processor.scanned_glue_identity();
         let source_register = processor.scanned_glue_register();
         if mu {

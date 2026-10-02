@@ -49,18 +49,15 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
-        let status =
-            processor.scan_restricted_integer_into(RestrictedIntegerClass::FourBit, scalar);
-        let stream = take_control_scalar!(scalar, status, take_restricted, scan_origin).value as u8;
-        let status = processor.scan_optional_equals_into(scalar);
-        let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
-        let status = processor.scan_file_name_into(scalar);
-        let file_name = take_control_scalar!(scalar, status, take_file_name, scan_origin);
+        let stream = take_native_scalar!(
+            processor.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit),
+            scan_origin
+        )
+        .value as u8;
+        let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
+        let file_name = take_native_scalar!(processor.scan_file_name_retained(), scan_origin);
         {
             let (direct_arg0, direct_arg1) = (stream, file_name.packed());
             finish_scan!(self.execute_deferred_open_out(direct_arg0, direct_arg1))
@@ -115,13 +112,12 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
-        let status = processor.scan_extended_register_index_into(scalar);
-        let class = take_control_scalar!(scalar, status, take_register, scan_origin);
+        let class = take_native_scalar!(
+            processor.scan_extended_register_index_retained(),
+            scan_origin
+        );
         let scan = processor.scan_balanced_text_retained(true);
         let text = (retain_operation_child(processor, scan))
             .map_err(|error| scan_error(error, scan_origin))?;

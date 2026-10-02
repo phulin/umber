@@ -377,7 +377,7 @@ fn attempt_promotion_preflights_then_writes_the_resident_destination_once() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
+fn resource_capable_scalar_scans_expose_typed_products_and_keep_raw_entries_private() {
     let repository = test_support::repository_root();
     let manifest_dir = repository.join("crates/tex-command");
     let scalar = fs::read_to_string(manifest_dir.join("src/scanners/scalar.rs"))
@@ -413,16 +413,16 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
     assert!(!structured.contains("pub fn scan_file_name("));
 
     assert!(scalar.contains("pub enum RetainedScalarScan<T>"));
-    assert!(scalar.contains("pub struct ScalarScanFrame"));
-    let scalar_frame = scalar
-        .split("pub struct ScalarScanFrame")
-        .nth(1)
-        .and_then(|tail| tail.split("impl ScalarScanFrame").next())
-        .expect("locate scalar result slot");
-    for forbidden in ["Box<", "Vec<", "Arc<", "VecDeque", "HashMap"] {
+    for forbidden in [
+        "ScalarScanFrame",
+        "ScalarScanValue",
+        "ScalarScanStatus",
+        "fn publish_scalar_result<T>",
+        "publish_retained_scalar_frame",
+    ] {
         assert!(
-            !scalar_frame.contains(forbidden),
-            "scalar continuation must remain inline and allocation-free: {forbidden}"
+            !scalar.contains(forbidden),
+            "executor scalar products must remain typed: {forbidden}"
         );
     }
 

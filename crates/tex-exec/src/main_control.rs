@@ -65,21 +65,6 @@ use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::vertical::is_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
 
-/// Consumes one destination-directed scalar result at its producing call
-/// site. Scalar scanners are ordinary synchronous calls: a resource error
-/// unwinds the whole operation and is handled by checkpoint replay. No
-/// scanner child or caller phase is retained here.
-macro_rules! take_operation_scalar {
-    ($frame:expr, $status:expr, $take:ident) => {{
-        match $status {
-            tex_command::ScalarScanStatus::Complete => $frame.$take(),
-            tex_command::ScalarScanStatus::Failed => {
-                return Err(command_error($frame.take_error()));
-            }
-        }
-    }};
-}
-
 mod code_table;
 mod cold;
 mod definition_assignments;

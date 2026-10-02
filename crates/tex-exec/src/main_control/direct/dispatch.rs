@@ -245,9 +245,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                 let shown_mode = &mut self.control.shown_mode;
                 let diagnostics = &mut self.diagnostics;
                 let mut scan_origin = self.current_origin;
-                let mut command = if let Some(command) = settled.take() {
-                    command
-                } else {
+                let mut command_slot = settled.take();
+                if command_slot.is_none() {
+                    command_slot = source_command.take();
                     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
                     // `get_x_token`; §1034's inner character loop instead re-enters at
                     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
@@ -257,11 +257,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                     {
                         prepare_command_trace(processor, mode, *shown_mode);
                     }
-                    let mut destination = source_command.take();
                     let delivery = if main_loop_active {
-                        processor.main_loop_lookahead_into(&mut destination)
+                        processor.main_loop_lookahead_into(&mut command_slot)
                     } else {
-                        processor.main_control_expanded_into(&mut destination)
+                        processor.main_control_expanded_into(&mut command_slot)
                     };
                     match (delivery.map_err(command_error))
                         .map_err(|error| scan_error(error, scan_origin))?
@@ -278,7 +277,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                         tex_command::DeliveryStatus::Command => {}
                         _ => unreachable!("main-control delivery has no alignment event"),
                     };
-                    let command = destination.expect("command status initializes destination");
+                    let command = command_slot
+                        .as_ref()
+                        .expect("command status initializes destination");
                     // TeX82 §§1034/1038 keeps a fetched character inside `main_loop`;
                     // it reaches neither `reswitch` nor §1030's command trace. A
                     // non-character fetched by the same lookahead does go to `reswitch` and
@@ -299,7 +300,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             || processor.int_param(IntParam::TRACING_COMMANDS) > 0)
                     {
                         report_main_control_command_trace(
-                            processor, mode, &command, boxes, shown_mode,
+                            processor, mode, command, boxes, shown_mode,
                         );
                     }
                     if main_loop_active
@@ -316,9 +317,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                             finish_scan!(self.execute_no_boundary(direct_arg0))
                         };
                     }
-
-                    command
-                };
+                }
+                let command = command_slot
+                    .as_mut()
+                    .expect("command status initializes destination");
                 scan_origin = Some(command.origin());
                 self.current_origin = scan_origin;
 
@@ -350,7 +352,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             scan_origin,
                         ));
                     }
-                    command = destination
+                    *command = destination
                         .take()
                         .expect("command status initializes destination");
                 }
@@ -368,7 +370,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                         payload: *payload,
                     };
                     return {
-                        let (direct_arg0, direct_arg1) = (Some(command), result);
+                        let (direct_arg0, direct_arg1) = (Some(*command), result);
                         finish_scan!(self.scan_leader_glue_command(direct_arg0, direct_arg1))
                     };
                 }
@@ -395,11 +397,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                             if !tex_command::exceeds_max_non_prefixed_command(static_meaning(
                                 command.meaning(),
                             )) {
-                                let printed = tex_command::PrintCommand::from_current(&command);
+                                let printed = tex_command::PrintCommand::from_current(command);
                                 // §1212's `back_error`: the substantive command is retained
                                 // and re-delivered without the discarded prefixes.
-                                let site = processor.capture_diagnostic_site(Some(&command));
-                                (processor.back_input(command).map_err(command_error))
+                                let site = processor.capture_diagnostic_site(Some(command));
+                                (processor.back_input(*command).map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                 // `back_error` is `back_input` *then* `error`, so §82 renders
                                 // the context with the backed-up level already on the stack.
@@ -463,7 +465,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 return Err(scan_error(command_error(error), scan_origin));
                             }
                         };
-                        command = next;
+                        *command = next;
                         command_code = command.control_code();
                         prefixed = true;
                     }
@@ -483,9 +485,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                         )
                     {
                         let etex = processor.profile().capabilities().supports_etex();
-                        let site = Some(processor.current_diagnostic_site(Some(&command)));
+                        let site = Some(processor.current_diagnostic_site(Some(command)));
                         diagnostics.push(PendingDiagnostic::IrrelevantLongOuterPrefix(
-                            tex_command::PrintCommand::from_current(&command),
+                            tex_command::PrintCommand::from_current(command),
                             processor.error_context(),
                             etex,
                             site,
@@ -590,8 +592,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 .take()
                                 .expect("command status initializes destination")
                         };
-                        command = next;
-                        report_command_trace(processor, mode, &command, shown_mode);
+                        *command = next;
+                        report_command_trace(processor, mode, command, shown_mode);
                         continue;
                     }
                     if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
@@ -624,8 +626,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
                             )
                         );
-                        command = next;
-                        report_command_trace(processor, mode, &command, shown_mode);
+                        *command = next;
+                        report_command_trace(processor, mode, command, shown_mode);
                         continue;
                     }
                     // TeX82 §1214 resolves `\globaldefs` exactly once, before entering
@@ -680,7 +682,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     }
                     if matches!(mode, Mode::Math | Mode::DisplayMath)
                         && let Some(request) =
-                            (processor.scan_math_request(&command).map_err(command_error))
+                            (processor.scan_math_request(command).map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?
                     {
                         return {
@@ -850,7 +852,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             ..
                         }) = command.meaning()
                     {
-                        (processor.back_input(command).map_err(command_error))
+                        (processor.back_input(*command).map_err(command_error))
                             .map_err(|error| scan_error(error, scan_origin))?;
                         return {
                             let (direct_arg0,) = (MathRequest::TextField(MathTextFieldKind::Ord),);
@@ -880,7 +882,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                         };
                         if threshold != 0 && partoken_context_replays(processor, mode, threshold) {
                             (processor
-                                .insert_partoken_before(command)
+                                .insert_partoken_before(*command)
                                 .map_err(command_error))
                             .map_err(|error| scan_error(error, scan_origin))?;
                             return finish_scan!(self.execute_continue());
@@ -905,7 +907,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     {
                         if partoken_context_replays(processor, mode, 2) {
                             (processor
-                                .insert_partoken_before(command)
+                                .insert_partoken_before(*command)
                                 .map_err(command_error))
                             .map_err(|error| scan_error(error, scan_origin))?;
                             return finish_scan!(self.execute_continue());
@@ -936,7 +938,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     if matches!(mode, Mode::Vertical | Mode::InternalVertical)
                         && paragraph_start::starts_paragraph_in_vertical_mode(command_code)
                     {
-                        (processor.back_input(command).map_err(command_error))
+                        (processor.back_input(*command).map_err(command_error))
                             .map_err(|error| scan_error(error, scan_origin))?;
                         return finish_scan!(self.execute_paragraph_start());
                     }
@@ -1025,11 +1027,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     processor.int_param(IntParam::GLOBAL_DEFS),
                                     global,
                                 );
-                                let mut scalar_storage = tex_command::ScalarScanFrame::default();
-                                let scalar = &mut scalar_storage;
-                                let (character, value) =
-                                    (scan_code_table_operands(processor, scalar))
-                                        .map_err(|error| scan_error(error, scan_origin))?;
+                                let (character, value) = (scan_code_table_operands(processor))
+                                    .map_err(|error| scan_error(error, scan_origin))?;
                                 return {
                                     let (direct_arg0, direct_arg1, direct_arg2) =
                                         (character, value, global);
@@ -1228,7 +1227,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // sentinels have the distinct `EndV`/`EndTemplate` meanings and
                                 // remain owned by their dedicated paths.
                                 return {
-                                    let (direct_arg0,) = (command,);
+                                    let (direct_arg0,) = (*command,);
                                     finish_scan!(self.scan_off_save(direct_arg0))
                                 };
                             }
@@ -1236,7 +1235,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 if mode == Mode::Horizontal =>
                             {
                                 (processor
-                                    .recover_stop_for_vertical_mode(command)
+                                    .recover_stop_for_vertical_mode(*command)
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return finish_scan!(self.execute_continue());
@@ -1245,7 +1244,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 if mode == Mode::RestrictedHorizontal =>
                             {
                                 return {
-                                    let (direct_arg0,) = (command,);
+                                    let (direct_arg0,) = (*command,);
                                     finish_scan!(self.scan_off_save(direct_arg0))
                                 };
                             }
@@ -1253,7 +1252,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 if matches!(mode, Mode::Math | Mode::DisplayMath) =>
                             {
                                 (processor
-                                    .recover_missing_math_shift(command)
+                                    .recover_missing_math_shift(*command)
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return finish_scan!(self.execute_missing_math_shift());
@@ -1275,7 +1274,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         meaning,
                                         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dump,)
                                     );
-                                    return finish_scan!(self.execute_stop(command, dump));
+                                    return finish_scan!(self.execute_stop(*command, dump));
                                 }
                             }
                             (_, codes::PRIMITIVE_COUNT | codes::COUNT_REGISTER) => {
@@ -1283,30 +1282,26 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     processor.int_param(IntParam::GLOBAL_DEFS),
                                     global,
                                 );
-                                let mut scalar_storage = tex_command::ScalarScanFrame::default();
-                                let scalar = &mut scalar_storage;
                                 let index =
                                     if let ResolvedMeaning::Static(Meaning::CountRegister(index)) =
                                         command.meaning()
                                     {
                                         index
                                     } else {
-                                        let status =
-                                            processor.scan_profile_register_index_into(scalar);
-                                        take_control_scalar!(
-                                            scalar,
-                                            status,
-                                            take_register,
+                                        take_native_scalar!(
+                                            processor.scan_profile_register_index_retained(),
                                             scan_origin
                                         )
                                     };
-                                let status = processor.scan_optional_equals_into(scalar);
-                                let _ =
-                                    take_control_scalar!(scalar, status, take_boolean, scan_origin);
-                                let status = processor.scan_integer_into(scalar);
-                                let value =
-                                    take_control_scalar!(scalar, status, take_integer, scan_origin)
-                                        .value;
+                                let _ = take_native_scalar!(
+                                    processor.scan_optional_equals_retained(),
+                                    scan_origin
+                                );
+                                let value = take_native_scalar!(
+                                    processor.scan_integer_retained(),
+                                    scan_origin
+                                )
+                                .value;
                                 let step = retained_semantic!(
                                     receipts,
                                     |native_context,
@@ -1332,31 +1327,23 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     processor.int_param(IntParam::GLOBAL_DEFS),
                                     global,
                                 );
-                                let mut scalar_storage = tex_command::ScalarScanFrame::default();
-                                let scalar = &mut scalar_storage;
                                 let index =
                                     if let ResolvedMeaning::Static(Meaning::DimenRegister(index)) =
                                         command.meaning()
                                     {
                                         index
                                     } else {
-                                        let status =
-                                            processor.scan_profile_register_index_into(scalar);
-                                        take_control_scalar!(
-                                            scalar,
-                                            status,
-                                            take_register,
+                                        take_native_scalar!(
+                                            processor.scan_profile_register_index_retained(),
                                             scan_origin
                                         )
                                     };
-                                let status = processor.scan_optional_equals_into(scalar);
-                                let _ =
-                                    take_control_scalar!(scalar, status, take_boolean, scan_origin);
-                                let status = processor.scan_dimension_into(scalar);
-                                let value = take_control_scalar!(
-                                    scalar,
-                                    status,
-                                    take_dimension,
+                                let _ = take_native_scalar!(
+                                    processor.scan_optional_equals_retained(),
+                                    scan_origin
+                                );
+                                let value = take_native_scalar!(
+                                    processor.scan_dimension_retained(),
                                     scan_origin
                                 )
                                 .value;
@@ -1745,7 +1732,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_V_FIL_NEG,
                             ) if matches!(mode, Mode::Math | Mode::DisplayMath) => {
                                 (processor
-                                    .recover_missing_math_shift(command)
+                                    .recover_missing_math_shift(*command)
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return finish_scan!(self.execute_missing_math_shift());
@@ -1759,7 +1746,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_V_FIL_NEG,
                             ) if mode == Mode::Horizontal => {
                                 (processor
-                                    .recover_stop_for_vertical_mode(command)
+                                    .recover_stop_for_vertical_mode(*command)
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return finish_scan!(self.execute_continue());
@@ -1773,7 +1760,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_V_FIL_NEG,
                             ) if mode == Mode::RestrictedHorizontal => {
                                 return {
-                                    let (direct_arg0,) = (command,);
+                                    let (direct_arg0,) = (*command,);
                                     finish_scan!(self.scan_off_save(direct_arg0))
                                 };
                             }
@@ -2283,7 +2270,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             // pdftex.web §§1551--1552 report this before scanning any
                                             // image operand. Retain the exact command on input so the
                                             // ErrorStop retry can re-enter the complete command.
-                                            (processor.back_input(command).map_err(command_error))
+                                            (processor.back_input(*command).map_err(command_error))
                                                 .map_err(|error| scan_error(error, scan_origin))?;
                                             return Err(scan_error(
                                                 ExecError::PdfExtensionInDviMode(name),
@@ -2387,7 +2374,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // `reserveobjnum`, `useobjnum`, the integer, stream/attr/file
                                 // options, body scan, or allocation.
                                 if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
-                                    (processor.back_input(command).map_err(command_error))
+                                    (processor.back_input(*command).map_err(command_error))
                                         .map_err(|error| scan_error(error, scan_origin))?;
                                     return Err(scan_error(
                                         ExecError::PdfExtensionInDviMode("pdfobj"),
@@ -2406,7 +2393,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // pdftex.web §1544 calls `check_pdfoutput` before `scan_int`,
                                 // object validation, whatsit allocation, or list mutation.
                                 if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
-                                    (processor.back_input(command).map_err(command_error))
+                                    (processor.back_input(*command).map_err(command_error))
                                         .map_err(|error| scan_error(error, scan_origin))?;
                                     return Err(scan_error(
                                         ExecError::PdfExtensionInDviMode("pdfrefobj"),
@@ -2441,7 +2428,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             UnexpandablePrimitive::PdfRefXForm => "pdfrefxform",
                                             _ => unreachable!(),
                                         };
-                                        (processor.back_input(command).map_err(command_error))
+                                        (processor.back_input(*command).map_err(command_error))
                                             .map_err(|error| scan_error(error, scan_origin))?;
                                         return Err(scan_error(
                                             ExecError::PdfExtensionInDviMode(name),
@@ -2534,7 +2521,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             UnexpandablePrimitive::PdfSavePos => unreachable!(),
                                             _ => unreachable!(),
                                         };
-                                        (processor.back_input(command).map_err(command_error))
+                                        (processor.back_input(*command).map_err(command_error))
                                             .map_err(|error| scan_error(error, scan_origin))?;
                                         return Err(scan_error(
                                             ExecError::PdfExtensionInDviMode(name),
@@ -2603,7 +2590,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             UnexpandablePrimitive::PdfEndThread => "pdfendthread",
                                             _ => unreachable!(),
                                         };
-                                        (processor.back_input(command).map_err(command_error))
+                                        (processor.back_input(*command).map_err(command_error))
                                             .map_err(|error| scan_error(error, scan_origin))?;
                                         return Err(scan_error(
                                             ExecError::PdfExtensionInDviMode(name),
@@ -2621,7 +2608,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             | UnexpandablePrimitive::PdfEndLink
                                     ) && matches!(mode, Mode::Vertical | Mode::InternalVertical)
                                     {
-                                        (processor.back_input(command).map_err(command_error))
+                                        (processor.back_input(*command).map_err(command_error))
                                             .map_err(|error| scan_error(error, scan_origin))?;
                                         return Err(scan_error(
                                             ExecError::PdfLinkInVerticalMode(match primitive {
@@ -2735,7 +2722,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     if processor.int_param(IntParam::PDF_OUTPUT) <= 0
                                         && let Some(name) = dvi_name
                                     {
-                                        (processor.back_input(command).map_err(command_error))
+                                        (processor.back_input(*command).map_err(command_error))
                                             .map_err(|error| scan_error(error, scan_origin))?;
                                         return Err(scan_error(
                                             ExecError::PdfExtensionInDviMode(name),
@@ -2912,8 +2899,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     processor.int_param(IntParam::GLOBAL_DEFS),
                                     global,
                                 );
-                                let mut scalar_storage = tex_command::ScalarScanFrame::default();
-                                let scalar = &mut scalar_storage;
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     primitive @ (UnexpandablePrimitive::Advance
                                     | UnexpandablePrimitive::Multiply
@@ -2924,38 +2909,131 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         "packed command selected its native operand family"
                                     )
                                 };
-                                {
-                                    match scan_arithmetic::scan_arithmetic_operands(
-                                        processor,
-                                        scalar,
-                                        primitive,
-                                        scan_origin,
-                                    )? {
-                                        Err(target) => {
-                                            finish_scan!(self.execute_invalid_arithmetic_target(
-                                                primitive, target
-                                            ))
-                                        }
-                                        Ok((target, operand)) => {
-                                            let step = retained_semantic!(
-                                            receipts,
-                                |native_context, native_state, native_effects, _native_fuel, _native_observer|
-                                            semantic::execute_arithmetic(
-                                                native_context,
-                                                native_effects,
-                                                native_state,
-                                                receipts,
+                                let mut target_slot = None;
+                                processor
+                                    .get_x_token_into(&mut target_slot)
+                                    .map_err(command_error)
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                let target_command = target_slot
+                                    .as_ref()
+                                    .ok_or(ExecError::UnsupportedAssignmentTarget)
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                let target = match target_command.meaning() {
+                                    tex_state::meaning::ResolvedMeaning::Macro { .. } => {
+                                        return finish_scan!(
+                                            self.execute_invalid_arithmetic_target(
                                                 primitive,
-                                                target,
-                                                operand,
-                                                global,
+                                                tex_command::PrintCommand::from_current(
+                                                    target_command
+                                                )
                                             )
-                                        )?;
-                                            self.schedule_assignment_token()?;
-                                            Ok(step)
+                                        );
+                                    }
+                                    tex_state::meaning::ResolvedMeaning::Static(meaning) => {
+                                        match meaning {
+                                            Meaning::UnexpandablePrimitive(
+                                                UnexpandablePrimitive::Count,
+                                            ) => ArithmeticTarget::IntegerRegister(
+                                                take_native_scalar!(
+                                                    processor
+                                                        .scan_profile_register_index_retained(),
+                                                    scan_origin
+                                                ),
+                                            ),
+                                            Meaning::UnexpandablePrimitive(
+                                                UnexpandablePrimitive::Dimen,
+                                            ) => ArithmeticTarget::DimensionRegister(
+                                                take_native_scalar!(
+                                                    processor
+                                                        .scan_profile_register_index_retained(),
+                                                    scan_origin
+                                                ),
+                                            ),
+                                            Meaning::UnexpandablePrimitive(
+                                                UnexpandablePrimitive::Skip,
+                                            ) => ArithmeticTarget::GlueRegister {
+                                                index: take_native_scalar!(
+                                                    processor
+                                                        .scan_profile_register_index_retained(),
+                                                    scan_origin
+                                                ),
+                                                mu: false,
+                                            },
+                                            Meaning::UnexpandablePrimitive(
+                                                UnexpandablePrimitive::Muskip,
+                                            ) => ArithmeticTarget::GlueRegister {
+                                                index: take_native_scalar!(
+                                                    processor
+                                                        .scan_profile_register_index_retained(),
+                                                    scan_origin
+                                                ),
+                                                mu: true,
+                                            },
+                                            Meaning::CountRegister(index) => {
+                                                ArithmeticTarget::IntegerRegister(index)
+                                            }
+                                            Meaning::DimenRegister(index) => {
+                                                ArithmeticTarget::DimensionRegister(index)
+                                            }
+                                            Meaning::SkipRegister(index) => {
+                                                ArithmeticTarget::GlueRegister { index, mu: false }
+                                            }
+                                            Meaning::MuskipRegister(index) => {
+                                                ArithmeticTarget::GlueRegister { index, mu: true }
+                                            }
+                                            Meaning::IntParam(index) => {
+                                                ArithmeticTarget::IntegerParameter(index)
+                                            }
+                                            Meaning::DimenParam(index) => {
+                                                ArithmeticTarget::DimensionParameter(index)
+                                            }
+                                            Meaning::GlueParam(index) => {
+                                                ArithmeticTarget::GlueParameter { index, mu: false }
+                                            }
+                                            Meaning::MuGlueParam(index) => {
+                                                ArithmeticTarget::GlueParameter { index, mu: true }
+                                            }
+                                            _ => {
+                                                return finish_scan!(
+                                                    self.execute_invalid_arithmetic_target(
+                                                        primitive,
+                                                        tex_command::PrintCommand::from_current(
+                                                            target_command
+                                                        )
+                                                    )
+                                                );
+                                            }
                                         }
                                     }
-                                }
+                                };
+
+                                let operand = scan_arithmetic::scan_arithmetic_operand(
+                                    processor,
+                                    target,
+                                    primitive,
+                                    scan_origin,
+                                )?;
+                                let step = retained_semantic!(
+                                    receipts,
+                                    |native_context,
+                                     native_state,
+                                     native_effects,
+                                     _native_fuel,
+                                     _native_observer| {
+                                        semantic::execute_arithmetic(
+                                            native_context,
+                                            native_effects,
+                                            native_state,
+                                            receipts,
+                                            primitive,
+                                            target,
+                                            operand,
+                                            global,
+                                        )
+                                    }
+                                )?;
+                                self.schedule_assignment_token()?;
+                                Ok(step)
                             }
                             (_, codes::PRIMITIVE_CHAR_DEF | codes::PRIMITIVE_MATH_CHAR_DEF) => {
                                 let global = effective_global(
@@ -3198,7 +3276,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     // The inner PDF command is already backed up by the command
                                     // scanner. Back up `\immediate` after it so the outer command
                                     // is delivered first on the next retry.
-                                    (processor.back_input(command).map_err(command_error))
+                                    (processor.back_input(*command).map_err(command_error))
                                         .map_err(|error| scan_error(error, scan_origin))?;
                                 }
                                 if processor.command_trace_count() != trace_count {
@@ -3228,7 +3306,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // in math mode. §1047's `insert_dollar_sign` closes math with an
                                 // inserted `$` and replays `\hrule` in the resulting mode.
                                 (processor
-                                    .recover_missing_math_shift(command)
+                                    .recover_missing_math_shift(*command)
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return finish_scan!(self.execute_missing_math_shift());
@@ -3240,7 +3318,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // lookahead may cross a line boundary, while §804's paragraph
                                 // diagnostic must retain the line on which the rule was read.
                                 (processor
-                                    .recover_stop_for_vertical_mode(command)
+                                    .recover_stop_for_vertical_mode(*command)
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return finish_scan!(self.execute_continue());
@@ -3345,7 +3423,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_SPLIT_DISCARDS,
                             ) if mode == Mode::Horizontal => {
                                 (processor
-                                    .recover_stop_for_vertical_mode(command)
+                                    .recover_stop_for_vertical_mode(*command)
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return finish_scan!(self.execute_continue());
@@ -3358,7 +3436,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_SPLIT_DISCARDS,
                             ) if mode == Mode::RestrictedHorizontal => {
                                 return {
-                                    let (direct_arg0,) = (command,);
+                                    let (direct_arg0,) = (*command,);
                                     finish_scan!(self.scan_off_save(direct_arg0))
                                 };
                             }
@@ -3367,7 +3445,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 codes::PRIMITIVE_PAGE_DISCARDS | codes::PRIMITIVE_SPLIT_DISCARDS,
                             ) if matches!(mode, Mode::Math | Mode::DisplayMath) => {
                                 (processor
-                                    .recover_missing_math_shift(command)
+                                    .recover_missing_math_shift(*command)
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return finish_scan!(self.execute_missing_math_shift());
@@ -3605,14 +3683,14 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::PRIMITIVE_H_ALIGN) if mode == Mode::Horizontal => {
                                 (processor
-                                    .recover_stop_for_vertical_mode(command)
+                                    .recover_stop_for_vertical_mode(*command)
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return finish_scan!(self.execute_continue());
                             }
                             (_, codes::PRIMITIVE_H_ALIGN) if mode == Mode::RestrictedHorizontal => {
                                 return {
-                                    let (direct_arg0,) = (command,);
+                                    let (direct_arg0,) = (*command,);
                                     finish_scan!(self.scan_off_save(direct_arg0))
                                 };
                             }
@@ -3634,7 +3712,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     ) != Some(GroupKind::MathShift)
                                     {
                                         return {
-                                            let (direct_arg0,) = (command,);
+                                            let (direct_arg0,) = (*command,);
                                             finish_scan!(self.scan_off_save(direct_arg0))
                                         };
                                     } else {
@@ -3672,7 +3750,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     ) != Some(GroupKind::MathShift)
                                 {
                                     return {
-                                        let (direct_arg0,) = (command,);
+                                        let (direct_arg0,) = (*command,);
                                         finish_scan!(self.scan_off_save(direct_arg0))
                                     };
                                 } else {
@@ -3692,7 +3770,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 ) && processor.paragraph_end_needs_alignment_recovery() =>
                             {
                                 return {
-                                    let (direct_arg0,) = (command,);
+                                    let (direct_arg0,) = (*command,);
                                     finish_scan!(self.scan_off_save(direct_arg0))
                                 };
                             }
@@ -3700,7 +3778,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 if matches!(mode, Mode::Math | Mode::DisplayMath) =>
                             {
                                 (processor
-                                    .recover_missing_math_shift(command)
+                                    .recover_missing_math_shift(*command)
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return finish_scan!(self.execute_missing_math_shift());
@@ -3722,7 +3800,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     ) != Some(GroupKind::MathShift) =>
                             {
                                 return {
-                                    let (direct_arg0,) = (command,);
+                                    let (direct_arg0,) = (*command,);
                                     finish_scan!(self.scan_off_save(direct_arg0))
                                 };
                             }
@@ -3847,7 +3925,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     return finish_scan!(self.execute_non_script());
                                 } else {
                                     (processor
-                                        .recover_missing_math_shift(command)
+                                        .recover_missing_math_shift(*command)
                                         .map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     return finish_scan!(self.execute_missing_math_shift());
@@ -3958,7 +4036,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                                 {
                                     return {
-                                        let (direct_arg0, direct_arg1) = (command, primitive);
+                                        let (direct_arg0, direct_arg1) = (*command, primitive);
                                         finish_scan!(
                                             self.scan_unclassified_primitive(
                                                 direct_arg0,
@@ -3971,7 +4049,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             (_, _) => {
                                 let meaning = static_meaning(command.meaning());
                                 {
-                                    let (direct_arg0, direct_arg1) = (command, meaning);
+                                    let (direct_arg0, direct_arg1) = (*command, meaning);
                                     finish_scan!(
                                         self.scan_unclassified_meaning(direct_arg0, direct_arg1)
                                     )

@@ -112,17 +112,24 @@ pub(super) fn alignment_preamble<G>(
 /// character selector, optional equals, and signed value identically.
 pub(super) fn scan_code_table_operands<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    scalar: &mut tex_command::ScalarScanFrame,
 ) -> Result<(char, i32), ExecError> {
-    let status =
-        processor.scan_restricted_integer_into(RestrictedIntegerClass::CharacterCode, scalar);
-    let character = take_operation_scalar!(scalar, status, take_restricted).value;
+    let character =
+        match processor.scan_restricted_integer_retained(RestrictedIntegerClass::CharacterCode) {
+            tex_command::RetainedScalarScan::Complete(value) => value,
+            tex_command::RetainedScalarScan::Failed(error) => return Err(command_error(error)),
+        }
+        .value;
     let character =
         char::from_u32(character as u32).expect("scan_char_num returns a valid character");
-    let status = processor.scan_optional_equals_into(scalar);
-    let _ = take_operation_scalar!(scalar, status, take_boolean);
-    let status = processor.scan_integer_into(scalar);
-    let value = take_operation_scalar!(scalar, status, take_integer).value;
+    let _ = match processor.scan_optional_equals_retained() {
+        tex_command::RetainedScalarScan::Complete(value) => value,
+        tex_command::RetainedScalarScan::Failed(error) => return Err(command_error(error)),
+    };
+    let value = match processor.scan_integer_retained() {
+        tex_command::RetainedScalarScan::Complete(value) => value,
+        tex_command::RetainedScalarScan::Failed(error) => return Err(command_error(error)),
+    }
+    .value;
     Ok((character, value))
 }
 

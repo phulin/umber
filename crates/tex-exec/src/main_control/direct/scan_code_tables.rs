@@ -53,12 +53,9 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
-        let (character, value) = (scan_code_table_operands(processor, scalar))
+        let (character, value) = (scan_code_table_operands(processor))
             .map_err(|error| scan_error(error, scan_origin))?;
         {
             let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) =

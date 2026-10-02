@@ -4345,7 +4345,7 @@ command. Replay completion and alignment events remain compact status variants
 and leave no command-bearing return envelope.
 
 The executor's caller-loop command episode owns command, delivery, scanner,
-operation-scan, scalar-destination, and completed-operand values only while the
+operation-scan and completed-operand values only while the
 ordinary call is active. There is no nested preflight-command projection or
 generic operation payload. A completed cold scan installs its uncommon leaf
 once in an adjacent caller-owned typed slot. Canonical dispatch then enters
@@ -4362,6 +4362,12 @@ effects remain private until the full replay attempt commits. The host restores
 the selected checkpoint and matching prefixes, then reconstructs ordinary
 delivery by replay rather than resuming a delivered command. Host capabilities
 remain borrow-scoped and never enter command state.
+
+Executor scalar families consume the actual typed scanner products directly.
+There is no generic scalar value union, publication frame, status/projection
+protocol, or retained scalar destination. Nested scanner calls keep their own
+call-local typed value/error slots where the successful ABI must avoid copying
+a cold error payload; they retain no scanner continuation or product classifier.
 
 There is no coverage fallback. Every TeX82, e-TeX, and pdfTeX meaning enters
 this loop, including definitions, assignments, groups, alignments, mode and

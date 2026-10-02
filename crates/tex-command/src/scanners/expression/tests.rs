@@ -96,12 +96,11 @@ fn numexpr_honors_precedence_and_leaves_its_relax_terminator_consumed() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut scalar = crate::ScalarScanFrame::default();
-        assert_eq!(
-            processor.scan_integer_into(&mut scalar),
-            crate::ScalarScanStatus::Complete
-        );
-        let scanned = scalar.take_integer();
+        let scalar_result = match processor.scan_integer_retained() {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        };
+        let scanned = scalar_result;
         assert_eq!(scanned.value, 14);
         let mut following = None;
         assert_eq!(
@@ -168,23 +167,24 @@ fn warmed_numexpr_destination_path_allocates_zero_heap() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut scalar = crate::ScalarScanFrame::default();
-        assert_eq!(
-            processor.scan_integer_into(&mut scalar),
-            crate::ScalarScanStatus::Complete
-        );
-        assert_eq!(scalar.take_integer().value, 14);
+        let scalar_result = match processor.scan_integer_retained() {
+            crate::RetainedScalarScan::Complete(value) => value,
+            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        };
+        assert_eq!(scalar_result.value, 14);
 
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
         {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
             for _ in 1..SCANS {
-                assert_eq!(
-                    processor.scan_integer_into(&mut scalar),
-                    crate::ScalarScanStatus::Complete
-                );
-                assert_eq!(scalar.take_integer().value, 14);
+                let scalar_result = match processor.scan_integer_retained() {
+                    crate::RetainedScalarScan::Complete(value) => value,
+                    crate::RetainedScalarScan::Failed(error) => {
+                        panic!("scalar scan failed: {error:?}")
+                    }
+                };
+                assert_eq!(scalar_result.value, 14);
             }
         }
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);

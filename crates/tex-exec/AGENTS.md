@@ -46,7 +46,11 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   character buffer demands mutable mode ownership and ends the processor loan. Actual diagnostic,
   observer/tracked, page/output, afterassignment and budget demands release the
   loan for the common settlement tail. `scan_arithmetic.rs` scans concrete
-  operands in that same processor; register scans likewise stay in their native
+  the final typed operand in that same processor; target selection and invalid-target
+  diagnostics remain in the actual switch arm. Scalar scans consume typed values
+  without generic frame publication/projection. Fetch/reswitch borrows the one
+  initialized command slot, copying only values needed across real input overwrites
+  and cold ownership boundaries. Register scans likewise stay in their native
   switch arms. These paths own no operation value or continuation. `characters.rs` consumes borrowed
   source spans in the existing horizontal loop. `publication.rs` validates and
   reserves the complete scanner token root set before streaming final native

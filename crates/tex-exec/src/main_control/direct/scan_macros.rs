@@ -1,10 +1,12 @@
 //! Local scanner control flow; no returned operation carrier.
-macro_rules! take_control_scalar {
-    ($frame:expr,$status:expr,$take:ident,$origin:expr $(,)?) => {{
-        match $status {
-            tex_command::ScalarScanStatus::Complete => $frame.$take(),
-            tex_command::ScalarScanStatus::Failed => {
-                return Err(scan_error(command_error($frame.take_error()), $origin));
+// Consume the native scanner's actual typed product without publishing it
+// through a generic frame and projecting it back out.
+macro_rules! take_native_scalar {
+    ($scan:expr, $origin:expr $(,)?) => {{
+        match $scan {
+            tex_command::RetainedScalarScan::Complete(value) => value,
+            tex_command::RetainedScalarScan::Failed(error) => {
+                return Err(scan_error(command_error(error), $origin));
             }
         }
     }};

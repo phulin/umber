@@ -34,6 +34,11 @@ print channel of its own outside the borrowed
 `\tracingifs` uses with the executor's operation-local detached-effect
 collector (see `src/conditionals.rs`).
 
+Executor-facing scalar scans return their actual typed product or error. Generic
+scalar result unions, publication frames and projection/status APIs are absent.
+Nested scalar calls retain their own typed value/error slots only at actual
+call boundaries that avoid copying cold error payloads on successful reads.
+
 ## File Map
 
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.

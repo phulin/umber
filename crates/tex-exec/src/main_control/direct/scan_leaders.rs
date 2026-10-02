@@ -53,9 +53,6 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
         let kind = crate::box_runtime::leader_glue_kind(primitive);
         let payload = (processor.scan_leader_payload().map_err(command_error))
@@ -92,7 +89,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 scan_origin,
             ));
         }
-        let glue = (scan_leader_glue_operand(processor, scalar, &mut destination, mode))
+        let glue = (scan_leader_glue_operand(processor, &mut destination, mode))
             .map_err(|error| scan_error(error, scan_origin))?;
         finish_scan!(self.complete_leader_glue(result, glue))
     }
@@ -150,11 +147,8 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
-        let glue = (scan_leader_glue_operand(processor, scalar, &mut command, mode))
+        let glue = (scan_leader_glue_operand(processor, &mut command, mode))
             .map_err(|error| scan_error(error, scan_origin))?;
         finish_scan!(self.complete_leader_glue(result, glue))
     }
@@ -180,7 +174,6 @@ impl<G> DirectDispatch<'_, '_, G> {
 
 pub(super) fn scan_leader_glue_operand<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    scalar: &mut tex_command::ScalarScanFrame,
     command: &mut Option<tex_command::CurrentCommand<G>>,
     mode: Mode,
 ) -> Result<Option<(GlueSpec, bool)>, ExecError> {
@@ -208,8 +201,11 @@ pub(super) fn scan_leader_glue_operand<G>(
     if (horizontal && primitive == UnexpandablePrimitive::HSkip)
         || (!horizontal && primitive == UnexpandablePrimitive::VSkip)
     {
-        let status = processor.scan_glue_into(false, scalar);
-        let glue = take_operation_scalar!(scalar, status, take_glue).value;
+        let glue = match processor.scan_glue_retained(false) {
+            tex_command::RetainedScalarScan::Complete(value) => value,
+            tex_command::RetainedScalarScan::Failed(error) => return Err(command_error(error)),
+        }
+        .value;
         return Ok(Some((glue, processor.scanned_glue_shared_zero())));
     }
     let infinite = match (horizontal, primitive) {

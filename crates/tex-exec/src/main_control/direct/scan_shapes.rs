@@ -52,15 +52,10 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
-        let status = processor.scan_optional_equals_into(scalar);
-        let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
-        let status = processor.scan_integer_into(scalar);
-        let count = take_control_scalar!(scalar, status, take_integer, scan_origin)
+        let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
+        let count = take_native_scalar!(processor.scan_integer_retained(), scan_origin)
             .value
             .max(0) as usize;
         let mut lines = Vec::new();
@@ -69,10 +64,9 @@ impl<G> DirectDispatch<'_, '_, G> {
             .map_err(|_| ExecError::ArithmeticOverflow))
         .map_err(|error| scan_error(error, scan_origin))?;
         for _ in 0..count {
-            let status = processor.scan_dimension_into(scalar);
-            let indent = take_control_scalar!(scalar, status, take_dimension, scan_origin).value;
-            let status = processor.scan_dimension_into(scalar);
-            let width = take_control_scalar!(scalar, status, take_dimension, scan_origin).value;
+            let indent =
+                take_native_scalar!(processor.scan_dimension_retained(), scan_origin).value;
+            let width = take_native_scalar!(processor.scan_dimension_retained(), scan_origin).value;
             lines.push(ParagraphShapeLine { indent, width });
         }
         {
@@ -133,15 +127,10 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let mut scalar_storage = tex_command::ScalarScanFrame::default();
-        let scalar = &mut scalar_storage;
-
         let scan_origin = self.current_origin;
 
-        let status = processor.scan_optional_equals_into(scalar);
-        let _ = take_control_scalar!(scalar, status, take_boolean, scan_origin);
-        let status = processor.scan_integer_into(scalar);
-        let count = take_control_scalar!(scalar, status, take_integer, scan_origin)
+        let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
+        let count = take_native_scalar!(processor.scan_integer_retained(), scan_origin)
             .value
             .max(0) as usize;
         let mut values = Vec::new();
@@ -150,8 +139,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             .map_err(|_| ExecError::ArithmeticOverflow))
         .map_err(|error| scan_error(error, scan_origin))?;
         for _ in 0..count {
-            let status = processor.scan_integer_into(scalar);
-            let value = take_control_scalar!(scalar, status, take_integer, scan_origin).value;
+            let value = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
             values.push(value);
         }
         {
