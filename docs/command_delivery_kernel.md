@@ -165,6 +165,13 @@ This is separate from the routine tests of exact boundary accounting.
 
 ## Native word completion and cold input ownership
 
+The unobserved macro activation shortcut tests its actual macro meaning before
+checking whether suppression, an outer restriction or a persistent delivery mode
+requires settlement. Other meanings reach their one ordinary settlement call
+directly; they do not prepare macro eligibility or repeat outer classification.
+Observed and protected delivery keep their existing settlement and terminal
+boundaries.
+
 Resident delivery returns only its actual consumer completion or no word. It
 never constructs an input-transition descriptor containing row coordinates,
 argument regions, parameter spans or source facts. When no word is available,

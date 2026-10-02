@@ -228,12 +228,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let (meaning, resolution) = processor.resolve_token_word(word);
                 processor.record_consumed_word(kind, resolution.meaning_lookup());
                 if !OBSERVED
+                    && let CommandWord::Macro { flags, definition } = meaning
+                    && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
                     && !processor
                         .command
                         .delivery_mode
-                        .requires_semantic_settlement(suppress, meaning.is_outer())
-                    && let CommandWord::Macro { flags, definition } = meaning
-                    && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
+                        .requires_semantic_settlement(suppress, flags.contains(MeaningFlags::OUTER))
                 {
                     let name = resolution
                         .control_sequence()
