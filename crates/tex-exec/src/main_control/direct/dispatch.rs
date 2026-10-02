@@ -261,7 +261,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     let delivery = if main_loop_active {
                         processor.main_loop_lookahead_into(&mut destination)
                     } else {
-                        processor.preflight_command_into(&mut destination)
+                        processor.main_control_expanded_into(&mut destination)
                     };
                     match (delivery.map_err(command_error))
                         .map_err(|error| scan_error(error, scan_origin))?

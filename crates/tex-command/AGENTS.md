@@ -112,7 +112,7 @@ collector (see `src/conditionals.rs`).
   their genuine consuming shape without a second command representation.
   Exact source geometry remains behind the spelling's
   packed origin and is materialized only by cold processor consumers; the hot
-  value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through preflight and scanning,
+  value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through delivery and scanning,
   and moves it only into another semantic owner; it never
   enters a durable snapshot or format boundary.
   Command identity is derived at diagnostic/observation consumers from the native word and existing frozen-noexpand flag; no duplicate identity column is materialized during ordinary delivery.
@@ -320,9 +320,11 @@ collector (see `src/conditionals.rs`).
   end-template handling, macro activation, undefined recovery, or one exact
   primitive dispatch. That borrowed decision directly drives expansion;
   expansion does not match the resident meaning or primitive opcode again.
-  Main-control preflight performs raw fetch, expansion classification, and any
-  required expansion in one expanded-loop entry without backing up or
-  redelivering the command.
+  Main control enters the same canonical expanded word loop and one actual
+  expansion episode. Only a directly fetched raw `end_template` uses its
+  frozen `endv` insertion/reread; a template reached after expansion uses
+  the existing scanner terminal conversion. Raw character lookahead is its
+  genuine TeX fetch label, not a first-read preflight or eligibility handoff.
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.
@@ -355,7 +357,7 @@ collector (see `src/conditionals.rs`).
   lifecycle tests.
 - `src/processor/expand/tests.rs` and `src/processor/expand/tests/`: shared
   expansion-test setup and named delivery, balanced-body, numeric/conditional,
-  expression, font/name, macro, preflight, character-run, protected-replay, and
+  expression, font/name, macro, main-control, character-run, protected-replay, and
   PDF-query families. Existing kernel, nesting, and resident-run modules stay
   in the same unit-test target; `src/processor/fixtures/` holds bounded source
   microfixtures.

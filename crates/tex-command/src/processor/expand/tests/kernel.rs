@@ -28,7 +28,7 @@ fn install_identity<G>(universe: &mut tex_state::Universe<G>, name: &str, body: 
 
 // A source parent, replacement parent and argument parent all resume after
 // nested input. Fuel cuts exercise every intermediate return/unwind position.
-fn nested_readers(observed: bool, limit: u64) -> (String, u64, bool) {
+fn nested_readers(observed: bool, main_control: bool, limit: u64) -> (String, u64, bool) {
     crate::test_harness::with_universe(|universe| {
         for (ch, cat) in [('{', Catcode::BeginGroup), ('}', Catcode::EndGroup)] {
             universe
@@ -74,7 +74,12 @@ fn nested_readers(observed: bool, limit: u64) -> (String, u64, bool) {
         let mut output = String::new();
         let mut destination = None;
         let exhausted = loop {
-            match processor.get_x_token_into(&mut destination) {
+            let result = if main_control {
+                processor.main_control_expanded_into(&mut destination)
+            } else {
+                processor.get_x_token_into(&mut destination)
+            };
+            match result {
                 Ok(crate::DeliveryStatus::End) => {
                     assert!(destination.is_none());
                     break false;
@@ -108,20 +113,29 @@ fn nested_readers(observed: bool, limit: u64) -> (String, u64, bool) {
 
 #[test]
 fn input_frame_readers_resume_identically_with_and_without_observation() {
-    let ordinary = nested_readers(false, 100);
+    let ordinary = nested_readers(false, false, 100);
     assert_eq!(ordinary.0, "ALBCRD");
     assert!(!ordinary.2);
-    assert_eq!(nested_readers(true, 100), ordinary);
+    for observed in [false, true] {
+        for main_control in [false, true] {
+            assert_eq!(nested_readers(observed, main_control, 100), ordinary);
+        }
+    }
 }
 
 #[test]
 fn observation_specialization_preserves_every_nested_fuel_cut() {
     for limit in 1..=20 {
-        assert_eq!(
-            nested_readers(true, limit),
-            nested_readers(false, limit),
-            "fuel {limit}"
-        );
+        let ordinary = nested_readers(false, false, limit);
+        for observed in [false, true] {
+            for main_control in [false, true] {
+                assert_eq!(
+                    nested_readers(observed, main_control, limit),
+                    ordinary,
+                    "fuel {limit}"
+                );
+            }
+        }
     }
 }
 

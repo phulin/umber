@@ -5,8 +5,6 @@ mod consume;
 mod input;
 mod resident;
 
-use consume::ExpansionCandidate;
-
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
@@ -22,6 +20,13 @@ use super::{
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
 };
+
+/// Only the genuine terminal treatment differs between canonical reader roles.
+#[derive(Clone, Copy, PartialEq)]
+enum ExpandedReaderRole {
+    Scanner,
+    MainControl,
+}
 
 enum InputFrameTransition {
     Source {
@@ -318,9 +323,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.charge_command_action()?;
         loop {
             match self.consume_resident_input(
-                &mut |_, _, _, _, span| {
-                    span.consume_prefix(|_, _| std::ops::ControlFlow::Continue(false))
-                },
+                &mut |_, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
                 finish,
             )? {
                 std::ops::ControlFlow::Break(result) => {
@@ -388,7 +391,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.expanded_next_hot_with_mode::<false, false>(destination, initial_action)
+        self.expanded_next_hot_with_mode::<false, false>(
+            destination,
+            initial_action,
+            ExpandedReaderRole::Scanner,
+        )
     }
 
     #[cold]
@@ -397,7 +404,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.expanded_next_hot_with_mode::<true, false>(destination, None)
+        self.expanded_next_hot_with_mode::<true, false>(
+            destination,
+            None,
+            ExpandedReaderRole::Scanner,
+        )
     }
 
     /// Delivers e-TeX's `get_x_or_protected`: each raw fetch is expanded only
@@ -410,7 +421,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let result = self.expanded_next_hot_with_mode::<false, true>(destination, None);
+        let result = self.expanded_next_hot_with_mode::<false, true>(
+            destination,
+            None,
+            ExpandedReaderRole::Scanner,
+        );
         Self::finish_delivery(destination, result)
     }
 
@@ -418,6 +433,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
+        role: ExpandedReaderRole,
     ) -> Result<DeliveryStatus, CommandError> {
         let depth = self.command.transient.active_expansion_depth;
         let Some(active_depth) = depth.checked_add(1) else {
@@ -432,11 +448,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.expanded_delivery_loop::<true, PRESERVE_UNDEFINED, STOP_PROTECTED>(
                 destination,
                 initial_action,
+                role,
             )
         } else {
             self.expanded_delivery_loop::<false, PRESERVE_UNDEFINED, STOP_PROTECTED>(
                 destination,
                 initial_action,
+                role,
             )
         };
         debug_assert_eq!(self.command.transient.active_expansion_depth, active_depth);
@@ -560,33 +578,31 @@ impl<G> CommandProcessor<'_, '_, G> {
                 _ => crate::fuel::RawDeliveryKind::StoredToken,
             };
             let selected = self.consume_resident_input(
-                &mut |state, fuel, effects, _, span| {
-                    span.consume_prefix(|word, origin| {
-                        let Token::Char {
-                            ch,
-                            cat: Catcode::Letter | Catcode::Other,
-                        } = word.semantic_token()
-                        else {
-                            return std::ops::ControlFlow::Continue(false);
-                        };
-                        if !allows_characters || !fuel.try_charge() {
-                            return std::ops::ControlFlow::Continue(false);
-                        }
-                        consumed_characters = true;
-                        #[cfg(feature = "profiling")]
-                        fuel.record_raw_run(false, kind, 1);
-                        let admission = consume.admit(
-                            state,
-                            fuel,
-                            effects,
-                            MainCharacterInput::Scalar { ch, origin },
-                        );
-                        if admission.continue_run() {
-                            std::ops::ControlFlow::Continue(true)
-                        } else {
-                            std::ops::ControlFlow::Break(DeliveryStatus::CharacterRun)
-                        }
-                    })
+                &mut |state, fuel, effects, _, word, origin| {
+                    let Token::Char {
+                        ch,
+                        cat: Catcode::Letter | Catcode::Other,
+                    } = word.semantic_token()
+                    else {
+                        return std::ops::ControlFlow::Continue(false);
+                    };
+                    if !allows_characters || !fuel.try_charge() {
+                        return std::ops::ControlFlow::Continue(false);
+                    }
+                    consumed_characters = true;
+                    #[cfg(feature = "profiling")]
+                    fuel.record_raw_run(false, kind, 1);
+                    let admission = consume.admit(
+                        state,
+                        fuel,
+                        effects,
+                        MainCharacterInput::Scalar { ch, origin },
+                    );
+                    if admission.continue_run() {
+                        std::ops::ControlFlow::Continue(true)
+                    } else {
+                        std::ops::ControlFlow::Break(DeliveryStatus::CharacterRun)
+                    }
                 },
                 &mut |processor, word, origin, suppress, site, kind| {
                     processor.finish_character_boundary(
@@ -779,47 +795,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.expanded_next_with_action(destination, initial_action)
     }
 
-    // Both native main-control fetch labels share this resident command slot.
+    /// TeX's raw character lookahead is the other actual main-control fetch label.
     #[inline(never)]
     fn main_action_lookahead(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
-        preflight: bool,
     ) -> Result<DeliveryStatus, CommandError> {
         if destination.is_none() {
-            if preflight {
-                let candidate = if self.is_observed() {
-                    self.read_expansion_candidate::<true, false, true>(destination)
-                } else {
-                    self.read_expansion_candidate::<false, false, true>(destination)
-                };
-                match candidate {
-                    Ok(ExpansionCandidate::ExpandedMacro) => {
-                        let result = self.expanded_next_hot(destination, None);
-                        return Self::finish_delivery(destination, result);
-                    }
-                    Ok(ExpansionCandidate::Command) => {}
-                    Ok(ExpansionCandidate::Finished(status)) => return Ok(status),
-                    Err(failure) => {
-                        return self.fail_hot_expanded_delivery(
-                            destination,
-                            self.command.transient.active_expansion_depth,
-                            failure,
-                        );
-                    }
-                }
-            } else {
-                match self.raw_next_hot(destination)? {
-                    DeliveryStatus::Command => {}
-                    status => return Ok(status),
-                }
+            match self.raw_next_hot(destination)? {
+                DeliveryStatus::Command => {}
+                status => return Ok(status),
             }
         }
         let command = destination
             .as_ref()
             .ok_or_else(CommandError::input_invariant)?;
         let is_character = command.command_word().is_main_loop_character();
-        if is_character && !preflight {
+        if is_character {
             return Ok(DeliveryStatus::Command);
         }
         let action = classify_hot_command(command);
@@ -863,7 +855,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        match self.main_action_lookahead(destination, false)? {
+        match self.main_action_lookahead(destination)? {
             DeliveryStatus::PendingExpanded => Ok(DeliveryStatus::Command),
             result => Ok(result),
         }
@@ -1364,17 +1356,20 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// Delivers main-control preflight through one raw-fetch/classification
-    /// loop. An ordinary unexpandable command publishes its canonical expanded
-    /// observation directly, without completing a second expanded-driver
-    /// episode; a macro, expandable primitive, or undefined command continues
-    /// in place through the canonical expanded loop.
-    pub fn preflight_command_into(
+    /// Main control's expanded fetch uses the canonical word loop and one
+    /// expansion episode. Its only role-specific cut is a raw end-template.
+    pub fn main_control_expanded_into(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        debug_assert!(destination.is_none());
         loop {
-            match self.main_action_lookahead(destination, true)? {
+            let expanded = self.expanded_next_hot_with_mode::<false, false>(
+                destination,
+                None,
+                ExpandedReaderRole::MainControl,
+            );
+            match Self::finish_delivery(destination, expanded)? {
                 DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
                     return Ok(DeliveryStatus::Command);
                 }
@@ -1416,7 +1411,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         loop {
-            let result = self.main_action_lookahead(destination, false)?;
+            let result = self.main_action_lookahead(destination)?;
             match result {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination

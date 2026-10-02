@@ -64,23 +64,16 @@ need no meaning lookup. Expanded delivery resolves each interpreted meaning
 once. A macro supplies only its name, origin, flags, and definition to activation
 and argument scanning; successful ordinary activation constructs no command.
 
-Resident admission borrows one actual physical span and its authoritative frame
-cursor. The selected consumer borrows context, fuel, effects and alignment once
-for that span; its inner word loop retains those owners instead of passing all
-four through a callback at every word. The span borrows either immutable packed
-definition/list words or traced argument/backup words from their existing owner.
-It owns no copy, detached coordinates or classified-command cache. Each admitted
-word still advances its frame and charges fuel at the original semantic point.
-The first boundary word goes to the existing scalar consumer after the span
-loan ends. Exhaustion, parameter substitution, recovery, macro activation and
-input insertion reselect only after their genuine ownership transition.
-Main-control preflight uses this same final meaning for its first
-token. An ordinary unobserved macro can activate directly there and continue
-through the existing expansion loop; source, recovery, observation, and other
-commands still pass through ordinary raw settlement. Preflight retains the
-canonical `end_template` insertion and its fuel charge. Direct first-macro
-activation retains the expanded episode's transient quiescence guard while
-matching arguments; the continuation enters the ordinary guarded expansion loop.
+Main control's expanded fetch enters this same word loop and one expansion
+episode before reading its first token. There is no first-read preflight or
+separate first-macro activation path. Main control and scanners differ only at
+the selected `end_template` terminal: a directly fetched raw main-control
+template inserts and rereads frozen `endv`, retaining its extra raw fuel,
+spelling, origin and observations. A template reached after macro/primitive
+expansion uses the existing inline terminal conversion, as scanner expansion
+does. The loop's actual expanded-state fact distinguishes these cases. TeX's
+raw main-loop character lookahead remains its genuine separate fetch label;
+its non-character enters this same expanded loop without redelivery.
 
 Meaning resolution writes the final native `CommandWord` enum: validated static
 word, macro key/flags, or font capability. There is no operand adapter, temporary

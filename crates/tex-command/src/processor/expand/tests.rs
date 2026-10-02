@@ -12,14 +12,14 @@ mod expressions;
 mod font_and_names;
 #[path = "tests/macro_delivery.rs"]
 mod macro_delivery;
+#[path = "tests/main_control.rs"]
+mod main_control;
 #[path = "tests/main_loop.rs"]
 mod main_loop;
 #[path = "tests/number_condition.rs"]
 mod number_condition;
 #[path = "tests/pdf_queries.rs"]
 mod pdf_queries;
-#[path = "tests/preflight.rs"]
-mod preflight;
 #[path = "tests/protected_replay.rs"]
 mod protected_replay;
 
@@ -265,8 +265,8 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
             );
             assert_eq!(
                 processor
-                    .preflight_command_into(&mut destination)
-                    .expect("preflight expansion delivery"),
+                    .main_control_expanded_into(&mut destination)
+                    .expect("main-control expanded delivery"),
                 crate::DeliveryStatus::Command
             );
         }

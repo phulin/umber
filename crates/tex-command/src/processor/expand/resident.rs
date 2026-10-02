@@ -6,60 +6,6 @@ use crate::{CommandError, CommandProcessor};
 use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
 
-/// A synchronous loan of the selected row's actual words and cursor. Native
-/// consumers retain their semantic owners across its inner word loop.
-pub(super) struct ResidentSpan<'a> {
-    frame: &'a mut crate::input::PackedInputFrame,
-    words: ResidentWords<'a>,
-}
-
-enum ResidentWords<'a> {
-    Packed(&'a [TokenWord]),
-    Traced(&'a [tex_state::token::TracedTokenWord]),
-}
-
-impl ResidentSpan<'_> {
-    #[inline(always)]
-    pub(super) fn consume_prefix<R>(
-        &mut self,
-        mut admit: impl FnMut(TokenWord, OriginId) -> ControlFlow<R, bool>,
-    ) -> ControlFlow<R, Option<(TokenWord, OriginId)>> {
-        let frame = &mut *self.frame;
-        let start = frame.start() as usize;
-        macro_rules! consume_words {
-            ($words:expr, $project:expr) => {{
-                let words = $words;
-                loop {
-                    let position = frame.position();
-                    if position >= frame.limit() {
-                        return ControlFlow::Continue(None);
-                    }
-                    let (word, origin) = $project(words[start + position as usize]);
-                    frame.advance_resident();
-                    match admit(word, origin) {
-                        ControlFlow::Continue(true) => {}
-                        ControlFlow::Continue(false) => {
-                            return ControlFlow::Continue(Some((word, origin)));
-                        }
-                        ControlFlow::Break(result) => return ControlFlow::Break(result),
-                    }
-                }
-            }};
-        }
-        match self.words {
-            ResidentWords::Packed(words) => {
-                consume_words!(words, |word| (word, OriginId::UNKNOWN))
-            }
-            ResidentWords::Traced(words) => {
-                consume_words!(words, |word: tex_state::token::TracedTokenWord| (
-                    word.token_word(),
-                    word.origin()
-                ))
-            }
-        }
-    }
-}
-
 impl<G> CommandProcessor<'_, '_, G> {
     /// Settles a drained frame or a replacement parameter after a bulk scan.
     pub(crate) fn settle_resident_run_boundary(&mut self) -> Result<bool, CommandError> {
@@ -84,9 +30,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(false);
         }
         let selected = self.consume_resident_input(
-            &mut |_, _, _, _, span| {
-                span.consume_prefix(|_, _| ControlFlow::<(), bool>::Continue(false))
-            },
+            &mut |_, _, _, _, _, _| ControlFlow::<(), bool>::Continue(false),
             &mut |_, _, _, _, _, _| Err(CommandError::input_invariant()),
         )?;
         let ControlFlow::Continue(transition) = selected else {
@@ -102,7 +46,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// Selects the physical span once, lends it to its actual semantic consumer,
+    /// Selects the physical span once, admits its ordinary prefix in place,
     /// and hands boundary scalars straight to the caller's actual consumer.
     /// Only a cold input transition leaves without consuming a word.
     #[inline(always)]
@@ -113,8 +57,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             &mut crate::fuel::CommandFuel,
             &mut tex_state::diagnostic::DiagnosticEffects,
             &mut crate::processor::alignment::AlignmentDeliveryState<G>,
-            &mut ResidentSpan<'_>,
-        ) -> ControlFlow<R, Option<(TokenWord, OriginId)>>,
+            TokenWord,
+            OriginId,
+        ) -> ControlFlow<R, bool>,
         finish: &mut impl FnMut(
             &mut Self,
             TokenWord,
@@ -147,37 +92,53 @@ impl<G> CommandProcessor<'_, '_, G> {
                 },
             ));
         }
-        let words = match &row.storage {
-            ResidentTokenStorage::MacroBody(body) => {
-                ResidentWords::Packed(body.body.definition_words())
+        macro_rules! consume_run {
+            ($words:expr, $project:expr) => {{
+                let words = $words;
+                let start = frame.start() as usize;
+                loop {
+                    let position = frame.position();
+                    if position >= frame.limit() {
+                        return Ok(ControlFlow::Continue(
+                            InputFrameTransition::ResidentExhausted {
+                                resident_index,
+                                identity: InputLevelId(frame.identity()),
+                            },
+                        ));
+                    }
+                    let (word, origin) = $project(words[start + position as usize]);
+                    frame.advance_resident();
+                    match admit(
+                        self.state,
+                        self.fuel,
+                        self.diagnostic_effects,
+                        &mut self.command.roots.alignment,
+                        word,
+                        origin,
+                    ) {
+                        ControlFlow::Continue(true) => {}
+                        ControlFlow::Continue(false) => break (word, origin),
+                        ControlFlow::Break(result) => return Ok(ControlFlow::Break(result)),
+                    }
+                }
+            }};
+        }
+        let (word, origin) = match &row.storage {
+            ResidentTokenStorage::MacroBody(body) => consume_run!(
+                body.body.definition_words(),
+                |word| (word, OriginId::UNKNOWN)
+            ),
+            ResidentTokenStorage::StoredList(list) => {
+                consume_run!(list.words(), |word| (word, OriginId::UNKNOWN))
             }
-            ResidentTokenStorage::StoredList(list) => ResidentWords::Packed(list.words()),
-            ResidentTokenStorage::MacroArgument { region, .. } => {
-                ResidentWords::Traced(levels.arguments.region(*region))
-            }
-            _ => ResidentWords::Traced(&levels.words),
-        };
-        let admitted = admit(
-            self.state,
-            self.fuel,
-            self.diagnostic_effects,
-            &mut self.command.roots.alignment,
-            &mut ResidentSpan {
-                frame: &mut *frame,
-                words,
-            },
-        );
-        let (word, origin) = match admitted {
-            ControlFlow::Break(result) => return Ok(ControlFlow::Break(result)),
-            ControlFlow::Continue(Some(word)) => word,
-            ControlFlow::Continue(None) => {
-                return Ok(ControlFlow::Continue(
-                    InputFrameTransition::ResidentExhausted {
-                        resident_index,
-                        identity: InputLevelId(frame.identity()),
-                    },
-                ));
-            }
+            ResidentTokenStorage::MacroArgument { region, .. } => consume_run!(
+                levels.arguments.region(*region),
+                |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin())
+            ),
+            _ => consume_run!(&levels.words, |word: tex_state::token::TracedTokenWord| (
+                word.token_word(),
+                word.origin()
+            )),
         };
         if let Some(slot) = word.out_parameter_slot() {
             let span = match &row.storage {

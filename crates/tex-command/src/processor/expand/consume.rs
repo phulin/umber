@@ -1,6 +1,8 @@
 //! Consumer-side interpretation of the shared input reader.
 
-use super::{ExpandedCommandAction, ExpansionDispatch, ReadSite, classify_hot_command};
+use super::{
+    ExpandedCommandAction, ExpandedReaderRole, ExpansionDispatch, ReadSite, classify_hot_command,
+};
 use crate::command::{CommandWord, CurrentCommand};
 use crate::input::InputLevel;
 #[cfg(feature = "profiling")]
@@ -27,8 +29,8 @@ enum SkippedWord {
 }
 
 /// One read from the shared raw input kernel, interpreted for expansion.
-/// Preflight and the ordinary expansion loop share this exact admission so
-/// neither has to construct a command for an ordinary unobserved macro.
+/// The canonical expansion loop activates ordinary unobserved macros without
+/// constructing a command.
 ///
 /// A settled command is written straight into the caller's slot; returning it
 /// by value through this status would copy the whole compact command at
@@ -75,40 +77,36 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let scanner = self.command.delivery_mode.scanner_active();
                 self.pending_diagnostic_location = None;
                 let selected = self.consume_resident_input(
-                    &mut |state, fuel, _, alignment, span| {
-                        span.consume_prefix(|word, _| {
-                            let effect = match word.literal_catcode() {
-                                Some(tex_state::token::Catcode::BeginGroup) => {
-                                    SkippedWord::Brace(1)
-                                }
-                                Some(tex_state::token::Catcode::EndGroup) => SkippedWord::Brace(-1),
-                                Some(tex_state::token::Catcode::Active) if classify => {
-                                    Self::skipped_command(state, word, *nested_conditions)
-                                }
-                                Some(tex_state::token::Catcode::Active) => SkippedWord::Boundary,
-                                Some(_) => SkippedWord::Discarded,
-                                None if classify && word.is_control_sequence() => {
-                                    Self::skipped_command(state, word, *nested_conditions)
-                                }
-                                None => SkippedWord::Boundary,
-                            };
-                            if matches!(effect, SkippedWord::Boundary) || !fuel.try_charge() {
-                                return ControlFlow::Continue(false);
+                    &mut |state, fuel, _, alignment, word, _| {
+                        let effect = match word.literal_catcode() {
+                            Some(tex_state::token::Catcode::BeginGroup) => SkippedWord::Brace(1),
+                            Some(tex_state::token::Catcode::EndGroup) => SkippedWord::Brace(-1),
+                            Some(tex_state::token::Catcode::Active) if classify => {
+                                Self::skipped_command(state, word, *nested_conditions)
                             }
-                            match effect {
-                                SkippedWord::Brace(delta) => alignment.align_state += delta,
-                                SkippedWord::NestedConditional => *nested_conditions += 1,
-                                SkippedWord::NestedFi => *nested_conditions -= 1,
-                                SkippedWord::Discarded | SkippedWord::Boundary => {}
+                            Some(tex_state::token::Catcode::Active) => SkippedWord::Boundary,
+                            Some(_) => SkippedWord::Discarded,
+                            None if classify && word.is_control_sequence() => {
+                                Self::skipped_command(state, word, *nested_conditions)
                             }
-                            #[cfg(feature = "profiling")]
-                            fuel.record_raw_run(scanner, kind, 1);
-                            if fuel.remaining() == 0 {
-                                ControlFlow::Break(None)
-                            } else {
-                                ControlFlow::Continue(true)
-                            }
-                        })
+                            None => SkippedWord::Boundary,
+                        };
+                        if matches!(effect, SkippedWord::Boundary) || !fuel.try_charge() {
+                            return ControlFlow::Continue(false);
+                        }
+                        match effect {
+                            SkippedWord::Brace(delta) => alignment.align_state += delta,
+                            SkippedWord::NestedConditional => *nested_conditions += 1,
+                            SkippedWord::NestedFi => *nested_conditions -= 1,
+                            SkippedWord::Discarded | SkippedWord::Boundary => {}
+                        }
+                        #[cfg(feature = "profiling")]
+                        fuel.record_raw_run(scanner, kind, 1);
+                        if fuel.remaining() == 0 {
+                            ControlFlow::Break(None)
+                        } else {
+                            ControlFlow::Continue(true)
+                        }
                     },
                     &mut |processor, word, origin, suppress, site, kind| {
                         processor.charge_command_action()?;
@@ -223,11 +221,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     #[inline(always)]
-    pub(super) fn read_expansion_candidate<
-        const OBSERVED: bool,
-        const STOP_PROTECTED: bool,
-        const PREFLIGHT_FIRST: bool,
-    >(
+    pub(super) fn read_expansion_candidate<const OBSERVED: bool, const STOP_PROTECTED: bool>(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<ExpansionCandidate, CommandError> {
@@ -247,19 +241,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let name = resolution
                         .control_sequence()
                         .ok_or_else(CommandError::input_invariant)?;
-                    if PREFLIGHT_FIRST {
-                        let depth = processor.command.transient.active_expansion_depth;
-                        processor.command.transient.active_expansion_depth =
-                            depth
-                                .checked_add(1)
-                                .ok_or_else(CommandError::input_invariant)?;
-                        let result =
-                            processor.activate_read_macro(word, origin, flags, definition, name);
-                        processor.command.transient.active_expansion_depth = depth;
-                        result?;
-                    } else {
-                        processor.activate_read_macro(word, origin, flags, definition, name)?;
-                    }
+                    processor.activate_read_macro(word, origin, flags, definition, name)?;
                     return Ok(ExpansionCandidate::ExpandedMacro);
                 }
                 let line = match site {
@@ -321,6 +303,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
+        role: ExpandedReaderRole,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut expanded = false;
         if STOP_PROTECTED
@@ -339,7 +322,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             expanded = true;
         }
         loop {
-            match self.read_expansion_candidate::<OBSERVED, STOP_PROTECTED, false>(destination)? {
+            match self.read_expansion_candidate::<OBSERVED, STOP_PROTECTED>(destination)? {
                 ExpansionCandidate::ExpandedMacro => {
                     expanded = true;
                     continue;
@@ -368,6 +351,18 @@ impl<G> CommandProcessor<'_, '_, G> {
             if let ExpandedCommandAction::Expand(dispatch) = action {
                 self.execute_expansion_action(command, dispatch)?;
                 expanded = true;
+                continue;
+            }
+            if role == ExpandedReaderRole::MainControl
+                && !expanded
+                && matches!(action, ExpandedCommandAction::EndTemplate)
+                && !matches!(
+                    command.alignment_adjustment(),
+                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                )
+            {
+                destination.take();
+                self.insert_frozen_endv()?;
                 continue;
             }
             return Ok(self.finish_terminal_expansion::<OBSERVED>(command, action, expanded));
