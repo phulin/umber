@@ -69,7 +69,7 @@ fn classify_hot_command<G>(command: &CurrentCommand<G>) -> ExpandedCommandAction
     #[cfg(test)]
     EXPANDED_CLASSIFICATIONS.with(|counter| counter.set(counter.get().saturating_add(1)));
 
-    let word = command.command_word();
+    let word = command;
     match word.class() {
         CommandClass::Macro => ExpandedCommandAction::Expand(ExpansionDispatch::Macro),
         CommandClass::Expandable => match word.expandable_primitive() {
@@ -89,7 +89,7 @@ fn classify_hot_command<G>(command: &CurrentCommand<G>) -> ExpandedCommandAction
 
 #[inline(always)]
 fn hot_decimal_digit<G>(command: &CurrentCommand<G>) -> Option<u8> {
-    match command.command_word().static_meaning() {
+    match command.static_meaning() {
         Some(Meaning::CharToken {
             ch: ch @ '0'..='9',
             cat: Catcode::Other,
@@ -101,7 +101,7 @@ fn hot_decimal_digit<G>(command: &CurrentCommand<G>) -> Option<u8> {
 #[inline(always)]
 fn hot_is_space<G>(command: &CurrentCommand<G>) -> bool {
     matches!(
-        command.command_word().static_meaning(),
+        command.static_meaning(),
         Some(Meaning::CharToken {
             cat: Catcode::Space,
             ..
@@ -787,7 +787,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let command = destination
             .as_ref()
             .ok_or_else(CommandError::input_invariant)?;
-        let is_character = command.command_word().is_main_loop_character();
+        let is_character = command.is_main_loop_character();
         if is_character {
             return Ok(DeliveryStatus::Command);
         }
@@ -1214,7 +1214,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .as_ref()
                 .ok_or_else(CommandError::input_invariant)?;
             if !matches!(
-                command.command_word().static_meaning(),
+                command.static_meaning(),
                 Some(
                     Meaning::CharToken {
                         cat: Catcode::Space,

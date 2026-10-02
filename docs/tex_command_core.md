@@ -321,7 +321,7 @@ Control-sequence resolution performs one direct probe of the already-admitted
 dense meaning row through the live `CommandContext`. The packed-token resolver
 accepts the final native meaning value as its in-place target; the canonical row writes
 the validated static meaning word, font id, or one generation-branded
-macro-definition coordinate directly into `CommandWord<G>`. It constructs no
+macro-definition coordinate directly into `MeaningWord<G>`. It constructs no
 projection carrier, intermediate `ResolvedMeaning`, whole-row copy, or second
 command. The row
 borrow ends with that write, before outer recovery, alignment handling,
@@ -2149,7 +2149,7 @@ parameter, exhaustion, and retirement facts return as cold input transitions.
 Transitions retry under one semantic delivery charge. No token/result carrier,
 cached reader, or second cursor enters command roots.
 
-The final meaning target is native `CommandWord`: static word, macro key/flags,
+The final meaning target is native `MeaningWord`: static word, macro key/flags,
 or font capability. Each interpreted token resolves once. Ordinary unobserved
 macro activation uses that final value directly; actual scanner, execution,
 observation, backup, recovery, alignment or suppression boundaries construct a

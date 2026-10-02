@@ -75,8 +75,11 @@ does. The loop's actual expanded-state fact distinguishes these cases. TeX's
 raw main-loop character lookahead remains its genuine separate fetch label;
 its non-character enters this same expanded loop without redelivery.
 
-Meaning resolution writes the final native `CommandWord` enum: validated static
-word, macro key/flags, or font capability. There is no operand adapter, temporary
+Meaning resolution writes the final native `MeaningWord` enum: validated static
+word, macro key/flags, or font capability. Its native tag and operand are
+unchanged between the dense row and the delivered command snapshot. Resolution
+stores no derived command class; actual consumers project their class, primitive
+or scalar value only when needed. There is no operand adapter, temporary
 `TokenMeaning`, or parallel font column.
 
 A full hot command is materialized when a caller actually needs command delivery,

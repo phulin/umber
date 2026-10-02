@@ -674,7 +674,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let next = next.take().ok_or_else(|| CommandError::input_invariant())?;
         let kind = next
-            .command_word()
             .expandable_primitive()
             .and_then(ConditionalKind::from_primitive);
         let Some(kind) = kind.filter(|kind| *kind != ConditionalKind::IfCase) else {
@@ -1125,7 +1124,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::input_invariant());
         }
         let relation = relation.expect("command status initializes hot destination");
-        match relation.command_word().static_meaning() {
+        match relation.static_meaning() {
             Some(Meaning::CharToken { ch: '<', .. }) => Ok(IfRelation::Less),
             Some(Meaning::CharToken { ch: '=', .. }) => Ok(IfRelation::Equal),
             Some(Meaning::CharToken { ch: '>', .. }) => Ok(IfRelation::Greater),

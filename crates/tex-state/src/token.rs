@@ -206,6 +206,27 @@ pub trait PackedCommandTarget<G> {
     );
 }
 
+impl<G> PackedCommandTarget<G> for crate::meaning::MeaningWord<G> {
+    #[inline(always)]
+    fn write_static_meaning_word(&mut self, word: u64) {
+        *self = Self::Static(word);
+    }
+
+    #[inline(always)]
+    fn write_font_meaning(&mut self, font: crate::ids::FontId) {
+        *self = Self::Font(font);
+    }
+
+    #[inline(always)]
+    fn write_macro_meaning(
+        &mut self,
+        flags: crate::meaning::MeaningFlags,
+        definition: crate::DefinitionRef<G>,
+    ) {
+        *self = Self::Macro { flags, definition };
+    }
+}
+
 impl PackedMeaningResolution {
     #[must_use]
     pub const fn control_sequence(self) -> Option<Symbol> {

@@ -235,7 +235,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .take()
             .ok_or_else(|| CommandError::input_invariant())?;
         let primary = command.origin();
-        let code = match command.command_word().static_meaning() {
+        let code = match command.static_meaning() {
             Some(Meaning::CharToken {
                 ch,
                 cat: Catcode::Letter | Catcode::Other,

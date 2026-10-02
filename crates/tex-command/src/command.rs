@@ -1,14 +1,17 @@
 //! Ephemeral current-command representation.
 
+mod identity;
+mod native_meaning;
+
+pub(crate) use identity::{CommandIdentity, ConvertSelector};
+
 use tex_state::CommandContext;
 use tex_state::DefinitionRef;
-use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{
-    ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning, StaticCommandClass,
-    UnexpandablePrimitive,
+    ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord, ResolvedMeaning, UnexpandablePrimitive,
 };
-use tex_state::token::{Catcode, OriginId, PackedCommandTarget, Token, TokenWord, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 /// Profiling-only proof of how current-command ownership changes.
 ///
@@ -62,216 +65,6 @@ pub(crate) enum CommandClass {
     Value,
 }
 
-/// Native final meaning equivalent to TeX's `cur_cmd`/`cur_chr`.
-///
-/// Static meanings retain their validated packed word. In particular, dense
-/// meaning resolution does not first decode a [`ResolvedMeaning`] and then
-/// rematch it to discover the expansion branch.
-#[derive(Debug)]
-pub(crate) enum CommandWord<G> {
-    Static {
-        class: CommandClass,
-        word: u64,
-    },
-    Macro {
-        flags: MeaningFlags,
-        definition: DefinitionRef<G>,
-    },
-    Font(FontId),
-}
-
-impl<G> Clone for CommandWord<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<G> Copy for CommandWord<G> {}
-
-impl<G> PartialEq for CommandWord<G> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Static { class: a, word: x }, Self::Static { class: b, word: y }) => {
-                a == b && x == y
-            }
-            (
-                Self::Macro {
-                    flags: a,
-                    definition: x,
-                },
-                Self::Macro {
-                    flags: b,
-                    definition: y,
-                },
-            ) => a == b && x == y,
-            (Self::Font(a), Self::Font(b)) => a == b,
-            _ => false,
-        }
-    }
-}
-impl<G> Eq for CommandWord<G> {}
-impl<G> core::hash::Hash for CommandWord<G> {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.class().hash(state);
-        match self {
-            Self::Static { word, .. } => word.hash(state),
-            Self::Macro { flags, definition } => {
-                flags.hash(state);
-                definition.hash(state);
-            }
-            Self::Font(font) => font.hash(state),
-        }
-    }
-}
-
-impl<G> CommandWord<G> {
-    pub(crate) fn from_static_word(word: u64) -> Self {
-        let class = match Meaning::runtime_word_class(word) {
-            StaticCommandClass::Undefined => CommandClass::Undefined,
-            StaticCommandClass::Relax => CommandClass::Relax,
-            StaticCommandClass::Character => CommandClass::Character,
-            StaticCommandClass::Expandable => CommandClass::Expandable,
-            StaticCommandClass::EndV => CommandClass::EndV,
-            StaticCommandClass::Unexpandable => CommandClass::Unexpandable,
-            StaticCommandClass::Value => CommandClass::Value,
-        };
-        Self::Static { class, word }
-    }
-
-    #[cfg(test)]
-    fn from_meaning(meaning: ResolvedMeaning<G>) -> Self {
-        match meaning {
-            ResolvedMeaning::Static(Meaning::Font(font)) => Self::Font(font),
-            ResolvedMeaning::Static(meaning) => Self::from_static_word(meaning.encode()),
-            ResolvedMeaning::Macro { flags, definition } => Self::Macro { flags, definition },
-        }
-    }
-
-    pub(crate) const fn class(self) -> CommandClass {
-        match self {
-            Self::Static { class, .. } => class,
-            Self::Macro { .. } => CommandClass::Macro,
-            Self::Font(_) => CommandClass::Font,
-        }
-    }
-
-    pub(crate) const fn flags(self) -> MeaningFlags {
-        match self {
-            Self::Macro { flags, .. } => flags,
-            _ => MeaningFlags::EMPTY,
-        }
-    }
-
-    pub(crate) const fn expandable_primitive(self) -> Option<ExpandablePrimitive> {
-        match self {
-            Self::Static {
-                class: CommandClass::Expandable,
-                word,
-            } => ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word)),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn character_catcode(self) -> Option<Catcode> {
-        match self.static_meaning() {
-            Some(Meaning::CharToken { cat, .. }) => Some(cat),
-            _ => None,
-        }
-    }
-
-    /// Returns the character value carried by either TeX character command.
-    ///
-    /// TeX82 §26 accepts both a literal character token and a `\chardef`
-    /// (`char_given`) wherever a numeric scanner reads an internal integer.
-    /// Keep that value projection separate from [`Self::character_token`],
-    /// whose callers need to distinguish a literal token from a character
-    /// value defined by a control sequence.
-    #[cfg(test)]
-    pub(crate) fn character_value(self) -> Option<char> {
-        if !matches!(self.class(), CommandClass::Character) {
-            return None;
-        }
-        match Meaning::from_runtime_word(self.static_word()) {
-            Meaning::CharGiven(ch) | Meaning::CharToken { ch, .. } => Some(ch),
-            _ => None,
-        }
-    }
-
-    /// Returns only a literal character token, never a `\chardef` value.
-    pub(crate) fn character_token(self) -> Option<char> {
-        if !matches!(self.class(), CommandClass::Character) {
-            return None;
-        }
-        match Meaning::from_runtime_word(self.static_word()) {
-            Meaning::CharToken { ch, .. } => Some(ch),
-            _ => None,
-        }
-    }
-
-    /// Whether TeX82 section 1038 can continue its main-loop character run.
-    pub(crate) fn is_main_loop_character(self) -> bool {
-        if !matches!(self.class(), CommandClass::Character) {
-            return false;
-        }
-        matches!(
-            Meaning::from_runtime_word(self.static_word()),
-            Meaning::CharGiven(_)
-                | Meaning::CharToken {
-                    cat: Catcode::Letter | Catcode::Other,
-                    ..
-                }
-        )
-    }
-
-    pub(crate) const fn unexpandable_primitive(self) -> Option<UnexpandablePrimitive> {
-        if !matches!(self.class(), CommandClass::Unexpandable) {
-            return None;
-        }
-        UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(self.static_word()))
-    }
-
-    pub(crate) fn resolved_meaning(&self) -> ResolvedMeaning<G> {
-        match *self {
-            Self::Macro { flags, definition } => ResolvedMeaning::Macro { flags, definition },
-            Self::Font(font) => ResolvedMeaning::Static(Meaning::Font(font)),
-            Self::Static { word, .. } => ResolvedMeaning::Static(Meaning::from_runtime_word(word)),
-        }
-    }
-
-    pub(crate) const fn macro_definition(self) -> Option<(MeaningFlags, DefinitionRef<G>)> {
-        match self {
-            Self::Macro { flags, definition } => Some((flags, definition)),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn is_outer(self) -> bool {
-        self.flags().contains(MeaningFlags::OUTER)
-            || self.expandable_primitive() == Some(ExpandablePrimitive::EndTemplate)
-    }
-
-    const fn static_word(self) -> u64 {
-        match self {
-            Self::Static { word, .. } => word,
-            _ => 0,
-        }
-    }
-
-    /// Decodes a static command word without constructing a rich delivery.
-    ///
-    /// Macro definitions and font identities are the only command meanings
-    /// whose operands are opaque capabilities rather than packed static
-    /// words. Scanners that only classify a terminal command therefore use
-    /// this projection instead of materializing `CurrentCommand`.
-    pub(crate) fn static_meaning(self) -> Option<Meaning> {
-        match self.class() {
-            CommandClass::Macro | CommandClass::Font => None,
-            _ => Some(Meaning::from_runtime_word(self.static_word())),
-        }
-    }
-}
-
-const _: () = assert!(core::mem::size_of::<CommandWord<()>>() == 24);
-
 /// Compact coordinates and one-delivery policy attached to a hot token.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct DeliverySite {
@@ -298,7 +91,7 @@ pub(crate) struct HotToken {
 #[derive(Debug)]
 pub struct CurrentCommand<G> {
     token: HotToken,
-    command: CommandWord<G>,
+    command: MeaningWord<G>,
 }
 
 /// Scalar delivery facts shared by the raw, resolved, and recovery phases.
@@ -357,144 +150,21 @@ impl<G> Eq for CurrentCommand<G> {}
 impl<G> core::hash::Hash for CurrentCommand<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.token.hash(state);
-        self.command.hash(state);
-    }
-}
-
-/// The command-code identity of a current delivery.
-///
-/// TeX82's `get_next` gives an expandable control sequence replayed by
-/// `\\noexpand` the inaccessible frozen-`\\relax` command identity: its
-/// effective meaning is `relax`, but its `cur_chr` is `no_expand_flag` (257),
-/// rather than the ordinary `relax` value (256). Separately, TeX82 §25's
-/// `\expandafter`, `\csname`, and its `\endcsname` boundary have dedicated
-/// command identities rather than the generic expandable fallback. TeX82's
-/// text conversions likewise share the `convert` command with a selector
-/// owned by the delivered primitive. Its diagnostic commands likewise share
-/// `xray`, with a selector installed by the primitive table. These remain
-/// ephemeral with the current delivery and are never stored in snapshots or
-/// input payloads.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum CommandIdentity {
-    Ordinary,
-    ExpandAfter,
-    CsName,
-    EndCsName,
-    Convert(ConvertSelector),
-    XRay(XRaySelector),
-    NoExpandFrozenRelax,
-}
-
-/// TeX82's `convert` selectors.
-///
-/// TeX.web §35 installs the classic conversion primitives with these values;
-/// §27's `conv_toks` then consumes the selector while retaining the original
-/// `convert` current-command identity throughout the conversion episode.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum ConvertSelector {
-    Number,
-    RomanNumeral,
-    String,
-    Meaning,
-    FontName,
-    JobName,
-}
-
-impl ConvertSelector {
-    const fn from_primitive(primitive: tex_state::meaning::ExpandablePrimitive) -> Option<Self> {
-        use tex_state::meaning::ExpandablePrimitive;
-
-        match primitive {
-            ExpandablePrimitive::Number => Some(Self::Number),
-            ExpandablePrimitive::RomanNumeral => Some(Self::RomanNumeral),
-            ExpandablePrimitive::String => Some(Self::String),
-            ExpandablePrimitive::Meaning => Some(Self::Meaning),
-            ExpandablePrimitive::FontName => Some(Self::FontName),
-            ExpandablePrimitive::JobName => Some(Self::JobName),
-            _ => None,
+        match self.command {
+            MeaningWord::Static(word) => {
+                0_u8.hash(state);
+                word.hash(state);
+            }
+            MeaningWord::Font(font) => {
+                1_u8.hash(state);
+                font.hash(state);
+            }
+            MeaningWord::Macro { flags, definition } => {
+                2_u8.hash(state);
+                flags.hash(state);
+                definition.hash(state);
+            }
         }
-    }
-
-    pub(crate) const fn operand(self) -> i64 {
-        match self {
-            Self::Number => 0,
-            Self::RomanNumeral => 1,
-            Self::String => 2,
-            Self::Meaning => 3,
-            Self::FontName => 4,
-            Self::JobName => 5,
-        }
-    }
-}
-
-/// TeX82's `xray` selectors.
-///
-/// TeX.web §18 installs the diagnostic primitives under the shared `xray`
-/// command: `\show`, `\showbox`, `\showthe`, and `\showlists`. Their
-/// selector is current-command identity; the executor still owns each
-/// primitive's distinct typed diagnostic behavior.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum XRaySelector {
-    Show,
-    ShowBox,
-    ShowThe,
-    ShowLists,
-}
-
-impl XRaySelector {
-    const fn from_primitive(primitive: tex_state::meaning::UnexpandablePrimitive) -> Option<Self> {
-        use tex_state::meaning::UnexpandablePrimitive;
-
-        match primitive {
-            UnexpandablePrimitive::Show => Some(Self::Show),
-            UnexpandablePrimitive::ShowBox => Some(Self::ShowBox),
-            UnexpandablePrimitive::ShowThe => Some(Self::ShowThe),
-            UnexpandablePrimitive::ShowLists => Some(Self::ShowLists),
-            _ => None,
-        }
-    }
-
-    pub(crate) const fn operand(self) -> i64 {
-        match self {
-            Self::Show => 0,
-            Self::ShowBox => 1,
-            Self::ShowThe => 2,
-            Self::ShowLists => 3,
-        }
-    }
-}
-
-impl CommandIdentity {
-    fn from_command_word<G>(command: CommandWord<G>) -> Self {
-        if let Some(primitive) = command.expandable_primitive() {
-            return match primitive {
-                ExpandablePrimitive::ExpandAfter => Self::ExpandAfter,
-                ExpandablePrimitive::CsName => Self::CsName,
-                ExpandablePrimitive::EndCsName => Self::EndCsName,
-                other => {
-                    ConvertSelector::from_primitive(other).map_or(Self::Ordinary, Self::Convert)
-                }
-            };
-        }
-        command
-            .unexpandable_primitive()
-            .and_then(XRaySelector::from_primitive)
-            .map_or(Self::Ordinary, Self::XRay)
-    }
-}
-
-impl<G> PackedCommandTarget<G> for CommandWord<G> {
-    #[inline(always)]
-    fn write_static_meaning_word(&mut self, word: u64) {
-        *self = Self::from_static_word(word);
-    }
-    #[inline(always)]
-    fn write_font_meaning(&mut self, font: FontId) {
-        *self = Self::Font(font);
-    }
-    #[inline(always)]
-    fn write_macro_meaning(&mut self, flags: MeaningFlags, definition: DefinitionRef<G>) {
-        *self = Self::Macro { flags, definition };
     }
 }
 
@@ -550,7 +220,7 @@ impl<G> CurrentCommand<G> {
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
     ) -> (Self, tex_state::token::PackedMeaningResolution) {
-        let mut meaning = CommandWord::from_static_word(Meaning::UNDEFINED_WORD);
+        let mut meaning = MeaningWord::Static(Meaning::UNDEFINED_WORD);
         let resolution = state.write_packed_token_command_into(word, &mut meaning);
         (
             Self::from_delivered_parts(
@@ -574,7 +244,7 @@ impl<G> CurrentCommand<G> {
         direct_source: bool,
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
-        meaning: CommandWord<G>,
+        meaning: MeaningWord<G>,
         control_sequence: Option<Symbol>,
     ) -> Self {
         #[cfg(test)]
@@ -617,7 +287,7 @@ impl<G> CurrentCommand<G> {
                     delivery_flags: CommandDeliveryFlags::default(),
                 },
             },
-            command: CommandWord::from_static_word(Meaning::UNDEFINED_WORD),
+            command: MeaningWord::Static(Meaning::UNDEFINED_WORD),
         }
     }
 
@@ -655,18 +325,6 @@ impl<G> CurrentCommand<G> {
         resolution
     }
 
-    #[inline(always)]
-    pub(crate) const fn command_word(&self) -> CommandWord<G> {
-        self.command
-    }
-
-    /// Classifies a delivered static command without expanding its rich
-    /// recovery and diagnostic representation.
-    #[inline(always)]
-    pub(crate) fn static_meaning(&self) -> Option<Meaning> {
-        self.command.static_meaning()
-    }
-
     pub(crate) const fn spelling_word(&self) -> TokenWord {
         self.token.word
     }
@@ -676,7 +334,7 @@ impl<G> CurrentCommand<G> {
     /// `ResolvedMeaning` merely to identify `\par`.
     #[inline(always)]
     pub(crate) fn is_effective_paragraph(&self) -> bool {
-        self.command.unexpandable_primitive() == Some(UnexpandablePrimitive::Par)
+        self.unexpandable_primitive() == Some(UnexpandablePrimitive::Par)
     }
 
     /// Whether this compact delivery was replaced by TeX82 §23's temporary
@@ -688,15 +346,6 @@ impl<G> CurrentCommand<G> {
             .site
             .delivery_flags
             .contains(CommandDeliveryFlags::OUTER_RECOVERY_SPACE)
-    }
-
-    /// Returns a literal character token represented by a compact character
-    /// command. The expanded `\csname` and `\ifcsname` drivers use this
-    /// without projecting a decoded meaning on every collected
-    /// character. A `\chardef` value deliberately returns `None`, allowing
-    /// the caller to enter TeX82 §25's missing-`\endcsname` recovery.
-    pub(crate) fn character_token(&self) -> Option<char> {
-        self.command.character_token()
     }
 
     pub(crate) fn set_alignment_adjustment(
@@ -714,13 +363,13 @@ impl<G> CurrentCommand<G> {
     }
 
     pub(crate) fn suppress_expandable(&mut self) {
-        if self.command.expandable_primitive() != Some(ExpandablePrimitive::EndCsName)
+        if self.expandable_primitive() != Some(ExpandablePrimitive::EndCsName)
             && matches!(
-                self.command.class(),
+                self.class(),
                 CommandClass::Undefined | CommandClass::Macro | CommandClass::Expandable
             )
         {
-            self.command = CommandWord::from_static_word(Meaning::RELAX_WORD);
+            self.command = MeaningWord::Static(Meaning::RELAX_WORD);
             self.token
                 .site
                 .delivery_flags
@@ -729,35 +378,25 @@ impl<G> CurrentCommand<G> {
     }
 
     pub(crate) const fn is_outer(&self) -> bool {
-        (matches!(self.command.class(), CommandClass::Macro)
-            && self.command.flags().contains(MeaningFlags::OUTER))
-            || matches!(
-                self.command.expandable_primitive(),
-                Some(ExpandablePrimitive::EndTemplate)
-            )
+        self.command.is_outer()
     }
 
-    pub(crate) fn macro_parts(&self) -> Option<(MeaningFlags, DefinitionRef<G>)> {
-        matches!(self.command.class(), CommandClass::Macro).then(|| {
-            (
-                self.command.flags(),
-                self.command
-                    .macro_definition()
-                    .expect("macro command definition")
-                    .1,
-            )
-        })
+    pub(crate) const fn macro_parts(&self) -> Option<(MeaningFlags, DefinitionRef<G>)> {
+        match self.command {
+            MeaningWord::Macro { flags, definition } => Some((flags, definition)),
+            _ => None,
+        }
     }
 
     pub(crate) fn convert_end_template_to_endv(&mut self, frozen_endv: Token) {
         self.token.word = TokenWord::pack(frozen_endv);
-        self.command = CommandWord::from_static_word(Meaning::END_V_WORD);
+        self.command = MeaningWord::Static(Meaning::END_V_WORD);
         self.token.site.control_sequence = None;
         self.token.site.alignment_adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
     }
 
     pub(crate) fn convert_to_end_template(&mut self) {
-        self.command = CommandWord::from_static_word(Meaning::END_TEMPLATE_WORD);
+        self.command = MeaningWord::Static(Meaning::END_TEMPLATE_WORD);
         self.token.site.control_sequence = None;
     }
 }
@@ -797,7 +436,7 @@ impl<G> CurrentCommand<G> {
         {
             CommandIdentity::NoExpandFrozenRelax
         } else {
-            CommandIdentity::from_command_word(self.command)
+            CommandIdentity::from_command(self)
         }
     }
 
@@ -839,7 +478,7 @@ impl<G> CurrentCommand<G> {
             cat: Catcode::Space,
         });
         self.token.origin = OriginId::UNKNOWN;
-        self.command = CommandWord::from_static_word(Meaning::char_token_word(' ', Catcode::Space));
+        self.command = MeaningWord::Static(Meaning::char_token_word(' ', Catcode::Space));
         self.token.site.control_sequence = None;
         self.token
             .site
@@ -873,7 +512,7 @@ impl<G> CurrentCommand<G> {
     /// Returns the effective meaning resolved at this delivery.
     #[must_use]
     pub fn meaning(&self) -> ResolvedMeaning<G> {
-        self.command.resolved_meaning()
+        self.command.resolve()
     }
 
     /// Borrows the delivered packed static word for direct main-control dispatch.
@@ -881,7 +520,7 @@ impl<G> CurrentCommand<G> {
     #[must_use]
     pub const fn static_word(&self) -> Option<u64> {
         match self.command {
-            CommandWord::Static { word, .. } => Some(word),
+            MeaningWord::Static(word) => Some(word),
             _ => None,
         }
     }
@@ -891,11 +530,11 @@ impl<G> CurrentCommand<G> {
     #[inline]
     pub fn control_code(&self) -> Option<u64> {
         match self.command {
-            CommandWord::Static { word, .. } => Some(Meaning::runtime_word_control_code(word)),
-            CommandWord::Font(font) => Some(Meaning::runtime_word_control_code(
+            MeaningWord::Static(word) => Some(Meaning::runtime_word_control_code(word)),
+            MeaningWord::Font(font) => Some(Meaning::runtime_word_control_code(
                 Meaning::Font(font).encode(),
             )),
-            CommandWord::Macro { .. } => None,
+            MeaningWord::Macro { .. } => None,
         }
     }
 

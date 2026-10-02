@@ -1016,7 +1016,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
-            match command.command_word().static_meaning() {
+            match command.static_meaning() {
                 Some(Meaning::CharToken { ch: ' ', .. })
                 | Some(Meaning::CharToken { ch: '+', .. }) => {}
                 Some(Meaning::CharToken { ch: '-', .. }) => negative = !negative,

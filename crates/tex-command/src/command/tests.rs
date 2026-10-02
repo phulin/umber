@@ -5,11 +5,16 @@ use tex_state::meaning::{
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use super::{CommandClass, CommandWord, CurrentCommand};
+use super::{CommandClass, CurrentCommand};
+
+fn native_command(meaning: Meaning) -> CurrentCommand<()> {
+    let mut command = CurrentCommand::empty();
+    command.command = MeaningWord::from_static(meaning);
+    command
+}
 
 #[test]
 fn command_delivery_layout_stays_compact() {
-    assert_eq!(std::mem::size_of::<CommandWord<()>>(), 24);
     assert!(std::mem::size_of::<ResolvedMeaning<()>>() <= 32);
     assert_eq!(std::mem::size_of::<Option<crate::SourceProvenance>>(), 32);
     // Decoded source geometry lives behind the packed origin coordinate, not
@@ -42,8 +47,8 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
             false,
             &context,
         );
-        assert_eq!(hot.command_word().class(), CommandClass::Macro);
-        assert_eq!(hot.command_word().flags(), MeaningFlags::LONG);
+        assert_eq!(hot.class(), CommandClass::Macro);
+        assert_eq!(hot.flags(), MeaningFlags::LONG);
         assert_eq!(hot.macro_parts(), Some((MeaningFlags::LONG, definition)));
         assert_eq!(
             hot.meaning(),
@@ -57,7 +62,7 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
 
 #[test]
 fn packed_main_loop_character_class_excludes_structural_catcodes() {
-    let word = |meaning| CommandWord::<()>::from_meaning(ResolvedMeaning::Static(meaning));
+    let word = native_command;
 
     assert!(word(Meaning::CharGiven('x')).is_main_loop_character());
     assert!(
@@ -92,18 +97,18 @@ fn packed_main_loop_character_class_excludes_structural_catcodes() {
 
 #[test]
 fn compact_character_projections_distinguish_tokens_from_chardef_values() {
-    let literal = CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::CharToken {
+    let literal = native_command(Meaning::CharToken {
         ch: 'x',
         cat: Catcode::Letter,
-    }));
+    });
     assert_eq!(literal.character_token(), Some('x'));
     assert_eq!(literal.character_value(), Some('x'));
 
-    let defined = CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::CharGiven('A')));
+    let defined = native_command(Meaning::CharGiven('A'));
     assert_eq!(defined.character_token(), None);
     assert_eq!(defined.character_value(), Some('A'));
 
-    let relax = CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::Relax));
+    let relax = native_command(Meaning::Relax);
     assert_eq!(relax.character_token(), None);
     assert_eq!(relax.character_value(), None);
 }
@@ -207,11 +212,11 @@ fn native_font_command_preserves_opaque_runtime_identity() {
     let font = tex_state::ids::FontId::testing_from_words([0x5a17_0042, 7, 11, 23])
         .expect("valid branded font identity");
     let mut rich = CurrentCommand::<()>::empty();
-    rich.command = CommandWord::Font(font);
+    rich.command = MeaningWord::Font(font);
 
     let hot = rich;
 
-    assert_eq!(hot.command_word().class(), CommandClass::Font);
+    assert_eq!(hot.class(), CommandClass::Font);
     assert_eq!(
         hot.meaning(),
         ResolvedMeaning::Static(Meaning::Font(font)),

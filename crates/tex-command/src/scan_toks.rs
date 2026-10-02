@@ -261,10 +261,9 @@ enum CollectorExpansionOutcome {
 
 #[inline(always)]
 fn is_expandable_hot_command<G>(command: &CurrentCommand<G>) -> bool {
-    match command.command_word().class() {
+    match command.class() {
         CommandClass::Macro => true,
         CommandClass::Expandable => command
-            .command_word()
             .expandable_primitive()
             .is_some_and(|primitive| primitive != ExpandablePrimitive::EndCsName),
         CommandClass::Undefined => command.spelling_word().out_parameter_slot().is_none(),
@@ -1482,11 +1481,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let command = destination
             .as_mut()
             .expect("direct collector expansion retains its command destination");
-        if command
-            .command_word()
-            .flags()
-            .contains(MeaningFlags::PROTECTED)
-            && command.command_word().class() == CommandClass::Macro
+        if command.flags().contains(MeaningFlags::PROTECTED)
+            && command.class() == CommandClass::Macro
         {
             // e-TeX 2.6 change section [27.465] represents a protected macro
             // as `relax/no_expand_flag` for this collector iteration.
@@ -1553,7 +1549,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .as_ref()
                 .expect("compact command delivery initializes destination");
             if is_expandable_hot_command(command) {
-                let route = match command.command_word().expandable_primitive() {
+                let route = match command.expandable_primitive() {
                     Some(ExpandablePrimitive::The) => CollectorExpansionRoute::The,
                     Some(ExpandablePrimitive::Unexpanded) => CollectorExpansionRoute::Unexpanded,
                     Some(ExpandablePrimitive::Detokenize) => CollectorExpansionRoute::Detokenize,

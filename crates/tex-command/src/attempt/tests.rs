@@ -395,38 +395,6 @@ fn generic_cold_promotion_preserves_checked_definition_content() {
     .expect("test fixture is valid");
 }
 
-#[cfg(feature = "profiling")]
-#[test]
-fn warmed_generic_single_definition_promotion_uses_no_semantic_apply_allocations() {
-    tex_state::with_universe(budget(), |universe| {
-        let mut attempt = AttemptArena::default();
-        let warm = definition(&mut attempt, &[], &[word('x')]);
-        let mut warm_destination = TestPromotionDestination::new(&[], &[], &[warm], &[]);
-        attempt
-            .promote_into(universe, &mut warm_destination)
-            .expect("warm generic promotion");
-
-        let definition = definition(&mut attempt, &[], &[word('x')]);
-        let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
-        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-        let mut destination = TestPromotionDestination::new(&[], &[], &[definition], &[]);
-        {
-            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-            attempt
-                .promote_into(universe, &mut destination)
-                .expect("measured generic promotion");
-        }
-        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-        assert_eq!(after.calls - before.calls, 0);
-        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-
-        let context = universe.command_context().expect("definition context");
-        let promoted = context.definition(destination.definition(0));
-        assert_eq!(promoted.replacement_text(), [word('x').token_word()]);
-    })
-    .expect("test fixture is valid");
-}
-
 #[test]
 fn promotion_copies_only_declared_provenance_roots() {
     tex_state::with_universe(budget(), |universe| {

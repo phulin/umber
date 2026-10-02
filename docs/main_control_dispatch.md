@@ -2,7 +2,7 @@
 
 [Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
 governs this engine. `tex-command::CurrentCommand` contains its native packed
-`CommandWord`; `control_code` projects its dispatch family without storing a
+`MeaningWord`; `control_code` projects its dispatch family without storing a
 second decoded meaning. Command identity is derived at its actual diagnostic
 or observer consumer from that packed word and the existing noexpand flag;
 ordinary delivery stores no redundant identity column. `main_control/direct/dispatch.rs` is the one packed

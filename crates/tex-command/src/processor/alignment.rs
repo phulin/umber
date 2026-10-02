@@ -467,13 +467,13 @@ impl<G> AlignmentDeliveryState<G> {
         let adjustment = match () {
             _ if self.active_cell.is_some()
                 && self.align_state == CELL_ALIGN_STATE
-                && command.command_word().character_catcode() == Some(Catcode::AlignmentTab) =>
+                && command.character_catcode() == Some(Catcode::AlignmentTab) =>
             {
                 command.convert_to_end_template();
                 AlignmentDeliveryAdjustment::Delimiter(AlignmentDelimiter::Tab)
             }
             _ if self.active_cell.is_some() && self.align_state == CELL_ALIGN_STATE => {
-                let delimiter = match command.command_word().unexpandable_primitive() {
+                let delimiter = match command.unexpandable_primitive() {
                     Some(UnexpandablePrimitive::Span) => Some(AlignmentDelimiter::Span),
                     Some(UnexpandablePrimitive::Cr) => Some(AlignmentDelimiter::Cr),
                     Some(UnexpandablePrimitive::CrCr) => Some(AlignmentDelimiter::CrCr),
@@ -547,7 +547,7 @@ impl<G> AlignmentDeliveryState<G> {
     ) -> bool {
         self.active_cell.is_some()
             && self.align_state == -1
-            && command.command_word().character_catcode() == Some(Catcode::EndGroup)
+            && command.character_catcode() == Some(Catcode::EndGroup)
     }
     /// TeX82 §774's `init_align` prologue: `push_alignment` (§772) saves the
     /// running `align_state`, then `align_state:=-1000000` enters the new

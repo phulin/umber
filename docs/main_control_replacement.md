@@ -143,17 +143,15 @@ complete permanent-symbol domain. The existing 8-byte `TracedTokenWord` is now
 the exact composition of this token-only word and its 4-byte origin coordinate,
 so introducing the packed word does not create a second token meaning.
 
-`HotToken` contains the packed `TokenWord`, `OriginId`, and compact delivery
-site. Its paired 16-byte `CommandWord<G>` contains the directly branchable
-command class, flags, and opaque fixed-width operand. Static meanings remain
-packed through dense resolution; the operand instead carries the one typed
-font or macro coordinate when required. Together they replace the rich
-`CurrentCommand` on the ordinary raw and macro-expansion path. Execution,
-scanners, backup, observation/diagnosis, suspension, and exceptional recovery
-materialize the existing public command value at their boundary.
-
-The exact layout is versioned and asserted with size tests. It is runtime
-state, not format ABI.
+`CurrentCommand` contains the packed spelling/origin and actual delivery site
+beside the same native `MeaningWord<G>` used by the eqtb: a static packed word,
+full font capability or macro flags/key. Resolution writes this value directly
+without another meaning product or a stored derived class. Expansion, scanner
+and execution consumers compute the required native class or operand from that
+value; observation and diagnosis demand their decoded presentation at their
+actual boundary. The delivered meaning remains a snapshot even if subsequent
+operand reads assign its original control sequence. Runtime representations
+are independent of the portable format ABI.
 
 ### Input frames
 

@@ -116,7 +116,8 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   scalar stack maxima directly; they are operational session evidence outside
   snapshot roots and survive restore without shared synchronization.
 - `src/command.rs`: compact internal `HotToken { word, origin, site }`, native
-  24-byte `CommandWord<G>` (static meaning, macro key/flags, or font capability), and public opaque, ephemeral `CurrentCommand` containing that same packed
+  `MeaningWord<G>` from the authoritative eqtb (static meaning, macro key/flags,
+  or full font capability), and public opaque, ephemeral `CurrentCommand` containing that same packed
   word. Its native control-code projection drives the sole executor switch;
   decoded meaning is materialized only at a consuming boundary.
   Command-sensitive boundaries materialize this pair from the reader's facts
@@ -130,6 +131,11 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   and moves it only into another semantic owner; it never
   enters a durable snapshot or format boundary.
   Command identity is derived at diagnostic/observation consumers from the native word and existing frozen-noexpand flag; no duplicate identity column is materialized during ordinary delivery.
+- `src/command/native_meaning.rs`: demanded class, primitive and scalar
+  projections on the actual delivered command. No separately classified
+  command-word type or cached class is constructed by resolution.
+- `src/command/identity.rs`: demanded diagnostic/observer command identity and
+  canonical conversion/xray selectors on that same actual command.
 - `src/direct_command_delivery.rs`: profiling-only mixed-meaning structural
   harness for direct dense-row writes into the caller-owned command. Its
   one/4,096-round gate counts row accesses, row decodes, final macro-owner

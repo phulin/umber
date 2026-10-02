@@ -235,6 +235,17 @@ impl<G> Eq for MeaningWord<G> {}
 impl<G> MeaningWord<G> {
     pub(crate) const UNDEFINED: Self = Self::Static(0);
 
+    /// Whether the native value belongs to TeX82 §336's outer class.
+    #[must_use]
+    #[inline(always)]
+    pub const fn is_outer(&self) -> bool {
+        match self {
+            Self::Static(word) => *word == Meaning::END_TEMPLATE_WORD,
+            Self::Macro { flags, .. } => flags.contains(MeaningFlags::OUTER),
+            Self::Font(_) => false,
+        }
+    }
+
     #[must_use]
     pub const fn from_static(meaning: Meaning) -> Self {
         match meaning {

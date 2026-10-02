@@ -280,7 +280,8 @@ expose substores or introduce another arena.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed compact
   macro definition keys and the canonical dense-row writer which decodes one
-  borrowed row directly into its caller's final command fields.
+  borrowed row directly into its caller's final native meaning. Outer validity
+  inspects this native tag/operand without a derived command class.
 - `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
 - `src/measurement.rs`, `src/measurement/hot_core.rs`, and
   `src/measurement/box_fallback.rs`: Profiling-feature-only
@@ -498,7 +499,8 @@ expose substores or introduce another arena.
   generation-typed checkpoint replay.
 - `src/token.rs`: Token and catcode value definitions, constructors,
   classification helpers, destination-directed packed command resolution
-  which writes the consumer's final native meaning target and returns its
+  which writes the consumer's final native `MeaningWord` without class
+  construction and returns its
   control-sequence identity, lookup fact, and already-decoded literal catcode, and inline-small
   rooted traced-token buffers with
   sparse provenance ownership and spillover storage. Generated runs sharing

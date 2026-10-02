@@ -119,9 +119,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let command = destination
                     .as_ref()
                     .expect("command status initializes destination");
-                if command.command_word().expandable_primitive()
-                    == Some(ExpandablePrimitive::EndCsName)
-                {
+                if command.expandable_primitive() == Some(ExpandablePrimitive::EndCsName) {
                     break;
                 }
                 if let Some(ch) = command.character_token() {
@@ -221,7 +219,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 /// [`super::expand::is_expandable_command`]: `\endcsname` is unexpandable, while an
 /// undefined control sequence expands into its error.
 fn is_expandable_hot_command<G>(command: &CurrentCommand<G>) -> bool {
-    let word = command.command_word();
+    let word = command;
     match word.class() {
         CommandClass::Macro => true,
         CommandClass::Expandable => {

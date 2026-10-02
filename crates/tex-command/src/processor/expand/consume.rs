@@ -3,14 +3,14 @@
 use super::{
     ExpandedCommandAction, ExpandedReaderRole, ExpansionDispatch, ReadSite, classify_hot_command,
 };
-use crate::command::{CommandWord, CurrentCommand};
+use crate::command::CurrentCommand;
 use crate::input::InputLevel;
 #[cfg(feature = "profiling")]
 use crate::input::ResidentTokenStorage;
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use std::ops::ControlFlow;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, MeaningFlags};
+use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord};
 use tex_state::token::PackedMeaningResolution;
 
 /// How TeX82 §494's `pass_text` treats one word of skipped text.
@@ -178,12 +178,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         word: tex_state::token::TokenWord,
         nested_conditions: u32,
     ) -> SkippedWord {
-        let mut meaning = CommandWord::from_static_word(Meaning::UNDEFINED_WORD);
+        let mut meaning = MeaningWord::Static(Meaning::UNDEFINED_WORD);
         state.write_packed_token_command_into(word, &mut meaning);
         if meaning.is_outer() {
             return SkippedWord::Boundary;
         }
-        let CommandWord::Static { word, .. } = meaning else {
+        let MeaningWord::Static(word) = meaning else {
             return SkippedWord::Discarded;
         };
         if !matches!(
@@ -228,7 +228,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let (meaning, resolution) = processor.resolve_token_word(word);
                 processor.record_consumed_word(kind, resolution.meaning_lookup());
                 if !OBSERVED
-                    && let CommandWord::Macro { flags, definition } = meaning
+                    && let MeaningWord::Macro { flags, definition } = meaning
                     && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
                     && !processor
                         .command
@@ -266,8 +266,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn resolve_token_word(
         &self,
         word: tex_state::token::TokenWord,
-    ) -> (CommandWord<G>, PackedMeaningResolution) {
-        let mut meaning = CommandWord::from_static_word(Meaning::UNDEFINED_WORD);
+    ) -> (MeaningWord<G>, PackedMeaningResolution) {
+        let mut meaning = MeaningWord::Static(Meaning::UNDEFINED_WORD);
         let resolution = self
             .state
             .write_packed_token_command_into(word, &mut meaning);
@@ -374,10 +374,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             || matches!(
                 action,
                 ExpandedCommandAction::Expand(ExpansionDispatch::Macro)
-            ) && command
-                .command_word()
-                .flags()
-                .contains(MeaningFlags::PROTECTED)
+            ) && command.flags().contains(MeaningFlags::PROTECTED)
     }
 
     /// Matching's local storage belongs to macro activation, never to a

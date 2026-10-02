@@ -1633,8 +1633,6 @@ fn assert_warmed_single_character_control_sequence_is_allocation_free<G>(
         crate::test_harness::expect_raw_command(&mut processor)
     };
     assert_eq!(first.spelling().semantic_token(), Token::Cs(expected));
-    drop(first);
-
     let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
     let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
     let second = {

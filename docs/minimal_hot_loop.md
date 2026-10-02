@@ -15,7 +15,18 @@ histories, not another mutable eqtb or interpreter.
 ## Implemented ownership and hot work
 
 Ordinary token delivery reads the current input frame and writes the consumer's
-final native `CommandWord`. A macro frame retains the complete immutable
+final native `MeaningWord`. The same native meaning value belongs to the eqtb
+row and the delivered `CurrentCommand` snapshot. Resolution writes its static
+word, font capability or macro flags/key directly, without constructing a
+second command-word type or storing a derived class. Macro grammar, definition
+collection and conditional skipping inspect those actual tags and operands;
+the delivered command computes class, primitive and scalar projections only
+where its consumer needs them. The delivered snapshot still precedes operand
+reads, so later assignments cannot change it. Font and definition capabilities
+keep their complete identities, and raw recovery, alignment, tracing and
+observation retain their existing settlement chronology.
+
+A macro frame retains the complete immutable
 words/matcher/origin payload once and then reads its slices directly. Stored
 lists similarly retain their real immutable owners. Meaning reads, replacement
 delivery and parameter substitution perform no checkpoint stamping, history
