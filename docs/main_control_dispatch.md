@@ -3,7 +3,9 @@
 [Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
 governs this engine. `tex-command::CurrentCommand` contains its native packed
 `CommandWord`; `control_code` projects its dispatch family without storing a
-second decoded meaning. `main_control/direct/dispatch.rs` is the one packed
+second decoded meaning. Command identity is derived at its actual diagnostic
+or observer consumer from that packed word and the existing noexpand flag;
+ordinary delivery stores no redundant identity column. `main_control/direct/dispatch.rs` is the one packed
 mode/command switch, including TeX82 §1030's `reswitch`, §1034's horizontal
 character loop, and §1211's prefix loop. Ordinary, observed, tracked,
 diagnostic, nested math/accent/alignment, PDF, and resource consumers enter
@@ -12,10 +14,16 @@ these same arms.
 Expanded fetching and raw horizontal lookahead retain their distinct TeX
 labels. Borrowed source spans enter the actual horizontal material consumer.
 Prefixes and replacement commands dispatch in place without redelivery. Each
-selected arm scans its concrete operands through the existing processor and
-ends that processor borrow before applying its native semantics. The bounded
-fetch/reswitch loop keeps its actual admitted context across completed native
-commands. Each command still settles its scanner scratch, consumes its real
+selected arm scans its concrete operands through the existing processor. A
+source-free native arm reborrows that processor's actual context, command state,
+fuel and diagnostic owners while the processor remains live. The callback owns
+no payload, phase, counter or separate dispatcher. An actual pending character
+flush ends the processor's immutable mode-fact loan before borrowing the mode
+owner mutably; other context-consuming commands retain both processor and
+context in the same fetch/reswitch loop. Each completed command settles its
+real scratch and tracing boundary before fetching again. Genuine diagnostic,
+observer, output, alignment or World demands end the appropriate owner loan.
+Each command still settles its scanner scratch, consumes its real
 fuel, and counts toward the caller's remaining command budget. Native semantic
 arms examine the diagnostics, pending output, observation, tracked-region, alignment delivery and synchronous World-effect
 demands they actually produced; those demands end the loan before the existing

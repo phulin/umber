@@ -38,11 +38,12 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   a facade or second command front.
 - `src/main_control/direct/`: the single packed mode/command/prefix switch in
   `dispatch.rs`, with synchronous `scan_*` routines and concrete `apply_*`
-  methods organized by native command responsibility. `scan_macros.rs` ends
-  the actual processor loan before applying completed operands. The native
-  fetch/reswitch loop retains its context through RELAX, ordinary groups,
+  methods organized by native command responsibility. `scan_macros.rs` releases
+  actual scanner loans at cold owner and publication boundaries. The native
+  fetch/reswitch loop retains its actual processor and context through RELAX, ordinary groups,
   integer/dimension registers, and arithmetic, settling each command's real
-  scratch and respecting the caller's remaining budget. Actual diagnostic,
+  scratch and respecting the caller's remaining budget. An existing pending
+  character buffer demands mutable mode ownership and ends the processor loan. Actual diagnostic,
   observer/tracked, page/output, afterassignment and budget demands release the
   loan for the common settlement tail. `scan_arithmetic.rs` scans concrete
   operands in that same processor; register scans likewise stay in their native

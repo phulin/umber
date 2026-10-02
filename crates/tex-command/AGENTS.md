@@ -114,6 +114,7 @@ collector (see `src/conditionals.rs`).
   value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through preflight and scanning,
   and moves it only into another semantic owner; it never
   enters a durable snapshot or format boundary.
+  Command identity is derived at diagnostic/observation consumers from the native word and existing frozen-noexpand flag; no duplicate identity column is materialized during ordinary delivery.
 - `src/direct_command_delivery.rs`: profiling-only mixed-meaning structural
   harness for direct dense-row writes into the caller-owned command. Its
   one/4,096-round gate counts row accesses, row decodes, final macro-owner
@@ -181,6 +182,7 @@ collector (see `src/conditionals.rs`).
   caller-owned admitted context, session-owned fuel, observer, and
   operation-local diagnostic-effects collector directly and constructs no
   temporary owned ledger or whole-context handoff.
+  Its scoped native callback reborrows the real context, command state, effects, and fuel after synchronous scans return; completed-command settlement clears actual scanner temporaries and attempt scratch while retaining the processor. Actual Drop still owns resource-failure cleanup.
 - `src/command.rs`: test builds count resolved-command writes for structural
   assertions. Profiling builds derive that exact one-write-per-raw-delivery
   volume from the singular command-work ledger, so the resident loop does not

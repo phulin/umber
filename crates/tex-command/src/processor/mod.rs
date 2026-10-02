@@ -645,6 +645,52 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             || self.diagnostic_effects.has_first_recoverable()
     }
 
+    /// Reborrows the actual owners for a completed source-free native command.
+    /// Synchronous scanners have returned before their caller can invoke this.
+    /// No processor or native owner leaves this exclusive borrow.
+    pub fn apply_completed_command<R>(
+        &mut self,
+        apply: impl FnOnce(
+            &mut CommandContext<'admission, G>,
+            &mut CommandState<G>,
+            &mut tex_state::diagnostic::DiagnosticEffects,
+            &mut CommandFuel,
+        ) -> R,
+    ) -> R {
+        apply(self.state, self.command, self.diagnostic_effects, self.fuel)
+    }
+
+    /// Closes the real scratch and trace boundary before the next native fetch.
+    pub fn settle_completed_command(&mut self) {
+        self.command.settle_attempt();
+        debug_assert!(self.command.attempt_is_clear());
+        self.command_trace_mode_prefix = None;
+        self.command_trace_printed = false;
+        self.command_trace_count = 0;
+        self.immediate_write_retirement = None;
+        self.pending_file_warning_context = None;
+        self.paragraph_word = None;
+        self.pending_diagnostic_location = None;
+        self.read_line_ended = false;
+        self.outer_recovered_while_matching = false;
+        self.outer_recovered_while_absorbing = false;
+        self.eof_recovered_while_matching = false;
+        debug_assert_eq!(self.expansion_depth, 0);
+        debug_assert_eq!(self.write_expansion_depth, 0);
+        debug_assert!(!self.is_in_csname);
+        debug_assert!(!self.create_source_control_sequences);
+        self.last_integer_terminator = None;
+        self.scanned_glue_identity = None;
+        self.scanned_glue_register = None;
+        self.scanned_glue_shared_zero = false;
+        self.command.delivery_mode.begin_episode(
+            self.observer.is_some(),
+            self.state
+                .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
+                > 1,
+        );
+    }
+
     /// Number of §299 command traces printed during this processor episode.
     ///
     /// Nested operations use this to distinguish a trace they emitted from
@@ -766,7 +812,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     /// alignment decision may branch on this, and no committed artifact may
     /// differ by it.
     #[must_use]
-    pub(crate) fn is_observed(&self) -> bool {
+    pub fn is_observed(&self) -> bool {
         self.observer.is_some()
     }
 

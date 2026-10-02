@@ -74,7 +74,7 @@ macro_rules! direct_apply_relax {
             checked,
             semantic::execute_relax(
                 &mut $admission,
-                &mut $this.control.modes,
+                Some(&mut $this.control.modes),
                 $this.effects,
                 $this.control.fuel.fuel_mut(),
             ),

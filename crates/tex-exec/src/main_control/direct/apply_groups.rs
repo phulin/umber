@@ -140,10 +140,6 @@ impl<G> MainControl<G> {
             effects,
             self.fuel.fuel_mut(),
         )?;
-        let (level, frame) = {
-            let frames = context.group_frames();
-            (frames.len(), frames.last().copied())
-        };
         let mut facts = ExecutorHostFacts {
             modes: &self.modes,
             pdf_ignore_depth: self.pdf_ignore_depth,
@@ -159,25 +155,38 @@ impl<G> MainControl<G> {
             context,
         );
         processor.set_output_routine_active(self.boxes.output_routine_active);
-        if let Some(frame) = frame {
-            processor.warn_cross_file_group_close(
-                level,
-                frame.kind().group_text(),
-                frame.entered_line(),
-            );
-        }
-        let result =
-            processor.end_group(kind, crate::assignments::tracing::trace_group_restoration);
-        drop(processor);
-        let frame = result.map_err(|_| ExecError::MissingToken {
-            context: error_context,
-        })?;
+        finish_native_group_leave(&mut processor, kind, error_context)
+    }
+}
+
+/// Unsave through the actual scanner that owns aftergroup input delivery.
+pub(super) fn finish_native_group_leave<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    kind: GroupKind,
+    error_context: &'static str,
+) -> Result<ReplayStep, ExecError> {
+    let (level, frame) = processor.apply_completed_command(|context, _, _, _| {
+        let frames = context.group_frames();
+        (frames.len(), frames.last().copied())
+    });
+    if let Some(frame) = frame {
+        processor.warn_cross_file_group_close(
+            level,
+            frame.kind().group_text(),
+            frame.entered_line(),
+        );
+    }
+    let result = processor.end_group(kind, crate::assignments::tracing::trace_group_restoration);
+    let frame = result.map_err(|_| ExecError::MissingToken {
+        context: error_context,
+    })?;
+    processor.apply_completed_command(|context, _, effects, _| {
         context.trace_group_leave(
             effects,
             frame.kind(),
             u32::try_from(level).unwrap_or(u32::MAX),
             frame.entered_line(),
         );
-        Ok(ReplayStep::Continue)
-    }
+    });
+    Ok(ReplayStep::Continue)
 }

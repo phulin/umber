@@ -342,7 +342,6 @@ impl<G> Clone for HotCommand<G> {
 pub struct CurrentCommand<G> {
     spelling: TracedTokenWord,
     meaning: CommandWord<G>,
-    identity: CommandIdentity,
     control_sequence: Option<Symbol>,
     direct_source_line: u32,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
@@ -395,7 +394,6 @@ impl<G> Clone for CurrentCommand<G> {
         Self {
             spelling: self.spelling,
             meaning: self.meaning,
-            identity: self.identity,
             control_sequence: self.control_sequence,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
@@ -408,7 +406,6 @@ impl<G> PartialEq for CurrentCommand<G> {
     fn eq(&self, other: &Self) -> bool {
         self.spelling == other.spelling
             && self.meaning == other.meaning
-            && self.identity == other.identity
             && self.control_sequence == other.control_sequence
             && self.direct_source_line == other.direct_source_line
             && self.alignment_adjustment == other.alignment_adjustment
@@ -422,7 +419,6 @@ impl<G> core::hash::Hash for CurrentCommand<G> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.spelling.hash(state);
         self.meaning.hash(state);
-        self.identity.hash(state);
         self.control_sequence.hash(state);
         self.direct_source_line.hash(state);
         self.alignment_adjustment.hash(state);
@@ -940,16 +936,6 @@ impl<G> HotCommand<G> {
         });
         CurrentCommand {
             spelling: TracedTokenWord::from_parts(self.token.word, self.token.origin),
-            identity: if self
-                .token
-                .site
-                .delivery_flags
-                .contains(CommandDeliveryFlags::NOEXPAND_FROZEN_RELAX)
-            {
-                CommandIdentity::NoExpandFrozenRelax
-            } else {
-                CommandIdentity::from_command_word(self.command)
-            },
             meaning: self.command,
             control_sequence: self.token.site.control_sequence,
             direct_source_line: self.token.site.direct_source_line,
@@ -1042,7 +1028,6 @@ impl<G> CurrentCommand<G> {
         Self {
             spelling: TracedTokenWord::INITIALIZED_PLACEHOLDER,
             meaning: CommandWord::from_static_word(Meaning::UNDEFINED_WORD),
-            identity: CommandIdentity::Ordinary,
             control_sequence: None,
             direct_source_line: 0,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
@@ -1051,8 +1036,15 @@ impl<G> CurrentCommand<G> {
     }
 
     /// Returns the command-owned identity selected by raw input delivery.
-    pub(crate) const fn identity(&self) -> CommandIdentity {
-        self.identity
+    pub(crate) fn identity(&self) -> CommandIdentity {
+        if self
+            .delivery_flags
+            .contains(CommandDeliveryFlags::NOEXPAND_FROZEN_RELAX)
+        {
+            CommandIdentity::NoExpandFrozenRelax
+        } else {
+            CommandIdentity::from_command_word(self.meaning)
+        }
     }
 
     /// The active character this delivery would have been, had `\\noexpand`
@@ -1064,7 +1056,10 @@ impl<G> CurrentCommand<G> {
     /// `\\ifcat` perform that reconstruction — everywhere else a `\\noexpand`
     /// delivery keeps its `relax`/`no_expand_flag` identity.
     pub(crate) fn no_expand_active_character(&self) -> Option<char> {
-        if !matches!(self.identity, CommandIdentity::NoExpandFrozenRelax) {
+        if !self
+            .delivery_flags
+            .contains(CommandDeliveryFlags::NOEXPAND_FROZEN_RELAX)
+        {
             return None;
         }
         match self.spelling.semantic_token() {
@@ -1202,7 +1197,6 @@ impl<G> CurrentCommand<G> {
         Self {
             spelling: self.spelling,
             meaning: self.meaning,
-            identity: self.identity,
             control_sequence: self.control_sequence,
             direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,

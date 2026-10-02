@@ -46,7 +46,7 @@ pub(in crate::main_control) fn execute_continue() -> Result<ReplayStep, ExecErro
 
 pub(in crate::main_control) fn execute_relax<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
+    modes: Option<&mut ModeNest>,
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ReplayStep, ExecError> {
@@ -65,12 +65,14 @@ pub(in crate::main_control) fn execute_relax<G>(
         // the ligature loop. The command itself has no list effect, but
         // it is still a word boundary: `?\\relax\\char96` must not form
         // the `?`` ligature across the relax.
-        crate::box_runtime::flush_pending_hchars_with_fuel(
-            modes,
-            stores,
-            diagnostic_effects,
-            fuel,
-        )?;
+        if let Some(modes) = modes {
+            crate::box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                diagnostic_effects,
+                fuel,
+            )?;
+        }
         Ok(ReplayStep::Continue)
     }
 }
