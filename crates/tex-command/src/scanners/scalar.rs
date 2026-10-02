@@ -584,23 +584,25 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> ScalarCallStatus {
         let mut provenance = OriginId::UNKNOWN;
         let mut equals = false;
-        let result = self.consume_expanded_commands(&mut |processor, command| {
-            if provenance == OriginId::UNKNOWN {
-                provenance = command.origin();
-            }
-            match command.character() {
-                Some((' ', Catcode::Space)) => Ok(std::ops::ControlFlow::Continue(())),
-                // §405 compares the actual other-category '=' token.
-                Some(('=', Catcode::Other)) => {
-                    equals = true;
-                    Ok(std::ops::ControlFlow::Break(()))
+        let result = self.consume_expanded_words(
+            &mut |processor, spelling, meaning, _control_sequence, exceptional| {
+                if provenance == OriginId::UNKNOWN {
+                    provenance = spelling.origin();
                 }
-                _ => {
-                    processor.back_input(*command)?;
-                    Ok(std::ops::ControlFlow::Break(()))
+                match native_character(meaning) {
+                    Some((' ', Catcode::Space)) => Ok(std::ops::ControlFlow::Continue(())),
+                    // §405 compares the actual other-category '=' token.
+                    Some(('=', Catcode::Other)) => {
+                        equals = true;
+                        Ok(std::ops::ControlFlow::Break(()))
+                    }
+                    _ => {
+                        processor.back_consumed_word(spelling, exceptional)?;
+                        Ok(std::ops::ControlFlow::Break(()))
+                    }
                 }
-            }
-        });
+            },
+        );
         match result {
             Ok(()) => {
                 call.put_complete(ScannedScalar {
@@ -686,32 +688,32 @@ impl<G> CommandProcessor<'_, '_, G> {
         let result = if keyword.is_empty() {
             Ok(())
         } else {
-            self.consume_expanded_commands(&mut |processor, command| {
-                if provenance == OriginId::UNKNOWN {
-                    provenance = command.origin();
-                }
-                let letter = keyword.as_bytes()[matched.len()];
-                let character = command.character();
-                if command.control_sequence().is_none()
-                    && matches!(
-                        character,
-                        Some((ch, _)) if ch.eq_ignore_ascii_case(&char::from(letter))
-                    )
-                {
-                    matched.push(crate::input::BackedUpToken {
-                        spelling: command.spelling(),
-                    });
-                    if matched.len() == keyword.len() {
+            self.consume_expanded_words(
+                &mut |processor, spelling, meaning, control_sequence, exceptional| {
+                    if provenance == OriginId::UNKNOWN {
+                        provenance = spelling.origin();
+                    }
+                    let letter = keyword.as_bytes()[matched.len()];
+                    let character = native_character(meaning);
+                    if control_sequence.is_none()
+                        && matches!(
+                            character,
+                            Some((ch, _)) if ch.eq_ignore_ascii_case(&char::from(letter))
+                        )
+                    {
+                        matched.push(crate::input::BackedUpToken { spelling });
+                        if matched.len() == keyword.len() {
+                            return Ok(std::ops::ControlFlow::Break(()));
+                        }
+                    } else if matched.is_empty() && matches!(character, Some((_, Catcode::Space))) {
+                        // §407 drops leading spaces without advancing the prefix.
+                    } else {
+                        processor.back_consumed_word(spelling, exceptional)?;
                         return Ok(std::ops::ControlFlow::Break(()));
                     }
-                } else if matched.is_empty() && matches!(character, Some((_, Catcode::Space))) {
-                    // §407 drops leading spaces without advancing the prefix.
-                } else {
-                    processor.back_input(*command)?;
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-                Ok(std::ops::ControlFlow::Continue(()))
-            })
+                    Ok(std::ops::ControlFlow::Continue(()))
+                },
+            )
         };
         if let Err(error) = result {
             return self.finish_scalar_destination_error(error, call);
@@ -1745,8 +1747,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut vacuous = first.is_none();
         let mut overflowed = false;
         let mut missing_site = None;
-        self.consume_expanded_commands(&mut |processor, command| {
-            let character = command.character();
+        self.consume_expanded_words(&mut |processor,
+                                          spelling,
+                                          meaning,
+                                          control_sequence,
+                                          exceptional| {
+            let character = native_character(meaning);
             match radix_digit(character) {
                 Some(digit) if digit < radix => {
                     vacuous = false;
@@ -1763,7 +1769,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                             // `loc`. Later digits remain consumed, but do not
                             // repeat the report (`OK_so_far:=false`).
                             if !overflowed {
-                                let site = processor.capture_diagnostic_site(Some(command));
+                                let site = processor.capture_consumed_site(
+                                    spelling,
+                                    meaning,
+                                    control_sequence,
+                                    exceptional,
+                                );
                                 processor.number_too_big_error(Some(site))?;
                                 overflowed = true;
                             }
@@ -1775,9 +1786,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                         // §446's `back_error`, which is `back_input; error`
                         // and so keeps even a spacer for the caller's report
                         // to pseudoprint.
-                        missing_site = Some(processor.capture_diagnostic_site(Some(command)));
-                        processor.back_input(*command)?;
-                    } else if processor.back_input_unless_spacer(*command)? {
+                        missing_site = Some(processor.capture_consumed_site(
+                            spelling,
+                            meaning,
+                            control_sequence,
+                            exceptional,
+                        ));
+                        processor.back_consumed_word(spelling, exceptional)?;
+                    } else if !matches!(character, Some((_, Catcode::Space))) {
+                        processor.back_consumed_word(spelling, exceptional)?;
                         // A numeric constant absorbs one terminating space,
                         // so replay must not manufacture a backup transition
                         // before publishing it.
@@ -1837,26 +1854,30 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut fraction = [0_u8; 17];
         let mut fraction_len = 0;
         if decimal {
-            self.consume_expanded_commands(&mut |processor, command| {
-                match command.character() {
-                    Some((ch, Catcode::Other)) if ch.is_ascii_digit() => {
-                        if fraction_len < fraction.len() {
-                            fraction[fraction_len] = ch as u8 - b'0';
-                            fraction_len += 1;
+            self.consume_expanded_words(
+                &mut |processor, spelling, meaning, _control_sequence, exceptional| {
+                    match native_character(meaning) {
+                        Some((ch, Catcode::Other)) if ch.is_ascii_digit() => {
+                            if fraction_len < fraction.len() {
+                                fraction[fraction_len] = ch as u8 - b'0';
+                                fraction_len += 1;
+                            }
+                        }
+                        // §452's closing `if cur_cmd<>spacer then back_input`: a
+                        // fraction absorbs the space that ends it exactly as
+                        // §444's integer constant does, so `.5 in` reaches the
+                        // unit scan with `i` still unread rather than with a
+                        // backed-up space in front of it.
+                        _ => {
+                            if !matches!(native_character(meaning), Some((_, Catcode::Space))) {
+                                processor.back_consumed_word(spelling, exceptional)?;
+                            }
+                            return Ok(std::ops::ControlFlow::Break(()));
                         }
                     }
-                    // §452's closing `if cur_cmd<>spacer then back_input`: a
-                    // fraction absorbs the space that ends it exactly as
-                    // §444's integer constant does, so `.5 in` reaches the
-                    // unit scan with `i` still unread rather than with a
-                    // backed-up space in front of it.
-                    _ => {
-                        processor.back_input_unless_spacer(*command)?;
-                        return Ok(std::ops::ControlFlow::Break(()));
-                    }
-                }
-                Ok(std::ops::ControlFlow::Continue(()))
-            })?;
+                    Ok(std::ops::ControlFlow::Continue(()))
+                },
+            )?;
         }
         let (unit, magnification) = if allow_infinite
             && !decimal
@@ -3376,3 +3397,11 @@ impl<G> CommandProcessor<'_, '_, G> {
 
 #[cfg(test)]
 mod tests;
+
+#[inline(always)]
+fn native_character<G>(meaning: &tex_state::meaning::MeaningWord<G>) -> Option<(char, Catcode)> {
+    match meaning {
+        tex_state::meaning::MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
+        _ => None,
+    }
+}

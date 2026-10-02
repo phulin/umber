@@ -79,8 +79,8 @@ fn nested_readers(
         let mut output = String::new();
         let mut destination = None;
         let exhausted = if fused {
-            let result = processor.consume_expanded_commands(&mut |_, current| {
-                let Token::Char { ch, .. } = current.spelling().semantic_token() else {
+            let result = processor.consume_expanded_words(&mut |_, spelling, _, _, _| {
+                let Token::Char { ch, .. } = spelling.semantic_token() else {
                     panic!("expected expanded character");
                 };
                 output.push(ch);
@@ -327,5 +327,74 @@ fn reused_raw_destination_is_cleared_at_eof_and_fuel_failure() {
             }
             assert!(destination.is_none());
         });
+    }
+}
+
+#[test]
+fn native_primitive_and_terminal_runs_construct_no_commands() {
+    struct Observer;
+    impl CommandObserver for Observer {
+        fn committed(&mut self, _: CommandObservation) {}
+    }
+    for observed in [false, true] {
+        for count in [1, 4096] {
+            crate::test_harness::with_universe(|universe| {
+                let iftrue = install_static(
+                    universe,
+                    "iftrue-native",
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue),
+                );
+                let fi = install_static(
+                    universe,
+                    "fi-native",
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+                );
+                let letter = Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Letter,
+                };
+                let mut command = CommandState::default();
+                crate::test_harness::push(
+                    &mut command,
+                    [iftrue, letter, fi].into_iter().cycle().take(count * 3),
+                );
+                let mut capabilities = CommandHostCapabilities::default();
+                let mut fuel = crate::CommandFuelLedger::default();
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut observer = Observer;
+                let mut context = universe.command_context().expect("context");
+                let processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut effects,
+                );
+                let mut processor = if observed {
+                    processor.with_observer(&mut observer)
+                } else {
+                    processor
+                };
+                let before = crate::command::command_ownership_counters();
+                let mut delivered = 0;
+                processor
+                    .consume_expanded_words(&mut |_, spelling, _, _, record| {
+                        assert_eq!(spelling.semantic_token(), letter);
+                        assert_eq!(record.is_some(), observed);
+                        delivered += 1;
+                        Ok(std::ops::ControlFlow::Continue(()))
+                    })
+                    .expect("expanded native run");
+                assert_eq!(delivered, count);
+                assert!(processor.command.conditions.current().is_none());
+                let after = crate::command::command_ownership_counters();
+                assert_eq!(
+                    after.resolved_writes - before.resolved_writes,
+                    count as u64 * if observed { 3 } else { 0 },
+                    "native expansion and actual terminal consumption need no command; observation does",
+                );
+                assert_eq!(processor.fuel.burned(), count as u64 * 3 + 1);
+            });
+        }
     }
 }

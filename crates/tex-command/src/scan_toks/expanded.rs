@@ -16,6 +16,36 @@ pub(super) struct ReplacementConsumer<'a, G> {
 
 impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for ReplacementConsumer<'_, G> {
     const RAW_TOKEN: bool = true;
+    const NATIVE_TERMINAL: bool = true;
+
+    fn native_terminal(
+        &mut self,
+        processor: &mut CommandProcessor<'_, '_, G>,
+        spelling: TracedTokenWord,
+        _meaning: &tex_state::meaning::MeaningWord<G>,
+        _control_sequence: Option<Symbol>,
+    ) -> Result<ControlFlow<()>, CommandError> {
+        // Protected macros are retained as spelling; suppression affects only
+        // the demanded observation, which is handled by the cold terminal.
+        #[cfg(test)]
+        {
+            processor
+                .command
+                .token_collector_path_counters
+                .raw_classifications += 1;
+        }
+        let token = crate::token_collector::ClassifiedToken::from_word(spelling, None);
+        if processor.accept_replacement_word(
+            self.macro_parameters,
+            self.collector,
+            token,
+            |processor| processor.back_input_token(spelling),
+        )? {
+            Ok(ControlFlow::Break(()))
+        } else {
+            Ok(ControlFlow::Continue(()))
+        }
+    }
 
     fn expand(
         &mut self,
@@ -23,32 +53,38 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for ReplacementCo
         command: &mut CurrentCommand<G>,
         action: ExpandedCommandAction,
     ) -> Result<bool, CommandError> {
-        match action {
-            ExpandedCommandAction::Return => return Ok(false),
-            ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                ExpandablePrimitive::The,
-            )) => {
-                let mut operand = None;
-                if processor.append_direct_the_toks(self.collector, &mut operand)? {
-                    return Ok(true);
-                }
-            }
-            ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                ExpandablePrimitive::Unexpanded,
-            )) => {
-                processor.append_unexpanded(self.collector)?;
-                return Ok(true);
-            }
-            ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                ExpandablePrimitive::Detokenize,
-            )) => {
-                processor.append_detokenize(self.collector)?;
-                return Ok(true);
-            }
-            _ => {}
+        if matches!(action, ExpandedCommandAction::Return) {
+            return Ok(false);
+        }
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) = action
+            && self.splice(processor, primitive)?
+        {
+            return Ok(true);
         }
         processor.expand_delivered_action(command, action, true)?;
         Ok(true)
+    }
+
+    fn splice(
+        &mut self,
+        processor: &mut CommandProcessor<'_, '_, G>,
+        primitive: ExpandablePrimitive,
+    ) -> Result<bool, CommandError> {
+        match primitive {
+            ExpandablePrimitive::The => {
+                let mut operand = None;
+                processor.append_direct_the_toks(self.collector, &mut operand)
+            }
+            ExpandablePrimitive::Unexpanded => {
+                processor.append_unexpanded(self.collector)?;
+                Ok(true)
+            }
+            ExpandablePrimitive::Detokenize => {
+                processor.append_detokenize(self.collector)?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     fn recover(

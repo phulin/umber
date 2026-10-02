@@ -8,6 +8,18 @@ struct OneExpansion;
 
 impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for OneExpansion {
     const RAW_TOKEN: bool = true;
+    const NATIVE_TERMINAL: bool = true;
+
+    fn native_terminal(
+        &mut self,
+        processor: &mut CommandProcessor<'_, '_, G>,
+        spelling: tex_state::token::TracedTokenWord,
+        _meaning: &tex_state::meaning::MeaningWord<G>,
+        _control_sequence: Option<tex_state::interner::Symbol>,
+    ) -> Result<ControlFlow<()>, CommandError> {
+        processor.back_input_token(spelling)?;
+        Ok(ControlFlow::Break(()))
+    }
 
     fn before_action(&mut self, processor: &mut CommandProcessor<'_, '_, G>) {
         // get_token permits source-name creation while reading, then restores

@@ -186,10 +186,21 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   reads stage a file diagnostic coordinate; settled raw delivery publishes it
   only when §342 reaches a command exit.
 - `src/processor/expand/consume.rs`: one dense meaning resolution, ordinary
-  macro activation from invocation facts, and terminal native command construction.
-  One read/interpret loop publishes terminal commands directly. Matching's local
+  macro activation from invocation facts, and synchronous native terminal consumption.
+  Unobserved expandable primitives also invoke their shared engine directly from
+  the opcode and original spelling, without a temporary command. Observation,
+  suppression, outer validation, alignment and template sentinels keep their
+  actual settlement boundary. One read/interpret loop invokes native consumers directly or initializes explicitly requested delivery records. Matching's local
   storage lives in its activation call; prefix diagnostics consume spelling and
   invocation facts without a command or delivery geometry.
+- `src/processor/expand/primitive.rs`: the sole primitive expansion engine from
+  native opcode, traced invocation spelling and control-sequence identity. It
+  retains capacity and resource unwind, outlines real conditional/nonconditional
+  recursion, and creates print values only for demanded tracing. Conditional
+  delimiter diagnostics and input-name recovery consume native spelling at
+  their actual exceptional boundary. Delivered/observed callers use this same
+  engine from their existing command's invocation facts.
+- `src/processor/expand/scalar.rs`: synchronous continuing scalar consumers borrow native spelling and meaning directly; exceptional observation/recovery lends its demanded record. Accepted words construct no command.
 - `src/processor/expand/once.rs`: TeX82 §368's single-expansion consumer of
   the same reader. It creates source names while reading its operand, restores
   normal delivery before nesting, activates ordinary macros without a command,

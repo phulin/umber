@@ -367,9 +367,9 @@ pub(crate) fn append_meaning_token_words<G>(
 
 /// The copyable portion of a delivered command needed by TeX82 §298.
 ///
-/// This is captured from `CurrentCommand<G>`, not reconstructed from `Meaning`,
-/// so the delivered control-sequence identity remains available across the
-/// executor's transactional scan/apply seam.
+/// Execution captures it from the delivered command across its scan/apply seam.
+/// Expansion materializes it only when tracing consumes the known primitive and
+/// original control-sequence identity. Both preserve the actual invocation.
 #[derive(Debug, Eq, PartialEq)]
 pub struct PrintCommand<G> {
     meaning: ResolvedMeaning<G>,
@@ -382,6 +382,16 @@ impl<G> PrintCommand<G> {
         Self {
             meaning: command.meaning(),
             control_sequence: command.control_sequence(),
+        }
+    }
+
+    pub(crate) fn from_expandable(
+        primitive: ExpandablePrimitive,
+        control_sequence: Option<tex_state::interner::Symbol>,
+    ) -> Self {
+        Self {
+            meaning: ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)),
+            control_sequence,
         }
     }
 

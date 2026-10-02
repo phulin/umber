@@ -3,7 +3,6 @@
 use tex_state::env::banks::IntParam;
 use tex_state::token::{Token, TracedTokenWord};
 
-use crate::command::CurrentCommand;
 use crate::input::{
     BackedUpToken, BackupTreatment, ReplayTrace, RetirementBehavior, TokenBehavior,
     backed_up_replay,
@@ -87,18 +86,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    /// Compact source-input expansion.  Opening a registered file only needs
-    /// the opener provenance; the hot command remains the owner while the
-    /// source transition is installed.  Name-in-progress recovery is the
-    /// genuine backup boundary and therefore uses the stamped hot backup
-    /// path instead of constructing a rich command first.
-    pub(super) fn expand_input_hot(
-        &mut self,
-        opener: &mut CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    /// Source-input expansion consumes its original traced spelling. Opening
+    /// needs only the origin; name-in-progress recovery consumes a native backup.
+    pub(super) fn expand_input(&mut self, opener: TracedTokenWord) -> Result<(), CommandError> {
         let opener_origin = opener.origin();
         if self.command.name_in_progress() {
-            self.back_input(*opener)?;
+            self.back_input_token(opener)?;
             let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), opener_origin);
             let level = self.command.push_token_level(
                 backed_up_replay([BackedUpToken {

@@ -32,8 +32,10 @@ static, and all input ownership and unwind rules below still apply.
 
 The removed `ResidentWord`/`TokenMeaning` chain and duplicated font column must
 not return as adapters. One interpreted token resolves once into the final
-native meaning. The same native `CurrentCommand` remains live through interpreted
-raw input, expansion, synchronous scanners and main control. Raw macro matching
+native meaning. Continuing scalar scanners and expanded replacement collection consume native
+spelling and meaning synchronously, without a `CurrentCommand` for accepted
+words. Explicit command-returning scanners and main control still use their
+existing delivery slot while that execution boundary is being removed. Raw macro matching
 and unexpanded replacement grammar consume final spelling and origin directly;
 their ordinary accepted words construct no command merely to project those fields.
 Recovery, tracing and observation
@@ -126,8 +128,8 @@ reader and primitive expansion depths before those locals unwind.
 
 Expanded replacement collection lends its actual destination, parameter grammar
 and scanner episode to that same reader. Ordinary unobserved macro activation
-constructs no command; only terminal words and exceptional expansion actions
-need one. Direct token-list splices bypass replacement brace/parameter grammar,
+and ordinary replacement consumption construct no command; only observation
+and exceptional expansion actions demand a record. Direct token-list splices bypass replacement brace/parameter grammar,
 protected retention and outer recovery run synchronously, and alignment-template
 entry stays at its raw semantic boundary. No collection routing/result adapter
 or second expansion loop exists.
@@ -137,6 +139,14 @@ and demanded backup-observation token only. Its second operand is a single-actio
 consumer of the same reader: native macro activation constructs no command,
 failed matching propagates before first-token replay, and no replacement terminal
 is fetched merely to complete this operation. All these operands are call-local.
+
+Ordinary unobserved primitives likewise expand from their opcode, traced spelling
+and resolved control sequence, without a command record. Their operand recursion
+retains only those actual invocation facts. Print values and conditional diagnostic
+sites are built on demand; filename and conditional recovery consume native
+backup tokens. Observed and exceptional settlement still borrows its genuine
+command, then enters the same primitive engine. There is no second primitive
+switch, saved command-shaped opener or successful-command cleanup.
 
 A resource miss unwinds all those locals, matching holdback, builders and
 borrowed contexts. The host restores the full aggregate, not the immediate

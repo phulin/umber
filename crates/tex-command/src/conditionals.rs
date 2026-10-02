@@ -1279,13 +1279,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    /// Compact delimiter handling for the expanded delivery loop.  A
-    /// delimiter is retained in the occupied hot owner until this method has
-    /// either closed the condition, queued the cold skip, or chosen the
-    /// exceptional recovery that backs the exact delivery up.
-    pub(crate) fn expand_conditional_delimiter_hot(
+    /// Native delimiter handling. Ordinary closing needs no command owner;
+    /// only diagnostics or recovery consume the original invocation spelling.
+    pub(crate) fn expand_conditional_delimiter(
         &mut self,
-        command: &CurrentCommand<G>,
+        spelling: TracedTokenWord,
+        control_sequence: Option<tex_state::interner::Symbol>,
         primitive: ExpandablePrimitive,
     ) -> Result<(), CommandError> {
         let delimiter = match primitive {
@@ -1295,7 +1294,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             _ => return Err(CommandError::input_invariant()),
         };
         let Some(frame) = self.command.conditions.current().cloned() else {
-            let site = self.capture_hot_diagnostic_site(command);
+            let site = self.capture_spelled_diagnostic_site(
+                crate::command::CommandIdentity::Ordinary,
+                spelling,
+                control_sequence,
+                ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)),
+            );
             self.record_extra_delimiter(delimiter, Some(site));
             return Ok(());
         };
@@ -1306,12 +1310,17 @@ impl<G> CommandProcessor<'_, '_, G> {
             .evaluating_delimiter_recovery(frame.identity, delimiter)
             .is_some()
         {
-            self.back_input(*command)?;
+            self.back_input_token(spelling)?;
             self.recover_incomplete_if()?;
             return Ok(());
         }
         if !frame.limit.accepts_delimiter(delimiter) {
-            let site = self.capture_hot_diagnostic_site(command);
+            let site = self.capture_spelled_diagnostic_site(
+                crate::command::CommandIdentity::Ordinary,
+                spelling,
+                control_sequence,
+                ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)),
+            );
             self.record_extra_delimiter(delimiter, Some(site));
             return Ok(());
         }

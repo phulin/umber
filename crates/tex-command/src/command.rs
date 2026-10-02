@@ -436,7 +436,7 @@ impl<G> CurrentCommand<G> {
         {
             CommandIdentity::NoExpandFrozenRelax
         } else {
-            CommandIdentity::from_command(self)
+            CommandIdentity::from_meaning(&self.command)
         }
     }
 

@@ -1010,8 +1010,8 @@ fn expanded_definition_activates_macro_runs_without_temporary_commands() {
                 assert!(definition.replacement_text().is_empty());
                 assert_eq!(
                     after.resolved_writes - before.resolved_writes,
-                    if observed { length as u64 + 2 } else { 2 },
-                    "only observation needs invocation commands; collection owns the two braces",
+                    if observed { length as u64 + 2 } else { 1 },
+                    "only the raw opening scan needs a command; native replacement consumption does not",
                 );
                 assert_eq!(processor.fuel.burned(), length as u64 + 2);
             });

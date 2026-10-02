@@ -1,7 +1,7 @@
 //! Demanded observer and diagnostic command identity.
 
-use super::CurrentCommand;
 use tex_state::meaning::ExpandablePrimitive;
+use tex_state::meaning::{Meaning, MeaningWord, ResolvedMeaning};
 
 /// The command-code identity of a current delivery.
 ///
@@ -107,20 +107,20 @@ impl XRaySelector {
 }
 
 impl CommandIdentity {
-    pub(super) fn from_command<G>(command: &CurrentCommand<G>) -> Self {
-        if let Some(primitive) = command.expandable_primitive() {
-            return match primitive {
+    pub(crate) fn from_meaning<G>(meaning: &MeaningWord<G>) -> Self {
+        match meaning.resolve() {
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => match primitive {
                 ExpandablePrimitive::ExpandAfter => Self::ExpandAfter,
                 ExpandablePrimitive::CsName => Self::CsName,
                 ExpandablePrimitive::EndCsName => Self::EndCsName,
                 other => {
                     ConvertSelector::from_primitive(other).map_or(Self::Ordinary, Self::Convert)
                 }
-            };
+            },
+            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) => {
+                XRaySelector::from_primitive(primitive).map_or(Self::Ordinary, Self::XRay)
+            }
+            _ => Self::Ordinary,
         }
-        command
-            .unexpandable_primitive()
-            .and_then(XRaySelector::from_primitive)
-            .map_or(Self::Ordinary, Self::XRay)
     }
 }

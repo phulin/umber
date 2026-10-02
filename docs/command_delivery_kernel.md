@@ -81,14 +81,29 @@ stores no derived command class; actual consumers project their class, primitive
 or scalar value only when needed. There is no operand adapter, temporary
 `TokenMeaning`, or parallel font column.
 
-A full hot command is materialized when a caller actually needs command delivery,
-or when observation, suppression, alignment, or outer recovery requires the
-existing settlement boundary. Materialization uses the already-resolved meaning;
-it must not repeat a dense lookup. Illegal definition parameters materialize
-only the rejected token needed by backup. Macro matching retains only spelling
-and invocation facts; prefix diagnostics construct their site directly from
-those facts, without a command or delivery coordinates. Origin remains valid
-when the original input frame retires.
+The hot path has no command-product boundary. Its actual consumer receives the
+spelling, native meaning and resolved control-sequence identity synchronously.
+The expansion decision is made once from that native meaning; a terminal
+consumer must not classify the same word again through a constructed command.
+Bookkeeping belongs to the actual mutation: literal braces update alignment
+state before consumption, and a source word publishes its diagnostic position
+before nested scanning or input retirement.
+
+Observation and exceptional TeX recovery can demand a cold delivery record.
+That record supplies the exact suppression identity, alignment correction or
+outer-recovery spelling to the actual consumer. It is absent for ordinary
+accepted scanner words and replacement tokens. A backup retains spelling on
+the real input stack; it does not retain an expanded command. Scalar error
+sites decode meaning only when an error occurs. The native consumer interface
+must not introduce a renamed command bundle, queued operation, shadow current
+command, compatibility adapter or separately classified descriptor.
+
+The execution switch must ultimately consume the same native facts under its
+existing processor loan. Removing command products does not remove the real
+TeX meaning lookup or opcode decision, and does not change execution, scanner,
+checkpoint or group-stack ownership. A resource miss unwinds ordinary calls;
+full checkpoints retain the semantic input frames and state owners rather than
+an ephemeral consumer or delivery product.
 
 Raw and expanded consumers use the same read, fuel, and input-transition
 implementation. Expansion chains stay iterative. EOF, replay completion, and
@@ -105,13 +120,12 @@ provenance, and any prefix needed for canonical backup.
 
 Continuing scalar scanners lend their actual callback to one shared synchronous
 scanner-call boundary. Each scanner keeps its result locals in its calling
-frame and borrows the reader’s final command slot. Accepted characters do not
-copy that command through a callback argument; only consuming backup copies the
-actual rejected command. The scanner boundary embeds that borrowed callback in the same statically
-selected expansion reader used by single-command delivery. This prevents each
-keyword or digit closure from copying the complete reader into the executable,
-while the single-command consumer still returns directly. No selector enum,
-heap callback, parked continuation, or additional input state exists.
+frame and consumes native spelling and meaning directly. Accepted characters
+construct no command. Exceptional and observed deliveries lend their demanded
+cold record during the callback; rejected ordinary words are backed up from
+spelling. The scalar callback boundary prevents each keyword or digit closure
+from copying the complete reader into the executable. It has no selector enum,
+heap callback, parked continuation or additional input state.
 
 Expansion, raw and expanded observation, alignment admission, provenance, and
 fuel still belong to the shared reader. The expanded-state fact resets after
@@ -196,6 +210,34 @@ episode, and single expansion completes after precisely one action. There is
 no second expansion reader, optional command owned solely for macro activation,
 expandable-classification adapter, retained expansion phase, or compatibility
 entry for the replaced operand path.
+
+## Primitive expansion from native facts
+
+An expandable primitive consumes its resolved opcode and invocation spelling,
+not a fabricated terminal command. The unobserved reader invokes the same native
+primitive engine from those facts after the existing semantic-boundary decision.
+Terminal consumers receive native facts directly. Observation, suppression,
+outer validation, alignment interception and template sentinels retain their
+actual cold semantic treatment during the transition.
+Native primitive activation preserves the source diagnostic position and each
+word’s existing fuel charge before entering its operand scanner.
+
+Primitive engines accept the actual opcode, traced spelling and resolved
+control-sequence identity. Most consume only the origin or their nested operands.
+Tracing constructs its demanded print value from the known primitive and original
+control sequence. Conditional-delimiter diagnostics construct their actual site
+only on error, and recovery backs up the native spelling. Input filename recovery
+uses that same consuming backup. Observed and already-delivered invocations enter
+the same engine from their existing command’s facts; no parallel primitive switch
+or compatibility entry remains.
+
+The expanded collector’s direct-splice action accepts the primitive opcode at
+this boundary. Its output owner handles only `\the`, `\unexpanded` and
+`\detokenize`; all other primitives use the shared engine. Macro activation and
+primitive activation both return to the reader’s actual consumer completion:
+ordinary expansion continues, collection continues, and a single expansion stops.
+No command-shaped primitive descriptor, generic publication product or successful
+command cleanup stage is introduced.
 
 ## Native completion and exceptional ownership
 

@@ -2,7 +2,7 @@
 
 use super::{
     ExpandedCommandAction, ExpandedReaderConsumer, ExpandedReaderRole, ExpansionDispatch, ReadSite,
-    classify_hot_command,
+    classify_hot_command, classify_native_command,
 };
 use crate::command::CurrentCommand;
 use crate::input::InputLevel;
@@ -306,6 +306,48 @@ impl<G> CommandProcessor<'_, '_, G> {
                         expanded = true;
                         return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                     }
+                    let native = !OBSERVED && !processor.command.delivery_mode
+                        .requires_semantic_settlement(suppress, meaning.is_outer());
+                    let native_action;
+                    if native {
+                        native_action = classify_native_command(word, &meaning);
+                        if matches!(site, ReadSite::Source(_))
+                            && let Some(location) = processor.pending_diagnostic_location.take()
+                        {
+                            processor.command.set_last_diagnostic_location(Some(location));
+                        }
+                        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) = native_action {
+                            terminal.before_action(processor);
+                            let result = terminal.splice(processor, primitive).and_then(|spliced| {
+                                if spliced { Ok(()) } else {
+                                    processor.expand_primitive(primitive,
+                                        tex_state::token::TracedTokenWord::from_parts(word, origin),
+                                        resolution.control_sequence(), true)
+                                }
+                            });
+                            if let Err(failure) = result {
+                                if Consumer::RAW_TOKEN { terminal.recover(processor, failure)?; }
+                                else { return Err(failure); }
+                            }
+                            expanded = true;
+                            return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
+                        }
+                        let protected = STOP_PROTECTED && matches!(meaning,
+                            MeaningWord::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED));
+                        if Consumer::NATIVE_TERMINAL &&
+                            (protected || matches!(native_action, ExpandedCommandAction::Return))
+                        {
+                            processor.command.roots.alignment.account_literal_catcode(resolution.literal_catcode());
+                            terminal.before_action(processor);
+                            let result = terminal.native_terminal(processor,
+                                tex_state::token::TracedTokenWord::from_parts(word, origin),
+                                &meaning, resolution.control_sequence())?;
+                            expanded = false;
+                            return Ok(result.map_break(|()| DeliveryStatus::Command));
+                        }
+                    } else {
+                        native_action = ExpandedCommandAction::Return;
+                    }
                     let line = match site {
                         ReadSite::Source(line) => line,
                         _ => None,
@@ -319,10 +361,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                         meaning,
                         resolution.control_sequence(),
                     ));
-                    processor.settle_hot_delivery_in::<OBSERVED>(
-                        command,
-                        resolution.literal_catcode(),
-                    )?;
+                    if native {
+                        processor.command.roots.alignment.account_literal_brace(
+                            command, resolution.literal_catcode());
+                    } else {
+                        processor.settle_hot_delivery_in::<OBSERVED>(
+                            command, resolution.literal_catcode())?;
+                    }
                     if Consumer::RAW_TOKEN
                         && matches!(
                             command.alignment_adjustment(),
@@ -334,7 +379,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         return Ok(ControlFlow::Continue(()));
                     }
                     terminal.before_action(processor);
-                    let action = classify_hot_command(command);
+                    let action = if native { native_action } else { classify_hot_command(command) };
                     let terminal_status = if STOP_PROTECTED
                         && Self::protected_terminal(command, action)
                     {
