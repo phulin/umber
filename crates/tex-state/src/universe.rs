@@ -3433,6 +3433,24 @@ impl<G> Universe<G> {
         ))
     }
 
+    /// Reads the page owner's scheduling flags without borrowing generation payloads.
+    #[must_use]
+    pub fn page_fire_up(&self) -> Option<crate::page::PageFireUp> {
+        self.page_region.builder().fire_up()
+    }
+
+    /// Reports the page builder's pending return from output.
+    #[must_use]
+    pub fn page_builder_resume_after_output_pending(&self) -> bool {
+        self.page_region.builder().resume_after_output_pending()
+    }
+
+    /// Reads native save-stack accounting without admitting token or node payloads.
+    pub fn checked_save_stack_words(&self, source_lines: bool) -> Result<usize, UniverseError> {
+        let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
+        Ok(core.state().checked_save_stack_words(source_lines))
+    }
+
     /// Prepares §1012's page-owner transition from the complete page owner.
     ///
     /// Durable box and form closures already own independent regions. The

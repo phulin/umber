@@ -61,6 +61,9 @@ impl<G> DirectDispatch<'_, '_, G> {
     fn report_scan(&mut self) -> Result<(), ExecError> {
         self.control
             .capture_first_reported_command_error_context(self.stores);
+        if self.diagnostics.is_empty() {
+            return Ok(());
+        }
         self.control
             .capture_first_causal_context(self.stores, &self.diagnostics);
         report_pending_diagnostics(
@@ -73,14 +76,6 @@ impl<G> DirectDispatch<'_, '_, G> {
         &mut self,
         applied: Result<ReplayStep, ExecError>,
     ) -> Result<ReplayStep, ExecError> {
-        let applied = applied.and_then(|step| {
-            let pending = PendingPageOutputFacts::capture(
-                &self.stores.command_context().expect("live generation"),
-            );
-            self.control
-                .fire_pending_page_output(self.stores, self.effects, pending)?;
-            Ok(step)
-        });
         self.control.main_loop_active = false;
         self.control
             .finish_host_owned_step(applied, self.output_start, self.stores, self.effects)
@@ -232,7 +227,7 @@ impl<G> MainControl<G> {
 }
 impl<G> DirectDispatch<'_, '_, G> {
     fn deliver_control_command(&mut self) -> Result<ReplayStep, ExecError> {
-        {
+        if !self.control.main_control_entered {
             let mut context = self
                 .stores
                 .command_context()
@@ -262,13 +257,11 @@ impl<G> DirectDispatch<'_, '_, G> {
 
 impl<G> MainControl<G> {
     pub(super) fn update_save_stack_highwater(&mut self, stores: &mut Universe<G>) {
-        let context = stores.command_context().expect("save-stack highwater");
-        self.max_save_stack = self.max_save_stack.max(Self::save_stack_words(
-            &context,
-            &self.boxes,
-            self.command.state(),
-            self.command_profile(),
-        ));
+        let words = stores
+            .checked_save_stack_words(self.command_profile().capabilities().supports_etex())
+            .expect("save-stack highwater")
+            .saturating_add(self.boxes.box_spec_words);
+        self.max_save_stack = self.max_save_stack.max(words);
     }
 }
 

@@ -44,6 +44,9 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   source spans in the existing horizontal loop. `publication.rs` validates and
   reserves the complete scanner token root set before streaming final native
   token owners. `command_codes.rs` derives switch keys from packed meanings.
+  The startup prologue admits once; scalar page/save queries borrow their real
+  stores without generation admission, and host settlement has one page fire-up
+  seam with demand-only named-list publication.
 - `src/main_control/semantic/`: concrete source-free typed semantic routines
   grouped by assignments, registers, fonts, text, paragraph/page state, groups,
   boxes/builders/leaders, alignment/recovery, math, diagnostics, streams, and

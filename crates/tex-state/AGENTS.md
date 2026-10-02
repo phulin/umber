@@ -506,7 +506,8 @@ expose substores or introduce another arena.
 - `src/token/tests.rs`: Unit tests for token constructors, catcodes, parameter tokens, and display/debug behavior.
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
 - `src/universe.rs`: Public session/generation aggregate, typed scalar
-  mutation and allocation facade, exclusive retained-checkpoint state/node
+  mutation and allocation facade, generation-free page scheduling and native
+  save-stack scalar queries, exclusive retained-checkpoint state/node
   bank loans, immutable primitive-registry sharing, owner-checked journal
   cursors, semantically separate session, retained-generation, durable-node,
   operation-scratch, and page-region owners lent directly to admitted

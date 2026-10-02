@@ -25,6 +25,12 @@ fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
 }
 
 impl<G> CommandState<G> {
+    /// Reports whether an actual executor-requested list needs trace publication.
+    #[must_use]
+    pub fn has_pending_named_token_list_pushes(&self) -> bool {
+        !self.named_token_list_pushes.is_empty()
+    }
+
     /// Publishes the pushes of executor-requested named token lists, in order.
     ///
     /// The executor publishes them with the rest of the operation's committed
@@ -36,6 +42,9 @@ impl<G> CommandState<G> {
         diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
         observer: Option<&mut dyn crate::CommandObserver>,
     ) {
+        if self.named_token_list_pushes.is_empty() {
+            return;
+        }
         let mut observer = observer;
         for (level, reason, tokens) in self.named_token_list_pushes.drain(..) {
             // TeX82 §§323 and 1145 trace a named token list at

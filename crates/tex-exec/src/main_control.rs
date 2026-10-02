@@ -2464,13 +2464,12 @@ impl<G> MainControl<G> {
         loop {
             self.assert_command_scratch_clear();
             let mut diagnostic_effects = DiagnosticEffects::new();
-            let pending = if !self.page_region_succession_pending
-                && !self.boxes.output_routine_active
-            {
-                PendingPageOutputFacts::capture(&stores.command_context().expect("live generation"))
-            } else {
-                PendingPageOutputFacts::default()
-            };
+            let pending =
+                if !self.page_region_succession_pending && !self.boxes.output_routine_active {
+                    PendingPageOutputFacts::capture_runtime(stores)
+                } else {
+                    PendingPageOutputFacts::default()
+                };
             let applied = if pending.is_pending() {
                 self.fire_pending_page_output(stores, &mut diagnostic_effects, pending)
                     .map(|()| ReplayStep::Continue)
@@ -5891,6 +5890,13 @@ impl PendingPageOutputFacts {
         Self {
             fire_up: context.page_fire_up(),
             resume_after_output: context.page_builder_resume_after_output_pending(),
+        }
+    }
+
+    fn capture_runtime<G>(stores: &Universe<G>) -> Self {
+        Self {
+            fire_up: stores.page_fire_up(),
+            resume_after_output: stores.page_builder_resume_after_output_pending(),
         }
     }
 

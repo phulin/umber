@@ -10,7 +10,6 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         let mode = self.control.modes.current_mode();
         let boxes = &self.control.boxes;
-        let display_eq_no = self.control.modes.current_list().display_eq_no().is_some();
         let main_loop_active = self.control.main_loop_active;
         let mut admitted_context = self
             .stores
@@ -3018,7 +3017,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                             let (direct_arg0,) = (MathShiftPairing::ProbeDisplayEnd,);
                             finish_scan!(self.execute_math_shift(direct_arg0))
                         }
-                        Mode::Math if display_eq_no => {
+                        Mode::Math
+                            if self.control.modes.current_list().display_eq_no().is_some() =>
+                        {
                             let (direct_arg0,) = (MathShiftPairing::ProbeDisplayEnd,);
                             finish_scan!(self.execute_math_shift(direct_arg0))
                         }

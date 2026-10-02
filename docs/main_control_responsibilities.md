@@ -25,6 +25,19 @@ handles diagnostic/error completion, and seals eligible outer-paragraph
 checkpoints. Failure latches the session; replay restores every aggregate
 root rather than rolling back one command.
 
+Ordinary dispatch must not reacquire generation ownership merely to inspect
+page-builder scheduling flags or native save-stack accounting. Those scalar
+queries belong to their existing Universe-owned page and dense-state stores;
+they lend no token, definition or node payload. The main-control prologue admits
+its command context only once. Scanner and semantic consumers still acquire
+their actual mutable generation loan, and host transitions retire it before
+World publication. Output settlement reads the current page flags once at its
+own scheduling seam; it does not duplicate the same capture and fire-up in an
+outer wrapper. Named-list tracing admits a context only when a real queued
+push needs publication. These demand boundaries preserve diagnostics, page
+continuation, aftergroup and output order while removing ordinary-command
+owner admission and empty publication work.
+
 The source-free box, alignment, paragraph, math, and shipout kernels keep their
 existing authority boundaries. Main control calls them with native typed
 operands after scanning. Observed and unobserved execution share all semantic

@@ -507,8 +507,7 @@ impl<G> MainControl<G> {
         // episode here instead of asking only whether another fire-up is
         // currently pending; otherwise its observations survive into the
         // next command step and that command's raw delivery overtakes them.
-        let pending_page_output =
-            PendingPageOutputFacts::capture(&stores.command_context().expect("live generation"));
+        let pending_page_output = PendingPageOutputFacts::capture_runtime(stores);
         let opens_output_batch = !self.page_output_observations.is_empty()
             || (pending_page_output.fire_up.is_some() && !self.boxes.output_routine_active);
         self.fire_pending_page_output(stores, diagnostic_effects, pending_page_output)?;
@@ -527,12 +526,14 @@ impl<G> MainControl<G> {
             // command is fetched. Leaving the push queued until an ordinary
             // step reverses those events: the hook's final command is traced
             // and executed before its own `begin_token_list` trace.
-            publish_named_token_list_pushes(
-                &mut self.command,
-                &mut stores.command_context().expect("live generation"),
-                diagnostic_effects,
-                &mut self.operation_observations,
-            );
+            if self.command.has_pending_named_token_list_pushes() {
+                publish_named_token_list_pushes(
+                    &mut self.command,
+                    &mut stores.command_context().expect("live generation"),
+                    diagnostic_effects,
+                    &mut self.operation_observations,
+                );
+            }
             if opens_output_batch {
                 let mut records = Vec::new();
                 // Same order as the ordinary tail: the named token-list push

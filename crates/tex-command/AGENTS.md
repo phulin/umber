@@ -92,7 +92,7 @@ collector (see `src/conditionals.rs`).
   synchronous child scopes, and checkpoint-replay cleanup;
   `src/state/projection.rs` owns allocation-free retained-byte
   and dependency views; `src/state/executor_publication.rs` owns ordered
-  executor-facing fact transfer. Each is an inherent implementation on the
+  executor-facing fact transfer and demand-only queued-list publication. Each is an inherent implementation on the
   same authoritative `CommandState`; none adds a facade or state owner. A named
   checkpoint copies the quiescent transient roots by value; warmed command
   delivery performs no root admission and writes no journal. A resource miss
