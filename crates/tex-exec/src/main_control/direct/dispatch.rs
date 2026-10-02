@@ -110,8 +110,6 @@ impl<G> DirectDispatch<'_, '_, G> {
             }
             'processor: loop {
                 let main_loop_active = self.control.main_loop_active;
-                let innermost_group = owned_processor
-                    .apply_completed_command(|context, _, _, _| context.innermost_group_kind());
                 let processor: &mut CommandProcessor<'_, '_, G> = &mut owned_processor;
                 // Finish this actual processor/context loan before semantic application.
                 macro_rules! finish_scan {
@@ -237,8 +235,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                     }};
                 }
 
-                let mut scalar_storage = tex_command::ScalarScanFrame::default();
-                let scalar = &mut scalar_storage;
                 let shown_mode = &mut self.control.shown_mode;
                 let diagnostics = &mut self.diagnostics;
                 let mut scan_origin = self.current_origin;
@@ -249,7 +245,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // `get_x_token`; §1034's inner character loop instead re-enters at
                     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
                     // run of adjacent characters from being delivered through expansion.
-                    prepare_command_trace(processor, mode, *shown_mode);
+                    if processor.int_param(IntParam::TRACING_COMMANDS) > 0
+                        || processor.int_param(IntParam::TRACING_IFS) > 0
+                    {
+                        prepare_command_trace(processor, mode, *shown_mode);
+                    }
                     let mut destination = source_command.take();
                     let delivery = if main_loop_active {
                         processor.main_loop_lookahead_into(&mut destination)
@@ -287,7 +287,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
                             )
                         );
-                    if !continues_main_loop {
+                    if !continues_main_loop
+                        && (processor.command_trace_printed()
+                            || processor.int_param(IntParam::TRACING_COMMANDS) > 0)
+                    {
                         report_main_control_command_trace(
                             processor, mode, &command, boxes, shown_mode,
                         );
@@ -369,6 +372,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 // This loop is that label.
                 let mut suppress_left_boundary = false;
                 loop {
+                    let mut command_code = command.control_code();
                     // A prefix the caller's own §1211 loop consumed has already fetched
                     // the current command, which is checked exactly as a command this
                     // loop fetches.
@@ -422,7 +426,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 );
                             }
                         }
-                        match command.control_code() {
+                        match command_code {
                             Some(codes::PRIMITIVE_GLOBAL) => global = true,
                             Some(codes::PRIMITIVE_LONG) => flags = flags | MeaningFlags::LONG,
                             Some(codes::PRIMITIVE_OUTER) => flags = flags | MeaningFlags::OUTER,
@@ -453,6 +457,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                         };
                         command = next;
+                        command_code = command.control_code();
                         prefixed = true;
                     }
                     // §1213's `<Discard the prefixes \long and \outer if they are
@@ -485,7 +490,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // push a backup level, emit a recovery record, and deliver that
                     // command a second time, none of which TeX82 does
                     // (`umber2-johp.196`).
-                    if command.control_code() == Some(codes::PRIMITIVE_IGNORE_SPACES) {
+                    if command_code == Some(codes::PRIMITIVE_IGNORE_SPACES) {
                         let next = if let Some(alignment) = alignment {
                             let mut destination = None;
                             loop {
@@ -621,18 +626,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // definition, committed application, and mutation observation below
                     // therefore receives the same effective value rather than
                     // independently consulting live state at a later seam.
-                    let global = effective_global(
-                        processor.int_param(IntParam::GLOBAL_DEFS),
-                        global
-                            || matches!(
-                                command.control_code(),
-                                Some(codes::PRIMITIVE_GDEF | codes::PRIMITIVE_XDEF)
-                            ),
-                    );
-
                     self.suppress_left_boundary = suppress_left_boundary;
 
-                    let family_size = match command.control_code() {
+                    let family_size = match command_code {
                         Some(codes::PRIMITIVE_TEXT_FONT) => Some(tex_command::MathFamilySize::Text),
                         Some(codes::PRIMITIVE_SCRIPT_FONT) => {
                             Some(tex_command::MathFamilySize::Script)
@@ -643,6 +639,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                         _ => None,
                     };
                     if let Some(size) = family_size {
+                        let global =
+                            effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
                         return finish_scan!(self.scan_math_family_assignment(size, global));
                     }
                     // Math operands are scanned exclusively by `tex-command`.  The replay
@@ -757,14 +755,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // TeX82 §1068 dispatches a right brace from the current `cur_group`.
                     // An ancestor simple group must not make a nested box's body closer look
                     // like an ordinary group closer.
-                    if innermost_group == Some(GroupKind::Simple)
-                        && matches!(
-                            command.meaning(),
-                            ResolvedMeaning::Static(Meaning::CharToken {
-                                cat: Catcode::EndGroup,
-                                ..
-                            })
-                        )
+                    if command_code == Some(codes::CHAR_END_GROUP)
+                        && processor.apply_completed_command(|context, _, _, _| {
+                            context.innermost_group_kind()
+                        }) == Some(GroupKind::Simple)
                     {
                         return {
                             let (direct_arg0, direct_arg1) =
@@ -803,28 +797,21 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // branch). §1153 and §1172/§1174 opened these levels with `push_math`,
                     // so each pair really does bracket a save-stack level and its closer must
                     // not fall through to the ordinary or box brace arms below.
-                    if let Some(kind @ (GroupKind::Math | GroupKind::MathChoice)) = innermost_group
-                        && matches!(
-                            command.meaning(),
-                            ResolvedMeaning::Static(Meaning::CharToken {
-                                cat: Catcode::EndGroup,
-                                ..
+                    if command_code == Some(codes::CHAR_END_GROUP)
+                        && let Some(kind @ (GroupKind::Math | GroupKind::MathChoice)) = processor
+                            .apply_completed_command(|context, _, _, _| {
+                                context.innermost_group_kind()
                             })
-                        )
                     {
                         return {
                             let (direct_arg0,) = (kind,);
                             finish_scan!(self.execute_end_math_group(direct_arg0))
                         };
                     }
-                    if innermost_group == Some(GroupKind::Disc)
-                        && matches!(
-                            command.meaning(),
-                            ResolvedMeaning::Static(Meaning::CharToken {
-                                cat: Catcode::EndGroup,
-                                ..
-                            })
-                        )
+                    if command_code == Some(codes::CHAR_END_GROUP)
+                        && processor.apply_completed_command(|context, _, _, _| {
+                            context.innermost_group_kind()
+                        }) == Some(GroupKind::Disc)
                     {
                         return finish_scan!(self.execute_discretionary_part_end());
                     }
@@ -870,15 +857,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // holds every open level, and counting braces instead silently skipped
                     // `unsave`, losing both the nested group's local restores and the
                     // `\aftergroup` tokens §282 backs up when it pops.
-                    if let Some(box_state) = boxes.active_boxes.last()
-                        && innermost_group == Some(box_state.group_kind)
-                        && matches!(
-                            command.meaning(),
-                            ResolvedMeaning::Static(Meaning::CharToken {
-                                cat: Catcode::EndGroup,
-                                ..
-                            })
-                        )
+                    if command_code == Some(codes::CHAR_END_GROUP)
+                        && let Some(box_state) = boxes.active_boxes.last()
+                        && processor.apply_completed_command(|context, _, _, _| {
+                            context.innermost_group_kind()
+                        }) == Some(box_state.group_kind)
                     {
                         let threshold = match box_state.kind {
                             ReplayBoxKind::VBox | ReplayBoxKind::VTop | ReplayBoxKind::VCenter => 1,
@@ -904,15 +887,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // TeX82 §1016 opens `output_group` before replaying the braced output
                     // token list. A box body nested in that list owns its closing brace first;
                     // only the live output group can close the enclosing output routine.
-                    if boxes.output_routine_active
-                        && innermost_group == Some(GroupKind::Output)
-                        && matches!(
-                            command.meaning(),
-                            ResolvedMeaning::Static(Meaning::CharToken {
-                                cat: Catcode::EndGroup,
-                                ..
-                            })
-                        )
+                    if command_code == Some(codes::CHAR_END_GROUP)
+                        && boxes.output_routine_active
+                        && processor.apply_completed_command(|context, _, _, _| {
+                            context.innermost_group_kind()
+                        }) == Some(GroupKind::Output)
                     {
                         if partoken_context_replays(processor, mode, 2) {
                             (processor
@@ -945,9 +924,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // before `\everypar` has run and before the paragraph's horizontal list
                     // exists, and skips the backup level and redelivery entirely.
                     if matches!(mode, Mode::Vertical | Mode::InternalVertical)
-                        && paragraph_start::starts_paragraph_in_vertical_mode(
-                            command.control_code(),
-                        )
+                        && paragraph_start::starts_paragraph_in_vertical_mode(command_code)
                     {
                         (processor.back_input(command).map_err(command_error))
                             .map_err(|error| scan_error(error, scan_origin))?;
@@ -958,8 +935,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                         let command_origin = command.origin();
                         match (
                             mode,
-                            command
-                                .control_code()
+                            command_code
                                 .expect("expanded delivery selected a static or font command"),
                         ) {
                             (_, codes::CHAR_BEGIN_GROUP) => {
@@ -1005,7 +981,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                             }
                             (_, codes::PRIMITIVE_END_GROUP)
-                                if innermost_group == Some(GroupKind::SemiSimple) =>
+                                if processor.apply_completed_command(|context, _, _, _| {
+                                    context.innermost_group_kind()
+                                }) == Some(GroupKind::SemiSimple) =>
                             {
                                 return {
                                     let (direct_arg0, direct_arg1) =
@@ -1033,6 +1011,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                             }
                             (_, codes::PRIMITIVE_CAT_CODE) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
+                                let mut scalar_storage = tex_command::ScalarScanFrame::default();
+                                let scalar = &mut scalar_storage;
                                 let (character, value) =
                                     (scan_code_table_operands(processor, scalar))
                                         .map_err(|error| scan_error(error, scan_origin))?;
@@ -1053,6 +1037,14 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_GDEF
                                 | codes::PRIMITIVE_XDEF,
                             ) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global
+                                        || matches!(
+                                            command_code,
+                                            Some(codes::PRIMITIVE_GDEF | codes::PRIMITIVE_XDEF)
+                                        ),
+                                );
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     primitive @ (UnexpandablePrimitive::Def
                                     | UnexpandablePrimitive::Edef
@@ -1090,6 +1082,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_LET | codes::PRIMITIVE_FUTURE_LET) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let _meaning = static_meaning(command.meaning());
                                 {
                                     let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
@@ -1149,16 +1145,22 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::CHAR_END_GROUP) => {
-                                let (direct_arg0,) = (match innermost_group {
-                                    Some(GroupKind::SemiSimple) => {
-                                        Some(ForgottenGroupOpener::EndGroup)
-                                    }
-                                    Some(GroupKind::MathShift) => {
-                                        Some(ForgottenGroupOpener::MathShift)
-                                    }
-                                    Some(GroupKind::MathLeft) => Some(ForgottenGroupOpener::Right),
-                                    _ => None,
-                                },);
+                                let (direct_arg0,) = (
+                                    match processor.apply_completed_command(|context, _, _, _| {
+                                        context.innermost_group_kind()
+                                    }) {
+                                        Some(GroupKind::SemiSimple) => {
+                                            Some(ForgottenGroupOpener::EndGroup)
+                                        }
+                                        Some(GroupKind::MathShift) => {
+                                            Some(ForgottenGroupOpener::MathShift)
+                                        }
+                                        Some(GroupKind::MathLeft) => {
+                                            Some(ForgottenGroupOpener::Right)
+                                        }
+                                        _ => None,
+                                    },
+                                );
                                 finish_scan!(self.execute_extra_right_brace(direct_arg0))
                             }
                             (_, codes::PRIMITIVE_END_GROUP) => {
@@ -1219,6 +1221,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_COUNT | codes::COUNT_REGISTER) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
+                                let mut scalar_storage = tex_command::ScalarScanFrame::default();
+                                let scalar = &mut scalar_storage;
                                 let index =
                                     if let ResolvedMeaning::Static(Meaning::CountRegister(index)) =
                                         command.meaning()
@@ -1261,6 +1269,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 Ok(step)
                             }
                             (_, codes::PRIMITIVE_DIMEN | codes::DIMEN_REGISTER) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
+                                let mut scalar_storage = tex_command::ScalarScanFrame::default();
+                                let scalar = &mut scalar_storage;
                                 let index =
                                     if let ResolvedMeaning::Static(Meaning::DimenRegister(index)) =
                                         command.meaning()
@@ -1310,6 +1324,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 _,
                                 codes::PRIMITIVE_WD | codes::PRIMITIVE_HT | codes::PRIMITIVE_DP,
                             ) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     primitive @ (UnexpandablePrimitive::Wd
                                     | UnexpandablePrimitive::Ht
@@ -1341,6 +1359,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_SKIP) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 return {
                                     let (direct_arg0, direct_arg1, direct_arg2) =
                                         (None, global, false);
@@ -1352,6 +1374,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                             }
                             (_, codes::SKIP_REGISTER) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::SkipRegister(index)) =
                                     command.meaning()
                                 else {
@@ -1372,6 +1398,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_MUSKIP) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 return {
                                     let (direct_arg0, direct_arg1, direct_arg2) =
                                         (None, global, true);
@@ -1383,6 +1413,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                             }
                             (_, codes::MUSKIP_REGISTER) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::MuskipRegister(index)) =
                                     command.meaning()
                                 else {
@@ -1403,6 +1437,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_H_SKIP) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     return {
@@ -1417,6 +1455,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_KERN) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     return {
@@ -1431,6 +1473,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_PENALTY) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     return {
@@ -1448,6 +1494,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 return finish_scan!(self.execute_control_space());
                             }
                             (_, codes::PRIMITIVE_PREV_DEPTH) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
@@ -1495,6 +1545,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_INTERACTION_MODE) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     return {
@@ -1509,6 +1563,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_SPACE_FACTOR) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
@@ -1534,6 +1592,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_PREV_GRAF) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     return {
@@ -1548,6 +1610,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_CHAR) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     let origin = processor
@@ -1654,6 +1720,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                             (_, codes::PRIMITIVE_V_SKIP)
                                 if matches!(mode, Mode::Vertical | Mode::InternalVertical) =>
                             {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     return {
@@ -1712,6 +1782,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_PAR_SHAPE) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 return {
                                     let (direct_arg0,) = (global,);
                                     finish_scan!(self.scan_paragraph_shape_assignment(direct_arg0))
@@ -1724,6 +1798,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_WIDOW_PENALTIES
                                 | codes::PRIMITIVE_DISPLAY_WIDOW_PENALTIES,
                             ) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     primitive @ (UnexpandablePrimitive::InterLinePenalties
                                     | UnexpandablePrimitive::ClubPenalties
@@ -1763,6 +1841,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_TOKS) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let owner =
                                     (command.control_sequence().ok_or(ExecError::MissingToken {
                                         context: "token-list assignment owner",
@@ -1788,6 +1870,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                             }
                             (_, codes::TOKS_REGISTER) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::ToksRegister(index)) =
                                     command.meaning()
                                 else {
@@ -1819,6 +1905,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::INT_PARAM) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::IntParam(index)) =
                                     command.meaning()
                                 else {
@@ -1837,6 +1927,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::DIMEN_PARAM) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::DimenParam(index)) =
                                     command.meaning()
                                 else {
@@ -1855,6 +1949,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PAGE_DIMENSION) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::PageDimension(dimension)) =
                                     command.meaning()
                                 else {
@@ -1873,6 +1971,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PAGE_INTEGER) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::PageInteger(integer)) =
                                     command.meaning()
                                 else {
@@ -1891,6 +1993,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::TOK_PARAM) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::TokParam(index)) =
                                     command.meaning()
                                 else {
@@ -1925,6 +2031,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::GLUE_PARAM) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::GlueParam(index)) =
                                     command.meaning()
                                 else {
@@ -1949,6 +2059,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::MU_GLUE_PARAM) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::MuGlueParam(index)) =
                                     command.meaning()
                                 else {
@@ -1979,6 +2093,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_READ
                                 | codes::PRIMITIVE_READ_LINE,
                             ) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     primitive @ (UnexpandablePrimitive::OpenIn
                                     | UnexpandablePrimitive::CloseIn
@@ -2008,6 +2126,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_FONT) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 // TeX82 §1257's `define(u,set_font,null_font)` precedes the file
                                 // name scan, so like §1224's provisional `\relax` it takes the
                                 // scope the eventual definition would take, `\globaldefs`
@@ -2027,6 +2149,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 _,
                                 codes::PRIMITIVE_PDF_COPY_FONT | codes::PRIMITIVE_LETTERSPACE_FONT,
                             ) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     primitive @ (UnexpandablePrimitive::PdfCopyFont
                                     | UnexpandablePrimitive::LetterspaceFont),
@@ -2065,6 +2191,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 _,
                                 codes::PRIMITIVE_PDF_X_IMAGE | codes::PRIMITIVE_PDF_REF_X_IMAGE,
                             ) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
@@ -2127,6 +2257,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_PDF_SET_RANDOM_SEED) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     return {
@@ -2450,6 +2584,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::FONT) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::Font(font)) =
                                     command.meaning()
                                 else {
@@ -2593,6 +2731,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                             }
                             (_, codes::PRIMITIVE_SET_LANGUAGE) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let meaning = static_meaning(command.meaning());
                                 {
                                     if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
@@ -2625,6 +2767,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_MATH_CODE
                                 | codes::PRIMITIVE_DEL_CODE,
                             ) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     primitive @ (UnexpandablePrimitive::LcCode
                                     | UnexpandablePrimitive::UcCode
@@ -2702,6 +2848,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_MULTIPLY
                                 | codes::PRIMITIVE_DIVIDE,
                             ) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
+                                let mut scalar_storage = tex_command::ScalarScanFrame::default();
+                                let scalar = &mut scalar_storage;
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     primitive @ (UnexpandablePrimitive::Advance
                                     | UnexpandablePrimitive::Multiply
@@ -2746,6 +2898,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_CHAR_DEF | codes::PRIMITIVE_MATH_CHAR_DEF) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     primitive @ (UnexpandablePrimitive::CharDef
                                     | UnexpandablePrimitive::MathCharDef),
@@ -2808,6 +2964,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_MUSKIP_DEF
                                 | codes::PRIMITIVE_TOKS_DEF,
                             ) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     primitive @ (UnexpandablePrimitive::CountDef
                                     | UnexpandablePrimitive::DimenDef
@@ -3064,6 +3224,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_SET_BOX) => {
+                                let global = effective_global(
+                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                                    global,
+                                );
                                 let assignment = (processor
                                     .scan_setbox_assignment(set_box_allowed)
                                     .map_err(command_error))
@@ -3403,7 +3567,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         finish_scan!(self.execute_illegal_h_align(direct_arg0))
                                     };
                                 } else if mode == Mode::DisplayMath {
-                                    if innermost_group != Some(GroupKind::MathShift) {
+                                    if processor.apply_completed_command(|context, _, _, _| {
+                                        context.innermost_group_kind()
+                                    }) != Some(GroupKind::MathShift)
+                                    {
                                         return {
                                             let (direct_arg0,) = (command,);
                                             finish_scan!(self.scan_off_save(direct_arg0))
@@ -3436,7 +3603,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::PRIMITIVE_V_ALIGN) => {
                                 if matches!(mode, Mode::Math | Mode::DisplayMath)
-                                    && innermost_group != Some(GroupKind::MathShift)
+                                    && processor.apply_completed_command(|context, _, _, _| {
+                                        context.innermost_group_kind()
+                                    }) != Some(GroupKind::MathShift)
                                 {
                                     return {
                                         let (direct_arg0,) = (command,);
@@ -3482,7 +3651,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::CHAR_MATH_SHIFT)
                                 if matches!(mode, Mode::Math | Mode::DisplayMath)
-                                    && innermost_group != Some(GroupKind::MathShift) =>
+                                    && processor.apply_completed_command(|context, _, _, _| {
+                                        context.innermost_group_kind()
+                                    }) != Some(GroupKind::MathShift) =>
                             {
                                 return {
                                     let (direct_arg0,) = (command,);

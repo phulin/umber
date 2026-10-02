@@ -13,7 +13,7 @@ these same arms.
 
 Expanded fetching and raw horizontal lookahead retain their distinct TeX
 labels. Borrowed source spans enter the actual horizontal material consumer.
-Prefixes and replacement commands dispatch in place without redelivery. Each
+Prefixes and replacement commands dispatch in place without redelivery. The reswitch label derives one local packed switch key from its actual current command, refreshing it when a prefix or replacement fetch changes that command. Scalar scan scratch belongs only to the native arms that scan scalars. Each assignment arm resolves its effective global flag once before scanning; unrelated commands read no GLOBAL_DEFS. Brace and math consumers query the live group only when that semantic case needs it. Disabled tracing prepares and reports no command evidence. Each
 selected arm scans its concrete operands through the existing processor. A
 source-free native arm reborrows that processor's actual context, command state,
 fuel and diagnostic owners while the processor remains live. The callback owns
