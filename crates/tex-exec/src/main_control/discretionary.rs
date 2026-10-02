@@ -292,7 +292,7 @@ impl<G> MainControl<G> {
             let font = stores.current_font();
             match u8::try_from(stores.font_hyphen_char(font)) {
                 Ok(hyphen) if stores.font_char_metrics(font, hyphen).is_some() => stores
-                    .publish_page_nodes(vec![Node::Char {
+                    .publish_page_nodes([Node::Char {
                         font,
                         ch: char::from(hyphen),
                         origin,

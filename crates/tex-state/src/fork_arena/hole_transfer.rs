@@ -16,7 +16,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         let base = self.base_payload_chunks as usize;
         match &self.ownership {
             ForkOwnership::Accepted(_) => base,
-            ForkOwnership::Forked { prefix, .. } => base + prefix.payload.len(),
+            ForkOwnership::Forked(forked) => base + forked.prefix.payload.len(),
         }
     }
 

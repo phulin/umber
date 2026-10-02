@@ -670,7 +670,7 @@ pub(crate) fn indent_in_hmode<G>(
     }
     if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
         let indent_box = make_indent_box(stores);
-        let list = stores.publish_page_nodes(vec![indent_box]);
+        let list = stores.publish_page_nodes([indent_box]);
         nest.current_list_mutation().push(
             stores,
             Node::MathNoad(MathNoad::new(

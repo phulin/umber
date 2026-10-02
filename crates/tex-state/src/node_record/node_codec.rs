@@ -1117,9 +1117,9 @@ impl NodeRecord<PageMaterialLane> {
                     }
                     Some(LeaderPayload::HList(boxed) | LeaderPayload::VList(boxed)) => {
                         let is_vertical = matches!(leader, Some(LeaderPayload::VList(_)));
-                        let mut payload = Vec::with_capacity(32);
-                        append_words(&mut payload, glue);
-                        payload.extend(encode_box_payload(boxed));
+                        let mut payload = [0; 32];
+                        payload[..4].copy_from_slice(&glue);
+                        payload[4..].copy_from_slice(&encode_box_payload::<28>(boxed));
                         let key = annex.append_fixed::<LeaderBoxPayload>(&payload);
                         Self::with_key(
                             NodeKind::Glue,
@@ -1155,7 +1155,8 @@ impl NodeRecord<PageMaterialLane> {
             ),
             Node::HList(value) | Node::VList(value) => {
                 let vertical = matches!(node, Node::VList(_));
-                let key = annex.append_fixed::<BoxPayload>(&encode_standalone_box_payload(value));
+                let key = annex
+                    .append_fixed::<BoxPayload>(&encode_box_payload::<BOX_PAYLOAD_WORDS>(value));
                 Self::with_key(
                     if vertical {
                         NodeKind::VList

@@ -353,7 +353,7 @@ fn distribute_insertions<G>(
                                 floating_penalty,
                             },
                         )? {
-                            heldover.push(stores.publish_page_nodes(vec![remainder]));
+                            heldover.push(stores.publish_page_nodes([remainder]));
                             heldover_count += 1;
                         }
                         package_insertion_box(

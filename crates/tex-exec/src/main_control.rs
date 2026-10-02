@@ -4691,7 +4691,7 @@ impl<G> MainControl<G> {
                     context: "math left group",
                 })?;
                 self.active_math_left_boundaries.pop();
-                let boundary = context.publish_page_nodes(vec![Node::MathNoad(MathNoad::new(
+                let boundary = context.publish_page_nodes([Node::MathNoad(MathNoad::new(
                     NoadKind::RightDelimiter {
                         delimiter: boundary.delimiter.code,
                     },
@@ -5641,10 +5641,10 @@ fn finish_math_list<G>(
             right_delimiter: fraction.right_delimiter,
         });
         if let Some(prefix) = prefix {
-            let fraction = stores.publish_page_nodes(vec![fraction]);
+            let fraction = stores.publish_page_nodes([fraction]);
             return Ok(stores.compose_page_node_sequences(&[prefix.list(), fraction]));
         }
-        return Ok(stores.publish_page_nodes(vec![fraction]));
+        return Ok(stores.publish_page_nodes([fraction]));
     }
     Ok(output)
 }

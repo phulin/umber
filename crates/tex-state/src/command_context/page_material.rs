@@ -2,20 +2,38 @@
 
 use super::*;
 
+mod sealed {
+    pub trait PageNodeSource {}
+
+    impl PageNodeSource for Vec<crate::node::Node> {}
+    impl<const N: usize> PageNodeSource for [crate::node::Node; N] {}
+}
+
+/// Actual owned node storage whose borrowed and consumed sequences agree.
+/// Sealed to prevent admission of one sequence followed by publication of another.
+pub trait PageNodeSource:
+    sealed::PageNodeSource + AsRef<[crate::node::Node]> + IntoIterator<Item = crate::node::Node>
+{
+}
+
+impl PageNodeSource for Vec<crate::node::Node> {}
+impl<const N: usize> PageNodeSource for [crate::node::Node; N] {}
+
 impl<'a, G> CommandContext<'a, G> {
     /// Publishes one complete page-lifetime list inside this admitted episode.
-    pub fn publish_page_nodes(&mut self, nodes: Vec<crate::node::Node>) -> PageListId {
+    pub fn publish_page_nodes(&mut self, nodes: impl PageNodeSource) -> PageListId {
         let etex_node_sizes = self.resident.engine_usage.uses_etex_node_sizes();
-        let words = nodes.iter().fold((0_usize, 0_usize), |words, node| {
-            let node_words = node.tex_memory_words(etex_node_sizes);
-            (
-                words.0.saturating_add(node_words.0),
-                words.1.saturating_add(node_words.1),
-            )
-        });
-        for node in &nodes {
-            self.assert_live_node_font_roots(node);
-        }
+        let words = nodes
+            .as_ref()
+            .iter()
+            .fold((0_usize, 0_usize), |words, node| {
+                self.assert_live_node_font_roots(node);
+                let node_words = node.tex_memory_words(etex_node_sizes);
+                (
+                    words.0.saturating_add(node_words.0),
+                    words.1.saturating_add(node_words.1),
+                )
+            });
         let list = self
             .page_nodes
             .publish_owned(nodes)

@@ -97,8 +97,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
         let prefix_len = match &self.ownership {
             ForkOwnership::Accepted(_) => self.base_payload_chunks as usize,
-            ForkOwnership::Forked { prefix, .. } => {
-                self.base_payload_chunks as usize + prefix.payload.len()
+            ForkOwnership::Forked(forked) => {
+                self.base_payload_chunks as usize + forked.prefix.payload.len()
             }
         };
         let end = self.live_payload_len();

@@ -117,7 +117,7 @@ pub(crate) fn publish_page_nodes<G>(
     nodes: impl IntoIterator<Item = tex_state::node::Node>,
 ) -> tex_state::page_node_arena::PageListId {
     with_admitted(universe, |context| {
-        context.publish_page_nodes(nodes.into_iter().collect())
+        context.publish_page_nodes(nodes.into_iter().collect::<Vec<_>>())
     })
 }
 

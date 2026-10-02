@@ -298,7 +298,7 @@ pub(crate) fn prepare_box_append<G>(
             )
         };
     let node = if matches!(mode, Mode::Math | Mode::DisplayMath) {
-        let nucleus = stores.publish_page_nodes(vec![node]);
+        let nucleus = stores.publish_page_nodes([node]);
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::SubBox(nucleus),

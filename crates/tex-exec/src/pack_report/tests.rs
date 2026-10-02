@@ -187,7 +187,7 @@ fn short_display_physical_count_is_independent_of_empty_side_list() {
             },
         ];
 
-        let list = stores.publish_page_nodes(nodes.into());
+        let list = stores.publish_page_nodes(nodes);
         assert_eq!(ShortDisplayRenderer::new().render_list(&stores, list), "|");
     });
 }

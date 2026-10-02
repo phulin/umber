@@ -18,7 +18,8 @@ Do not add either concern to this codec tree. This codec is the production
 page-material representation; keep decoding and validation rules shared by
 resident traversal and cold materialization.
 
-Fixed-payload explicit copies use bounded prepared word scratch in
+Box and leader-box publication initializes fixed word arrays without a temporary
+heap vector. Fixed-payload explicit copies use bounded prepared word scratch in
 `node_codec.rs`. Its child-field offsets are shared by visitation and both
 reencode directions. `annex.rs` publishes independent typed keys in batches;
 each key retains its own serial and exact word range. Box construction metadata

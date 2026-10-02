@@ -32,8 +32,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         let boundary = batch.payload_start as usize;
         let current_start = match &self.ownership {
             ForkOwnership::Accepted(_) => self.base_payload_chunks as usize,
-            ForkOwnership::Forked { prefix, .. } => {
-                self.base_payload_chunks as usize + prefix.payload.len()
+            ForkOwnership::Forked(forked) => {
+                self.base_payload_chunks as usize + forked.prefix.payload.len()
             }
         };
         if self.active_builder
@@ -85,7 +85,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     }
 
     pub(crate) fn is_forked(&self) -> bool {
-        matches!(self.ownership, ForkOwnership::Forked { .. })
+        matches!(self.ownership, ForkOwnership::Forked(_))
     }
 
     pub fn seal_batch(

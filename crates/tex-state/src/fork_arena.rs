@@ -2676,13 +2676,16 @@ struct ChunkSet {
     payload: SparseChunks,
 }
 
+// Candidate-only envelopes must not inflate every ordinary region owner.
 enum ForkOwnership {
     Accepted(ChunkSet),
-    Forked {
-        prefix: ChunkSet,
-        detached_prior: ChunkSet,
-        current: ChunkSet,
-    },
+    Forked(Box<ForkedChunks>),
+}
+
+struct ForkedChunks {
+    prefix: ChunkSet,
+    detached_prior: ChunkSet,
+    current: ChunkSet,
 }
 
 /// Partial local rollback point. It cannot be converted into a retained
@@ -3037,7 +3040,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     fn logical_payload_view<'a>(&self, pool: &'a ChunkPool<T>) -> LogicalBlockView<'a, T> {
         match self.ownership {
             ForkOwnership::Accepted(_) => LogicalBlockView::Accepted(&pool.payload),
-            ForkOwnership::Forked { .. } => LogicalBlockView::Candidate(&pool.payload),
+            ForkOwnership::Forked(_) => LogicalBlockView::Candidate(&pool.payload),
         }
     }
 
@@ -3136,14 +3139,14 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .payload
                 .last_live_position()
                 .map(|position| base + position),
-            ForkOwnership::Forked {
-                prefix, current, ..
-            } => current
+            ForkOwnership::Forked(forked) => forked
+                .current
                 .payload
                 .last_live_position()
-                .map(|position| base + prefix.payload.len() + position)
+                .map(|position| base + forked.prefix.payload.len() + position)
                 .or_else(|| {
-                    prefix
+                    forked
+                        .prefix
                         .payload
                         .last_live_position()
                         .map(|position| base + position)
@@ -3282,18 +3285,24 @@ impl<T, Lane> ForkArena<T, Lane> {
             &mut self.ownership,
             ForkOwnership::Accepted(ChunkSet::default()),
         );
-        let sets = match ownership {
-            ForkOwnership::Accepted(accepted) => vec![accepted],
-            ForkOwnership::Forked {
-                prefix,
-                detached_prior,
-                current,
-            } => vec![prefix, detached_prior, current],
+        match ownership {
+            ForkOwnership::Accepted(accepted) => self
+                .release_set(pool, accepted)
+                .expect("region retirement was completely preflighted"),
+            ForkOwnership::Forked(forked) => {
+                let ForkedChunks {
+                    prefix,
+                    detached_prior,
+                    current,
+                } = *forked;
+                self.release_set(pool, prefix)
+                    .expect("region retirement was completely preflighted");
+                self.release_set(pool, detached_prior)
+                    .expect("region retirement was completely preflighted");
+                self.release_set(pool, current)
+                    .expect("region retirement was completely preflighted")
+            }
         };
-        for set in sets {
-            self.release_set(pool, set)
-                .expect("region retirement was completely preflighted");
-        }
         Ok(())
     }
 
@@ -3324,11 +3333,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         };
         match &self.ownership {
             ForkOwnership::Accepted(accepted) => visit(accepted),
-            ForkOwnership::Forked {
-                prefix, current, ..
-            } => {
-                visit(prefix);
-                visit(current);
+            ForkOwnership::Forked(forked) => {
+                visit(&forked.prefix);
+                visit(&forked.current);
             }
         }
         tokens
@@ -3336,18 +3343,14 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     #[cfg(feature = "profiling")]
     pub(crate) fn profiling_prior_physical_tokens(&self, pool: &ChunkPool<T>) -> Vec<u64> {
-        let ForkOwnership::Forked {
-            prefix,
-            detached_prior,
-            ..
-        } = &self.ownership
-        else {
+        let ForkOwnership::Forked(forked) = &self.ownership else {
             return Vec::new();
         };
-        prefix
+        forked
+            .prefix
             .payload
             .iter_live_with_positions()
-            .chain(detached_prior.payload.iter_live_with_positions())
+            .chain(forked.detached_prior.payload.iter_live_with_positions())
             .filter_map(|(_, key)| pool.payload.profiling_physical_token(key))
             .collect()
     }
@@ -3367,9 +3370,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.base_payload_chunks as usize
             + match &self.ownership {
                 ForkOwnership::Accepted(chunks) => chunks.payload.len(),
-                ForkOwnership::Forked {
-                    prefix, current, ..
-                } => prefix.payload.len() + current.payload.len(),
+                ForkOwnership::Forked(forked) => {
+                    forked.prefix.payload.len() + forked.current.payload.len()
+                }
             }
     }
 
@@ -3384,11 +3387,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         let base = self.base_payload_chunks as usize;
         let sets: [Option<(&SparseChunks, usize)>; 2] = match &self.ownership {
             ForkOwnership::Accepted(chunks) => [Some((&chunks.payload, base)), None],
-            ForkOwnership::Forked {
-                prefix, current, ..
-            } => [
-                Some((&prefix.payload, base)),
-                Some((&current.payload, base + prefix.payload.len())),
+            ForkOwnership::Forked(forked) => [
+                Some((&forked.prefix.payload, base)),
+                Some((&forked.current.payload, base + forked.prefix.payload.len())),
             ],
         };
         sets.into_iter().flatten().flat_map(move |(set, offset)| {
@@ -3410,7 +3411,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     fn current_chunks_mut(&mut self) -> &mut ChunkSet {
         match &mut self.ownership {
             ForkOwnership::Accepted(chunks) => chunks,
-            ForkOwnership::Forked { current, .. } => current,
+            ForkOwnership::Forked(forked) => &mut forked.current,
         }
     }
 
@@ -3419,15 +3420,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         let index = index.checked_sub(base)?;
         let key = match &self.ownership {
             ForkOwnership::Accepted(chunks) => chunks.payload.get(index).copied(),
-            ForkOwnership::Forked {
-                prefix, current, ..
-            } => {
-                let prefix_len = prefix.payload.len();
+            ForkOwnership::Forked(forked) => {
+                let prefix_len = forked.prefix.payload.len();
                 if index < prefix_len {
-                    prefix.payload.get(index).copied()
+                    forked.prefix.payload.get(index).copied()
                 } else {
                     let index = index - prefix_len;
-                    current.payload.get(index).copied()
+                    forked.current.payload.get(index).copied()
                 }
             }
         };

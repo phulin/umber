@@ -54,6 +54,8 @@ expose substores or introduce another arena.
 - `src/command_context/page_material.rs`: Borrowed page-material construction,
   range, traversal, shipout-scratch, and generated mode-source removal
   projections of that command borrow.
+  Fixed-size node publications pass their actual arrays directly; no heap
+  vector is required solely to admit a single wrapper.
 - `src/command_context/page_builder.rs`: Page-builder dimensions, contributions,
   discard lists, insertions, and marks of that same borrow.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.
@@ -162,7 +164,10 @@ expose substores or introduce another arena.
   that exact unpublished reservation. Generic builder publication records
   same-lane child floors per value; typed childless annex words keep direct
   packed bulk copies. Batch and whole-region sealing validate complete
-  metadata and never repair it by scanning a published suffix.
+  metadata and never repair it by scanning a published suffix. Accepted arena
+  owners retain only their accepted envelope; the three candidate envelopes
+  share one cold allocation while a checkpoint fork exists. Retirement releases
+  those actual owners directly, with no vector of immediately consumed owners.
 - `src/fork_arena/checkpoint_lifecycle.rs`: Sealed checkpoint marks, exact
   candidate settlement, accepted-prefix release, and borrowed suffix visits
   on the existing arena lane.
@@ -175,6 +180,8 @@ expose substores or introduce another arena.
 - `src/fork_arena/sparse_chunks.rs`: Compact authoritative owner envelopes
   with stable logical positions and merged vacancy ranges after interior
   transfers; dense owners retain direct vector indexing.
+  The first two live keys reside in its actual owner; whole-envelope moves do no
+  metadata allocation, and retirement consumes keys without a copied vector.
 - `src/fork_arena/batch_transfer.rs`: Exclusive batch closure, detachment,
   reattachment, adoption, and promotion of the existing arena lane.
 - `src/fork_arena/compound_transfer.rs`: Exact disjoint interval ownership

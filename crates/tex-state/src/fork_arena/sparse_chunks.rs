@@ -12,10 +12,11 @@ struct Gap {
 
 /// Logical positions remain stable after an interior move. Live keys stay in
 /// order, while disjoint vacant ranges carry only scalar lengths. The common
-/// dense owner has no gaps and indexes its live vector directly.
+/// dense owner has no gaps and indexes its live keys directly. The first two keys
+/// belong inline to the actual envelope, without a metadata heap allocation.
 #[derive(Clone, Default)]
 pub(super) struct SparseChunks {
-    live: Vec<LogicalChunkId>,
+    live: smallvec::SmallVec<[LogicalChunkId; 2]>,
     gaps: Vec<Gap>,
     logical_len: usize,
 }
@@ -189,8 +190,8 @@ impl SparseChunks {
         debug_assert!(base < end && end <= self.logical_len);
         debug_assert!(ranges.windows(2).all(|pair| pair[0].end <= pair[1].start));
         let original = std::mem::take(self);
-        let mut retained_live = Vec::with_capacity(original.live.len());
-        let mut selected_live = Vec::new();
+        let mut retained_live = smallvec::SmallVec::with_capacity(original.live.len());
+        let mut selected_live = smallvec::SmallVec::new();
         let mut retained_gaps = Vec::new();
         let mut selected_gaps = Vec::new();
         let mut retained_cursor = 0;
@@ -249,7 +250,7 @@ impl SparseChunks {
         let retained = std::mem::take(self);
         let mut retained_live = retained.iter_live_with_positions().peekable();
         let mut selected_live = selected.iter_live_with_positions().peekable();
-        let mut live = Vec::with_capacity(retained.live.len() + selected.live.len());
+        let mut live = smallvec::SmallVec::with_capacity(retained.live.len() + selected.live.len());
         let mut gaps = Vec::new();
         let mut cursor = 0;
         loop {
@@ -294,6 +295,10 @@ impl SparseChunks {
     }
 
     pub(super) fn append(&mut self, mut suffix: Self) {
+        if self.logical_len == 0 {
+            *self = suffix;
+            return;
+        }
         let offset = self.logical_len;
         self.logical_len += suffix.logical_len;
         self.live.append(&mut suffix.live);
@@ -340,9 +345,12 @@ impl SparseChunks {
 
     pub(super) fn split_off(&mut self, at: usize) -> Self {
         assert!(at <= self.logical_len);
+        if at == 0 {
+            return std::mem::take(self);
+        }
         let old_len = self.logical_len;
         let physical_at = at - self.vacant_before(at);
-        let right_live = self.live.split_off(physical_at);
+        let right_live = self.live.drain(physical_at..).collect();
         let mut left_gaps = Vec::new();
         let mut right_gaps = Vec::new();
         for gap in self.gaps.drain(..) {
@@ -372,7 +380,10 @@ impl SparseChunks {
         right
     }
 
-    pub(super) fn drain_prefix(&mut self, count: usize) -> Vec<LogicalChunkId> {
+    pub(super) fn drain_prefix(
+        &mut self,
+        count: usize,
+    ) -> impl Iterator<Item = LogicalChunkId> + use<> {
         let suffix = self.split_off(count);
         let prefix = core::mem::replace(self, suffix);
         prefix.into_live_keys()
@@ -396,7 +407,7 @@ impl SparseChunks {
             })
             .collect();
         let mut selected = Self {
-            live: self.live[physical_start..physical_end].to_vec(),
+            live: smallvec::SmallVec::from_slice(&self.live[physical_start..physical_end]),
             gaps,
             logical_len: end - start,
         };
@@ -404,8 +415,8 @@ impl SparseChunks {
         selected
     }
 
-    pub(super) fn into_live_keys(self) -> Vec<LogicalChunkId> {
-        self.live
+    pub(super) fn into_live_keys(self) -> impl Iterator<Item = LogicalChunkId> {
+        self.live.into_iter()
     }
 }
 

@@ -10,6 +10,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
 
 Group close drives the same `CommandProcessor::end_group` native stack walk in the sole direct dispatcher. Its diagnostic callback renders each restoration while the saved owners are live; aftergroup words enter final input during unsave. There is no restoration receipt, token result vector, or delayed aftergroup scheduling helper. Ordinary, observed, diagnostic, and nested commands use that same group seam.
 
+Fixed-size page publications pass their actual node arrays directly into the
+admitted state owner. Box, math, discretionary and indentation wrappers must
+not allocate a vector merely to publish one already-complete node.
+
 ## Boundaries
 
 - Do not read raw input directly. All execution consumes `tex-command` delivery.
@@ -25,6 +29,10 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
 
 - `Cargo.toml`: execution-layer dependencies and workspace lints; neither normal nor development dependencies include a retired command crate.
 - `src/lib.rs`: public surface and module wiring. Do not add a second command front or a crate-wide dead-code allowance.
+- `src/main_control/tests/box_allocations.rs`: explicit profiling test of
+  warmed empty and small-body box publication, register replacement and actual
+  arena retirement without transient heap metadata or node vectors.
+
 - `src/episode.rs` and `src/episode/tests.rs`: typed semantic commit/barrier
   protocol, fixed-size operational counters, and focused
   rollback/publication perturbation tests. Internal group/rollback stops are

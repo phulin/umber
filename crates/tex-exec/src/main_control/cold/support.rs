@@ -836,7 +836,7 @@ pub(in crate::main_control) fn box_end<G>(
         // §1077 defines the register unconditionally: a void `cur_box` makes
         // the destination void, it does not leave the old value in place.
         BoxContext::SetBox(pending) => {
-            let boxed = node.map(|node| stores.publish_page_nodes(vec![node]));
+            let boxed = node.map(|node| stores.publish_page_nodes([node]));
             commit_set_box_target(pending, boxed, stores, command);
             Ok(())
         }
@@ -1198,7 +1198,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
     if base_metrics.height == accent_x_height {
         modes.current_list_mutation().push(stores, accent_node);
     } else {
-        let children = stores.publish_page_nodes(vec![accent_node]);
+        let children = stores.publish_page_nodes([accent_node]);
         let diagnostic_context = crate::pack_report::PackDiagnosticContext::default();
         let mut boxed = crate::box_runtime::hpack_with_overfull_rule(
             stores,

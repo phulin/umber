@@ -60,6 +60,32 @@ typed lane is an operation result, not a page-liveness batch. It may remain
 move-only. It must not acquire dependencies, reference counts, checkpoint
 leases, or independent long-term ownership.
 
+A chunk envelope retains its first two live logical keys inline. A newly built box
+usually needs a body block, a wrapper block, and an annex block; admitting either actual
+owner must not allocate a separate metadata vector for those first keys. Larger
+closures use the same ordered key sequence after it spills, and sparse gaps
+remain scalar intervals in the existing envelope. No owner registry or second
+chunk topology is added.
+
+An accepted arena stores only its actual accepted envelope. The three
+checkpoint-fork envelopes live together in one cold allocation only while a
+candidate exists; their union must not inflate every ordinary box owner.
+Candidate acceptance or rejection consumes that allocation, and region
+retirement releases its one or three actual envelopes directly without first
+building a vector of owners.
+
+A move of the entire envelope transfers that envelope directly. Splitting at
+zero and appending to an empty owner do not allocate or rebuild key and gap
+vectors. Partial and interleaved moves preserve their original logical offsets,
+while retirement consumes the actual key iterator without materializing a
+second vector. Node and annex authority, checkpoint forks, and stale-coordinate
+validation follow the existing paired-region contract.
+
+Box and leader-box encoders initialize their fixed word arrays directly. They
+must not allocate an owned word vector merely to resize it and immediately copy
+it into the typed annex. The descriptor tail starts zeroed and is stamped by the
+existing construction owner.
+
 Fixed annex records are published wholly inside one packed logical block.
 Readers authenticate their ordinary list root and publication serial, then
 borrow that initialized contiguous slice. They do not walk the general list

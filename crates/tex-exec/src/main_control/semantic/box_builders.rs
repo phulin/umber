@@ -211,7 +211,7 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
         // payload, nor a `\raise`/`\lower` operand, and the whole box
         // context every other branch below classifies is inapplicable.
         if box_kind == ReplayBoxKind::VCenter {
-            let boxed = stores.publish_page_nodes(vec![node]);
+            let boxed = stores.publish_page_nodes([node]);
             modes.current_list_mutation().push(
                 stores,
                 Node::MathNoad(MathNoad::new(NoadKind::VCenter, MathField::SubBox(boxed))),
@@ -248,7 +248,7 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
                 .expect("successful setbox packaging retains its active owner")
                 .target
                 .expect("setbox completion retains its target");
-            let boxed = stores.publish_page_nodes(vec![node]);
+            let boxed = stores.publish_page_nodes([node]);
             commit_set_box_target(target, Some(boxed), stores, command);
         } else {
             // TeX82 §1076's `box_end` branch for an ordinary

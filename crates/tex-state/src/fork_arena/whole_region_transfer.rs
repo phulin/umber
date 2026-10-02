@@ -41,7 +41,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         let base = self.base_payload_chunks as usize;
         let prefix_len = match &self.ownership {
             ForkOwnership::Accepted(_) => base,
-            ForkOwnership::Forked { prefix, .. } => base + prefix.payload.len(),
+            ForkOwnership::Forked(forked) => base + forked.prefix.payload.len(),
         };
         if start < prefix_len {
             return Err(ForkArenaError::InvalidRegion);

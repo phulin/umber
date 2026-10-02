@@ -31,6 +31,7 @@ use crate::world::{InputDependency, JobClock, WorldError};
 
 mod page_builder;
 mod page_material;
+pub use page_material::PageNodeSource;
 mod pdf_commands;
 #[cfg(test)]
 mod tests;

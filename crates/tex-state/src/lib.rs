@@ -172,7 +172,7 @@ pub use session_epoch::{SessionEpochError, SessionInternerEpoch};
 pub use capacity::{EngineCapacityConfiguration, EngineCapacityProfile, PdfEngineCapacities};
 pub use command_context::{
     BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, EngineUsageStatistics,
-    FontIdentifier, ParagraphShapeLine, PenaltyArrayKind, PrepareMagDiagnostic,
+    FontIdentifier, PageNodeSource, ParagraphShapeLine, PenaltyArrayKind, PrepareMagDiagnostic,
 };
 pub use definition_arena::{
     AdmittedMacroDefinition, DefinitionAllocationError, DefinitionBuildError, DefinitionBuildKey,

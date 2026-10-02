@@ -1784,7 +1784,7 @@ mod unset_diagnostic_tests {
     fn math_noad_names_use_live_escape_character() {
         with_context(|context| {
             set_escape(context, i32::from(b'|'));
-            let list = context.publish_page_nodes(vec![Node::MathNoad(MathNoad::new(
+            let list = context.publish_page_nodes([Node::MathNoad(MathNoad::new(
                 NoadKind::Operator(LimitType::Limits),
                 MathField::Empty,
             ))]);
@@ -1810,7 +1810,7 @@ mod unset_diagnostic_tests {
     fn math_choice_and_family_names_use_live_escape_character() {
         with_context(|context| {
             set_escape(context, i32::from(b'|'));
-            let arm = context.publish_page_nodes(vec![Node::MathNoad(MathNoad::new(
+            let arm = context.publish_page_nodes([Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
                 MathField::MathChar(MathChar {
                     family: 1,
@@ -1818,7 +1818,7 @@ mod unset_diagnostic_tests {
                     origin: Default::default(),
                 }),
             ))]);
-            let list = context.publish_page_nodes(vec![Node::MathChoice(MathChoice {
+            let list = context.publish_page_nodes([Node::MathChoice(MathChoice {
                 display: arm,
                 text: arm,
                 script: arm,
@@ -1853,14 +1853,14 @@ mod unset_diagnostic_tests {
         with_context(|context| {
             set_escape(context, i32::from(b'|'));
             let empty = PageListId::empty();
-            let fraction = context.publish_page_nodes(vec![Node::FractionNoad(MathFraction {
+            let fraction = context.publish_page_nodes([Node::FractionNoad(MathFraction {
                 numerator: empty,
                 denominator: empty,
                 thickness: FractionThickness::Default,
                 left_delimiter: None,
                 right_delimiter: None,
             })]);
-            let list = context.publish_page_nodes(vec![Node::MathChoice(MathChoice {
+            let list = context.publish_page_nodes([Node::MathChoice(MathChoice {
                 display: empty,
                 text: empty,
                 script: fraction,

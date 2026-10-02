@@ -1413,6 +1413,9 @@ mod aggregate_restore;
 mod alignment;
 #[path = "tests/assignments.rs"]
 mod assignments;
+#[cfg(feature = "profiling")]
+#[path = "tests/box_allocations.rs"]
+mod box_allocations;
 #[path = "tests/csname_runs.rs"]
 mod csname_runs;
 #[path = "tests/diagnostics_recovery.rs"]

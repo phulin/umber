@@ -223,36 +223,30 @@ pub(super) fn decode_font(source: &[u32], cursor: &mut usize) -> Option<FontId> 
     FontId::from_words(take_words(source, cursor)?)
 }
 
-pub(super) fn encode_box_payload(value: BoxNode<PageListId>) -> Vec<u32> {
-    let mut words = Vec::with_capacity(28);
-    append_words(
-        &mut words,
-        [
-            scaled_word(value.width),
-            scaled_word(value.height),
-            scaled_word(value.depth),
-            scaled_word(value.shift),
-            value.glue_set.numerator() as u32,
-            value.glue_set.denominator() as u32,
-            value.box_lr as u32
-                | ((value.glue_sign as u32) << 8)
-                | ((value.glue_order as u32) << 16)
-                | (bool_word(value.diagnostic_children.is_some()) << 24),
-        ],
+/// Initializes the actual fixed box body, including any descriptor words.
+pub(super) fn encode_box_payload<const N: usize>(value: BoxNode<PageListId>) -> [u32; N] {
+    assert!(N == 28 || N == BOX_PAYLOAD_WORDS);
+    let mut words = [0; N];
+    words[..7].copy_from_slice(&[
+        scaled_word(value.width),
+        scaled_word(value.height),
+        scaled_word(value.depth),
+        scaled_word(value.shift),
+        value.glue_set.numerator() as u32,
+        value.glue_set.denominator() as u32,
+        value.box_lr as u32
+            | ((value.glue_sign as u32) << 8)
+            | ((value.glue_order as u32) << 16)
+            | (bool_word(value.diagnostic_children.is_some()) << 24),
+    ]);
+    words[7..17].copy_from_slice(&value.children.words());
+    words[17..27].copy_from_slice(
+        &value
+            .diagnostic_children
+            .unwrap_or_else(PageListId::empty)
+            .words(),
     );
-    encode_page_list(&mut words, value.children);
-    encode_page_list(
-        &mut words,
-        value.diagnostic_children.unwrap_or_else(PageListId::empty),
-    );
-    words.push(value.allocator_high_cell_overlap);
-    debug_assert_eq!(words.len(), 28);
-    words
-}
-
-pub(super) fn encode_standalone_box_payload(value: BoxNode<PageListId>) -> Vec<u32> {
-    let mut words = encode_box_payload(value);
-    words.resize(BOX_PAYLOAD_WORDS, 0);
+    words[27] = value.allocator_high_cell_overlap;
     words
 }
 
