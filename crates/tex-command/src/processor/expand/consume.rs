@@ -1,7 +1,8 @@
 //! Consumer-side interpretation of the shared input reader.
 
 use super::{
-    ExpandedCommandAction, ExpandedReaderRole, ExpansionDispatch, ReadSite, classify_hot_command,
+    ExpandedCommandAction, ExpandedReaderConsumer, ExpandedReaderRole, ExpansionDispatch, ReadSite,
+    classify_hot_command,
 };
 use crate::command::CurrentCommand;
 use crate::input::InputLevel;
@@ -239,16 +240,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         const OBSERVED: bool,
         const PRESERVE_UNDEFINED: bool,
         const STOP_PROTECTED: bool,
+        Consumer: ExpandedReaderConsumer<Self, G>,
     >(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
         role: ExpandedReaderRole,
-        terminal: &mut impl FnMut(
-            &mut Self,
-            &mut Option<CurrentCommand<G>>,
-            DeliveryStatus,
-        ) -> Result<ControlFlow<()>, CommandError>,
+        terminal: &mut Consumer,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut expanded = false;
         let supplied = destination.is_some();
@@ -263,7 +261,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             None
         };
         if let Some(status) = initial_status {
-            if let ControlFlow::Break(()) = terminal(self, destination, status)? {
+            if let ControlFlow::Break(()) = terminal.terminal(self, destination, status)? {
                 return Ok(status);
             }
             destination.take();
@@ -294,7 +292,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                         let name = resolution
                             .control_sequence()
                             .ok_or_else(CommandError::input_invariant)?;
-                        processor.activate_read_macro(word, origin, flags, definition, name)?;
+                        let result = if Consumer::COLLECTING {
+                            processor.with_expansion_depth(|processor| {
+                                processor.activate_read_macro(word, origin, flags, definition, name)
+                            })
+                        } else {
+                            processor.activate_read_macro(word, origin, flags, definition, name)
+                        };
+                        if let Err(failure) = result {
+                            terminal.recover(processor, failure)?;
+                        }
                         expanded = true;
                         return Ok(ControlFlow::Continue(()));
                     }
@@ -315,12 +322,34 @@ impl<G> CommandProcessor<'_, '_, G> {
                         command,
                         resolution.literal_catcode(),
                     )?;
+                    if Consumer::COLLECTING
+                        && matches!(
+                            command.alignment_adjustment(),
+                            crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                        )
+                    {
+                        let command = destination.take().expect("alignment delimiter");
+                        processor.begin_scalar_alignment_v_template(&command)?;
+                        return Ok(ControlFlow::Continue(()));
+                    }
                     let action = classify_hot_command(command);
                     let terminal_status = if STOP_PROTECTED
                         && Self::protected_terminal(command, action)
                     {
                         DeliveryStatus::Command
                     } else {
+                        match terminal.expand(processor, command, action) {
+                            Ok(true) => {
+                                expanded = true;
+                                return Ok(ControlFlow::Continue(()));
+                            }
+                            Ok(false) => {}
+                            Err(failure) => {
+                                terminal.recover(processor, failure)?;
+                                expanded = true;
+                                return Ok(ControlFlow::Continue(()));
+                            }
+                        }
                         if !(PRESERVE_UNDEFINED
                             && matches!(
                                 action,
@@ -344,9 +373,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                             processor.insert_frozen_endv()?;
                             return Ok(ControlFlow::Continue(()));
                         }
-                        processor.finish_terminal_expansion::<OBSERVED>(command, action, expanded)
+                        if Consumer::COLLECTING {
+                            DeliveryStatus::Command
+                        } else {
+                            processor
+                                .finish_terminal_expansion::<OBSERVED>(command, action, expanded)
+                        }
                     };
-                    match terminal(processor, destination, terminal_status)? {
+                    match terminal.terminal(processor, destination, terminal_status)? {
                         ControlFlow::Break(()) => Ok(ControlFlow::Break(terminal_status)),
                         ControlFlow::Continue(()) => {
                             destination.take();
@@ -356,7 +390,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                 }
             },
-            |status| Ok(ControlFlow::Break(status)),
+            |status| {
+                if Consumer::COLLECTING && matches!(status, DeliveryStatus::ReplayCompleted(_)) {
+                    Ok(ControlFlow::Continue(()))
+                } else {
+                    Ok(ControlFlow::Break(status))
+                }
+            },
         )?;
         if matches!(
             status,
@@ -394,20 +434,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         name: Symbol,
     ) -> Result<(), CommandError> {
         self.record_macro_expansion();
-        match self.macro_call_parts(flags, definition, name, origin, |processor| {
+        self.macro_call_parts(flags, definition, name, origin, |processor| {
             processor.report_unobserved_macro_prefix_mismatch(
                 tex_state::token::TracedTokenWord::from_parts(word, origin),
                 flags,
                 definition,
                 name,
             );
-        }) {
-            Ok(_)
-            | Err(CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument) => {
-                Ok(())
-            }
-            Err(error) => Err(error),
-        }
+        })
+        .map(|_| ())
     }
 
     /// Existing commands have already crossed a delivery boundary. Keep their

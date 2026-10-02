@@ -536,7 +536,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   An out-parameter word pushes a `MacroArgument` row over its range.
   Parameterless macros create no matcher or argument state, and ordinary
   empty replacements retain no exhausted input row.
-- `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
+- `src/scan_toks.rs`, `src/scan_toks/expanded.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. A scanner owns no arena or scope. Temporary collection uses
   the scanner word/builder lanes. Ordinary `\def`/`\gdef` write semantic words into the arena's one build
@@ -545,7 +545,11 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   owner to assignment; allocation has no local/global destination. The collector's
   phase tag is the one authority for parameter versus replacement writes; no
   destination-local phase mirror or published-header provenance edit exists.
-  Raw definition scanning is entirely call-local.
+  Raw definition scanning is entirely call-local. Expanded replacement collection
+  is a synchronous consumer of the same expansion reader as ordinary delivery;
+  its borrowed sink and scanner episode handle direct splices, protected retention,
+  replacement grammar and outer recovery. Unobserved macros activate directly
+  from invocation facts, without a temporary command or a separate get-x loop.
   `\edef`/`\xdef` retain only the build key while their ordinary local scanner
   runs; a resource miss unwinds the builder and expansion call tree. `read_toks`
   uses that same direct native writer and moves the sealed publication owner straight to assignment. Runaway reporting borrows the incomplete replacement. Read setup and finalization share one cleanup transaction which returns and aborts the actual writer, restores `align_state` and scanner status, and truncates its exact token scratch suffix on every error. General token-list scans append directly to independent

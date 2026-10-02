@@ -956,6 +956,70 @@ fn expanded_macro_definition_keeps_its_builder_across_nested_macro_retirement() 
 }
 
 #[test]
+fn expanded_definition_activates_macro_runs_without_temporary_commands() {
+    struct Observer;
+    impl crate::CommandObserver for Observer {
+        fn committed(&mut self, _: crate::CommandObservation) {}
+    }
+    for observed in [false, true] {
+        for length in [1, 4096] {
+            crate::test_harness::with_universe(|universe| {
+                let publication = universe
+                    .allocate_definition(&[], &[])
+                    .expect("empty definition");
+                let symbol = universe.intern("empty_in_definition").expect("symbol");
+                universe
+                    .assign_meaning(
+                        symbol,
+                        MeaningWord::macro_definition(MeaningFlags::EMPTY, publication.reference()),
+                        AssignmentScope::Global,
+                    )
+                    .expect("empty macro");
+                let mut command = CommandState::default();
+                crate::test_harness::push(
+                    &mut command,
+                    std::iter::once(token('{', Catcode::BeginGroup))
+                        .chain(std::iter::repeat_n(Token::Cs(symbol.symbol()), length))
+                        .chain(std::iter::once(token('}', Catcode::EndGroup))),
+                );
+                let mut capabilities = CommandHostCapabilities::default();
+                let mut fuel = crate::CommandFuelLedger::default();
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut observer = Observer;
+                let mut context = universe.command_context().expect("context");
+                let processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut effects,
+                );
+                let mut processor = if observed {
+                    processor.with_observer(&mut observer)
+                } else {
+                    processor
+                };
+                let before = crate::command::command_ownership_counters();
+                let scanned = processor
+                    .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: true })
+                    .expect("expanded definition");
+                let after = crate::command::command_ownership_counters();
+                let definition = processor
+                    .state
+                    .definition(scanned.definition().expect("definition").reference());
+                assert!(definition.replacement_text().is_empty());
+                assert_eq!(
+                    after.resolved_writes - before.resolved_writes,
+                    if observed { length as u64 + 2 } else { 2 },
+                    "only observation needs invocation commands; collection owns the two braces",
+                );
+                assert_eq!(processor.fuel.burned(), length as u64 + 2);
+            });
+        }
+    }
+}
+
+#[test]
 fn ordinary_definition_body_constructs_no_per_token_command() {
     for length in [1, 4096] {
         crate::test_harness::with_universe(|universe| {

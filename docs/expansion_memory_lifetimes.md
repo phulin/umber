@@ -124,6 +124,14 @@ completion use the reader's existing cold boundary, and every terminal resets
 the expanded-delivery fact before the next read. Fuel failures restore both
 reader and primitive expansion depths before those locals unwind.
 
+Expanded replacement collection lends its actual destination, parameter grammar
+and scanner episode to that same reader. Ordinary unobserved macro activation
+constructs no command; only terminal words and exceptional expansion actions
+need one. Direct token-list splices bypass replacement brace/parameter grammar,
+protected retention and outer recovery run synchronously, and alignment-template
+entry stays at its raw semantic boundary. No collection routing/result adapter
+or second expansion loop exists.
+
 A resource miss unwinds all those locals, matching holdback, builders and
 borrowed contexts. The host restores the full aggregate, not the immediate
 collector mark. Verified readiness belongs to the host/VFS outside rollback.

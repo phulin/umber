@@ -137,6 +137,39 @@ Source tokenization and exceptional deliveries keep the scalar path. A run
 stops after the last available fuel charge so the next rejected token remains
 unread, as it would under scalar delivery.
 
+## Expanded token collection
+
+Expanded definition and general-text collection use the same expansion reader
+as main control and scalar scanners. The collector lends its existing output
+owner, parameter grammar and scanner episode to that reader. The reader reads,
+resolves and activates an ordinary unobserved macro directly from its invocation
+facts; collection must not first create a command solely to invoke expansion,
+clear that command and restart a parallel get-x loop.
+
+A synchronous consumer supplies its terminal action and the few actual TeX
+collection-specific expansion actions. Ordinary single-command and scalar
+consumers have no such interception work; their empty policy compiles away.
+The collector intercepts `\the`, `\unexpanded` and `\detokenize` at their
+existing direct splice boundary. Token-list splices retain their exemption from
+replacement brace and parameter interpretation. Other expansions use the
+shared primitive and macro implementation.
+
+Collection retains protected macros with the existing suppression flag and
+suppression observation before its expanded-delivery observation. Its terminal
+action applies the existing parameter conversion, balanced-brace grammar and
+consuming backup in their original order. Alignment-template entry and
+`end_template` treatment remain the collection-specific TeX entry semantics;
+they must not inherit main control’s frozen-endv reread accidentally.
+
+A failed macro match keeps its original paragraph and outer-validity recovery.
+The collector resumes its actual scanner episode at the outer-recovery point,
+while ordinary expansion keeps its existing recovery treatment. No callback,
+collector continuation or input loan survives resource unwind. Fuel, exhausted
+frame retirement, provenance, observations and full-checkpoint replay remain
+owned by the shared reader and the actual scanner episode. The separate
+expanded collection loop and its routing/result adapters are deleted at the
+cutover; unexpanded collection keeps its existing native-word grammar.
+
 ## Native completion and exceptional ownership
 
 Each scalar consumer returns its own native completion: a raw delivery status,

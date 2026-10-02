@@ -25,6 +25,58 @@ use crate::observation::{
 type ExpandedCommandConsumer<'a, Processor, G> = dyn FnMut(&mut Processor, &CurrentCommand<G>) -> Result<std::ops::ControlFlow<()>, CommandError>
     + 'a;
 
+/// Synchronous action of the actual expansion consumer. Empty ordinary hooks
+/// disappear in its static reader specialization; collection borrows its final
+/// output and scanner episode for the duration of this call only.
+pub(crate) trait ExpandedReaderConsumer<Processor, G> {
+    const COLLECTING: bool = false;
+
+    fn terminal(
+        &mut self,
+        processor: &mut Processor,
+        destination: &mut Option<CurrentCommand<G>>,
+        status: DeliveryStatus,
+    ) -> Result<std::ops::ControlFlow<()>, CommandError>;
+
+    fn expand(
+        &mut self,
+        _processor: &mut Processor,
+        _command: &mut CurrentCommand<G>,
+        _action: ExpandedCommandAction,
+    ) -> Result<bool, CommandError> {
+        Ok(false)
+    }
+
+    fn recover(
+        &mut self,
+        _processor: &mut Processor,
+        failure: CommandError,
+    ) -> Result<(), CommandError> {
+        match failure {
+            CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument => Ok(()),
+            failure => Err(failure),
+        }
+    }
+}
+
+impl<Processor, G, F> ExpandedReaderConsumer<Processor, G> for F
+where
+    F: FnMut(
+        &mut Processor,
+        &mut Option<CurrentCommand<G>>,
+        DeliveryStatus,
+    ) -> Result<std::ops::ControlFlow<()>, CommandError>,
+{
+    fn terminal(
+        &mut self,
+        processor: &mut Processor,
+        destination: &mut Option<CurrentCommand<G>>,
+        status: DeliveryStatus,
+    ) -> Result<std::ops::ControlFlow<()>, CommandError> {
+        self(processor, destination, status)
+    }
+}
+
 /// Only the genuine terminal treatment differs between canonical reader roles.
 #[derive(Clone, Copy, PartialEq)]
 enum ExpandedReaderRole {
@@ -42,7 +94,7 @@ enum ReadSite {
 /// The one decision TeX.web §380 makes after raw delivery has resolved the
 /// current meaning.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ExpandedCommandAction {
+pub(crate) enum ExpandedCommandAction {
     Return,
     EndTemplate,
     Expand(ExpansionDispatch),
@@ -393,6 +445,39 @@ impl<G> CommandProcessor<'_, '_, G> {
         )
     }
 
+    /// `scan_toks` owns replacement grammar, not a second expansion loop.
+    /// Its semantic expansion calls retain their own capacity accounting.
+    pub(crate) fn consume_expanded_collection(
+        &mut self,
+        consumer: &mut impl ExpandedReaderConsumer<Self, G>,
+    ) -> Result<(), CommandError> {
+        let mut destination = None;
+        let result = if self.is_observed() {
+            self.expanded_delivery_loop::<true, false, true, _>(
+                &mut destination,
+                None,
+                ExpandedReaderRole::Scanner,
+                consumer,
+            )
+        } else {
+            self.expanded_delivery_loop::<false, false, true, _>(
+                &mut destination,
+                None,
+                ExpandedReaderRole::Scanner,
+                consumer,
+            )
+        };
+        match result {
+            Ok(DeliveryStatus::End) => Err(CommandError::input_invariant()),
+            Ok(_) => Ok(()),
+            Err(failure) => self.fail_hot_expanded_delivery(
+                &mut destination,
+                self.command.transient.active_expansion_depth,
+                failure,
+            ),
+        }
+    }
+
     #[inline(always)]
     fn consume_expanded_with_mode<const PRESERVE_UNDEFINED: bool, const STOP_PROTECTED: bool>(
         &mut self,
@@ -415,14 +500,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.command.transient.active_expansion_depth = active_depth;
         let result = if self.is_observed() {
-            self.expanded_delivery_loop::<true, PRESERVE_UNDEFINED, STOP_PROTECTED>(
+            self.expanded_delivery_loop::<true, PRESERVE_UNDEFINED, STOP_PROTECTED, _>(
                 destination,
                 initial_action,
                 role,
                 terminal,
             )
         } else {
-            self.expanded_delivery_loop::<false, PRESERVE_UNDEFINED, STOP_PROTECTED>(
+            self.expanded_delivery_loop::<false, PRESERVE_UNDEFINED, STOP_PROTECTED, _>(
                 destination,
                 initial_action,
                 role,
@@ -1014,9 +1099,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// Expands one already-delivered hot command in place. This is the
-    /// collector counterpart to [`Self::request_expansion_into`]: successful
-    /// expansion consumes the opener, while an error leaves the compact
-    /// owner available to the caller's existing recovery/unwind path.
+    /// already-read structural expansion operand: successful expansion consumes
+    /// the opener, while an error leaves it available for recovery or unwind.
     pub(crate) fn request_expansion_hot(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
@@ -1026,10 +1110,25 @@ impl<G> CommandProcessor<'_, '_, G> {
             .take()
             .ok_or_else(CommandError::input_invariant)?;
         let action = classify_hot_command(&command);
-        let result = match action {
+        let result = self.expand_delivered_action(&mut command, action, report_trace);
+        if result.is_err() {
+            *destination = Some(command);
+            return result;
+        }
+        Ok(())
+    }
+
+    /// One expansion action for consumers that already own a raw command.
+    pub(crate) fn expand_delivered_action(
+        &mut self,
+        command: &mut CurrentCommand<G>,
+        action: ExpandedCommandAction,
+        report_trace: bool,
+    ) -> Result<(), CommandError> {
+        match action {
             ExpandedCommandAction::Return => Err(CommandError::input_invariant()),
             ExpandedCommandAction::EndTemplate => self.expand_compact_occupied(
-                &mut command,
+                command,
                 ExpandablePrimitive::EndTemplate,
                 report_trace,
             ),
@@ -1041,22 +1140,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.record_write_expansion();
                     }
                 }
-                self.with_expansion_depth(|processor| {
-                    processor.macro_call_hot(&mut command).map(|_| ())
-                })
+                self.with_expansion_depth(|processor| processor.macro_call_hot(command).map(|_| ()))
             }
             ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
-                self.expand_undefined_hot(&command, report_trace)
+                self.expand_undefined_hot(command, report_trace)
             }
             ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) => {
-                self.expand_compact_occupied(&mut command, primitive, report_trace)
+                self.expand_compact_occupied(command, primitive, report_trace)
             }
-        };
-        if result.is_err() {
-            *destination = Some(command);
-            return result;
         }
-        Ok(())
     }
 
     /// Delivers protected replay-aware expansion into caller-provided storage.

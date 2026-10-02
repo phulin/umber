@@ -11,8 +11,10 @@ use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
+mod expanded;
+
 use crate::attempt::{AttemptError, AttemptMark, AttemptTokenListId};
-use crate::command::{CommandClass, CurrentCommand};
+use crate::command::CurrentCommand;
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
 use crate::processor::status::{
     AbsorbingContext, DefinitionContext, ScannerEpisode, ScannerStatus, ScannerStatusVisibility,
@@ -238,37 +240,6 @@ enum ScanToksStage {
         primary: OriginId,
         malformed_parameter: bool,
     },
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum CollectorExpansionRoute {
-    Ordinary,
-    The,
-    Unexpanded,
-    Detokenize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CollectorExpansionOutcome {
-    Expanded,
-    Retained,
-}
-
-#[inline(always)]
-fn is_expandable_hot_command<G>(command: &CurrentCommand<G>) -> bool {
-    match command.class() {
-        CommandClass::Macro => true,
-        CommandClass::Expandable => command
-            .expandable_primitive()
-            .is_some_and(|primitive| primitive != ExpandablePrimitive::EndCsName),
-        CommandClass::Undefined => command.spelling_word().out_parameter_slot().is_none(),
-        CommandClass::Relax
-        | CommandClass::Character
-        | CommandClass::EndV
-        | CommandClass::Unexpandable
-        | CommandClass::Font
-        | CommandClass::Value => false,
-    }
 }
 
 impl ScanToksConfig {
@@ -1353,85 +1324,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    #[inline(always)]
-    fn drive_collector_expansion_hot(
-        &mut self,
-        route: CollectorExpansionRoute,
-        episode: &ScannerEpisode,
-        collector: &mut TokenCollector<G>,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<CollectorExpansionOutcome, CommandError> {
-        if route == CollectorExpansionRoute::The {
-            // TeX82 §478 handles `\the` directly in `scan_toks` instead of
-            // routing it through §380's ordinary expanded-fetch loop. The
-            // opener stays hot; only the target crosses the existing scalar
-            // scanner boundary when that scanner needs rich command state.
-            let mut expansion_operand = None;
-            match self.append_direct_the_toks(collector, &mut expansion_operand) {
-                Ok(true) => {
-                    destination.take();
-                    return Ok(CollectorExpansionOutcome::Expanded);
-                }
-                Ok(false) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        if route == CollectorExpansionRoute::Unexpanded {
-            self.append_unexpanded(collector)?;
-            destination.take();
-            return Ok(CollectorExpansionOutcome::Expanded);
-        }
-        if route == CollectorExpansionRoute::Detokenize {
-            self.append_detokenize(collector)?;
-            destination.take();
-            return Ok(CollectorExpansionOutcome::Expanded);
-        }
-
-        let command = destination
-            .as_mut()
-            .expect("direct collector expansion retains its command destination");
-        if command.flags().contains(MeaningFlags::PROTECTED)
-            && command.class() == CommandClass::Macro
-        {
-            // e-TeX 2.6 change section [27.465] represents a protected macro
-            // as `relax/no_expand_flag` for this collector iteration.
-            observe!(
-                self,
-                CommandObservation::TokenList(TokenListRecord {
-                    transition: "splice",
-                    purpose: "protected_expansion_suppression",
-                    tokens: vec![self.observed_token(command.spelling())],
-                }),
-            );
-            command.suppress_expandable();
-            return Ok(CollectorExpansionOutcome::Retained);
-        }
-
-        // TeX82 §394 returns from a failed macro call after either an ordinary
-        // non-`\long` `\par` or §23's outer-validity recovery. Both return to
-        // §380's get_x_token loop, which this collector owns while active.
-        match self.request_expansion_hot(destination, true) {
-            Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
-                destination.take();
-                Ok(CollectorExpansionOutcome::Expanded)
-            }
-            Err(CommandError::OuterInMacroArgument) => {
-                self.resume_scanner_episode_after_recovery(episode);
-                destination.take();
-                Ok(CollectorExpansionOutcome::Expanded)
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    /// TeX82 §477, "Scan and build the body of the token list".
-    ///
-    /// `macro_parameters` is §477's `macro_def` guard: only a macro
-    /// definition's body gives a parameter character its §479 meaning, and
-    /// then `Some(highest)` is §479's `t` -- the highest parameter number the
-    /// parameter text declared, and so the largest one a `#<digit>` may name.
-    /// A body scanned for any other purpose (`\message`, `\write`, `\toks`,
-    /// `\mark`, ...) stores parameter characters verbatim.
+    /// TeX82 §477 replacement grammar, consumed in the canonical reader.
     fn collect_replacement(
         &mut self,
         expansion: ScanToksExpansion,
@@ -1442,71 +1335,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !expansion.is_expanded() {
             return self.collect_unexpanded_replacement(macro_parameters, collector);
         }
-        // Expanded collection needs the special \the/\unexpanded splice
-        // grammar. Unexpanded bodies have already selected direct word collection.
-        let mut destination = None;
-
-        loop {
-            let status = self.get_next_into(&mut destination)?;
-            match status {
-                crate::DeliveryStatus::Command => {}
-                crate::DeliveryStatus::End => return Err(CommandError::input_invariant()),
-                _ => unreachable!("ordinary raw delivery has no side event"),
-            }
-
-            let command = destination
-                .as_ref()
-                .expect("compact command delivery initializes destination");
-            if is_expandable_hot_command(command) {
-                let route = match command.expandable_primitive() {
-                    Some(ExpandablePrimitive::The) => CollectorExpansionRoute::The,
-                    Some(ExpandablePrimitive::Unexpanded) => CollectorExpansionRoute::Unexpanded,
-                    Some(ExpandablePrimitive::Detokenize) => CollectorExpansionRoute::Detokenize,
-                    _ => CollectorExpansionRoute::Ordinary,
-                };
-                if self.drive_collector_expansion_hot(
-                    route,
-                    episode,
-                    collector,
-                    &mut destination,
-                )? == CollectorExpansionOutcome::Expanded
-                {
-                    continue;
-                }
-            }
-
-            // The expanded collector has completed a get_x-style delivery
-            // for each retained unexpandable token. Both collection policies
-            // classify the already-settled packed spelling directly.
-            let command = destination
-                .as_ref()
-                .expect("compact command delivery initializes destination");
-            self.observe_expanded_delivery(command);
-            let token = self.classify_collector_hot_token(command, None);
-
-            // TeX82 §342 has already replaced a delivered `\cr`/`\span`/tab
-            // delimiter by §789's ⟨v_j⟩ template inside `get_next`, so this
-            // balanced-text collector never sees one. That matters for a
-            // braced group whose matching `}` lives in the ⟨v_j⟩ template
-            // (plain.tex's `\eqalign`/`\displaylines` idiom
-            // `$\displaystyle{##}$` is the common case): the still-open
-            // `depth` continues over the boundary exactly as if no alignment
-            // entry had ended.
-            //
-            // TeX82 §23 backs an inaccessible outer control sequence up,
-            // installs the right brace that ends this runaway collector, and
-            // changes only the live current command to a space. That space is
-            // recovery state, not input: §477 resumes with the inserted brace
-            // and must not append the temporary current-command value.
-            if command.is_outer_recovery_space() {
-                continue;
-            }
-            if self.accept_replacement_word(macro_parameters, collector, token, |processor| {
-                processor.back_input(destination.take().expect("rejected collector token"))
-            })? {
-                return Ok(());
-            }
-        }
+        self.consume_expanded_collection(&mut expanded::ReplacementConsumer {
+            macro_parameters,
+            episode,
+            collector,
+        })
     }
 
     pub(crate) fn accept_replacement_word(
