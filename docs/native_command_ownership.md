@@ -79,3 +79,62 @@ Trace, afterassignment, aftergroup, errors, output and observation retain their
 semantic tests and ordered canonical comparison. Matched release profiles and
 microbenchmarks measure the deleted command-boundary work separately from
 the older baseline's already completed refactors.
+
+## Measured result
+
+The implementation is `8b52e20c9207e8c09de850aca0bf5c6e48b6c884` (the main
+ownership change is `0c29b01f2`). The frozen release executable is
+`target/umber2-i0n5-16/no-settlement/umber`, SHA-256
+`0f0484ce0755b10a0eb7da30c45697516a111c636c582022ce8748e3c4e29a5a`.
+It uses the same release recipe and frozen format as the earlier comparison.
+`micro.json` and `book-receipt.json` in that directory retain the exact engine,
+format, input, argument, environment, output and counter evidence.
+
+The 22-case microbenchmark measures short/long instruction differences with
+startup removed. Its marginal costs against the immediately preceding
+`d44cff87a` build include:
+
+| Fixture                   | Previous instructions | Current instructions | Change |
+| ------------------------- | --------------------: | -------------------: | -----: |
+| Relax                     |                 523.5 |                389.8 | −25.5% |
+| Macro with literal body   |               1,586.3 |              1,318.9 | −16.9% |
+| Ordinary group pair       |               1,841.5 |              1,658.8 |  −9.9% |
+| Let assignment            |                 1,448 |                1,325 |  −8.5% |
+| Definition                |               3,460.9 |              3,339.2 |  −3.5% |
+| Token-register assignment |               7,240.2 |              7,134.1 |  −1.5% |
+| Dimension fixture         |              22,773.8 |             23,062.1 |  +1.3% |
+
+The empty macro remains at 216 instructions, equal to the pinned pdfTeX
+fixture. The one-parameter fixture remains at 1,081 (pdfTeX: 421). Thus deleting
+command settlement does not itself remove the remaining reading, matching and
+replay costs. There is no numerical acceptance threshold for this design.
+
+A fresh unobserved, CPU-pinned book pair uses the partially refactored Claude
+control `eb754fc2`, the same 74 sources and frozen format, detached working
+and cache directories, and the existing wall/RSS/fuel bounds. Both engines
+finish the unrepaired 588-page document with all four PDF/aux/toc/out hashes
+unchanged. The six PMU events report 100% enabled time; the conclusions below
+use instructions and cycles.
+
+| Metric            |  Claude control |   Current build |
+| ----------------- | --------------: | --------------: |
+| User instructions | 510,737,414,107 | 469,724,518,571 |
+| User cycles       | 340,429,560,066 | 293,723,025,634 |
+| User seconds      |          107.25 |           92.68 |
+| Wall seconds      |          113.63 |           98.13 |
+| Maximum RSS, KiB  |         852,016 |         831,100 |
+
+This is 8.0% fewer instructions and 13.7% fewer cycles than that Claude
+control. Relative to the earlier `d44cff87a` book receipt, the additional
+instruction reduction is 1.4% and the cycle reduction is 4.4%. The modest
+whole-document instruction gain and larger noop gain distinguish command
+bookkeeping from the reader/matcher work left in the workload.
+
+Verification passes 4,237 routine native tests (980 ignored; 85 groups), all
+four authoritative `scripts/check.sh` gates, and the focused Story and
+immediate-write trace regressions. The exhaustive canonical comparison is
+byte-identical to the existing 18,573-byte worklist: 663 known ordered
+semantic divergences at 17 root sites and zero geometry differences. It is
+still a DIVERGED verdict, not a clean oracle comparison. Optional profiling
+command/execution tests pass 1,319 tests with three ignored; the three selected
+profiling tool checks and two selected wasm checks pass, including Firefox.
