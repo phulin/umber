@@ -39,77 +39,53 @@ impl<G> CommandProcessor<'_, '_, G> {
             Option<&CurrentCommand<G>>,
         ) -> Result<R, CommandError>,
     ) -> Result<Option<R>, CommandError> {
-        loop {
-            self.create_source_control_sequences = true;
-            let selected = self.consume_input(
-                true,
-                &mut |processor, word, origin, suppress, site, kind| {
-                    let literal = word.literal_catcode();
-                    let mut meaning = None;
-                    let mut lookup = false;
-                    let outer = if literal.is_some_and(|cat| cat != Catcode::Active) && !OBSERVED {
-                        false
-                    } else {
-                        let (resolved, resolution) = processor.resolve_token_word(word);
-                        lookup = resolution.meaning_lookup();
-                        let outer = resolved.is_outer();
-                        meaning = Some((resolved, resolution));
-                        outer
-                    };
-                    processor.record_consumed_word(kind, lookup);
-                    let exceptional = OBSERVED
-                        || processor.outer_recovered_while_matching
-                        || processor.eof_recovered_while_matching
-                        || processor
-                            .command
-                            .delivery_mode
-                            .requires_semantic_settlement(suppress, outer);
-                    if exceptional {
-                        let (meaning, resolution) =
-                            meaning.unwrap_or_else(|| processor.resolve_token_word(word));
-                        let mut command = CurrentCommand::from_delivered_parts(
-                            word,
-                            origin,
-                            matches!(site, ReadSite::Source(_)),
-                            match site {
-                                ReadSite::Source(line) => line,
-                                _ => None,
-                            },
-                            suppress,
-                            meaning,
-                            resolution.control_sequence(),
-                        );
-                        processor.settle_hot_delivery_in::<OBSERVED>(&mut command, literal)?;
-                        if matches!(
-                            command.alignment_adjustment(),
-                            super::super::AlignmentDeliveryAdjustment::Delimiter(_)
-                        ) {
-                            processor.begin_scalar_alignment_v_template(&command)?;
-                            return Ok(ControlFlow::Continue(None));
-                        }
-                        #[cfg(test)]
-                        {
-                            processor
-                                .command
-                                .token_collector_path_counters
-                                .raw_classifications += 1;
-                        }
-                        processor.create_source_control_sequences = false;
-                        return consume(processor, command.spelling(), Some(&command))
-                            .map(|value| ControlFlow::Continue(Some(value)));
-                    }
-                    if matches!(site, ReadSite::Source(_))
-                        && let Some(location) = processor.pending_diagnostic_location.take()
-                    {
-                        processor
-                            .command
-                            .set_last_diagnostic_location(Some(location));
-                    }
-                    processor
+        self.create_source_control_sequences = true;
+        self.consume_input(
+            true,
+            &mut |processor, word, origin, suppress, site, kind| {
+                let literal = word.literal_catcode();
+                let mut meaning = None;
+                let mut lookup = false;
+                let outer = if literal.is_some_and(|cat| cat != Catcode::Active) && !OBSERVED {
+                    false
+                } else {
+                    let (resolved, resolution) = processor.resolve_token_word(word);
+                    lookup = resolution.meaning_lookup();
+                    let outer = resolved.is_outer();
+                    meaning = Some((resolved, resolution));
+                    outer
+                };
+                processor.record_consumed_word(kind, lookup);
+                let exceptional = OBSERVED
+                    || processor.outer_recovered_while_matching
+                    || processor.eof_recovered_while_matching
+                    || processor
                         .command
-                        .roots
-                        .alignment
-                        .account_literal_catcode(literal);
+                        .delivery_mode
+                        .requires_semantic_settlement(suppress, outer);
+                if exceptional {
+                    let (meaning, resolution) =
+                        meaning.unwrap_or_else(|| processor.resolve_token_word(word));
+                    let mut command = CurrentCommand::from_delivered_parts(
+                        word,
+                        origin,
+                        matches!(site, ReadSite::Source(_)),
+                        match site {
+                            ReadSite::Source(line) => line,
+                            _ => None,
+                        },
+                        suppress,
+                        meaning,
+                        resolution.control_sequence(),
+                    );
+                    processor.settle_hot_delivery_in::<OBSERVED>(&mut command, literal)?;
+                    if matches!(
+                        command.alignment_adjustment(),
+                        super::super::AlignmentDeliveryAdjustment::Delimiter(_)
+                    ) {
+                        processor.begin_scalar_alignment_v_template(&command)?;
+                        return Ok(ControlFlow::Continue(()));
+                    }
                     #[cfg(test)]
                     {
                         processor
@@ -118,19 +94,38 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .raw_classifications += 1;
                     }
                     processor.create_source_control_sequences = false;
-                    consume(processor, TracedTokenWord::from_parts(word, origin), None)
-                        .map(|value| ControlFlow::Continue(Some(value)))
-                },
-                ControlFlow::Break,
-            )?;
-            match selected {
-                ControlFlow::Continue(Some(value)) => return Ok(Some(value)),
-                ControlFlow::Continue(None)
-                | ControlFlow::Break(DeliveryStatus::ReplayCompleted(_)) => {}
-                ControlFlow::Break(DeliveryStatus::End) => return Ok(None),
-                ControlFlow::Break(_) => unreachable!("raw spelling has no expanded event"),
-            }
-        }
+                    return consume(processor, command.spelling(), Some(&command))
+                        .map(|value| ControlFlow::Break(Some(value)));
+                }
+                if matches!(site, ReadSite::Source(_))
+                    && let Some(location) = processor.pending_diagnostic_location.take()
+                {
+                    processor
+                        .command
+                        .set_last_diagnostic_location(Some(location));
+                }
+                processor
+                    .command
+                    .roots
+                    .alignment
+                    .account_literal_catcode(literal);
+                #[cfg(test)]
+                {
+                    processor
+                        .command
+                        .token_collector_path_counters
+                        .raw_classifications += 1;
+                }
+                processor.create_source_control_sequences = false;
+                consume(processor, TracedTokenWord::from_parts(word, origin), None)
+                    .map(|value| ControlFlow::Break(Some(value)))
+            },
+            |status| match status {
+                DeliveryStatus::ReplayCompleted(_) => Ok(ControlFlow::Continue(())),
+                DeliveryStatus::End => Ok(ControlFlow::Break(None)),
+                _ => unreachable!("raw spelling has no expanded event"),
+            },
+        )
     }
 
     pub(crate) fn collect_unexpanded_replacement(
@@ -231,10 +226,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                             super::super::AlignmentDeliveryAdjustment::Delimiter(_)
                         ) {
                             processor.begin_scalar_alignment_v_template(&command)?;
-                            return Ok(ControlFlow::Continue(false));
+                            return Ok(ControlFlow::Break(false));
                         }
                         if command.is_outer_recovery_space() {
-                            return Ok(ControlFlow::Continue(false));
+                            return Ok(ControlFlow::Break(false));
                         }
                         let token = processor.classify_collector_hot_token(&command, None);
                         if processor.accept_replacement_word(
@@ -243,9 +238,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                             token,
                             |processor| processor.back_input(command),
                         )? {
-                            return Ok(ControlFlow::Continue(true));
+                            return Ok(ControlFlow::Break(true));
                         }
-                        return Ok(ControlFlow::Continue(false));
+                        return Ok(ControlFlow::Break(false));
                     }
                     let adjustment = processor
                         .command
@@ -288,17 +283,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                             processor.back_input(command)
                         },
                     )? {
-                        return Ok(ControlFlow::Continue(true));
+                        return Ok(ControlFlow::Break(true));
                     }
-                    Ok(ControlFlow::Continue(false))
+                    Ok(ControlFlow::Break(false))
                 },
-                ControlFlow::Break,
+                |status| match status {
+                    DeliveryStatus::ReplayCompleted(_) => Ok(ControlFlow::Break(false)),
+                    _ => Err(CommandError::input_invariant()),
+                },
             )?;
-            match selected {
-                ControlFlow::Continue(true) => return Ok(()),
-                ControlFlow::Continue(false)
-                | ControlFlow::Break(DeliveryStatus::ReplayCompleted(_)) => {}
-                ControlFlow::Break(_) => return Err(CommandError::input_invariant()),
+            if selected {
+                return Ok(());
             }
         }
     }

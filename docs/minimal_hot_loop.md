@@ -57,6 +57,14 @@ returned vector capacity stays with the engine and is excluded from captures.
 Ordinary parameterless macros acquire no argument region or matcher carrier.
 Their genuine body frame and invocation origin remain.
 
+The expansion consumer owns the shared reader’s semantic back edge. A macro
+activates directly from its resolved word and continues that same read loop;
+a primitive expands there, and a terminal command returns from there. There
+is no expansion-candidate result between reading and interpretation. Each
+new semantic token takes one fuel charge, while refill, retirement and
+parameter substitution retry under the current charge. Raw reads and spelling
+collectors stop that same reader at their actual consumer boundary.
+
 Assignments share one mutation policy. A local first write at a new TeX level
 owns a native group preimage. A first touch in a retained host checkpoint
 interval owns a separate checkpoint preimage. These histories need different

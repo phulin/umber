@@ -28,19 +28,6 @@ enum SkippedWord {
     Boundary,
 }
 
-/// One read from the shared raw input kernel, interpreted for expansion.
-/// The canonical expansion loop activates ordinary unobserved macros without
-/// constructing a command.
-///
-/// A settled command is written straight into the caller's slot; returning it
-/// by value through this status would copy the whole compact command at
-/// every nested result boundary of the per-token loop.
-pub(super) enum ExpansionCandidate {
-    ExpandedMacro,
-    Command,
-    Finished(DeliveryStatus),
-}
-
 impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §494 admits skipped words directly from the selected native
     /// span. Its first exceptional word goes straight to raw settlement.
@@ -218,51 +205,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     #[inline(always)]
-    pub(super) fn read_expansion_candidate<const OBSERVED: bool, const STOP_PROTECTED: bool>(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<ExpansionCandidate, CommandError> {
-        self.consume_input(
-            self.create_source_control_sequences,
-            &mut |processor, word, origin, suppress, site, kind| {
-                let (meaning, resolution) = processor.resolve_token_word(word);
-                processor.record_consumed_word(kind, resolution.meaning_lookup());
-                if !OBSERVED
-                    && let MeaningWord::Macro { flags, definition } = meaning
-                    && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
-                    && !processor
-                        .command
-                        .delivery_mode
-                        .requires_semantic_settlement(suppress, flags.contains(MeaningFlags::OUTER))
-                {
-                    let name = resolution
-                        .control_sequence()
-                        .ok_or_else(CommandError::input_invariant)?;
-                    processor.activate_read_macro(word, origin, flags, definition, name)?;
-                    return Ok(ExpansionCandidate::ExpandedMacro);
-                }
-                let line = match site {
-                    ReadSite::Source(line) => line,
-                    _ => None,
-                };
-                let command = destination.insert(CurrentCommand::from_delivered_parts(
-                    word,
-                    origin,
-                    matches!(site, ReadSite::Source(_)),
-                    line,
-                    suppress,
-                    meaning,
-                    resolution.control_sequence(),
-                ));
-                processor
-                    .settle_hot_delivery_in::<OBSERVED>(command, resolution.literal_catcode())?;
-                Ok(ExpansionCandidate::Command)
-            },
-            ExpansionCandidate::Finished,
-        )
-    }
-
-    #[inline(always)]
     pub(super) fn resolve_token_word(
         &self,
         word: tex_state::token::TokenWord,
@@ -316,52 +258,85 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             expanded = true;
         }
-        loop {
-            match self.read_expansion_candidate::<OBSERVED, STOP_PROTECTED>(destination)? {
-                ExpansionCandidate::ExpandedMacro => {
+        let status = self.consume_input(
+            self.create_source_control_sequences,
+            &mut |processor, word, origin, suppress, site, kind| {
+                let (meaning, resolution) = processor.resolve_token_word(word);
+                processor.record_consumed_word(kind, resolution.meaning_lookup());
+                if !OBSERVED
+                    && let MeaningWord::Macro { flags, definition } = meaning
+                    && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
+                    && !processor
+                        .command
+                        .delivery_mode
+                        .requires_semantic_settlement(suppress, flags.contains(MeaningFlags::OUTER))
+                {
+                    let name = resolution
+                        .control_sequence()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    processor.activate_read_macro(word, origin, flags, definition, name)?;
                     expanded = true;
-                    continue;
+                    return Ok(ControlFlow::Continue(()));
                 }
-                ExpansionCandidate::Finished(status) => {
+                let line = match site {
+                    ReadSite::Source(line) => line,
+                    _ => None,
+                };
+                let command = destination.insert(CurrentCommand::from_delivered_parts(
+                    word,
+                    origin,
+                    matches!(site, ReadSite::Source(_)),
+                    line,
+                    suppress,
+                    meaning,
+                    resolution.control_sequence(),
+                ));
+                processor
+                    .settle_hot_delivery_in::<OBSERVED>(command, resolution.literal_catcode())?;
+                let action = classify_hot_command(command);
+                if STOP_PROTECTED && Self::protected_terminal(command, action) {
+                    return Ok(ControlFlow::Break(DeliveryStatus::Command));
+                }
+                if PRESERVE_UNDEFINED
+                    && matches!(
+                        action,
+                        ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
+                    )
+                {
+                    return Ok(ControlFlow::Break(
+                        processor.finish_terminal_expansion::<OBSERVED>(command, action, expanded),
+                    ));
+                }
+                if let ExpandedCommandAction::Expand(dispatch) = action {
+                    processor.execute_expansion_action(command, dispatch)?;
+                    expanded = true;
+                    return Ok(ControlFlow::Continue(()));
+                }
+                if role == ExpandedReaderRole::MainControl
+                    && !expanded
+                    && matches!(action, ExpandedCommandAction::EndTemplate)
+                    && !matches!(
+                        command.alignment_adjustment(),
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                    )
+                {
                     destination.take();
-                    return Ok(status);
+                    processor.insert_frozen_endv()?;
+                    return Ok(ControlFlow::Continue(()));
                 }
-                ExpansionCandidate::Command => {}
-            }
-            let command = destination
-                .as_mut()
-                .expect("command candidate initializes destination");
-            let action = classify_hot_command(command);
-            if STOP_PROTECTED && Self::protected_terminal(command, action) {
-                return Ok(DeliveryStatus::Command);
-            }
-            if PRESERVE_UNDEFINED
-                && matches!(
-                    action,
-                    ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
-                )
-            {
-                return Ok(self.finish_terminal_expansion::<OBSERVED>(command, action, expanded));
-            }
-            if let ExpandedCommandAction::Expand(dispatch) = action {
-                self.execute_expansion_action(command, dispatch)?;
-                expanded = true;
-                continue;
-            }
-            if role == ExpandedReaderRole::MainControl
-                && !expanded
-                && matches!(action, ExpandedCommandAction::EndTemplate)
-                && !matches!(
-                    command.alignment_adjustment(),
-                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                )
-            {
-                destination.take();
-                self.insert_frozen_endv()?;
-                continue;
-            }
-            return Ok(self.finish_terminal_expansion::<OBSERVED>(command, action, expanded));
+                Ok(ControlFlow::Break(
+                    processor.finish_terminal_expansion::<OBSERVED>(command, action, expanded),
+                ))
+            },
+            |status| Ok(ControlFlow::Break(status)),
+        )?;
+        if matches!(
+            status,
+            DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)
+        ) {
+            destination.take();
         }
+        Ok(status)
     }
 
     /// e-TeX's `get_x_or_protected` procedure stops on the first

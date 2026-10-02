@@ -39,6 +39,12 @@ scalar result unions, publication frames and projection/status APIs are absent.
 Nested scalar calls retain their own typed value/error slots only at actual
 call boundaries that avoid copying cold error payloads on successful reads.
 
+Expansion continues inside the shared reader until its actual consumer returns
+a command or completion; there is no expansion-candidate carrier. Macro
+activation and primitive expansion continue that reader’s semantic back edge,
+which charges every newly consumed token once. Cold input transitions retry
+under the existing charge.
+
 Resident input completes directly into its consumer or leaves the authoritative
 row/cursor at a real source, exhaustion or parameter boundary. There is no
 input-transition descriptor or immediately consuming transition dispatcher.

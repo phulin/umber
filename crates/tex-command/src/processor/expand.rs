@@ -232,16 +232,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         let status = self.consume_input(
             self.create_source_control_sequences,
             &mut |processor, word, origin, suppress, site, kind| {
-                processor.finish_delivered_word::<OBSERVED>(
-                    word,
-                    origin,
-                    suppress,
-                    site,
-                    kind,
-                    destination,
-                )
+                processor
+                    .finish_delivered_word::<OBSERVED>(
+                        word,
+                        origin,
+                        suppress,
+                        site,
+                        kind,
+                        destination,
+                    )
+                    .map(std::ops::ControlFlow::Break)
             },
-            std::convert::identity,
+            |status| Ok(std::ops::ControlFlow::Break(status)),
         )?;
         if matches!(
             status,
@@ -286,23 +288,30 @@ impl<G> CommandProcessor<'_, '_, G> {
             bool,
             ReadSite,
             crate::fuel::RawDeliveryKind,
-        ) -> Result<R, CommandError>,
-        finished: impl Fn(DeliveryStatus) -> R,
+        ) -> Result<std::ops::ControlFlow<R>, CommandError>,
+        finished: impl Fn(DeliveryStatus) -> Result<std::ops::ControlFlow<R>, CommandError>,
     ) -> Result<R, CommandError> {
-        self.pending_diagnostic_location = None;
-        self.charge_command_action()?;
         loop {
-            if let Some(result) = self.consume_resident_input(
-                &mut |_, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
-                finish,
-            )? {
+            self.pending_diagnostic_location = None;
+            self.charge_command_action()?;
+            let consumed = loop {
+                if let Some(result) = self.consume_resident_input(
+                    &mut |_, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
+                    finish,
+                )? {
+                    break result;
+                }
+                if let Some(result) =
+                    self.advance_input_boundary(create_control_sequences, finish)?
+                {
+                    match result {
+                        std::ops::ControlFlow::Continue(value) => break value,
+                        std::ops::ControlFlow::Break(status) => break finished(status)?,
+                    }
+                }
+            };
+            if let std::ops::ControlFlow::Break(result) = consumed {
                 return Ok(result);
-            }
-            if let Some(result) = self.advance_input_boundary(create_control_sequences, finish)? {
-                return Ok(match result {
-                    std::ops::ControlFlow::Continue(value) => value,
-                    std::ops::ControlFlow::Break(status) => finished(status),
-                });
             }
         }
     }
