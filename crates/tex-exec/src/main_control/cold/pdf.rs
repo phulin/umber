@@ -774,13 +774,13 @@ pub(in crate::main_control) fn replay_text<G>(
     diagnostics.extend(pending.into_iter().map(PendingDiagnostic::Command));
     let expanded = expanded?;
     let mut text = String::new();
-    let expanded_words = command
-        .state
-        .state()
-        .attempt_token_words(&expanded)
-        .map_err(|_| ExecError::MissingToken {
-            context: "expanded output replay",
-        })?;
+    let expanded_words =
+        command
+            .state
+            .attempt_token_words(&expanded)
+            .map_err(|_| ExecError::MissingToken {
+                context: "expanded output replay",
+            })?;
     for word in expanded_words {
         let token = word.semantic_token();
         match kind {
@@ -794,7 +794,6 @@ pub(in crate::main_control) fn replay_text<G>(
     }
     command
         .state
-        .state_mut()
         .discard_attempt_tokens(expanded)
         .expect("rendered output replay consumed");
     if matches!(kind, crate::shipout::ReplayTextKind::PdfLiteral) {
@@ -845,7 +844,6 @@ pub(in crate::main_control) fn replay_write<G>(
     let mut text = String::new();
     let words = command
         .state
-        .state()
         .attempt_token_words(&expanded.tokens)
         .map_err(|_| ExecError::MissingToken {
             context: "expanded write replay",
@@ -855,7 +853,6 @@ pub(in crate::main_control) fn replay_write<G>(
     }
     command
         .state
-        .state_mut()
         .discard_attempt_tokens(expanded.tokens)
         .expect("rendered write consumed");
     let mut text = crate::diagnostics::print_text_with_newlinechar(&*stores, &text);
@@ -1500,7 +1497,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                             sink: PrintSink,
                             tokens: tex_state::ShipoutTokenSource<G>| {
         let mut command = command_cell.borrow_mut();
-        let child_scope = command.state.state_mut().begin_attempt_child_scope();
+        let child_scope = command.state.begin_attempt_child_scope();
         // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
         // before moving to the next whatsit. A following write expands only
         // after those effects have happened, so publish the committed prefix
@@ -1570,14 +1567,11 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             let context = stores
                 .command_context()
                 .expect("deferred write observation admission");
-            let expanded_words =
-                command
-                    .state
-                    .state()
-                    .attempt_token_words(&tokens)
-                    .map_err(|_| ExecError::MissingToken {
-                        context: "expanded deferred write",
-                    })?;
+            let expanded_words = command.state.attempt_token_words(&tokens).map_err(|_| {
+                ExecError::MissingToken {
+                    context: "expanded deferred write",
+                }
+            })?;
             let observed_tokens = observing.then(|| {
                 expanded_words
                     .iter()
@@ -1595,7 +1589,6 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             }
             command
                 .state
-                .state_mut()
                 .discard_attempt_tokens(tokens)
                 .expect("rendered deferred write consumed");
             let text = crate::diagnostics::print_text_with_newlinechar(&context, &text);
@@ -1607,7 +1600,6 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         // in the parent operation for §1335 final cleanup.
         command
             .state
-            .state_mut()
             .close_attempt_child_scope(child_scope)
             .map_err(|_| ExecError::MissingToken {
                 context: "deferred write child scope close",

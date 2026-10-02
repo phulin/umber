@@ -818,7 +818,7 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
             !terminal_text(stores).contains("Missing { inserted"),
             "aftergroup token supplied the next part opener"
         );
-        assert!(control.active_discretionaries.is_empty());
+        assert!(control.execution.active_discretionaries.is_empty());
         assert_eq!(
             admitted!(stores, |context| context.innermost_group_kind()),
             None
@@ -838,8 +838,9 @@ fn discretionary_nest_overflow_leaves_group_and_active_stack_untouched() {
             control.advance(stores).expect("paragraph starts"),
             StepResult::Progress(MainControlStep::Continue)
         );
-        while control.modes.depth() < 41 {
+        while control.execution.modes.depth() < 41 {
             control
+                .execution
                 .modes
                 .push(Mode::RestrictedHorizontal)
                 .expect("fill the TeX82 semantic nest");
@@ -849,12 +850,12 @@ fn discretionary_nest_overflow_leaves_group_and_active_stack_untouched() {
             control.advance(stores).expect("fatal overflow succumbs"),
             StepResult::Progress(MainControlStep::End)
         );
-        assert_eq!(control.modes.depth(), 41);
+        assert_eq!(control.execution.modes.depth(), 41);
         assert_eq!(
             admitted!(stores, |context| context.innermost_group_kind()),
             None
         );
-        assert!(control.active_discretionaries.is_empty());
+        assert!(control.execution.active_discretionaries.is_empty());
     });
 }
 #[test]
@@ -1969,7 +1970,7 @@ fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_va
             crate::test_harness::with_nonstop_plain_universe(|stores| {
                 let mut control = etex_initex(stores);
                 if mode != Mode::Vertical {
-                    control.modes.push(mode).expect("test mode push");
+                    control.execution.modes.push(mode).expect("test mode push");
                 }
                 let source = format!(r"\{name}  =  2  101  -202 \count0=17");
                 register_source(&mut control, source.as_bytes());

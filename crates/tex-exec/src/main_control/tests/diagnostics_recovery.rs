@@ -952,7 +952,7 @@ fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode
                 let mut control = MainControl::tex82_initex(stores);
                 control.set_fuel_limit(128).expect("bounded command fuel");
                 if mode != Mode::Vertical {
-                    control.modes.push(mode).expect("test mode push");
+                    control.execution.modes.push(mode).expect("test mode push");
                 }
                 register_source(&mut control, br"\endcsname\count0=17");
                 if observed {
@@ -1244,6 +1244,7 @@ fn fused_definition_scan_retains_the_first_command_error_context() {
         run_to_end(&mut control, stores);
 
         let context = control
+            .execution
             .first_causal_context
             .as_ref()
             .expect("scanner error captures its live command context");
@@ -1311,6 +1312,7 @@ fn main_control_error_privilege_and_stop_paths_are_finite() {
     crate::test_harness::with_nonstop_plain_universe(|internal_stores| {
         let mut internal = MainControl::tex82_initex(internal_stores);
         internal
+            .execution
             .modes
             .push(Mode::InternalVertical)
             .expect("test mode push");
@@ -1349,6 +1351,7 @@ fn illegal_case_command_spelling_uses_live_escapechar() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         control
+            .execution
             .modes
             .push(Mode::InternalVertical)
             .expect("test mode push");
@@ -2271,7 +2274,7 @@ fn invalid_arithmetic_target_recovers_and_fires_afterassignment() {
             "execution continued after the error"
         );
         assert_eq!(
-            control.modes.current_list().prev_depth(),
+            control.execution.modes.current_list().prev_depth(),
             Some(Scaled::from_raw(2 * 65_536))
         );
         let output = terminal_text(stores);

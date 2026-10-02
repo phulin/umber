@@ -12,7 +12,7 @@ impl<G> MainControl<G> {
         source: SourceRegistration,
     ) -> Result<tex_state::SourceId, SourceRegistrationError> {
         debug_assert!(
-            self.root_main_source.is_none(),
+            self.execution.root_main_source.is_none(),
             "one MainControl has exactly one root main source"
         );
         let source = if source.role().is_some() {
@@ -26,7 +26,7 @@ impl<G> MainControl<G> {
         self.command
             .open_registered_source(id)
             .expect("freshly registered source must be openable");
-        self.root_main_source = Some(id);
+        self.execution.root_main_source = Some(id);
         Ok(id)
     }
 
@@ -52,7 +52,7 @@ impl<G> MainControl<G> {
         let current = self
             .command
             .rebind_generated_source(accepted, bytes, unchanged_prefix)?;
-        self.root_main_source = Some(current);
+        self.execution.root_main_source = Some(current);
         Ok(())
     }
 
@@ -60,6 +60,7 @@ impl<G> MainControl<G> {
     /// boundary without advancing input.
     pub fn open_registered_root_framing(&mut self, stores: &mut Universe<G>) {
         let source = self
+            .execution
             .root_main_source
             .expect("root framing requires a registered root source");
         let Some(name) = self.command.live_file_framing_name(source) else {
@@ -74,7 +75,7 @@ impl<G> MainControl<G> {
     /// Selects whether exhaustion of the registered root ends an authored
     /// fragment or enters TeX82 §360's missing-`\end` handling.
     pub fn set_root_completion_policy(&mut self, policy: RootCompletionPolicy) {
-        self.root_completion = policy;
+        self.execution.root_completion = policy;
     }
 
     /// Performs one §360 terminal-input episode after a complete job reaches
@@ -86,19 +87,20 @@ impl<G> MainControl<G> {
     /// exhausted source again.
     pub(super) fn handle_root_end_of_input(&mut self, stores: &mut Universe<G>) -> ReplayStep {
         let previous_line_was_empty = self
+            .execution
             .terminal_line_was_empty
-            .unwrap_or(self.startup_terminal_line.is_empty());
+            .unwrap_or(self.execution.startup_terminal_line.is_empty());
         let action = {
             let mut context = stores.command_context().expect("live generation");
             crate::job::prompt_for_more_input(
                 &mut context,
-                &self.startup_terminal_line,
+                &self.execution.startup_terminal_line,
                 previous_line_was_empty,
             )
         };
         match action {
             crate::job::EndOfInputAction::Line(line) => {
-                self.terminal_line_was_empty = Some(line.is_empty());
+                self.execution.terminal_line_was_empty = Some(line.is_empty());
                 self.command.set_terminal_context_line(&line);
                 let source =
                     SourceRegistration::new(RegisteredSourceKind::Generated, line.into_bytes());
@@ -171,7 +173,7 @@ impl<G> MainControl<G> {
         requested_name: &str,
         resolved_name: Option<&str>,
     ) {
-        if self.initex {
+        if self.execution.initex {
             let components = tex_command::FileNameComponents::from_tex_name(requested_name);
             let stem = components.name;
             // §§534--536 retain the startup name component as `job_name`

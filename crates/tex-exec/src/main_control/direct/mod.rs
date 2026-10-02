@@ -76,7 +76,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         &mut self,
         applied: Result<ReplayStep, ExecError>,
     ) -> Result<ReplayStep, ExecError> {
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
         self.control
             .finish_host_owned_step(applied, self.output_start, self.stores, self.effects)
     }
@@ -168,12 +168,13 @@ impl<G> MainControl<G> {
         completed_operations: &mut usize,
     ) -> Result<ReplayStep, ExecError> {
         self.ensure_primitive_handles(stores);
-        let mode = self.modes.current_mode();
+        let mode = self.execution.modes.current_mode();
         let output_start = OperationOutputStart {
-            outer_paragraph_was_active: mode == Mode::Horizontal && self.modes.depth() == 2,
+            outer_paragraph_was_active: mode == Mode::Horizontal
+                && self.execution.modes.depth() == 2,
             artifact_count: stores.world().committed_artifacts().len(),
             effect_count: stores.world().effect_records().len(),
-            prepared_page_count: self.prepared_dvi_pages.len(),
+            prepared_page_count: self.execution.prepared_dvi_pages.len(),
             tracked_region_is_active: tracked,
         };
         if tracked {
@@ -206,15 +207,15 @@ impl<G> MainControl<G> {
         result
     }
     fn observe_control_projections(&mut self, stores: &mut Universe<G>) {
-        let mode = self.modes.current_mode();
-        let fingerprint = self.modes.semantic_fingerprint(stores);
+        let mode = self.execution.modes.current_mode();
+        let fingerprint = self.execution.modes.semantic_fingerprint(stores);
         let mut context = stores
             .command_context()
             .expect("tracked control projection");
         let mut facts = ExecutorHostFacts {
-            modes: &self.modes,
-            pdf_ignore_depth: self.pdf_ignore_depth,
-            telemetry: &mut self.episode_telemetry,
+            modes: &self.execution.modes,
+            pdf_ignore_depth: self.execution.pdf_ignore_depth,
+            telemetry: &mut self.execution.episode_telemetry,
         };
         let last = tex_command::CommandHostFacts::last_node_type(&mut facts, &context);
         context.observe_changed_command_projection(
@@ -247,7 +248,7 @@ impl<G> MainControl<G> {
 }
 impl<G> DirectDispatch<'_, '_, G> {
     fn deliver_control_command(&mut self) -> Result<ReplayStep, ExecError> {
-        if !self.control.main_control_entered {
+        if !self.control.execution.main_control_entered {
             let mut context = self
                 .stores
                 .command_context()
@@ -261,12 +262,17 @@ impl<G> DirectDispatch<'_, '_, G> {
                 );
             }
         }
-        if self.control.modes.current_mode() == Mode::DisplayMath
-            && self.control.modes.current_list().has_display_alignment()
+        if self.control.execution.modes.current_mode() == Mode::DisplayMath
+            && self
+                .control
+                .execution
+                .modes
+                .current_list()
+                .has_display_alignment()
         {
             return self.scan_display_alignment_tail();
         }
-        let phase = alignment_preamble(self.control.active_alignment.as_mut());
+        let phase = alignment_preamble(self.control.execution.active_alignment.as_mut());
         if phase.is_some() {
             self.scan_replay_step(phase)
         } else {
@@ -280,7 +286,7 @@ impl<G> MainControl<G> {
         let words = stores
             .max_save_stack_words(self.command_profile().capabilities().supports_etex())
             .expect("save-stack highwater");
-        self.max_save_stack = self.max_save_stack.max(words);
+        self.execution.max_save_stack = self.execution.max_save_stack.max(words);
     }
 }
 
@@ -304,9 +310,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                 context: "afterassignment admission",
             })?;
         let mut facts = ExecutorHostFacts {
-            modes: &self.control.modes,
-            pdf_ignore_depth: self.control.pdf_ignore_depth,
-            telemetry: &mut self.control.episode_telemetry,
+            modes: &self.control.execution.modes,
+            pdf_ignore_depth: self.control.execution.pdf_ignore_depth,
+            telemetry: &mut self.control.execution.episode_telemetry,
         };
         schedule_afterassignment(
             &mut self.control.command,
@@ -326,9 +332,9 @@ impl<G> MainControl<G> {
         character: Option<char>,
     ) {
         let context = stores.command_context().expect("character loop admission");
-        self.main_loop_active = character.is_some_and(|ch| {
+        self.execution.main_loop_active = character.is_some_and(|ch| {
             matches!(
-                self.modes.current_mode(),
+                self.execution.modes.current_mode(),
                 Mode::Horizontal | Mode::RestrictedHorizontal
             ) && u8::try_from(u32::from(ch)).ok().is_some_and(|code| {
                 context

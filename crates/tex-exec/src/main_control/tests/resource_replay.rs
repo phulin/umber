@@ -573,7 +573,7 @@ fn superscript_math_group_propagates_through_preloaded_input_probe() {
         run_to_end(&mut control, stores);
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(stores.count(1).expect("count register"), 23);
-        assert!(control.active_math_fields.is_empty());
+        assert!(control.execution.active_math_fields.is_empty());
         assert!(control.pending_resource_site().is_none());
     });
 }

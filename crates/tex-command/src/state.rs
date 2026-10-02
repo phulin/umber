@@ -1298,6 +1298,12 @@ impl<G> CommandState<G> {
     /// identity against this value.
     #[must_use]
     pub fn new(profile: CommandProfile) -> Self {
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_interpreter_construction();
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::InterpreterConstruction,
+        );
         let mut state = Self::default();
         state.roots.engine_semantics = CommandEngineSemantics::for_profile(profile);
         state.roots.profile = profile;

@@ -359,16 +359,11 @@ fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
         register_source(&mut control, br"H\ifhmode T\fi\ifvmode V\fi Q%");
         let mut effects = DiagnosticEffects::new();
         let mut context = stores.command_context().expect("context");
-        let mut facts = ExecutorHostFacts {
-            modes: &mut control.modes,
-            pdf_ignore_depth: control.pdf_ignore_depth,
-            telemetry: &mut control.episode_telemetry,
-        };
         let mut processor = command_processor(
             &mut control.command,
             control.fuel.fuel_mut(),
             &mut control.capabilities,
-            &mut facts,
+            &mut control.execution,
             &mut control.operation_observations,
             &mut effects,
             &mut context,
@@ -385,11 +380,19 @@ fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
                 };
                 consumed.push(ch);
                 processor.apply_completed_command(|_, _, _, _, _, execution| match ch {
-                    'H' => execution
-                        .modes
-                        .push(Mode::RestrictedHorizontal)
-                        .expect("enter mode"),
+                    'H' => {
+                        execution.main_loop_active = true;
+                        execution.boxes.recovery_simple_group_pending = true;
+                        execution
+                            .modes
+                            .push(Mode::RestrictedHorizontal)
+                            .expect("enter mode");
+                    }
                     'T' => {
+                        assert!(execution.main_loop_active);
+                        assert!(execution.boxes.recovery_simple_group_pending);
+                        execution.main_loop_active = false;
+                        execution.boxes.recovery_simple_group_pending = false;
                         assert_eq!(execution.modes.current_mode(), Mode::RestrictedHorizontal);
                         execution.modes.pop().expect("leave mode");
                     }
@@ -406,6 +409,8 @@ fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
         assert_eq!(result, tex_command::DeliveryStatus::Command);
         assert_eq!(consumed, "HTVQ");
         drop(processor);
-        assert_eq!(facts.modes.current_mode(), Mode::Vertical);
+        assert_eq!(control.execution.modes.current_mode(), Mode::Vertical);
+        assert!(!control.execution.main_loop_active);
+        assert!(!control.execution.boxes.recovery_simple_group_pending);
     });
 }

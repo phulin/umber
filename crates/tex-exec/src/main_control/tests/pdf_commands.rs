@@ -708,6 +708,7 @@ fn assert_dvi_rejection_precedes(
             let mut control = pdftex_form_control(stores);
             if restricted_horizontal {
                 control
+                    .execution
                     .modes
                     .push(Mode::RestrictedHorizontal)
                     .expect("test mode push");
@@ -778,7 +779,11 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         install_test_form(stores);
         let mut reference = pdftex_form_control(stores);
-        reference.modes.push(Mode::Math).expect("test mode push");
+        reference
+            .execution
+            .modes
+            .push(Mode::Math)
+            .expect("test mode push");
         register_source(&mut reference, br"\pdfrefxform 1");
         let state_before = stores.journal_cursor().expect("state cursor");
 
@@ -1067,7 +1072,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
         crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = pdftex_image_control(stores);
             if mode != Mode::Vertical {
-                control.modes.push(mode).expect("test mode push");
+                control.execution.modes.push(mode).expect("test mode push");
             }
             register_source(&mut control, br"\pdfrefximage 99");
             let state_before = stores.journal_cursor().expect("state cursor");
@@ -1105,7 +1110,11 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
         .expect("reference target image");
         assert_eq!(image.id().raw(), 1);
         let mut control = pdftex_image_control(stores);
-        control.modes.push(Mode::Math).expect("test mode push");
+        control
+            .execution
+            .modes
+            .push(Mode::Math)
+            .expect("test mode push");
         register_source(&mut control, br"\pdfrefximage 1");
         let state_before = stores.journal_cursor().expect("state cursor");
 
@@ -1140,7 +1149,7 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
     ] {
         crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = pdftex_annotation_control(stores);
-            control.modes.push(Mode::Horizontal).expect("test mode push");
+            control.execution.modes.push(Mode::Horizontal).expect("test mode push");
             register_source(&mut control, source);
             let state_before = stores.journal_cursor().expect("state cursor");
             assert!(
@@ -1215,6 +1224,7 @@ fn pdf_link_scans_its_action_after_the_mode_check() {
         .expect("integer parameter assignment");
         let mut control = pdftex_annotation_control(stores);
         control
+            .execution
             .modes
             .push(Mode::Horizontal)
             .expect("test mode push");
@@ -1255,6 +1265,7 @@ fn pdf_end_link_dvi_rejection_leaves_the_open_link() {
         .expect("integer parameter assignment");
         let mut control = pdftex_annotation_control(stores);
         control
+            .execution
             .modes
             .push(Mode::Horizontal)
             .expect("test mode push");
@@ -1334,7 +1345,7 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
             .expect("integer parameter assignment");
             let mut control = pdftex_destination_control(stores);
             if mode != Mode::Vertical {
-                control.modes.push(mode).expect("test mode push");
+                control.execution.modes.push(mode).expect("test mode push");
             }
             register_source(
                 &mut control,
@@ -1612,7 +1623,7 @@ fn pdf_outline_is_immediate_any_mode_document_state() {
             .expect("integer parameter assignment");
             let mut control = pdftex_outline_control(stores);
             if mode != Mode::Vertical {
-                control.modes.push(mode).expect("test mode push");
+                control.execution.modes.push(mode).expect("test mode push");
             }
             register_source(
                 &mut control,
@@ -1752,7 +1763,7 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
             .expect("integer parameter assignment");
             let mut control = pdftex_snapping_control(stores);
             if mode != Mode::Vertical {
-                control.modes.push(mode).expect("test mode push");
+                control.execution.modes.push(mode).expect("test mode push");
             }
             register_source(
                 &mut control,
@@ -2065,7 +2076,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
             .expect("integer parameter assignment");
             let mut control = pdftex_interword_control(stores);
             if mode != Mode::Vertical {
-                control.modes.push(mode).expect("test mode push");
+                control.execution.modes.push(mode).expect("test mode push");
             }
             register_source(
                 &mut control,
@@ -2236,7 +2247,7 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
             .expect("integer parameter assignment");
             let mut control = pdftex_interword_control(stores);
             if mode != Mode::Vertical {
-                control.modes.push(mode).expect("test mode push");
+                control.execution.modes.push(mode).expect("test mode push");
             }
             register_source(&mut control, br"\pdfrunninglinkoff\pdfrunninglinkon");
             run_to_end(&mut control, stores);
@@ -2422,7 +2433,7 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
             // a mode-specific final-cleanup sequence or silently adding `\end`.
             control.set_root_completion_policy(RootCompletionPolicy::StopAtRootEof);
             if mode != Mode::Vertical {
-                control.modes.push(mode).expect("test mode push");
+                control.execution.modes.push(mode).expect("test mode push");
             }
             register_source(&mut control, br"{\pdfspacefont{\n-space}}X");
             run_to_end(&mut control, stores);
@@ -2546,8 +2557,8 @@ fn outer_vertical_pdf_whatsits_cross_page_successors_before_final_end() {
                 .current_page_nodes()
                 .next()
                 .is_none()));
-            assert!(!control.page_region_succession_pending, "{name}");
-            assert!(!control.boxes.output_routine_active, "{name}");
+            assert!(!control.execution.page_region_succession_pending, "{name}");
+            assert!(!control.execution.boxes.output_routine_active, "{name}");
             admitted!(stores, |context| {
                 assert!(context.page_fire_up().is_none(), "{name}");
                 assert!(

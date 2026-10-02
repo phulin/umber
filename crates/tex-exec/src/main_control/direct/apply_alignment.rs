@@ -7,7 +7,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -43,8 +43,8 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
-        let suspended_alignment = self.control.active_alignment.is_some();
+        self.control.execution.main_loop_active = false;
+        let suspended_alignment = self.control.execution.active_alignment.is_some();
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -97,7 +97,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -123,7 +123,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let preamble = publication::publish_alignment_preamble(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             self.stores,
             alignment,
         )?;
@@ -135,6 +135,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             }
             let active = self
                 .control
+                .execution
                 .active_alignment
                 .as_mut()
                 .filter(|active| active.identity == preamble.alignment)
@@ -150,7 +151,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             active.align_peek_pending = true;
         }
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -183,7 +184,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -233,7 +234,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
         let finishing_alignment = self
             .control
             .command
@@ -277,7 +278,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
         let finishing_alignment = self.control.command.alignment_finish_observation(alignment);
 
         self.control.apply_direct_leaf(
@@ -316,7 +317,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -343,7 +344,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -394,7 +395,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,

@@ -97,3 +97,33 @@ can contain several native commands; removing cold handoffs changes this
 partition without changing replayed state or output. The resource-equivalence
 test requires real discarded work and exact restart/response counts while
 comparing complete preloaded and partitioned output byte for byte.
+
+## Native execution owner
+
+Main control separates the owned `CommandState`, fuel, resource capabilities,
+operation observer and resource-decline slot from one owned `ExecutionState`.
+That execution owner contains the existing mode, box, alignment, math,
+paragraph, output, job and driver fields. This is a partition of the real
+fields; it introduces no sampled facts, copied roots or additional semantic
+state. Neither owner dereferences to the old flat control layout.
+
+The reader borrows its own owners and the actual execution owner independently.
+A native terminal consumer reborrows the latter with the admitted state and
+command owners. The existing mode/prefix/reswitch switch remains the only
+execution authority. It must perform operand scans and semantic mutation at
+that consumption point, rather than returning a command product, an unbundled
+command tuple, a queued operation or an eligibility handoff. Actual output,
+resource, checkpoint and diagnostic demands stop the reader and return their
+real result after its loans unwind.
+
+The executor fact interface reads the execution owner's actual mode/list state.
+It retains no sample across execution. Source-free routines borrow the exact
+execution and command fields they need. Nested scanners use the same command
+state and admitted context; neither an empty replacement interpreter nor a
+replacement execution owner is installed to evade the borrow checker.
+
+Full checkpoints continue to capture command and execution roots through the
+existing aggregate contract. Group topology remains the sole native TeX save
+stack, and mode roots remain the same `ModeNest`. Moving a field into its
+execution owner changes no root, retention lifetime, capture eligibility or
+rollback rule. Formats serialize semantic state, never either borrow interface.

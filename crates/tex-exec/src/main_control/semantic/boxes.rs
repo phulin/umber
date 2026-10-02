@@ -163,7 +163,7 @@ pub(in crate::main_control) fn execute_box_register<G>(
                 modes,
                 stores,
                 command.diagnostic_effects,
-                command.state.state(),
+                &*command.state,
             )?;
         } else {
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;

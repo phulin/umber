@@ -9,7 +9,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -34,7 +34,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         let font_resource =
             self.control
                 .resolve_font_request(&mut request, self.stores, self.provider)?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -63,7 +63,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -93,7 +93,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -124,7 +124,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -150,7 +150,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,

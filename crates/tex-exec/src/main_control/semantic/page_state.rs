@@ -153,7 +153,7 @@ pub(in crate::main_control) fn execute_eject_residual_page<G>(
             .begin_end_job_ejection()
             .map_err(|_| ExecError::Fatal(FatalError::confusion("end job page progress")))?;
         crate::page_output::append_end_job_contributions(stores);
-        crate::page_builder::build_page(stores, command.diagnostic_effects, command.state.state())?;
+        crate::page_builder::build_page(stores, command.diagnostic_effects, &*command.state)?;
         if !stores.complete_end_job_ejection(progress) {
             return Err(ExecError::Fatal(FatalError::confusion(
                 "end job page progress",

@@ -44,13 +44,19 @@ not allocate a vector merely to publish one already-complete node.
   complete-job versus fragment completion, and terminal parking. Ownership
   transitions are direct calls into the private sibling modules below; none is
   a facade or second command front.
+- `src/main_control/execution_state.rs`: the actual execution, mode, box,
+  alignment, math, output and driver owner, disjoint from command input and
+  processor loans. Main control owns `CommandState` directly; no interpreter
+  wrapper or temporary replacement owner remains. Constructors initialize each
+  actual owner once, including checkpoint forks. The execution owner implements
+  live host fact queries; component-only cold loans share those exact queries.
 - `src/main_control/direct/`: the single packed mode/command/prefix switch in
   `dispatch.rs`, with synchronous `scan_*` routines and concrete `apply_*`
   methods organized by native command responsibility. `scan_macros.rs` releases
   actual scanner loans at cold owner and publication boundaries. The native
   fetch/reswitch loop retains its actual processor and context through RELAX, ordinary groups,
   integer/dimension/glue/token registers and parameters, arithmetic, definitions and let assignments, consuming scanner products at their actual destination and respecting the caller's remaining budget. An existing pending
-  character buffer demands mutable mode ownership and ends the processor loan. Actual diagnostic,
+  character buffer is flushed through the actual mutable mode loan. Actual diagnostic,
   observer/tracked, page/output, afterassignment and budget demands release the
   loan at the actual owner boundary; no command settlement tail exists. `scan_arithmetic.rs` scans concrete
   the final typed operand in that same processor; target selection and invalid-target
@@ -221,10 +227,6 @@ not allocate a vector merely to publish one already-complete node.
   `PackDiagnosticContext` line numbers and output-routine state; they do not
   capture or render an input-stack error context.
 - `src/retained_resource.rs` and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts. PDF image requests are defined by `tex-command` and passed through this host boundary directly.
-- `src/interpreter.rs`: session-lived canonical command-state ownership,
-  returning the real generation-typed command processor for an exclusive
-  call-local admitted-context borrow. Real processor drop owns scanner cleanup;
-  no lifecycle facade or per-command counters duplicate that borrow proof.
 - `src/retained_generation.rs`: Non-generic move-only external-store slot
   lease, universally generic admitted engine episodes, host-owned
   full-checkpoint replay for resource needs, the canonical packed reusable-row

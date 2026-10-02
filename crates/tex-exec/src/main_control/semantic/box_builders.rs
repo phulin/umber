@@ -301,7 +301,7 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
                 modes,
                 stores,
                 command.diagnostic_effects,
-                command.state.state(),
+                &*command.state,
             )?;
         }
         Ok(ReplayStep::Continue)

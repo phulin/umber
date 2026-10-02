@@ -20,17 +20,19 @@ pub(super) struct ExecutorHostFacts<'episode, G, Modes = &'episode ModeNest> {
     pub(super) telemetry: &'episode mut crate::EpisodeTelemetry,
 }
 
-impl<G, Modes: Borrow<ModeNest>> tex_command::CommandHostFacts<G>
-    for ExecutorHostFacts<'_, G, Modes>
-{
-    fn conditional_state(&mut self) -> tex_command::ConditionalState {
-        self.telemetry.record_host_fact_query();
-        self.modes.borrow().conditional_state()
+// Both implementations read their actual owner. The macro shares query
+// semantics without constructing a projection for each request.
+macro_rules! implement_host_facts {
+    (($($implementation:tt)*), $this:ident, $modes:expr, $telemetry:expr, $ignore_depth:expr) => {
+        $($implementation)* {
+    fn conditional_state(&mut $this) -> tex_command::ConditionalState {
+        ($telemetry).record_host_fact_query();
+        ($modes).conditional_state()
     }
 
-    fn diagnostic_mode_name(&mut self) -> &'static str {
-        self.telemetry.record_host_fact_query();
-        match self.modes.borrow().current_mode() {
+    fn diagnostic_mode_name(&mut $this) -> &'static str {
+        ($telemetry).record_host_fact_query();
+        match ($modes).current_mode() {
             Mode::Vertical => "vertical mode",
             Mode::InternalVertical => "internal vertical mode",
             Mode::Horizontal => "horizontal mode",
@@ -40,54 +42,72 @@ impl<G, Modes: Borrow<ModeNest>> tex_command::CommandHostFacts<G>
         }
     }
 
-    fn space_factor(&mut self) -> Option<i32> {
-        self.telemetry.record_host_fact_query();
+    fn space_factor(&mut $this) -> Option<i32> {
+        ($telemetry).record_host_fact_query();
         matches!(
-            self.modes.borrow().current_mode(),
+            ($modes).current_mode(),
             Mode::Horizontal | Mode::RestrictedHorizontal
         )
-        .then(|| self.modes.borrow().current_list().space_factor())
+        .then(|| ($modes).current_list().space_factor())
     }
 
-    fn prev_depth(&mut self, stores: &CommandContext<'_, G>) -> Option<Scaled> {
-        self.telemetry.record_host_fact_query();
-        let mode = self.modes.borrow().current_mode();
-        let ignored_depth = crate::mode::ignored_depth_with_handle(stores, self.pdf_ignore_depth);
+    fn prev_depth(&mut $this, stores: &CommandContext<'_, G>) -> Option<Scaled> {
+        ($telemetry).record_host_fact_query();
+        let mode = ($modes).current_mode();
+        let ignored_depth = crate::mode::ignored_depth_with_handle(stores, ($ignore_depth));
         // tex.web §418's `set_aux` twin of `space_factor`: `\prevdepth` is
         // readable only in vertical mode, where an unset `prev_depth` is
         // §215's `ignore_depth` initial value.
         matches!(mode, Mode::Vertical | Mode::InternalVertical).then(|| {
-            self.modes
-                .borrow()
+            ($modes)
                 .current_list()
                 .prev_depth()
                 .unwrap_or(ignored_depth)
         })
     }
 
-    fn prev_graf(&mut self) -> Option<i32> {
-        self.telemetry.record_host_fact_query();
+    fn prev_graf(&mut $this) -> Option<i32> {
+        ($telemetry).record_host_fact_query();
         // tex.web §422 walks to the nearest enclosing vertical level rather
         // than testing the current mode.
-        Some(self.modes.borrow().enclosing_vertical_prev_graf())
+        Some(($modes).enclosing_vertical_prev_graf())
     }
 
-    fn last_node(&mut self, stores: &CommandContext<'_, G>) -> Option<tex_command::LastNodeItem> {
-        self.telemetry.record_host_fact_query();
-        let tail = effective_tail_facts(self.modes.borrow(), stores);
-        self.telemetry
+    fn last_node(&mut $this, stores: &CommandContext<'_, G>) -> Option<tex_command::LastNodeItem> {
+        ($telemetry).record_host_fact_query();
+        let tail = effective_tail_facts(($modes), stores);
+        ($telemetry)
             .record_effective_tail_traversal(tail.traversed);
         tail.last_node
     }
 
-    fn last_node_type(&mut self, stores: &CommandContext<'_, G>) -> i32 {
-        self.telemetry.record_host_fact_query();
-        let tail = effective_tail_facts(self.modes.borrow(), stores);
-        self.telemetry
+    fn last_node_type(&mut $this, stores: &CommandContext<'_, G>) -> i32 {
+        ($telemetry).record_host_fact_query();
+        let tail = effective_tail_facts(($modes), stores);
+        ($telemetry)
             .record_effective_tail_traversal(tail.traversed);
         tail.last_node_type
     }
+        }
+    };
 }
+
+implement_host_facts!(
+    (impl<G, Modes: Borrow<ModeNest>> tex_command::CommandHostFacts<G>
+        for ExecutorHostFacts<'_, G, Modes>),
+    self,
+    self.modes.borrow(),
+    self.telemetry,
+    self.pdf_ignore_depth
+);
+
+implement_host_facts!(
+    (impl<G> tex_command::CommandHostFacts<G> for ExecutionState<G>),
+    self,
+    &self.modes,
+    self.episode_telemetry,
+    self.pdf_ignore_depth
+);
 
 /// Samples TeX82 §424 and e-TeX [26.424] from one effective-tail walk.
 ///

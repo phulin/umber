@@ -39,7 +39,7 @@ impl<G> MainControl<G> {
         let Some(candidate) = diagnostic_effects.take_first_recoverable() else {
             return;
         };
-        if self.first_recoverable_diagnostic.is_some() {
+        if self.execution.first_recoverable_diagnostic.is_some() {
             return;
         }
 
@@ -100,19 +100,20 @@ impl<G> MainControl<G> {
                 }
             })
             .collect();
-        self.first_recoverable_diagnostic = Some(Box::new(crate::FirstRecoverableDiagnostic {
-            kind: candidate.kind,
-            message: candidate.message,
-            arguments,
-            command,
-            command_operand,
-            observed_token,
-            origin: frozen_origin,
-            context: frozen_context,
-            mode,
-            scanner_status,
-            interaction: candidate.interaction,
-        }));
+        self.execution.first_recoverable_diagnostic =
+            Some(Box::new(crate::FirstRecoverableDiagnostic {
+                kind: candidate.kind,
+                message: candidate.message,
+                arguments,
+                command,
+                command_operand,
+                observed_token,
+                origin: frozen_origin,
+                context: frozen_context,
+                mode,
+                scanner_status,
+                interaction: candidate.interaction,
+            }));
     }
 
     pub(super) fn capture_first_causal_context(
@@ -120,11 +121,11 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostics: &[PendingDiagnostic<G>],
     ) {
-        if self.first_causal_context.is_none()
+        if self.execution.first_causal_context.is_none()
             && let Some(cause_kind) = diagnostics.iter().find_map(PendingDiagnostic::causal_kind)
         {
             let context = stores.command_context().expect("diagnostic admission");
-            self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
+            self.execution.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
                 &context,
                 self.command.diagnostic_input_context(8),
                 cause_kind,
@@ -136,9 +137,11 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
     ) {
-        if self.first_causal_context.is_none() && stores.world().error_channel().error_count() > 0 {
+        if self.execution.first_causal_context.is_none()
+            && stores.world().error_channel().error_count() > 0
+        {
             let context = stores.command_context().expect("live generation");
-            self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
+            self.execution.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
                 &context,
                 self.command.diagnostic_input_context(8),
                 "command-error",
@@ -152,18 +155,19 @@ impl<G> MainControl<G> {
         effects: &mut DiagnosticEffects,
         diagnostics: Vec<PendingDiagnostic<G>>,
     ) -> Result<(), ExecError> {
-        if self.first_causal_context.is_none() {
+        if self.execution.first_causal_context.is_none() {
             let cause = if context.reported_error_count() > 0 {
                 Some("command-error")
             } else {
                 diagnostics.iter().find_map(PendingDiagnostic::causal_kind)
             };
             if let Some(cause) = cause {
-                self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
-                    context,
-                    self.command.diagnostic_input_context(8),
-                    cause,
-                ));
+                self.execution.first_causal_context =
+                    Some(crate::FrozenDiagnosticContext::capture(
+                        context,
+                        self.command.diagnostic_input_context(8),
+                        cause,
+                    ));
             }
         }
         if diagnostics.is_empty() {
@@ -177,7 +181,8 @@ impl<G> MainControl<G> {
             .as_ref()
             .and_then(ObservationBuffer::limit_error)
             .or_else(|| {
-                self.page_output_observations
+                self.execution
+                    .page_output_observations
                     .as_ref()
                     .and_then(ObservationBuffer::limit_error)
             })
@@ -191,7 +196,7 @@ impl<G> MainControl<G> {
         termination: OperationTermination,
     ) -> Option<ExecError> {
         let (Some(start), Some(pending)) = (
-            self.operation_receipt_start,
+            self.execution.operation_receipt_start,
             self.operation_observations.as_mut(),
         ) else {
             return self.operation_evidence_limit_error();
@@ -289,17 +294,17 @@ impl<G> MainControl<G> {
         if applied.is_err() {
             return None;
         }
-        if self.dumped_format.is_some() != initial_format_dump {
+        if self.execution.dumped_format.is_some() != initial_format_dump {
             return Some(crate::EpisodeCommitBoundary::Semantic(
                 crate::SemanticEpisodeBarrier::Format,
             ));
         }
-        if self.fatal.is_some() {
+        if self.execution.fatal.is_some() {
             return Some(crate::EpisodeCommitBoundary::Semantic(
                 crate::SemanticEpisodeBarrier::Diagnostic,
             ));
         }
-        if self.first_causal_context.is_some() != initial_diagnostic
+        if self.execution.first_causal_context.is_some() != initial_diagnostic
             || stores.world().error_channel().error_count() != initial_error_count
         {
             return Some(crate::EpisodeCommitBoundary::Semantic(
@@ -314,7 +319,7 @@ impl<G> MainControl<G> {
                 crate::SemanticEpisodeBarrier::Output,
             ));
         }
-        if self.paragraph_checkpoint_cut {
+        if self.execution.paragraph_checkpoint_cut {
             return Some(crate::EpisodeCommitBoundary::NamedCheckpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
             ));
@@ -348,7 +353,8 @@ impl<G> MainControl<G> {
         _initial_boundaries: usize,
         initial_effect_pos: tex_state::EffectPos,
     ) {
-        self.episode_telemetry
+        self.execution
+            .episode_telemetry
             .record_commit(crate::EpisodeCommit::new(
                 operations
                     .try_into()
@@ -359,17 +365,19 @@ impl<G> MainControl<G> {
             && boundary
                 != crate::EpisodeCommitBoundary::Semantic(crate::SemanticEpisodeBarrier::Output)
         {
-            self.episode_telemetry
+            self.execution
+                .episode_telemetry
                 .record_semantic_barrier(crate::SemanticEpisodeBarrier::Output);
         }
         if stores.world().effect_pos() != initial_effect_pos
             && boundary
                 != crate::EpisodeCommitBoundary::Semantic(crate::SemanticEpisodeBarrier::Effect)
         {
-            self.episode_telemetry
+            self.execution
+                .episode_telemetry
                 .record_semantic_barrier(crate::SemanticEpisodeBarrier::Effect);
         }
-        self.advance_telemetry.commits += 1;
+        self.execution.advance_telemetry.commits += 1;
     }
 
     /// Halts the session at a failed operation without undoing it.
@@ -379,7 +387,7 @@ impl<G> MainControl<G> {
     /// full checkpoint, which replaces every root this operation touched and
     /// abandons its attempt scope. The latch refuses any other entry.
     pub(super) fn halt_direct_operation(&mut self) {
-        self.halted = true;
+        self.execution.halted = true;
     }
 
     /// Closes the observed receipt before committing a direct operation that
@@ -393,7 +401,7 @@ impl<G> MainControl<G> {
         termination: OperationTermination,
     ) -> Option<ExecError> {
         let evidence_error = self.admit_observed_receipt(stores, termination);
-        self.error_operation_committed = true;
+        self.execution.error_operation_committed = true;
         if diagnostic_effects.has_first_recoverable() {
             self.promote_first_recoverable(stores, diagnostic_effects);
         }
@@ -450,14 +458,14 @@ impl<G> MainControl<G> {
             .command
             .output_open_context(&stores.command_context().expect("live generation"));
         crate::diagnostics::report_irrecoverable_error(stores, fatal, context);
-        self.captured_fatal_origin = match &error {
+        self.execution.captured_fatal_origin = match &error {
             ExecError::Captured { site, frozen, .. } if fatal != FatalError::TooManyErrors => {
                 Some((
                     *site,
                     frozen
                         .as_deref()
                         .and_then(|evidence| evidence.origin.clone()),
-                    self.first_causal_context.clone().or_else(|| {
+                    self.execution.first_causal_context.clone().or_else(|| {
                         frozen
                             .as_deref()
                             .and_then(|evidence| evidence.context.clone())
@@ -513,7 +521,7 @@ impl<G> MainControl<G> {
         let applied = match applied {
             Ok(applied) => applied,
             Err(error) => {
-                self.page_output_observations = None;
+                self.execution.page_output_observations = None;
                 return Err(error);
             }
         };
@@ -524,10 +532,12 @@ impl<G> MainControl<G> {
         // next command step and that command's raw delivery overtakes them.
         let pending_page_output = PendingPageOutputFacts::capture_runtime(stores);
         let opens_output_batch = self
+            .execution
             .page_output_observations
             .as_ref()
             .is_some_and(|buffer| !buffer.is_empty())
-            || (pending_page_output.fire_up.is_some() && !self.boxes.output_routine_active);
+            || (pending_page_output.fire_up.is_some()
+                && !self.execution.boxes.output_routine_active);
         self.fire_pending_page_output(stores, diagnostic_effects, pending_page_output)?;
         {
             #[cfg(feature = "profiling")]
@@ -567,17 +577,17 @@ impl<G> MainControl<G> {
                         output_start.effect_count,
                         output_start.prepared_page_count,
                         stores,
-                        &self.prepared_dvi_pages,
+                        &self.execution.prepared_dvi_pages,
                     )
                     .into_iter()
                     .map(CommandObservation::Effect),
                 );
-                if let Some(mut observations) = self.page_output_observations.take() {
+                if let Some(mut observations) = self.execution.page_output_observations.take() {
                     observations.append_to(&mut records);
                 }
                 self.observe_committed(records);
             }
-            self.page_output_observations = None;
+            self.execution.page_output_observations = None;
         }
         self.finish_paragraph_boundary(output_start.outer_paragraph_was_active, stores);
         Ok(applied)
@@ -592,19 +602,20 @@ impl<G> MainControl<G> {
         if !outer_paragraph_was_active {
             return;
         }
-        if self.paragraph_checkpoint_demand.is_none() {
+        if self.execution.paragraph_checkpoint_demand.is_none() {
             return;
         }
-        let root_is_active = self.command.current_file_source_id() == self.root_main_source;
+        let root_is_active =
+            self.command.current_file_source_id() == self.execution.root_main_source;
         let context = stores
             .command_context()
             .expect("paragraph checkpoint admission");
         if root_is_active
             && context.execution_group_depth() == 0
-            && self.modes.current_mode() == Mode::Vertical
-            && self.modes.depth() == 1
+            && self.execution.modes.current_mode() == Mode::Vertical
+            && self.execution.modes.depth() == 1
         {
-            self.paragraph_checkpoint_cut = true;
+            self.execution.paragraph_checkpoint_cut = true;
         }
     }
 }
@@ -643,27 +654,28 @@ impl<G> MainControl<G> {
             error.freeze_diagnostic_origin(&mut context, self.command.diagnostic_input_context(8))
         };
         if let Some(fatal) = error.as_fatal() {
-            if self.first_causal_context.is_none() {
+            if self.execution.first_causal_context.is_none() {
                 let context = stores.command_context().expect("live generation");
-                self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
-                    &context,
-                    self.command.diagnostic_input_context(8),
-                    "command-error",
-                ));
+                self.execution.first_causal_context =
+                    Some(crate::FrozenDiagnosticContext::capture(
+                        &context,
+                        self.command.diagnostic_input_context(8),
+                        "command-error",
+                    ));
             }
             self.promote_first_recoverable(stores, diagnostic_effects);
             let context = self
                 .command
                 .output_open_context(&stores.command_context().expect("live generation"));
             crate::diagnostics::report_irrecoverable_error(stores, fatal, context);
-            self.captured_fatal_origin = match &error {
+            self.execution.captured_fatal_origin = match &error {
                 ExecError::Captured { site, frozen, .. } if fatal != FatalError::TooManyErrors => {
                     Some((
                         *site,
                         frozen
                             .as_deref()
                             .and_then(|evidence| evidence.origin.clone()),
-                        self.first_causal_context.clone().or_else(|| {
+                        self.execution.first_causal_context.clone().or_else(|| {
                             frozen
                                 .as_deref()
                                 .and_then(|evidence| evidence.context.clone())
@@ -709,7 +721,7 @@ impl<G> MainControl<G> {
                     name,
                     original_name,
                 } => {
-                    self.pending_resource_site = site.primary_origin();
+                    self.execution.pending_resource_site = site.primary_origin();
                     Ok(
                         self.observed_suspension(declined_need.unwrap_or(ResourceNeed::Input {
                             name,
@@ -718,19 +730,19 @@ impl<G> MainControl<G> {
                     )
                 }
                 ExecError::MissingInputProbe { request } => {
-                    self.pending_resource_site = site.primary_origin();
+                    self.execution.pending_resource_site = site.primary_origin();
                     Ok(self.observed_suspension(
                         declined_need.unwrap_or(ResourceNeed::InputProbe { request }),
                     ))
                 }
                 ExecError::MissingFont { request } => {
-                    self.pending_resource_site = site.primary_origin();
+                    self.execution.pending_resource_site = site.primary_origin();
                     Ok(self.observed_suspension(
                         declined_need.unwrap_or(ResourceNeed::Font { request: *request }),
                     ))
                 }
                 ExecError::MissingPdfImage { request } => {
-                    self.pending_resource_site = site.primary_origin();
+                    self.execution.pending_resource_site = site.primary_origin();
                     Ok(self.observed_suspension(
                         declined_need.unwrap_or(ResourceNeed::PdfImage { request: *request }),
                     ))
@@ -767,7 +779,7 @@ impl<G> MainControl<G> {
         // A host answer is retained by the outer candidate, but it cannot
         // revive this MainControl object; only full checkpoint replay clears
         // the latch.
-        self.halted = true;
+        self.execution.halted = true;
         if let Some(pending) = self.operation_observations.as_mut() {
             pending.record_resource(need.clone());
             pending
@@ -798,7 +810,7 @@ pub(super) struct OperationReceiptStart {
 
 /// Explicit live-observer boundary for detached shipout geometry.
 pub(super) struct MainControlShipoutGeometrySink<'a, G> {
-    pub(super) command: &'a PersistentInterpreter<G>,
+    pub(super) command: &'a CommandState<G>,
     pub(super) observations: &'a mut ObservationSlot,
 }
 
@@ -814,7 +826,7 @@ pub(super) struct MainControlPackGeometrySink<'a> {
 }
 
 pub(super) fn pack_geometry_sink<'a, G>(
-    command: &PersistentInterpreter<G>,
+    command: &CommandState<G>,
     observations: &'a mut ObservationSlot,
 ) -> MainControlPackGeometrySink<'a> {
     MainControlPackGeometrySink {

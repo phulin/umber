@@ -45,7 +45,7 @@ macro_rules! direct_native_semantic {
             $this.effects,
             std::mem::take(&mut $this.diagnostics),
         )?;
-        $this.control.main_loop_active = false;
+        $this.control.execution.main_loop_active = false;
         let $receipts = &mut $this
             .control
             .operation_observations
@@ -83,7 +83,7 @@ macro_rules! direct_apply_relax {
             result,
             semantic::execute_relax(
                 &mut $admission,
-                Some(&mut $this.control.modes),
+                Some(&mut $this.control.execution.modes),
                 $this.effects,
                 $this.control.fuel.fuel_mut(),
             )

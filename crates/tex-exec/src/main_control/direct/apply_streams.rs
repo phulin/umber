@@ -45,7 +45,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 .close_in(replay_stream_slot(*stream));
             return self.finish_host(Ok(ReplayStep::Continue));
         }
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -68,7 +68,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -94,7 +94,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -115,14 +115,14 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut tokens = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
                 .expect("token publication admission"),
             tokens,
         )?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -143,14 +143,14 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut tokens = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
                 .expect("token publication admission"),
             tokens,
         )?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,

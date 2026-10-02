@@ -219,7 +219,7 @@ fn format_font_suspension_while_closing_box_retains_active_owner() {
 
             assert_eq!(stores.count(0).expect("count register"), 23);
             assert!(stores.copy_box_to_page(0).is_some());
-            assert!(control.boxes.active_boxes.is_empty());
+            assert!(control.execution.boxes.active_boxes.is_empty());
             assert!(
                 !terminal_text(stores).contains("Too many }'s"),
                 "{}",

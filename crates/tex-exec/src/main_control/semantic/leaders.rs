@@ -54,7 +54,7 @@ pub(in crate::main_control) fn execute_leaders<G>(
             modes,
             stores,
             command.diagnostic_effects,
-            command.state.state(),
+            &*command.state,
         )?;
         Ok(ReplayStep::Continue)
     }
@@ -91,7 +91,7 @@ pub(in crate::main_control) fn execute_leader_register<G>(
                 modes,
                 stores,
                 command.diagnostic_effects,
-                command.state.state(),
+                &*command.state,
             )?;
         }
         Ok(ReplayStep::Continue)

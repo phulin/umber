@@ -395,12 +395,16 @@ fn display_resume_snapshots_hyphenation_context_for_following_paragraph() {
         control
             .resume_display_inner(stores, &mut effects, Vec::new(), false, &mut None)
             .expect("display resume");
-        assert_eq!(control.modes.current_mode(), Mode::Horizontal);
+        assert_eq!(control.execution.modes.current_mode(), Mode::Horizontal);
         assert_eq!(
-            control.modes.current_list().initial_hyphen_context(),
+            control
+                .execution
+                .modes
+                .current_list()
+                .initial_hyphen_context(),
             (7, 2, 3)
         );
-        assert_eq!(control.modes.current_list().hyphen_language(), 7);
+        assert_eq!(control.execution.modes.current_list().hyphen_language(), 7);
     });
 }
 #[test]

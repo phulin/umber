@@ -151,7 +151,7 @@ fn resource_replay_discards_interrupted_groups_builders_effects_and_pages() {
             assert!(matches!(need, Some(ResourceNeed::Input { .. })));
             assert_eq!(stores.count(0).expect("local count"), 9);
             assert!(admitted!(stores, |context| context.execution_group_depth()) > 0);
-            assert!(!control.boxes.active_boxes.is_empty());
+            assert!(!control.execution.boxes.active_boxes.is_empty());
             let spent = control.fuel_burned();
             if attempt == 0 {
                 let mut foreign_output = OutputLedger::new();
@@ -166,7 +166,7 @@ fn resource_replay_discards_interrupted_groups_builders_effects_and_pages() {
                 assert_eq!(stores.count(0).expect("unchanged local count"), 9);
                 assert!(admitted!(stores, |context| context.execution_group_depth()) > 0);
                 assert!(
-                    !control.boxes.active_boxes.is_empty(),
+                    !control.execution.boxes.active_boxes.is_empty(),
                     "failed admission cannot discard interrupted owners"
                 );
                 assert_eq!(control.fuel_burned(), spent);
@@ -184,7 +184,7 @@ fn resource_replay_discards_interrupted_groups_builders_effects_and_pages() {
                 admitted!(stores, |context| context.execution_group_depth()),
                 0
             );
-            assert!(control.boxes.active_boxes.is_empty());
+            assert!(control.execution.boxes.active_boxes.is_empty());
             assert!(control.command.named_boundary_is_quiescent());
             assert_eq!(stores.world().effect_pos(), effect_prefix);
             assert_eq!(stores.world().committed_artifacts().len(), artifact_prefix);

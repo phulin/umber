@@ -122,6 +122,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   persistent command state, retirement-owned executor replay-completion
   fences transferred directly to §325/§390 descendants, current-generation
   execution scratch, pending afterassignment, and direct semantic mutation. It owns no group topology or aftergroup lane. `CommandProcessor::end_group` consumes the native state stack and links aftergroup words directly into final backup input; restoration callbacks run synchronously.
+  Main control holds this actual state directly; the retired interpreter wrapper
+  remains absent. Profiling-only construction and processor-loan counters attach
+  to the real owners, with no ordinary runtime bookkeeping.
   `src/state/attempt_transition.rs` owns synchronous child scopes
   and halted full-checkpoint abandonment;
   `src/state/projection.rs` owns allocation-free retained-byte

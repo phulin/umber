@@ -4,7 +4,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_continue(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -19,7 +19,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_end_of_input(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -87,7 +87,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         incomplete_conditions: Vec<tex_command::IncompleteCondition>,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
         let result = {
             let mut context = self
                 .stores
@@ -104,7 +104,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             result
         };
         let step = result?;
-        if self.control.initex && dump {
+        if self.control.execution.initex && dump {
             let context = self
                 .stores
                 .command_context()
@@ -120,7 +120,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 .command_context()
                 .expect("format string pool")
                 .make_string_pool_string(&receipt.pool_string());
-            self.control.dumped_format = Some(receipt);
+            self.control.execution.dumped_format = Some(receipt);
         }
         if step == ReplayStep::End {
             self.stores
@@ -140,7 +140,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 self.output_start.effect_count,
                 self.output_start.prepared_page_count,
                 self.stores,
-                &self.control.prepared_dvi_pages,
+                &self.control.execution.prepared_dvi_pages,
             )
             .into_iter()
             .map(CommandObservation::Effect),
@@ -151,7 +151,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 .into_iter()
                 .map(CommandObservation::Effect),
         );
-        if let Some(mut observations) = self.control.page_output_observations.take() {
+        if let Some(mut observations) = self.control.execution.page_output_observations.take() {
             observations.append_to(&mut records);
         }
         self.control.observe_committed(records);
@@ -163,7 +163,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_eject_residual_page(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -183,7 +183,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -202,7 +202,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_space_factor(&mut self, mut value: i32) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
         if !(1..=32767).contains(&value) {
             self.stores
                 .world_mut()
@@ -226,7 +226,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_prev_graf(&mut self, mut value: i32) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
         if value < 0 {
             self.stores
                 .world_mut()
@@ -254,7 +254,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -277,7 +277,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,

@@ -5,7 +5,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         &mut self,
         primitive: UnexpandablePrimitive,
     ) -> Result<ReplayStep, ExecError> {
-        let boxes = &self.control.boxes;
+        let boxes = &self.control.execution.boxes;
 
         let mut admitted_context = self
             .stores
@@ -13,9 +13,9 @@ impl<G> DirectDispatch<'_, '_, G> {
             .expect("direct scanner admission");
 
         let mut host_facts = ExecutorHostFacts {
-            modes: &self.control.modes,
-            pdf_ignore_depth: self.control.pdf_ignore_depth,
-            telemetry: &mut self.control.episode_telemetry,
+            modes: &self.control.execution.modes,
+            pdf_ignore_depth: self.control.execution.pdf_ignore_depth,
+            telemetry: &mut self.control.execution.episode_telemetry,
         };
         let mut owned_processor = if let Some(provider) = self.provider.as_deref_mut() {
             command_processor_with_resource_provider(
@@ -76,7 +76,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     }
 
     pub(super) fn scan_pdf_font_expand_assignment(&mut self) -> Result<ReplayStep, ExecError> {
-        let boxes = &self.control.boxes;
+        let boxes = &self.control.execution.boxes;
 
         let mut admitted_context = self
             .stores
@@ -84,9 +84,9 @@ impl<G> DirectDispatch<'_, '_, G> {
             .expect("direct scanner admission");
 
         let mut host_facts = ExecutorHostFacts {
-            modes: &self.control.modes,
-            pdf_ignore_depth: self.control.pdf_ignore_depth,
-            telemetry: &mut self.control.episode_telemetry,
+            modes: &self.control.execution.modes,
+            pdf_ignore_depth: self.control.execution.pdf_ignore_depth,
+            telemetry: &mut self.control.execution.episode_telemetry,
         };
         let mut owned_processor = if let Some(provider) = self.provider.as_deref_mut() {
             command_processor_with_resource_provider(

@@ -1384,7 +1384,7 @@ fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
             let mut control = MainControl::tex82_initex(stores);
             control.set_fuel_limit(128).expect("bounded command fuel");
             if mode != Mode::Vertical {
-                control.modes.push(mode).expect("test mode push");
+                control.execution.modes.push(mode).expect("test mode push");
             }
             register_source(&mut control, br"\forcedendv\count0=23");
 

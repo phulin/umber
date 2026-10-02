@@ -7,7 +7,7 @@ pub(in crate::main_control) fn execute_after_group<G>(
     token: &mut tex_state::token::TracedTokenWord,
 ) -> Result<ReplayStep, ExecError> {
     {
-        match command.state.state_mut().save_aftergroup(stores, *token) {
+        match command.state.save_aftergroup(stores, *token) {
             // TeX82 §280's `save_for_after` consumes the operand at every
             // level, but creates an `insert_token` save word only when
             // `cur_level > level_one`. `NoOpenGroup` is therefore the
@@ -30,7 +30,6 @@ pub(in crate::main_control) fn execute_after_assignment<G>(
     {
         command
             .state
-            .state_mut()
             .set_afterassignment(&*stores, *token)
             .expect("afterassignment uses the synchronized command generation");
         Ok(ReplayStep::Continue)

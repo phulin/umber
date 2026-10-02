@@ -332,7 +332,7 @@ pub(in crate::main_control) fn execute_penalty<G>(
             modes,
             stores,
             command.diagnostic_effects,
-            command.state.state(),
+            &*command.state,
         )?;
         Ok(ReplayStep::Continue)
     }

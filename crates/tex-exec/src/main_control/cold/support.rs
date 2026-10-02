@@ -165,7 +165,7 @@ pub(in crate::main_control) fn warn_cross_file_group_close<G>(
 /// assignment has committed. TeX82 §1269 assigns it to `cur_tok` and invokes
 /// §325 `back_input`, so it must use the ordinary canonical backup level.
 pub(in crate::main_control) fn schedule_afterassignment<G>(
-    command: &mut PersistentInterpreter<G>,
+    command: &mut CommandState<G>,
     fuel: &mut tex_command::CommandFuel,
     capabilities: &mut CommandHostCapabilities,
     host_facts: &mut dyn tex_command::CommandHostFacts<G>,
@@ -175,7 +175,6 @@ pub(in crate::main_control) fn schedule_afterassignment<G>(
 ) -> Result<(), ExecError> {
     let token = {
         command
-            .state_mut()
             .take_afterassignment(stores)
             .expect("afterassignment uses the synchronized command generation")
     };
@@ -1027,7 +1026,7 @@ pub(in crate::main_control) fn append_shifted_box<G>(
         modes,
         stores,
         command.diagnostic_effects,
-        command.state.state(),
+        &*command.state,
     )
 }
 

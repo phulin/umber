@@ -36,7 +36,7 @@ impl<G> MainControl<G> {
         );
         let observing = self.operation_observations.is_some();
         let mut assignment_receipts = observing.then(Vec::new);
-        let output_routine_was_active = self.boxes.output_routine_active;
+        let output_routine_was_active = self.execution.boxes.output_routine_active;
         let mut command = CommandMachine {
             state: &mut self.command,
             fuel: self.fuel.fuel_mut(),
@@ -44,37 +44,37 @@ impl<G> MainControl<G> {
             resource_provider: operation_resource_provider.take(),
             declined_resource_attempt: &mut self.declined_resource_attempt,
             host_facts: CommandMachineHostFacts::Detached {
-                pdf_ignore_depth: self.pdf_ignore_depth,
-                telemetry: &mut self.episode_telemetry,
+                pdf_ignore_depth: self.execution.pdf_ignore_depth,
+                telemetry: &mut self.execution.episode_telemetry,
             },
             observations: &mut self.operation_observations,
             assignment_receipts: assignment_receipts.as_mut(),
             diagnostic_effects,
-            shown_mode: &mut self.shown_mode,
-            initex: self.initex,
-            emit_dvi_override: self.emit_dvi_override,
-            immediate_prints: &mut self.immediate_prints,
-            prepared_shipout: &mut self.prepared_shipout,
+            shown_mode: &mut self.execution.shown_mode,
+            initex: self.execution.initex,
+            emit_dvi_override: self.execution.emit_dvi_override,
+            immediate_prints: &mut self.execution.immediate_prints,
+            prepared_shipout: &mut self.execution.prepared_shipout,
             pending_show_completion: None,
             pending_outer_page_build_context: None,
-            output_routine_active: self.boxes.output_routine_active,
+            output_routine_active: self.execution.boxes.output_routine_active,
         };
         let (mut result, mut pending_page_output) = {
             let mut admitted_context = stores.command_context().expect("live semantic generation");
             let context = &mut admitted_context;
             let result = apply_leaf(
                 context,
-                &mut self.modes,
-                &mut self.next_alignment_identity,
-                &mut self.active_alignment,
+                &mut self.execution.modes,
+                &mut self.execution.next_alignment_identity,
+                &mut self.execution.active_alignment,
                 &mut command,
-                &mut self.boxes,
-                &self.active_discretionaries,
-                &self.active_math_choices,
-                &mut self.active_math_fields,
-                &self.active_math_left_boundaries,
-                &self.active_math_shifts,
-                &mut self.prepared_dvi_pages,
+                &mut self.execution.boxes,
+                &self.execution.active_discretionaries,
+                &self.execution.active_math_choices,
+                &mut self.execution.active_math_fields,
+                &self.execution.active_math_left_boundaries,
+                &self.execution.active_math_shifts,
+                &mut self.execution.prepared_dvi_pages,
             );
             if result.is_ok() {
                 command.publish_named_token_list_pushes(context);
@@ -123,7 +123,7 @@ impl<G> MainControl<G> {
                 .publish_diagnostic_effects_preserving(command.diagnostic_effects);
             let mut stores = stores.command_context().expect("live generation");
             match crate::vertical::build_page_if_outer_vertical_with_error_context(
-                &self.modes,
+                &self.execution.modes,
                 &mut stores,
                 command.diagnostic_effects,
                 &context,
@@ -186,12 +186,13 @@ impl<G> MainControl<G> {
                 stores
                     .world_mut()
                     .publish_diagnostic_effects_preserving(command.diagnostic_effects);
-                let staged = shipout_replay_box(shipout, stores, &mut command, &self.modes);
+                let staged =
+                    shipout_replay_box(shipout, stores, &mut command, &self.execution.modes);
                 stores.release_shipout_source();
                 match staged {
                     Ok(publication) => {
                         if let Some(receipt) = publication.and_then(|publication| publication.dvi) {
-                            push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
+                            push_prepared_dvi_page(&mut self.execution.prepared_dvi_pages, receipt);
                         }
                     }
                     Err(error) => result = Err(error),
@@ -209,7 +210,7 @@ impl<G> MainControl<G> {
             }
         }
         let completed_output_routine =
-            output_routine_was_active && !self.boxes.output_routine_active;
+            output_routine_was_active && !self.execution.boxes.output_routine_active;
         operation_resource_provider = command.resource_provider.take();
         drop(command);
         *resource_provider = operation_resource_provider;
@@ -218,11 +219,11 @@ impl<G> MainControl<G> {
             // complete held-over contribution closure. Rotate only now, after
             // any user `\shipout` has detached its output and after box255 has
             // either been consumed or diagnosed and cleared.
-            self.page_region_succession_pending = true;
+            self.execution.page_region_succession_pending = true;
             self.finish_pending_page_region_succession(stores);
         }
         if matches!(result, Ok(ReplayStep::EndOfInput))
-            && self.root_completion == RootCompletionPolicy::RequireTeXEnd
+            && self.execution.root_completion == RootCompletionPolicy::RequireTeXEnd
         {
             result = Ok(self.handle_root_end_of_input(stores));
         }
@@ -267,7 +268,7 @@ impl<G> MainControl<G> {
                 output_start.effect_count,
                 output_start.prepared_page_count,
                 stores,
-                &self.prepared_dvi_pages,
+                &self.execution.prepared_dvi_pages,
             );
             records.extend(
                 assignment_receipts
@@ -282,11 +283,11 @@ impl<G> MainControl<G> {
             for shipout in committed_shipout_observations(output_start.artifact_count, stores) {
                 records.push(CommandObservation::Effect(shipout));
             }
-            if let Some(mut observations) = self.page_output_observations.take() {
+            if let Some(mut observations) = self.execution.page_output_observations.take() {
                 observations.append_to(&mut records);
             }
             self.observe_committed(records);
         }
-        self.page_output_observations = None;
+        self.execution.page_output_observations = None;
     }
 }

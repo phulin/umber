@@ -5,8 +5,8 @@ impl<G> DirectDispatch<'_, '_, G> {
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<ReplayStep, ExecError> {
-        let mode = self.control.modes.current_mode();
-        let boxes = &self.control.boxes;
+        let mode = self.control.execution.modes.current_mode();
+        let boxes = &self.control.execution.boxes;
 
         let mut admitted_context = self
             .stores
@@ -15,9 +15,9 @@ impl<G> DirectDispatch<'_, '_, G> {
         let innermost_group = admitted_context.innermost_group_kind();
 
         let mut host_facts = ExecutorHostFacts {
-            modes: &self.control.modes,
-            pdf_ignore_depth: self.control.pdf_ignore_depth,
-            telemetry: &mut self.control.episode_telemetry,
+            modes: &self.control.execution.modes,
+            pdf_ignore_depth: self.control.execution.pdf_ignore_depth,
+            telemetry: &mut self.control.execution.episode_telemetry,
         };
         let mut owned_processor = if let Some(provider) = self.provider.as_deref_mut() {
             command_processor_with_resource_provider(
@@ -54,7 +54,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let shown_mode = &mut self.control.shown_mode;
+        let shown_mode = &mut self.control.execution.shown_mode;
 
         let scan_origin = self.current_origin;
         prepare_command_trace(processor, mode, *shown_mode);
@@ -108,10 +108,10 @@ impl<G> DirectDispatch<'_, '_, G> {
         &mut self,
         alignment: AlignmentIdentity,
     ) -> Result<ReplayStep, ExecError> {
-        let mode = self.control.modes.current_mode();
-        let boxes = &self.control.boxes;
+        let mode = self.control.execution.modes.current_mode();
+        let boxes = &self.control.execution.boxes;
 
-        let main_loop_active = self.control.main_loop_active;
+        let main_loop_active = self.control.execution.main_loop_active;
         let mut admitted_context = self
             .stores
             .command_context()
@@ -119,9 +119,9 @@ impl<G> DirectDispatch<'_, '_, G> {
         let innermost_group = admitted_context.innermost_group_kind();
 
         let mut host_facts = ExecutorHostFacts {
-            modes: &self.control.modes,
-            pdf_ignore_depth: self.control.pdf_ignore_depth,
-            telemetry: &mut self.control.episode_telemetry,
+            modes: &self.control.execution.modes,
+            pdf_ignore_depth: self.control.execution.pdf_ignore_depth,
+            telemetry: &mut self.control.execution.episode_telemetry,
         };
         let mut owned_processor = if let Some(provider) = self.provider.as_deref_mut() {
             command_processor_with_resource_provider(
@@ -158,7 +158,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             };
         }
 
-        let shown_mode = &mut self.control.shown_mode;
+        let shown_mode = &mut self.control.execution.shown_mode;
 
         let scan_origin = self.current_origin;
         prepare_command_trace(processor, mode, *shown_mode);

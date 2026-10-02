@@ -267,9 +267,11 @@ only at its demanded cold string consumer.
 
 `CommandProcessor` retains the concrete type of the live `CommandHostFacts`
 provider. Initial processors contain only the zero-sized initial facts. The
-executor lends its actual mode owner mutably; a native consumer can change it
+executor can lend its complete actual execution owner mutably; a native consumer can change its mode, box and driver fields
 through `apply_completed_command`, and subsequent conditionals query the same
-live stack. Cold query helpers may borrow the stack immutably, and genuine
+live stack. Main control owns `CommandState` directly, without an interpreter
+wrapper, and both session construction and checkpoint forks initialize their
+actual owners exactly once. Cold query helpers may borrow the stack immutably, and genuine
 query-only scanner and recursive resource reborrows erase the provider type to
 keep their loan shape finite and share the cold reader/scanner specialization. No provider, mode sample, callback or delivery product enters a
 checkpoint. `consume_main_control` uses the canonical expanded reader with its

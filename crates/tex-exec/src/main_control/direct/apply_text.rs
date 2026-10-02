@@ -8,7 +8,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -34,7 +34,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let applied = {
-            self.control.completed_replay_episode = Some(operand0);
+            self.control.execution.completed_replay_episode = Some(operand0);
             Ok(ReplayStep::Continue)
         };
         self.finish_host(applied)
@@ -47,7 +47,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -74,7 +74,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -97,7 +97,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_kern(&mut self, mut amount: Scaled) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -114,7 +114,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_penalty(&mut self, mut amount: i32) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -136,7 +136,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         suppress_left_boundary |= self.suppress_left_boundary;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -169,7 +169,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -186,7 +186,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_italic_correction(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -206,7 +206,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -223,7 +223,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_non_script(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -240,7 +240,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_control_space(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -260,7 +260,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -280,7 +280,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -303,7 +303,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -334,7 +334,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         suppress_left_boundary |= self.suppress_left_boundary;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,

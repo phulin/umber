@@ -13,17 +13,17 @@ impl<G> DirectDispatch<'_, '_, G> {
             .command_context()
             .expect("direct scanner admission");
         {
-            let mode = self.control.modes.current_mode();
-            let boxes = &self.control.boxes;
-            let main_loop_active = self.control.main_loop_active;
+            let mode = self.control.execution.modes.current_mode();
+            let boxes = &self.control.execution.boxes;
+            let main_loop_active = self.control.execution.main_loop_active;
             let mut source_command = None;
             if command_slot.is_none()
                 && main_loop_active
                 && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
-                && self.control.active_alignment.is_none()
+                && self.control.execution.active_alignment.is_none()
                 && self.control.operation_observations.is_none()
                 && !admitted_context.tracked_region_is_active()
-                && !self.control.page_region_succession_pending
+                && !self.control.execution.page_region_succession_pending
             {
                 let etex_extended = self.control.command_profile() == CommandProfile::ETEX26;
                 let mut forbidden_facts = CommandMachineHostFacts::Forbidden;
@@ -42,7 +42,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 let mut continues = true;
                 let status = {
                     let mut consume = characters::MainSourceAdmission {
-                        modes: &mut self.control.modes,
+                        modes: &mut self.control.execution.modes,
                         etex_extended,
                         run_error: &mut run_error,
                         borrowed_applied: &mut borrowed_applied,
@@ -64,7 +64,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 }
                 match status.map_err(command_error)? {
                     tex_command::DeliveryStatus::CharacterRun if borrowed_applied || count != 0 => {
-                        self.control.main_loop_active = continues;
+                        self.control.execution.main_loop_active = continues;
                         drop(admitted_context);
                         self.report_scan()?;
                         return Ok(ReplayStep::Continue);
@@ -78,9 +78,9 @@ impl<G> DirectDispatch<'_, '_, G> {
             }
             // Native consumers reborrow the actual mode owner through this loan.
             let mut host_facts = ExecutorHostFacts {
-                modes: &mut self.control.modes,
-                pdf_ignore_depth: self.control.pdf_ignore_depth,
-                telemetry: &mut self.control.episode_telemetry,
+                modes: &mut self.control.execution.modes,
+                pdf_ignore_depth: self.control.execution.pdf_ignore_depth,
+                telemetry: &mut self.control.execution.episode_telemetry,
             };
             let mut owned_processor = if let Some(provider) = self.provider.as_deref_mut() {
                 command_processor_with_resource_provider(
@@ -113,11 +113,11 @@ impl<G> DirectDispatch<'_, '_, G> {
             // These demands are fixed for this actual processor loan. The
             // retained semantic calls mutate only its admitted native owners.
             let retain_commands = observation_receipts.is_none()
-                && self.control.active_alignment.is_none()
-                && !self.control.page_region_succession_pending
-                && !self.control.paragraph_checkpoint_cut;
+                && self.control.execution.active_alignment.is_none()
+                && !self.control.execution.page_region_succession_pending
+                && !self.control.execution.paragraph_checkpoint_cut;
             'processor: loop {
-                let main_loop_active = self.control.main_loop_active;
+                let main_loop_active = self.control.execution.main_loop_active;
                 let processor = &mut owned_processor;
                 // Finish this actual processor/context loan before semantic application.
                 macro_rules! finish_scan {
@@ -166,11 +166,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     .operation_observations
                                     .as_mut()
                                     .map(|buffer| buffer as &mut dyn CommandObserver);
-                                let $modes = &mut self.control.modes;
+                                let $modes = &mut self.control.execution.modes;
                                 $apply
                             })
                         } else {
-                            self.control.main_loop_active = false;
+                            self.control.execution.main_loop_active = false;
                             let $receipts = &mut observation_receipts;
                             let mut completed = owned_processor.apply_completed_command(
                                 |$context, $state, $effects, $fuel, $observer, execution| {
@@ -230,7 +230,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     }};
                 }
 
-                let shown_mode = &mut self.control.shown_mode;
+                let shown_mode = &mut self.control.execution.shown_mode;
                 let diagnostics = &mut self.diagnostics;
                 let mut scan_origin = self.current_origin;
                 if command_slot.is_none() {
@@ -978,7 +978,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     && !processor.has_pending_reports()
                                     && self.completed_operations + 1 < self.remaining_operations
                                 {
-                                    self.control.main_loop_active = false;
+                                    self.control.execution.main_loop_active = false;
                                     self.completed_operations += 1;
                                     self.current_origin = None;
                                     command_slot = None;
@@ -1395,8 +1395,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                                 source_identity,
                                                 source_register,
                                                 global,
-                                                &self.control.skip_pointer_sources,
-                                                &self.control.muskip_pointer_sources,
+                                                &self.control.execution.skip_pointer_sources,
+                                                &self.control.execution.muskip_pointer_sources,
                                             );
                                         let redundant = native_context
                                             .int_param(IntParam::ETEX_EXTENDED_MODE)
@@ -1421,9 +1421,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             };
                                             if let Some(physical) = physical {
                                                 let pointers = if mu {
-                                                    &mut self.control.muskip_pointer_sources
+                                                    &mut self
+                                                        .control
+                                                        .execution
+                                                        .muskip_pointer_sources
                                                 } else {
-                                                    &mut self.control.skip_pointer_sources
+                                                    &mut self.control.execution.skip_pointer_sources
                                                 };
                                                 if pointers.len() <= usize::from(index) {
                                                     pointers.resize(usize::from(index) + 1, None);

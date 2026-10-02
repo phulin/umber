@@ -21,7 +21,10 @@ fn save_stack_high_water_samples_each_checked_push_without_hardcoded_job_totals(
             let mut control = MainControl::tex82_initex(stores);
             register_source(&mut control, source);
             run_to_end(&mut control, stores);
-            assert_eq!(control.max_save_stack, expected, "source: {source:?}");
+            assert_eq!(
+                control.execution.max_save_stack, expected,
+                "source: {source:?}"
+            );
         });
     }
 }
@@ -178,7 +181,7 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
         crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = MainControl::tex82_initex(stores);
             if mode != Mode::Vertical {
-                control.modes.push(mode).expect("test mode push");
+                control.execution.modes.push(mode).expect("test mode push");
             }
             register_source(&mut control, br"\count0=17\count1=29");
 

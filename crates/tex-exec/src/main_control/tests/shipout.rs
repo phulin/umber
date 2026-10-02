@@ -145,8 +145,8 @@ fn finish_job_publishes_each_live_stack_owner() {
         run_to_end(&mut control, stores);
 
         let command = control.command.stack_usage();
-        let nest = control.modes.maximum_saved_depth();
-        let save = control.max_save_stack.saturating_add(6);
+        let nest = control.execution.modes.maximum_saved_depth();
+        let save = control.execution.max_save_stack.saturating_add(6);
         assert!(command.input_stack > 0);
         assert!(nest > 0);
         assert!(command.parameter_stack > 0);
@@ -675,11 +675,12 @@ fn character_loop_uses_current_font_and_page_output_keeps_selected_break() {
         drop(context);
         let mut control = MainControl::tex82_initex(stores);
         control
+            .execution
             .modes
             .push(Mode::Horizontal)
             .expect("horizontal mode");
         control.resume_character_loop(stores, Some('A'));
-        assert!(control.main_loop_active);
+        assert!(control.execution.main_loop_active);
         stores
             .command_context()
             .expect("font update")
@@ -689,7 +690,7 @@ fn character_loop_uses_current_font_and_page_output_keeps_selected_break() {
             )
             .expect("nullfont assignment");
         control.resume_character_loop(stores, Some('A'));
-        assert!(!control.main_loop_active);
+        assert!(!control.execution.main_loop_active);
     });
 }
 #[test]

@@ -12,13 +12,13 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
-            self.modes.current_mode(),
+            self.execution.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
             let mut context = stores.command_context().expect("live generation");
             start_paragraph(
                 &mut self.command,
-                &mut self.modes,
+                &mut self.execution.modes,
                 &mut context,
                 diagnostic_effects,
                 true,
@@ -27,17 +27,19 @@ impl<G> MainControl<G> {
         {
             let mut context = stores.command_context().expect("live generation");
             crate::box_runtime::flush_pending_hchars_with_fuel(
-                &mut self.modes,
+                &mut self.execution.modes,
                 &mut context,
                 diagnostic_effects,
                 self.fuel.fuel_mut(),
             )?;
         }
         self.open_discretionary_part(stores, diagnostic_effects)?;
-        self.active_discretionaries.push(ActiveDiscretionary {
-            parts: Vec::new(),
-            rejected: false,
-        });
+        self.execution
+            .active_discretionaries
+            .push(ActiveDiscretionary {
+                parts: Vec::new(),
+                rejected: false,
+            });
         Ok(ReplayStep::Continue)
     }
 
@@ -51,7 +53,7 @@ impl<G> MainControl<G> {
         // this fallible operation must precede both halves of the live
         // discretionary lifecycle: no rejected opener may leave a disc_group
         // without its restricted-horizontal mode.
-        self.modes.push_at_line(
+        self.execution.modes.push_at_line(
             Mode::RestrictedHorizontal,
             self.command
                 .current_file_line_number()
@@ -80,7 +82,7 @@ impl<G> MainControl<G> {
         let mut level = {
             let mut context = stores.command_context().expect("live generation");
             crate::box_runtime::commit_current_list(
-                &mut self.modes,
+                &mut self.execution.modes,
                 &mut context,
                 diagnostic_effects,
                 self.fuel.fuel_mut(),
@@ -129,12 +131,11 @@ impl<G> MainControl<G> {
         };
 
         let (part_count, replacement_too_long) = {
-            let active = self
-                .active_discretionaries
-                .last_mut()
-                .ok_or(ExecError::MissingToken {
+            let active = self.execution.active_discretionaries.last_mut().ok_or(
+                ExecError::MissingToken {
                     context: "active discretionary",
-                })?;
+                },
+            )?;
             active.parts.push(nodes);
             let part_count = active.parts.len();
             let replacement_too_long = part_count == 3 && prefix_end > 127;
@@ -162,9 +163,9 @@ impl<G> MainControl<G> {
             {
                 let mut context = stores.command_context().expect("live generation");
                 let mut host_facts = ExecutorHostFacts {
-                    modes: &self.modes,
-                    pdf_ignore_depth: self.pdf_ignore_depth,
-                    telemetry: &mut self.episode_telemetry,
+                    modes: &self.execution.modes,
+                    pdf_ignore_depth: self.execution.pdf_ignore_depth,
+                    telemetry: &mut self.execution.episode_telemetry,
                 };
                 let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
                     command_processor_with_resource_provider(
@@ -205,6 +206,7 @@ impl<G> MainControl<G> {
             return Ok(ReplayStep::Continue);
         }
         let active = self
+            .execution
             .active_discretionaries
             .pop()
             .expect("three parts require an active discretionary");
@@ -215,8 +217,10 @@ impl<G> MainControl<G> {
             .parts
             .try_into()
             .expect("discretionary completes after exactly three parts");
-        if matches!(self.modes.current_mode(), Mode::Math | Mode::DisplayMath)
-            && !replace.is_empty()
+        if matches!(
+            self.execution.modes.current_mode(),
+            Mode::Math | Mode::DisplayMath
+        ) && !replace.is_empty()
         {
             // TeX82 §1120 diagnoses and deletes only a nonempty third part
             // in math mode; the discretionary and its first two parts survive.
@@ -248,7 +252,7 @@ impl<G> MainControl<G> {
             .len()
             .try_into()
             .expect("TeX discretionary replacement count fits a quarterword");
-        self.modes.current_list_mutation().push(
+        self.execution.modes.current_list_mutation().push(
             &mut stores.command_context().expect("live generation"),
             Node::Disc {
                 kind: DiscKind::Discretionary,
@@ -269,13 +273,13 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
-            self.modes.current_mode(),
+            self.execution.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
             let mut context = stores.command_context().expect("live generation");
             start_paragraph(
                 &mut self.command,
-                &mut self.modes,
+                &mut self.execution.modes,
                 &mut context,
                 diagnostic_effects,
                 true,
@@ -284,7 +288,7 @@ impl<G> MainControl<G> {
         let pre = {
             let mut stores = stores.command_context().expect("live generation");
             crate::box_runtime::flush_pending_hchars_with_fuel(
-                &mut self.modes,
+                &mut self.execution.modes,
                 &mut stores,
                 diagnostic_effects,
                 self.fuel.fuel_mut(),
@@ -314,7 +318,7 @@ impl<G> MainControl<G> {
             }
         };
         let empty = tex_state::page_node_arena::PageListId::empty();
-        self.modes.current_list_mutation().push(
+        self.execution.modes.current_list_mutation().push(
             &mut stores.command_context().expect("live generation"),
             Node::Disc {
                 kind: DiscKind::ExplicitHyphen,

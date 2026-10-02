@@ -7,7 +7,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
         {
             self.stores
                 .world_mut()
@@ -35,7 +35,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
         {
             self.stores
                 .world_mut()
@@ -66,7 +66,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut tokens = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
@@ -87,7 +87,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             None
         };
         drop(context);
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
         {
             self.stores
                 .world_mut()
@@ -112,7 +112,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -129,7 +129,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_show_lists(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -149,7 +149,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut tokens = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
@@ -174,7 +174,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             None
         };
         drop(context);
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -205,7 +205,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             None
         };
         drop(context);
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -228,12 +228,12 @@ impl<G> DirectDispatch<'_, '_, G> {
             let context = self.stores.command_context().expect("group diagnostic");
             diagnostic = Some(detached_showgroups(
                 &context,
-                &self.control.active_alignment,
-                &self.control.boxes,
-                &self.control.active_discretionaries,
-                &self.control.active_math_choices,
-                &self.control.active_math_left_boundaries,
-                &self.control.active_math_shifts,
+                &self.control.execution.active_alignment,
+                &self.control.execution.boxes,
+                &self.control.execution.active_discretionaries,
+                &self.control.execution.active_math_choices,
+                &self.control.execution.active_math_left_boundaries,
+                &self.control.execution.active_math_shifts,
             ));
         }
         let context = self.stores.command_context().expect("effect observation");
@@ -248,7 +248,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             None
         };
         drop(context);
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,

@@ -7,7 +7,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -27,7 +27,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -44,7 +44,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_begin_simple_group(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -61,7 +61,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_end_simple_group(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -78,7 +78,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_output_routine_opening_brace(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -95,7 +95,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_end_output_routine(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -119,15 +119,15 @@ impl<G> MainControl<G> {
         error_context: &'static str,
     ) -> Result<ReplayStep, ExecError> {
         crate::box_runtime::flush_pending_hchars_with_fuel(
-            &mut self.modes,
+            &mut self.execution.modes,
             context,
             effects,
             self.fuel.fuel_mut(),
         )?;
         let mut facts = ExecutorHostFacts {
-            modes: &self.modes,
-            pdf_ignore_depth: self.pdf_ignore_depth,
-            telemetry: &mut self.episode_telemetry,
+            modes: &self.execution.modes,
+            pdf_ignore_depth: self.execution.pdf_ignore_depth,
+            telemetry: &mut self.execution.episode_telemetry,
         };
         let mut processor = command_processor(
             &mut self.command,
@@ -138,7 +138,7 @@ impl<G> MainControl<G> {
             effects,
             context,
         );
-        processor.set_output_routine_active(self.boxes.output_routine_active);
+        processor.set_output_routine_active(self.execution.boxes.output_routine_active);
         finish_native_group_leave(&mut processor, kind, error_context)
     }
 }

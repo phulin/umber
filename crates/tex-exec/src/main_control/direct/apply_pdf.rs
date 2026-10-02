@@ -10,7 +10,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -39,7 +39,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(
             self.stores,
@@ -68,14 +68,14 @@ impl<G> DirectDispatch<'_, '_, G> {
             self.provider,
         )?;
         let mut request = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
                 .expect("token publication admission"),
             request,
         )?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -95,7 +95,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -136,7 +136,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -156,7 +156,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -176,14 +176,14 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
                 .expect("token publication admission"),
             operand0,
         )?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -203,14 +203,14 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
                 .expect("token publication admission"),
             operand0,
         )?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -230,14 +230,14 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
                 .expect("token publication admission"),
             operand0,
         )?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -257,7 +257,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -277,14 +277,14 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
                 .expect("token publication admission"),
             operand0,
         )?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -304,14 +304,14 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
                 .expect("token publication admission"),
             operand0,
         )?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -331,14 +331,14 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
                 .expect("token publication admission"),
             operand0,
         )?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -359,7 +359,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -382,14 +382,14 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let (mut first, mut second) = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
                 .expect("token publication admission"),
             (first, second),
         )?;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -415,7 +415,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state_mut(),
+            &mut self.control.command,
             &mut self
                 .stores
                 .command_context()
@@ -449,7 +449,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             None
         };
         drop(context);
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
 
         self.control.apply_direct_leaf(
             self.stores,
@@ -472,7 +472,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             .stores
             .provenance_budgets()
             .detached_artifact_recipe_bytes;
-        self.control.main_loop_active = false;
+        self.control.execution.main_loop_active = false;
         let mut command = CommandMachine {
             state: &mut self.control.command,
             fuel: self.control.fuel.fuel_mut(),
@@ -480,20 +480,20 @@ impl<G> DirectDispatch<'_, '_, G> {
             resource_provider: self.provider.take(),
             declined_resource_attempt: &mut self.control.declined_resource_attempt,
             host_facts: CommandMachineHostFacts::Detached {
-                pdf_ignore_depth: self.control.pdf_ignore_depth,
-                telemetry: &mut self.control.episode_telemetry,
+                pdf_ignore_depth: self.control.execution.pdf_ignore_depth,
+                telemetry: &mut self.control.execution.episode_telemetry,
             },
             observations: &mut self.control.operation_observations,
             assignment_receipts: None,
             diagnostic_effects: self.effects,
-            shown_mode: &mut self.control.shown_mode,
-            initex: self.control.initex,
-            emit_dvi_override: self.control.emit_dvi_override,
-            immediate_prints: &mut self.control.immediate_prints,
-            prepared_shipout: &mut self.control.prepared_shipout,
+            shown_mode: &mut self.control.execution.shown_mode,
+            initex: self.control.execution.initex,
+            emit_dvi_override: self.control.execution.emit_dvi_override,
+            immediate_prints: &mut self.control.execution.immediate_prints,
+            prepared_shipout: &mut self.control.execution.prepared_shipout,
             pending_show_completion: None,
             pending_outer_page_build_context: None,
-            output_routine_active: self.control.boxes.output_routine_active,
+            output_routine_active: self.control.execution.boxes.output_routine_active,
         };
         let result = (|| -> Result<ReplayStep, ExecError> {
             let (form, resolver) = {
@@ -504,7 +504,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 let form = apply_pdf_form_request(
                     request,
                     &mut context,
-                    &mut self.control.modes,
+                    &mut self.control.execution.modes,
                     &mut command,
                     true,
                 )?
@@ -520,7 +520,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             publish_immediate_pdf_form(
                 form,
                 &mut command,
-                &self.control.modes,
+                &self.control.execution.modes,
                 self.stores,
                 &resolver,
                 demand,

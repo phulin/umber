@@ -687,6 +687,12 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
         observer: Option<&'episode mut dyn CommandObserver>,
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Self {
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_interpreter_operation_entry();
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::InterpreterBorrow,
+        );
         command.observe_tracked_dependencies(state);
         command.delivery_mode.begin_episode(observer.is_some());
         Self {

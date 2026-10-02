@@ -134,8 +134,9 @@ fn fatal_attempt_publishes_the_typed_partial_commit_barrier() {
             control.advance(stores).expect("paragraph starts"),
             StepResult::Progress(MainControlStep::Continue)
         );
-        while control.modes.depth() < 41 {
+        while control.execution.modes.depth() < 41 {
             control
+                .execution
                 .modes
                 .push(Mode::RestrictedHorizontal)
                 .expect("fill the TeX82 semantic nest");

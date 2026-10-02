@@ -147,7 +147,7 @@ pub(in crate::main_control) fn execute_paragraph<G>(
                 modes,
                 stores,
                 command.diagnostic_effects,
-                command.state.state(),
+                &*command.state,
             )?;
         } else {
             let mut diagnostic_context =

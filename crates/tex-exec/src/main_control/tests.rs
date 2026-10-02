@@ -89,6 +89,7 @@ fn page_vec<G>(stores: &Universe<G>, root: tex_state::page_node_arena::PageListI
 
 fn mode_vec<G>(control: &MainControl<G>, stores: &mut Universe<G>) -> Vec<Node> {
     admitted!(stores, |context| control
+        .execution
         .modes
         .current_list()
         .nodes(context)
@@ -98,7 +99,7 @@ fn mode_vec<G>(control: &MainControl<G>, stores: &mut Universe<G>) -> Vec<Node> 
 }
 
 fn current_list_owner_vec<G>(control: &MainControl<G>, stores: &mut Universe<G>) -> Vec<Node> {
-    if crate::vertical::is_outer_vertical(&control.modes) {
+    if crate::vertical::is_outer_vertical(&control.execution.modes) {
         admitted!(stores, |context| context.page_contributions().to_vec())
     } else {
         mode_vec(control, stores)
@@ -357,11 +358,11 @@ struct AlignmentRuntimeSnapshot {
 fn active_alignment_runtime_snapshot<G>(
     control: &MainControl<G>,
 ) -> Option<AlignmentRuntimeSnapshot> {
-    let active = control.active_alignment.as_ref()?;
+    let active = control.execution.active_alignment.as_ref()?;
     if !active.row_open || !active.cell_open {
         return None;
     }
-    let summary = control.modes.summary();
+    let summary = control.execution.modes.summary();
     let levels = summary.levels();
     let [.., row, cell] = levels else {
         return None;
