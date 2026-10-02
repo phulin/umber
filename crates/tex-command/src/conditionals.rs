@@ -1307,7 +1307,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .evaluating_delimiter_recovery(frame.identity, delimiter)
             .is_some()
         {
-            self.back_input_hot(*command)?;
+            self.back_input(*command)?;
             self.recover_incomplete_if()?;
             return Ok(());
         }

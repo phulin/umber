@@ -150,11 +150,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .take()
                 .ok_or_else(|| CommandError::input_invariant())?;
             let meaning = second.meaning();
-            self.back_input_hot(second)?;
+            self.back_input(second)?;
             let first = first_destination
                 .take()
                 .ok_or_else(|| CommandError::input_invariant())?;
-            self.back_input_hot(first)?;
+            self.back_input(first)?;
             meaning
         } else {
             let is_space = |command: &crate::command::CurrentCommand<G>| {

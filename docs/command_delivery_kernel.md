@@ -63,6 +63,17 @@ sequences still resolve live meanings for outer validity; literal characters
 need no meaning lookup. Expanded delivery resolves each interpreted meaning
 once. A macro supplies only its name, origin, flags, and definition to activation
 and argument scanning; successful ordinary activation constructs no command.
+
+Resident admission borrows one actual physical span and its authoritative frame
+cursor. The selected consumer borrows context, fuel, effects and alignment once
+for that span; its inner word loop retains those owners instead of passing all
+four through a callback at every word. The span borrows either immutable packed
+definition/list words or traced argument/backup words from their existing owner.
+It owns no copy, detached coordinates or classified-command cache. Each admitted
+word still advances its frame and charges fuel at the original semantic point.
+The first boundary word goes to the existing scalar consumer after the span
+loan ends. Exhaustion, parameter substitution, recovery, macro activation and
+input insertion reselect only after their genuine ownership transition.
 Main-control preflight uses this same final meaning for its first
 token. An ordinary unobserved macro can activate directly there and continue
 through the existing expansion loop; source, recovery, observation, and other

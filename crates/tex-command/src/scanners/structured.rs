@@ -211,7 +211,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 command.spelling().semantic_token(),
                 tex_state::token::Token::Frozen(_)
             ) {
-                self.back_input_hot(command)?;
+                self.back_input(command)?;
             }
             let inaccessible =
                 Token::Cs(self.state.intern_internal_control_sequence("inaccessible"));

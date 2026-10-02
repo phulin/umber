@@ -1112,7 +1112,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return ScalarCallStatus::Complete;
                 }
                 _ => {
-                    if let Err(error) = self.back_input_hot(command) {
+                    if let Err(error) = self.back_input(command) {
                         fail!(error);
                     }
                     call.put_complete(ScannedScalar {
@@ -1245,7 +1245,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // `(cur_cmd<>spacer)or(p<>backup_head)` is false: §407 drops
                 // the space and rereads without advancing `k`.
             } else {
-                if let Err(error) = self.back_input_hot(command) {
+                if let Err(error) = self.back_input(command) {
                     fail!(error);
                 }
                 if !matched.is_empty() {
@@ -3136,7 +3136,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         ) {
             return Ok(false);
         }
-        self.back_input_hot(command)?;
+        self.back_input(command)?;
         Ok(true)
     }
 

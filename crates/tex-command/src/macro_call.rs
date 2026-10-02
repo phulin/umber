@@ -687,7 +687,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         delivery: CurrentCommand<G>,
     ) -> Result<ArgumentCursor, CommandError> {
-        self.back_input_hot(delivery)?;
+        self.back_input(delivery)?;
         self.insert_macro_argument_recovery_par()?;
         // §395 ends with `ins_error`, so §82 renders the context with
         // the inserted `\par` level already on the stack.
@@ -697,7 +697,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::ParagraphInMacroArgument);
         }
         let par = par.take().ok_or_else(CommandError::input_invariant)?;
-        self.back_input_hot(par)?;
+        self.back_input(par)?;
         // §395's `goto continue` immediately reads the inserted `\par`;
         // `long_state := call` makes §396 abort even a `\long` macro.
         self.report_paragraph_ended_before_complete(&[]);
@@ -1066,7 +1066,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // enclosing scanner status, so retain the exact `\par` input
             // ahead of that restoration rather than merely returning an
             // error from the scalar matcher.
-            self.back_input_hot(*delivery)?;
+            self.back_input(*delivery)?;
             // §396 ends with `back_error`, so §82 renders the context with the
             // replayed `\par` already on the stack.
             let partial = partial

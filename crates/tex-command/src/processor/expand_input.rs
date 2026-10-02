@@ -98,7 +98,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<(), CommandError> {
         let opener_origin = opener.origin();
         if self.command.name_in_progress() {
-            self.back_input_hot(*opener)?;
+            self.back_input(*opener)?;
             let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), opener_origin);
             let level = self.command.push_token_level(
                 PackedTokenSpanHandle::backed_up([BackedUpToken {

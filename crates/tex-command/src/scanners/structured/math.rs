@@ -258,7 +258,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // reporting the recovery. The following source token has not
             // entered the scanner and remains untouched.
             let site = self.capture_hot_diagnostic_site(&command);
-            self.back_input_hot(command)?;
+            self.back_input(command)?;
             self.missing_delimiter_error(Some(site))?;
             return Ok(MathDelimiterBoundary {
                 kind,

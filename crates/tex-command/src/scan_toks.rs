@@ -1432,7 +1432,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // supplies the expected parameter number.  The pending outer
             // validity operation remains responsible for all inaccessible
             // token recovery.
-            self.back_input_hot(follower)?;
+            self.back_input(follower)?;
             self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::NonconsecutiveNumber)?;
             malformed_parameter = true;
             if next_parameter <= 9 {
@@ -1597,7 +1597,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 continue;
             }
             if self.accept_replacement_word(macro_parameters, collector, token, |processor| {
-                processor.back_input_hot(destination.take().expect("rejected collector token"))
+                processor.back_input(destination.take().expect("rejected collector token"))
             })? {
                 return Ok(());
             }

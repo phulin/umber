@@ -123,7 +123,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             parameters,
                             collector,
                             token,
-                            |processor| processor.back_input_hot(command),
+                            |processor| processor.back_input(command),
                         )? {
                             return Ok(true);
                         }
@@ -167,7 +167,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     resolution.control_sequence(),
                                 );
                             command.set_alignment_adjustment(adjustment);
-                            processor.back_input_hot(command)
+                            processor.back_input(command)
                         },
                     )? {
                         return Ok(true);

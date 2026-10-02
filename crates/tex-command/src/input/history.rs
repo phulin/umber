@@ -1426,7 +1426,12 @@ impl<G> InputStack<G> {
         let source = match &retired {
             InputLevel::Source(source) => Some(&*source.slot),
             InputLevel::Resident(row) => {
-                self.release_row_words(row);
+                Self::release_row_words(
+                    row,
+                    &mut self.words,
+                    &mut self.arguments,
+                    &mut self.parameters,
+                );
                 None
             }
         };
@@ -1447,8 +1452,16 @@ impl<G> InputStack<G> {
     #[inline(always)]
     pub(super) fn pop_resident(&mut self, index: usize) {
         debug_assert_eq!(index.checked_add(1), Some(self.rows.len()));
-        if let Some(InputLevel::Resident(row)) = self.rows.pop() {
-            self.release_row_words(&row);
+        if let Some(InputLevel::Resident(row)) = self.rows.get(index) {
+            Self::release_row_words(
+                row,
+                &mut self.words,
+                &mut self.arguments,
+                &mut self.parameters,
+            );
+            // The row owns its shared payload until suffix release finishes.
+            // Drop it here without moving the enum and payload through temporaries.
+            self.rows.truncate(index);
         } else {
             unreachable!("resident coordinate selects a resident row");
         }
@@ -1457,17 +1470,22 @@ impl<G> InputStack<G> {
     /// Releases the ordinary suffix or final argument region a popped row owned.
     /// Parameter borrowers retire above their owning body. Capture is independent.
     #[inline(always)]
-    fn release_row_words(&mut self, row: &super::ResidentTokenRow<G>) {
+    fn release_row_words(
+        row: &super::ResidentTokenRow<G>,
+        words: &mut Vec<tex_state::token::TracedTokenWord>,
+        arguments: &mut super::ArgumentArena,
+        parameters: &mut Vec<super::ArgumentSpan>,
+    ) {
         match &row.storage {
             super::ResidentTokenStorage::List(_) => {
-                self.words.truncate(row.header.frame.start() as usize);
+                words.truncate(row.header.frame.start() as usize);
             }
             super::ResidentTokenStorage::StoredList(_) => {}
             super::ResidentTokenStorage::MacroBody(body) => {
                 if let Some(region) = body.argument_region {
-                    self.arguments.release(region);
+                    arguments.release(region);
                 }
-                self.parameters.truncate(body.parameter_base as usize);
+                parameters.truncate(body.parameter_base as usize);
             }
             super::ResidentTokenStorage::MacroArgument { .. } => {}
         }

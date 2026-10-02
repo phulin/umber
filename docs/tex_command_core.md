@@ -26,7 +26,10 @@ of an unexpandable current command to main control.
 `tex-exec::MainControl` is the production main-control seam for that boundary:
 it accepts no raw input cursor, obtains each `CurrentCommand` and every
 assignment operand through `CommandProcessor`, then applies only the completed
-typed structural mutation after the processor borrow ends. Macro calls and
+typed structural mutation. Native scalar/group/definition arms reborrow the
+still-live processor's actual semantic owners after their synchronous scans
+return; genuine mode, host, output and diagnostic demands end that loan.
+Macro calls and
 registered `\\input` nesting therefore remain command-core operations; the
 executor never rereads their source text.
 

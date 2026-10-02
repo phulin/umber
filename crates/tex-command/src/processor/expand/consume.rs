@@ -75,36 +75,40 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let scanner = self.command.delivery_mode.scanner_active();
                 self.pending_diagnostic_location = None;
                 let selected = self.consume_resident_input(
-                    &mut |state, fuel, _, alignment, word, _| {
-                        let effect = match word.literal_catcode() {
-                            Some(tex_state::token::Catcode::BeginGroup) => SkippedWord::Brace(1),
-                            Some(tex_state::token::Catcode::EndGroup) => SkippedWord::Brace(-1),
-                            Some(tex_state::token::Catcode::Active) if classify => {
-                                Self::skipped_command(state, word, *nested_conditions)
+                    &mut |state, fuel, _, alignment, span| {
+                        span.consume_prefix(|word, _| {
+                            let effect = match word.literal_catcode() {
+                                Some(tex_state::token::Catcode::BeginGroup) => {
+                                    SkippedWord::Brace(1)
+                                }
+                                Some(tex_state::token::Catcode::EndGroup) => SkippedWord::Brace(-1),
+                                Some(tex_state::token::Catcode::Active) if classify => {
+                                    Self::skipped_command(state, word, *nested_conditions)
+                                }
+                                Some(tex_state::token::Catcode::Active) => SkippedWord::Boundary,
+                                Some(_) => SkippedWord::Discarded,
+                                None if classify && word.is_control_sequence() => {
+                                    Self::skipped_command(state, word, *nested_conditions)
+                                }
+                                None => SkippedWord::Boundary,
+                            };
+                            if matches!(effect, SkippedWord::Boundary) || !fuel.try_charge() {
+                                return ControlFlow::Continue(false);
                             }
-                            Some(tex_state::token::Catcode::Active) => SkippedWord::Boundary,
-                            Some(_) => SkippedWord::Discarded,
-                            None if classify && word.is_control_sequence() => {
-                                Self::skipped_command(state, word, *nested_conditions)
+                            match effect {
+                                SkippedWord::Brace(delta) => alignment.align_state += delta,
+                                SkippedWord::NestedConditional => *nested_conditions += 1,
+                                SkippedWord::NestedFi => *nested_conditions -= 1,
+                                SkippedWord::Discarded | SkippedWord::Boundary => {}
                             }
-                            None => SkippedWord::Boundary,
-                        };
-                        if matches!(effect, SkippedWord::Boundary) || !fuel.try_charge() {
-                            return ControlFlow::Continue(false);
-                        }
-                        match effect {
-                            SkippedWord::Brace(delta) => alignment.align_state += delta,
-                            SkippedWord::NestedConditional => *nested_conditions += 1,
-                            SkippedWord::NestedFi => *nested_conditions -= 1,
-                            SkippedWord::Discarded | SkippedWord::Boundary => {}
-                        }
-                        #[cfg(feature = "profiling")]
-                        fuel.record_raw_run(scanner, kind, 1);
-                        if fuel.remaining() == 0 {
-                            ControlFlow::Break(None)
-                        } else {
-                            ControlFlow::Continue(true)
-                        }
+                            #[cfg(feature = "profiling")]
+                            fuel.record_raw_run(scanner, kind, 1);
+                            if fuel.remaining() == 0 {
+                                ControlFlow::Break(None)
+                            } else {
+                                ControlFlow::Continue(true)
+                            }
+                        })
                     },
                     &mut |processor, word, origin, suppress, site, kind| {
                         processor.charge_command_action()?;

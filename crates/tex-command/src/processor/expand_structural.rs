@@ -83,7 +83,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if second.as_ref().is_none_or(is_expandable_hot_command) {
             self.request_expansion_hot(&mut second, true)?;
         } else {
-            self.back_input_hot(
+            self.back_input(
                 second
                     .take()
                     .expect("unexpandable second command remains in its destination"),

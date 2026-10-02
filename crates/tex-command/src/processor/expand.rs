@@ -318,7 +318,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.charge_command_action()?;
         loop {
             match self.consume_resident_input(
-                &mut |_, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
+                &mut |_, _, _, _, span| {
+                    span.consume_prefix(|_, _| std::ops::ControlFlow::Continue(false))
+                },
                 finish,
             )? {
                 std::ops::ControlFlow::Break(result) => {
@@ -558,31 +560,33 @@ impl<G> CommandProcessor<'_, '_, G> {
                 _ => crate::fuel::RawDeliveryKind::StoredToken,
             };
             let selected = self.consume_resident_input(
-                &mut |state, fuel, effects, _, word, origin| {
-                    let Token::Char {
-                        ch,
-                        cat: Catcode::Letter | Catcode::Other,
-                    } = word.semantic_token()
-                    else {
-                        return std::ops::ControlFlow::Continue(false);
-                    };
-                    if !allows_characters || !fuel.try_charge() {
-                        return std::ops::ControlFlow::Continue(false);
-                    }
-                    consumed_characters = true;
-                    #[cfg(feature = "profiling")]
-                    fuel.record_raw_run(false, kind, 1);
-                    let admission = consume.admit(
-                        state,
-                        fuel,
-                        effects,
-                        MainCharacterInput::Scalar { ch, origin },
-                    );
-                    if admission.continue_run() {
-                        std::ops::ControlFlow::Continue(true)
-                    } else {
-                        std::ops::ControlFlow::Break(DeliveryStatus::CharacterRun)
-                    }
+                &mut |state, fuel, effects, _, span| {
+                    span.consume_prefix(|word, origin| {
+                        let Token::Char {
+                            ch,
+                            cat: Catcode::Letter | Catcode::Other,
+                        } = word.semantic_token()
+                        else {
+                            return std::ops::ControlFlow::Continue(false);
+                        };
+                        if !allows_characters || !fuel.try_charge() {
+                            return std::ops::ControlFlow::Continue(false);
+                        }
+                        consumed_characters = true;
+                        #[cfg(feature = "profiling")]
+                        fuel.record_raw_run(false, kind, 1);
+                        let admission = consume.admit(
+                            state,
+                            fuel,
+                            effects,
+                            MainCharacterInput::Scalar { ch, origin },
+                        );
+                        if admission.continue_run() {
+                            std::ops::ControlFlow::Continue(true)
+                        } else {
+                            std::ops::ControlFlow::Break(DeliveryStatus::CharacterRun)
+                        }
+                    })
                 },
                 &mut |processor, word, origin, suppress, site, kind| {
                     processor.finish_character_boundary(
@@ -1949,7 +1953,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 continue;
             }
             if !hot_is_space(&next) {
-                self.back_input_hot(next)?;
+                self.back_input(next)?;
             }
             break;
         }

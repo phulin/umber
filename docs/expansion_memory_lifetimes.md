@@ -133,6 +133,10 @@ Macro-body retirement releases its region after all parameter rows above it
 retire. A child capture owns a distinct region, so parent retirement cannot
 truncate its unfinished words. Forwarded bulk runs borrow distinct vectors
 through `split_at_mut`; destination reallocation cannot invalidate the source.
+Resident retirement releases the live row's word/argument/parameter suffix
+before dropping that row in place. It does not move the input enum or its
+resident payload into a temporary owner. Retirement identity and demanded
+observer metadata remain captured before that exact drop boundary.
 Backups retain the ordinary input-word lifetime. Tail chains reuse two slots,
 with no dead-prefix compaction or second payload copy. Aggregate restore clears
 all displaced regions while preserving engine pool capacity. Quiescent
