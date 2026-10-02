@@ -547,6 +547,7 @@ fn preamble_span_expansion_retires_its_command_before_raw_refill() {
         assert_eq!(preamble.columns.len(), 1);
         let u_template = preamble.columns[0]
             .u_template
+            .as_ref()
             .expect("ordinary column has a u-template");
         let words = command
             .attempt
@@ -557,7 +558,7 @@ fn preamble_span_expansion_retires_its_command_before_raw_refill() {
         assert!(
             command
                 .attempt
-                .token_words(preamble.columns[0].v_template)
+                .token_words(&preamble.columns[0].v_template)
                 .expect("live attempt template")
                 .is_empty()
         );

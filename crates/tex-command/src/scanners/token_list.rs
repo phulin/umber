@@ -18,7 +18,7 @@ use crate::{AttemptTokenListId, CommandError, CommandProcessor, processor::Deliv
 /// The register number follows the active profile: TeX82's eight-bit bound or
 /// e-TeX's 15-bit sparse-register bound. The token list is already frozen by
 /// the command-owned collector or copied from an internal token-list value.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ScannedTokenRegisterAssignment<G> {
     pub index: u16,
     pub tokens: Option<AttemptTokenListId>,
@@ -30,13 +30,13 @@ pub struct ScannedTokenRegisterAssignment<G> {
 /// `None` is tex.web's null token-list pointer. `Some` deliberately does not
 /// imply a nonempty list: §1226 copies a present source pointer even when its
 /// list is empty, while a newly scanned empty braced list becomes null.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ScannedTokenParameterAssignment<G> {
     pub tokens: Option<AttemptTokenListId>,
     pub source: Option<tex_state::TokenListId<G>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 struct ScannedTokenListRightHandSide<G> {
     tokens: Option<AttemptTokenListId>,
     source: Option<tex_state::TokenListId<G>>,
@@ -208,10 +208,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         if self
             .command
             .attempt
-            .token_words(collected)
+            .token_words(&collected)
             .map_err(crate::scan_toks::attempt_command_error)?
             .is_empty()
         {
+            self.command
+                .attempt
+                .discard_token_list(collected)
+                .map_err(crate::scan_toks::attempt_command_error)?;
             return Ok(ScannedTokenListRightHandSide {
                 tokens: None,
                 source: None,
@@ -225,34 +229,46 @@ impl<G> CommandProcessor<'_, '_, G> {
                 pointer_present: true,
             });
         }
-        let mut tokens = Vec::new();
-        tokens.push(TracedTokenWord::pack(
-            Token::Char {
-                ch: '{',
-                cat: Catcode::BeginGroup,
-            },
-            OriginId::UNKNOWN,
-        ));
-        tokens.extend(
-            self.command
-                .attempt
-                .token_words(collected)
-                .map_err(crate::scan_toks::attempt_command_error)?
-                .iter()
-                .copied(),
-        );
-        tokens.push(TracedTokenWord::pack(
-            Token::Char {
-                ch: '}',
-                cat: Catcode::EndGroup,
-            },
-            OriginId::UNKNOWN,
-        ));
+        let writer = self
+            .command
+            .attempt
+            .allocate_token_buffer()
+            .map_err(crate::scan_toks::attempt_command_error)?;
+        self.command
+            .attempt
+            .push_buffer_token(
+                &writer,
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch: '{',
+                        cat: Catcode::BeginGroup,
+                    },
+                    OriginId::UNKNOWN,
+                ),
+            )
+            .map_err(crate::scan_toks::attempt_command_error)?;
+        self.command
+            .attempt
+            .consume_token_list_into_buffer(collected, &writer)
+            .map_err(crate::scan_toks::attempt_command_error)?;
+        self.command
+            .attempt
+            .push_buffer_token(
+                &writer,
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch: '}',
+                        cat: Catcode::EndGroup,
+                    },
+                    OriginId::UNKNOWN,
+                ),
+            )
+            .map_err(crate::scan_toks::attempt_command_error)?;
         Ok(ScannedTokenListRightHandSide {
             tokens: Some(
                 self.command
                     .attempt
-                    .allocate_token_list(tokens)
+                    .finish_token_buffer(writer)
                     .map_err(crate::scan_toks::attempt_command_error)?,
             ),
             source: None,

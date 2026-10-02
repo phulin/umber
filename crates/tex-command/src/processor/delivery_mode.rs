@@ -16,8 +16,7 @@ impl DeliveryMode {
     const SCANNER: u8 = 1 << 0;
     const OBSERVING: u8 = 1 << 1;
     const ALIGNMENT: u8 = 1 << 2;
-    const TRACING: u8 = 1 << 5;
-    const EPISODE: u8 = Self::OBSERVING | Self::TRACING;
+    const EPISODE: u8 = Self::OBSERVING;
 
     #[inline(always)]
     const fn set(&mut self, flag: u8, enabled: bool) {
@@ -36,10 +35,9 @@ impl DeliveryMode {
         self.set(Self::ALIGNMENT, active);
     }
 
-    pub(crate) const fn begin_episode(&mut self, observing: bool, tracing: bool) {
+    pub(crate) const fn begin_episode(&mut self, observing: bool) {
         self.0 &= !Self::EPISODE;
         self.set(Self::OBSERVING, observing);
-        self.set(Self::TRACING, tracing);
     }
 
     pub(crate) const fn end_episode(&mut self) {
@@ -81,7 +79,7 @@ impl DeliveryMode {
 
     #[inline(always)]
     pub(crate) const fn allows_character_run(self) -> bool {
-        self.0 & (Self::SCANNER | Self::OBSERVING | Self::TRACING) == 0
+        self.0 & (Self::SCANNER | Self::OBSERVING) == 0
     }
 
     pub(crate) const fn scanner_active(self) -> bool {
@@ -94,10 +92,6 @@ impl DeliveryMode {
 
     pub(crate) const fn alignment_active(self) -> bool {
         self.0 & Self::ALIGNMENT != 0
-    }
-
-    pub(crate) const fn tracing(self) -> bool {
-        self.0 & Self::TRACING != 0
     }
 }
 
@@ -151,7 +145,7 @@ mod tests {
                 for alignment in [false, true] {
                     for tracing in [false, true] {
                         let mut mode = DeliveryMode::default();
-                        mode.begin_episode(observing, tracing);
+                        mode.begin_episode(observing);
                         mode.set_scanner_active(scanner);
                         mode.set_alignment_active(alignment);
                         for suppresses in [false, true] {

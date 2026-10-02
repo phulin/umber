@@ -207,6 +207,8 @@ pub(crate) struct SaveJournal<G> {
     host_epoch: u64,
     save_stack: SaveStackProjection,
     save_position: u32,
+    box_spec_words: usize,
+    max_save_words: [usize; 2],
     group_capacity_bytes: usize,
     checkpoint_capacity_bytes: usize,
     #[cfg(test)]
@@ -263,6 +265,8 @@ impl<G> SaveJournal<G> {
             host_epoch: 0,
             save_stack: SaveStackProjection::default(),
             save_position: 0,
+            box_spec_words: 0,
+            max_save_words: [0; 2],
             group_capacity_bytes: 0,
             checkpoint_capacity_bytes: 0,
             #[cfg(test)]
@@ -449,6 +453,9 @@ impl<G> SaveJournal<G> {
             .expect("group save stack fits u32");
         if !sparse {
             self.save_stack.push(&entry, position);
+            let depth = self.active_sequence.depth
+                + usize::from(matches!(entry, JournalEntry::GroupEnter(_)));
+            self.record_save_words_peak(depth);
         }
         #[cfg(feature = "profiling")]
         {
@@ -553,6 +560,29 @@ impl<G> SaveJournal<G> {
     #[must_use]
     pub(crate) const fn save_stack_projection(&self) -> (usize, Option<(u32, usize)>) {
         (self.save_stack.words, self.save_stack.latest_push)
+    }
+
+    fn record_save_words_peak(&mut self, depth: usize) {
+        let words = self
+            .save_stack
+            .words
+            .saturating_add(self.box_spec_words)
+            .saturating_sub(self.save_stack.latest_push.map_or(0, |(_, words)| words));
+        self.max_save_words[0] = self.max_save_words[0].max(words);
+        self.max_save_words[1] = self.max_save_words[1].max(words.saturating_add(depth));
+    }
+
+    pub(crate) const fn max_save_stack_words(&self, source_lines: bool) -> usize {
+        self.max_save_words[source_lines as usize]
+    }
+
+    pub(crate) fn add_box_spec_words(&mut self, words: usize) {
+        self.box_spec_words += words;
+        self.record_save_words_peak(self.active_sequence.depth);
+    }
+
+    pub(crate) fn remove_box_spec_words(&mut self, words: usize) {
+        self.box_spec_words -= words;
     }
 
     /// Current active sequence length, including fixed group-enter markers.
@@ -687,6 +717,7 @@ impl<G> SaveJournal<G> {
         self.active_sequence.truncate(0);
         self.active_sequence.top = None;
         self.active_sequence.depth = 0;
+        self.box_spec_words = 0;
         self.active_sequence.unsaving = false;
         self.save_stack = tail.save_stack;
         self.save_position = tail.save_position;
@@ -796,6 +827,7 @@ impl<G> SaveJournal<G> {
         self.active_sequence.truncate(0);
         self.active_sequence.top = None;
         self.active_sequence.depth = 0;
+        self.box_spec_words = 0;
         self.active_sequence.unsaving = false;
         self.save_stack = cursor.save_stack;
         self.save_position = cursor.save_position;

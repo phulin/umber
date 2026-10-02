@@ -399,7 +399,7 @@ fn expanded_unterminated_body_recovers_at_end_and_exposes_collected_text() {
                 && *heading == "Runaway text?"
                 && partial == "A"
         ));
-        command.settle_attempt();
+        assert!(command.attempt_is_clear());
         assert!(command.scratch.is_quiescent());
         assert!(command.attempt.is_clear());
     });

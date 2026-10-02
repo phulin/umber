@@ -41,11 +41,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         let words = self
             .command
             .attempt
-            .token_words(replacement)
-            .map_err(crate::scan_toks::attempt_command_error)?
-            .to_vec();
+            .token_words(&replacement)
+            .map_err(crate::scan_toks::attempt_command_error)?;
         let first = words.first().map(|word| word.semantic_token());
-        self.insert_expansion_list(PackedTokenSpanHandle::transient(words), first);
+        let len = u32::try_from(words.len()).map_err(|_| CommandError::input_invariant())?;
+        self.insert_expansion_list(
+            PackedTokenSpanHandle::AttemptList {
+                list: replacement,
+                len,
+            },
+            first,
+        );
         Ok(())
     }
 
@@ -122,11 +128,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let words = self
                         .command
                         .attempt
-                        .token_words(tokens)
-                        .map_err(crate::scan_toks::attempt_command_error)?
-                        .to_vec();
+                        .token_words(&tokens)
+                        .map_err(crate::scan_toks::attempt_command_error)?;
                     let first = words.first().map(|word| word.semantic_token());
-                    self.insert_expansion_list(PackedTokenSpanHandle::transient(words), first);
+                    let len =
+                        u32::try_from(words.len()).map_err(|_| CommandError::input_invariant())?;
+                    self.insert_expansion_list(
+                        PackedTokenSpanHandle::AttemptList { list: tokens, len },
+                        first,
+                    );
                 }
                 crate::InternalValue::Font(symbol) => {
                     self.push_rendered_tokens([Token::Cs(symbol)], opener);

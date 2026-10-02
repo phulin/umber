@@ -41,11 +41,10 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   methods organized by native command responsibility. `scan_macros.rs` releases
   actual scanner loans at cold owner and publication boundaries. The native
   fetch/reswitch loop retains its actual processor and context through RELAX, ordinary groups,
-  integer/dimension/glue/token registers and parameters, arithmetic, definitions and let assignments, settling each command's real
-  scratch and respecting the caller's remaining budget. An existing pending
+  integer/dimension/glue/token registers and parameters, arithmetic, definitions and let assignments, consuming scanner products at their actual destination and respecting the caller's remaining budget. An existing pending
   character buffer demands mutable mode ownership and ends the processor loan. Actual diagnostic,
   observer/tracked, page/output, afterassignment and budget demands release the
-  loan for the common settlement tail. `scan_arithmetic.rs` scans concrete
+  loan at the actual owner boundary; no command settlement tail exists. `scan_arithmetic.rs` scans concrete
   the final typed operand in that same processor; target selection and invalid-target
   diagnostics remain in the actual switch arm. Scalar scans consume typed values
   without generic frame publication/projection. Fetch/reswitch borrows the one
@@ -60,7 +59,7 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   Native §1090 vertical cases use those keys directly in the switch.
   Brace ownership, math-family selection and vertical paragraph entry are actual packed switch arms; unrelated commands perform none of their owner tests.
   The startup prologue admits once; scalar page/save queries borrow their real
-  stores without generation admission, and host settlement has one page fire-up
+  stores without generation admission, and the page owner has one fire-up
   seam with demand-only named-list publication.
 - `src/main_control/semantic/`: concrete source-free typed semantic routines
   grouped by assignments, registers, fonts, text, paragraph/page state, groups,
@@ -69,8 +68,7 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   union, readiness phase, context dereference facade, compatibility executor, or universal payload exists. Input stream scanners return a move-only final definition owner for read assignment; no attempt-definition promotion remains.
 - `src/main_control/semantic_owners.rs`: actual semantic-owner admission and
   ordered diagnostic, mutation, effect, artifact, and paragraph publication.
-  Native context-consuming arms share its settlement tail without constructing
-  an unused command machine. Observation allocates evidence only when requested; deferred page-output
+  Native context-consuming arms complete directly; observation publication is demanded by its actual instrumentation owner. Observation allocates evidence only when requested; deferred page-output
   evidence has an optional owner created by observed output routines. Provider loans return
   before propagation of semantic failure.
 - `src/main_control/code_table.rs`: the shared TeX82 code-table value bounds,
@@ -78,11 +76,11 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   existing hot or cold assignment committer; it owns no command or table state.
 - `src/main_control/leader_values.rs`: the concrete constructed/register
   leader payload that the leader-glue scanner consumes.
-- `src/main_control/settlement.rs`: direct-operation evidence ownership,
-  begin/commit/halt, resource-need and diagnostic settlement, ordered
+- `src/main_control/host_boundaries.rs`: demanded evidence ownership,
+  bounded host-driver accounting, halt, resource-need and diagnostic publication, ordered
   semantic/effect/artifact publication, and exact-cut main-source paragraph
   checkpoint intent. Shipout contributes only output-ledger evidence. Native
-  scratch settlement has no direct-operation mark or lifecycle carrier.
+  scratch is reclaimed by consumers; there is no direct-operation cleanup.
 - `src/main_control/resources.rs`: typed host-resource resolution and
   installation for fonts, input streams, and PDF images. It borrows the same
   `MainControl` and `Universe` owners and preserves checkpoint-replay errors.
@@ -92,7 +90,7 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
 - `src/main_control/discretionary.rs`: `\discretionary` group and part
   lifecycle plus the `\-` shorthand. It mutates the existing mode and node
   owners under the sole main-control episode; operand scanning remains in
-  `tex-command` and settlement remains in `settlement.rs`.
+  `tex-command` and host boundaries remain in `host_boundaries.rs`.
 - `src/main_control/executor_facts.rs`: the borrow-scoped live mode and
   effective-tail provider plus the stack-branded checked-save and delivery
   facts. A scanner or conditional invokes only the exact fact method it

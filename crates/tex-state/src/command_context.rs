@@ -2083,6 +2083,19 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
+    pub fn max_save_stack_words(&self, source_lines: bool) -> usize {
+        self.admitted.state_ref().max_save_stack_words(source_lines)
+    }
+
+    pub fn add_box_spec_words(&mut self, words: usize) {
+        self.admitted.state().add_box_spec_words(words);
+    }
+
+    pub fn remove_box_spec_words(&mut self, words: usize) {
+        self.admitted.state().remove_box_spec_words(words);
+    }
+
+    #[must_use]
     pub fn innermost_group_kind(&self) -> Option<crate::GroupKind> {
         self.admitted
             .state_ref()

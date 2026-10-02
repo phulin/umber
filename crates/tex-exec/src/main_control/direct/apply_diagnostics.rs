@@ -66,7 +66,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut tokens = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()
@@ -149,7 +149,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut tokens = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()

@@ -11,7 +11,7 @@
 use tex_state::interner::Symbol;
 use tex_state::token::{Catcode, TokenWord, TracedTokenWord};
 
-use crate::attempt::{AttemptTokenBufferId, AttemptTokenListId};
+use crate::attempt::AttemptTokenBufferId;
 use crate::command::CurrentCommand;
 
 /// Per-word rewrite applied only while an escaping general-text collector
@@ -121,8 +121,6 @@ pub(crate) struct PendingParameter {
 pub(crate) enum TokenCollectorDestination<G> {
     TokenBuffers {
         writer: AttemptTokenBufferId,
-        replacement: AttemptTokenBufferId,
-        parameter_result: Option<AttemptTokenListId>,
     },
     Definition {
         definition: tex_state::DefinitionBuildKey<G>,
@@ -186,16 +184,8 @@ impl<G> TokenCollector<G> {
         Ok(())
     }
 
-    pub(crate) fn prepare_token_buffers(
-        &mut self,
-        parameter: AttemptTokenBufferId,
-        replacement: AttemptTokenBufferId,
-    ) -> Result<(), ()> {
-        self.prepare_destination(TokenCollectorDestination::TokenBuffers {
-            writer: parameter,
-            replacement,
-            parameter_result: None,
-        })
+    pub(crate) fn prepare_token_buffers(&mut self, writer: AttemptTokenBufferId) -> Result<(), ()> {
+        self.prepare_destination(TokenCollectorDestination::TokenBuffers { writer })
     }
 
     pub(crate) fn prepare_definition(

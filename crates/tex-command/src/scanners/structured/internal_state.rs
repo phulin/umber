@@ -36,7 +36,7 @@ pub(crate) struct AlignmentPreambleState<G> {
     pub(super) _generation: PhantomData<fn(&G) -> &G>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(super) enum PendingPdfActionOwner {
     StartLink {
         dimensions: tex_state::PdfAnnotationDimensions,
@@ -57,7 +57,7 @@ pub(super) enum PendingPdfColorStackAction {
     Push,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(super) struct PdfNavigationScalarProgress {
     pub(super) primitive: UnexpandablePrimitive,
     pub(super) use_object: Option<i32>,
@@ -103,7 +103,7 @@ pub(super) enum PdfNavigationScalarPhase {
     FitRDepthDimension,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(super) struct PdfActionScalarProgress {
     pub(super) goto: Option<bool>,
     pub(super) file: Option<AttemptTokenListId>,
@@ -131,7 +131,7 @@ pub(super) enum PdfActionScalarPhase {
     NoNewWindowKeyword,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(super) struct PdfObjectScalarProgress {
     pub(super) use_object: Option<i32>,
     pub(super) stream: bool,
@@ -149,7 +149,7 @@ pub(super) enum PdfObjectScalarPhase {
     FileKeyword,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(super) struct PdfFormScalarProgress {
     pub(super) attr: Option<ScannedBalancedText>,
     pub(super) resources: Option<ScannedBalancedText>,
@@ -163,7 +163,7 @@ pub(super) enum PdfFormScalarPhase {
     BoxRegister,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(super) struct PdfImageScalarProgress {
     pub(super) width: Option<Scaled>,
     pub(super) height: Option<Scaled>,
@@ -175,7 +175,7 @@ pub(super) struct PdfImageScalarProgress {
     pub(super) phase: PdfImageScalarPhase,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(super) enum PendingPdfImagePage {
     Unset,
     Number(i32),

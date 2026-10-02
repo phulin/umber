@@ -185,7 +185,6 @@ struct ScanToksConfig {
 #[derive(Debug)]
 enum ScannedToksStorage<G> {
     Tokens {
-        parameter: AttemptTokenListId,
         replacement: AttemptTokenListId,
     },
     Definition(tex_state::PublishedDefinition<G>),
@@ -398,9 +397,8 @@ impl ScanToksConfig {
 }
 
 /// Frozen output of one `scan_toks` episode.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct ScannedToks {
-    pub(crate) parameter_text: AttemptTokenListId,
     pub(crate) replacement_text: AttemptTokenListId,
     pub(crate) primary: OriginId,
     pub(crate) malformed_parameter: bool,
@@ -484,18 +482,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<(), CommandError> {
         match (grammar, destination) {
             (ScanToksGrammar::General, ScanToksDestination::Attempt) => {
-                let parameter = self
-                    .command
-                    .attempt
-                    .allocate_token_buffer()
-                    .map_err(attempt_command_error)?;
-                let replacement = self
+                let writer = self
                     .command
                     .attempt
                     .allocate_token_buffer()
                     .map_err(attempt_command_error)?;
                 collector
-                    .prepare_token_buffers(parameter, replacement)
+                    .prepare_token_buffers(writer)
                     .map_err(|()| CommandError::input_invariant())?;
             }
             (ScanToksGrammar::General, ScanToksDestination::ReplayInput { transform }) => {
@@ -606,7 +599,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             TokenCollectorDestination::TokenBuffers { writer, .. } => self
                 .command
                 .attempt
-                .push_buffer_token(*writer, word)
+                .push_buffer_token(writer, word)
                 .map_err(attempt_command_error),
             TokenCollectorDestination::Definition { .. } => match phase {
                 TokenCollectorPhase::Parameter => collector
@@ -682,19 +675,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::input_invariant());
         }
         match collector.destination_mut() {
-            TokenCollectorDestination::TokenBuffers {
-                writer,
-                replacement,
-                parameter_result,
-            } => {
-                *parameter_result = Some(
-                    self.command
-                        .attempt
-                        .finish_token_buffer(*writer)
-                        .map_err(attempt_command_error)?,
-                );
-                *writer = *replacement;
-            }
+            TokenCollectorDestination::TokenBuffers { .. } => {}
             TokenCollectorDestination::Definition { .. } => collector
                 .definition_writer_mut()
                 .ok_or_else(CommandError::input_invariant)?
@@ -726,16 +707,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             | TokenCollectorDestination::ReplayInput { .. } => None,
         };
         let storage = match collector.destination() {
-            TokenCollectorDestination::TokenBuffers {
-                writer,
-                replacement,
-                parameter_result: Some(parameter),
-            } if writer == replacement => ScannedToksStorage::Tokens {
-                parameter: *parameter,
+            TokenCollectorDestination::TokenBuffers { writer } => ScannedToksStorage::Tokens {
                 replacement: self
                     .command
                     .attempt
-                    .finish_token_buffer(*replacement)
+                    .finish_token_buffer(*writer)
                     .map_err(attempt_command_error)?,
             },
             TokenCollectorDestination::Definition { .. } => {
@@ -764,7 +740,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     len: u32::try_from(len).map_err(|_| CommandError::input_invariant())?,
                 }
             }
-            _ => return Err(CommandError::input_invariant()),
         };
         collector
             .complete()
@@ -780,12 +755,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         &self,
         scanned: &ScannedToksBuffers<G>,
     ) -> Result<ScannedWords<'_, G>, CommandError> {
-        let arena = &self.command.attempt;
         match &scanned.storage {
-            ScannedToksStorage::Tokens { parameter, .. } => arena
-                .token_words(*parameter)
-                .map(ScannedWords::Traced)
-                .map_err(attempt_command_error),
+            ScannedToksStorage::Tokens { .. } => Err(CommandError::input_invariant()),
             ScannedToksStorage::Definition(definition) => Ok(ScannedWords::DefinitionParameter(
                 self.state.definition(definition.reference()),
             )),
@@ -797,10 +768,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         &self,
         scanned: &ScannedToksBuffers<G>,
     ) -> Result<ScannedWords<'_, G>, CommandError> {
-        let arena = &self.command.attempt;
         match &scanned.storage {
-            ScannedToksStorage::Tokens { replacement, .. } => arena
-                .token_words(*replacement)
+            ScannedToksStorage::Tokens { replacement, .. } => self
+                .command
+                .attempt
+                .token_words(replacement)
                 .map(ScannedWords::Traced)
                 .map_err(attempt_command_error),
             ScannedToksStorage::Definition(definition) => Ok(ScannedWords::DefinitionReplacement(
@@ -821,7 +793,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn attempt_words(
         &self,
-        list: AttemptTokenListId,
+        list: &AttemptTokenListId,
     ) -> Result<crate::attempt::AttemptTokenListView<'_>, CommandError> {
         self.command
             .attempt
@@ -838,14 +810,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn scan_toks(&mut self, mode: ScanToksMode) -> Result<ScannedToks, CommandError> {
         let result = self.scan_toks_buffers(mode)?;
         let ScannedToksStorage::Tokens {
-            parameter: parameter_text,
             replacement: replacement_text,
         } = result.storage
         else {
             return Err(CommandError::input_invariant());
         };
         Ok(ScannedToks {
-            parameter_text,
             replacement_text,
             primary: result.primary,
             malformed_parameter: result.malformed_parameter,
@@ -1790,7 +1760,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let words = self
             .command
             .attempt
-            .token_words(tokens)
+            .token_words(&tokens)
             .map_err(attempt_command_error)?;
         let len = words.len();
         if self.is_observed() {
@@ -1800,7 +1770,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             TokenCollectorDestination::TokenBuffers { writer, .. } => {
                 self.command
                     .attempt
-                    .consume_token_list_into_buffer(tokens, *writer)
+                    .consume_token_list_into_buffer(tokens, writer)
                     .map_err(attempt_command_error)?;
             }
             TokenCollectorDestination::Definition { .. } => {
@@ -1812,6 +1782,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .push_replacement(word.token_word())
                         .map_err(definition_build_command_error)?;
                 }
+                self.command
+                    .attempt
+                    .discard_token_list(tokens)
+                    .map_err(attempt_command_error)?;
                 #[cfg(test)]
                 {
                     self.command.token_collector_path_counters.collector_appends += len as u64;
@@ -1833,6 +1807,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .input
                     .pending_insertions
                     .extend(words.iter().copied());
+                self.command
+                    .attempt
+                    .discard_token_list(tokens)
+                    .map_err(attempt_command_error)?;
                 #[cfg(test)]
                 {
                     self.command.token_collector_path_counters.collector_appends += len as u64;
@@ -1883,12 +1861,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
-        let words = self.attempt_words(scanned.replacement_text)?;
+        let words = self.attempt_words(&scanned.replacement_text)?;
         let mut text = String::new();
         for word in words {
             self.state
                 .append_token_string_text(word.semantic_token(), &mut text);
         }
+        self.command
+            .attempt
+            .discard_token_list(scanned.replacement_text)
+            .map_err(attempt_command_error)?;
         let mut observed = Vec::new();
         for ch in text.chars() {
             let word = TracedTokenWord::pack(

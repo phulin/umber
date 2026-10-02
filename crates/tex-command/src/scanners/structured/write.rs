@@ -216,9 +216,38 @@ impl<G> CommandProcessor<'_, '_, G> {
             let write_words = self
                 .command
                 .attempt
-                .token_words(tokens)
+                .token_words(&tokens)
                 .map_err(|_| CommandError::input_invariant())?
                 .len();
+            if self
+                .state
+                .int_param(tex_state::env::banks::IntParam::TRACING_MACROS)
+                > 1
+            {
+                let mut text = String::new();
+                crate::processor::expand_render::append_print_esc_text(
+                    self.state, "write", &mut text,
+                );
+                text.push_str("->");
+                let words = self
+                    .command
+                    .attempt
+                    .token_words(&tokens)
+                    .map_err(|_| CommandError::input_invariant())?;
+                for word in words.iter() {
+                    crate::processor::expand_render::append_token_list_token_text(
+                        self.state,
+                        word.semantic_token(),
+                        &mut text,
+                    );
+                }
+                self.command
+                    .semantic_diagnostics
+                    .push(crate::CommandSemanticDiagnostic::Trace {
+                        text,
+                        force_newline: false,
+                    });
+            }
             // The bottom stopper delivers the synthetic closing brace followed
             // by frozen outer `\\endwrite`; the write list and opening brace sit
             // above it exactly as TeX82's three `ins_list` calls do.
@@ -236,35 +265,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             // TeX82 §§323 and 1370 trace the named write_text list at
             // begin_token_list, before the opening-brace insertion and expanded
             // scan_toks can report an error.
-            if self
-                .state
-                .int_param(tex_state::env::banks::IntParam::TRACING_MACROS)
-                > 1
-            {
-                let mut text = String::new();
-                crate::processor::expand_render::append_print_esc_text(
-                    self.state, "write", &mut text,
-                );
-                text.push_str("->");
-                let words = self
-                    .command
-                    .attempt
-                    .token_words(tokens)
-                    .map_err(|_| CommandError::input_invariant())?;
-                for word in words.iter() {
-                    crate::processor::expand_render::append_token_list_token_text(
-                        self.state,
-                        word.semantic_token(),
-                        &mut text,
-                    );
-                }
-                self.command
-                    .semantic_diagnostics
-                    .push(crate::CommandSemanticDiagnostic::Trace {
-                        text,
-                        force_newline: false,
-                    });
-            }
             self.observe_write_list_push(write_level);
             self.push_write_recovery([left_brace], left_brace);
             (stopper_level, write_words)
@@ -282,7 +282,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let expanded_words = self
             .command
             .attempt
-            .token_words(expanded)
+            .token_words(&expanded)
             .map_err(|_| CommandError::input_invariant())?
             .len();
         // TeX82 §1370 keeps the source list, expanded result, live command

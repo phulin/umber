@@ -2,37 +2,6 @@
 use super::*;
 
 impl<G> MainControl<G> {
-    /// Settles a completed native command while its real context remains live.
-    /// A publication or owner demand returns to the outer ordered boundary.
-    pub(super) fn settle_native_context_command(
-        &mut self,
-        context: &CommandContext<'_, G>,
-        effects: &DiagnosticEffects,
-        pending: PendingPageOutputFacts,
-        checked_save_stack: usize,
-        initial_effect_pos: tex_state::EffectPos,
-    ) -> bool {
-        if pending.is_pending()
-            || !effects.is_empty()
-            || effects.has_first_recoverable()
-            || self.command.has_afterassignment()
-            // The next cell delivery belongs to the alignment scanner's label.
-            || self.active_alignment.is_some()
-            || self.operation_observations.is_some()
-            || context.tracked_region_is_active()
-            || self.page_region_succession_pending
-            || self.paragraph_checkpoint_cut
-            || context.reported_error_count() > 0
-            || context.effect_pos() != initial_effect_pos
-        {
-            return false;
-        }
-        self.max_save_stack = self.max_save_stack.max(checked_save_stack);
-        self.command.settle_attempt();
-        self.assert_command_scratch_clear();
-        true
-    }
-
     #[allow(clippy::too_many_arguments)] // one borrowed application crosses all actual semantic owners
     pub(super) fn apply_direct_leaf(
         &mut self,
@@ -56,7 +25,6 @@ impl<G> MainControl<G> {
             &mut PreparedDviPages,
         ) -> Result<ReplayStep, ExecError>,
     ) -> Result<ReplayStep, ExecError> {
-        let checked_save_stack;
         let mut operation_resource_provider = resource_provider.take();
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_phase(
@@ -111,12 +79,6 @@ impl<G> MainControl<G> {
             if result.is_ok() {
                 command.publish_named_token_list_pushes(context);
             }
-            checked_save_stack = Self::save_stack_words(
-                context,
-                &self.boxes,
-                command.state,
-                command.state.profile(),
-            );
             let pending_page_output = PendingPageOutputFacts::capture(context);
             (result, pending_page_output)
         };
@@ -259,31 +221,6 @@ impl<G> MainControl<G> {
             self.page_region_succession_pending = true;
             self.finish_pending_page_region_succession(stores);
         }
-        self.finish_direct_semantic_step(
-            stores,
-            diagnostic_effects,
-            output_start,
-            result,
-            pending_page_output,
-            checked_save_stack,
-            effect,
-            assignment_receipts,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)] // ordered facts from the completed native semantic call
-    pub(super) fn finish_direct_semantic_step(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        output_start: OperationOutputStart,
-        mut result: Result<ReplayStep, ExecError>,
-        pending_page_output: PendingPageOutputFacts,
-        checked_save_stack: usize,
-        effect: Option<EffectRecord>,
-        assignment_receipts: Option<Vec<tex_command::MutationRecord>>,
-    ) -> Result<ReplayStep, ExecError> {
-        let observing = self.operation_observations.is_some();
         if matches!(result, Ok(ReplayStep::EndOfInput))
             && self.root_completion == RootCompletionPolicy::RequireTeXEnd
         {
@@ -291,7 +228,27 @@ impl<G> MainControl<G> {
         }
         if result.is_ok() {
             self.fire_pending_page_output(stores, diagnostic_effects, pending_page_output)?;
+            if observing {
+                self.publish_semantic_observations(
+                    stores,
+                    output_start,
+                    effect,
+                    assignment_receipts,
+                );
+            }
+            self.finish_paragraph_boundary(output_start.outer_paragraph_was_active, stores);
         }
+        result
+    }
+
+    /// Publishes evidence only for the active observation owner.
+    pub(super) fn publish_semantic_observations(
+        &mut self,
+        stores: &mut Universe<G>,
+        output_start: OperationOutputStart,
+        effect: Option<EffectRecord>,
+        assignment_receipts: Option<Vec<tex_command::MutationRecord>>,
+    ) {
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_phase(
             tex_state::measurement::HotCorePhase::EvidencePublication,
@@ -300,7 +257,7 @@ impl<G> MainControl<G> {
         let _evidence_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
             tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
         );
-        if result.is_ok() && observing {
+        {
             // These records are produced by applying the step, after the
             // command-processor episode's own borrow has ended. Named token
             // pushes were already sent directly to this operation's optional
@@ -331,45 +288,5 @@ impl<G> MainControl<G> {
             self.observe_committed(records);
         }
         self.page_output_observations = None;
-        if result.is_ok() {
-            self.finish_paragraph_boundary(output_start.outer_paragraph_was_active, stores);
-        }
-        self.max_save_stack = self.max_save_stack.max(checked_save_stack);
-        result
     }
-}
-
-/// Settles through the processor's actual owners without capturing cold output
-/// facts. A true page, input, diagnostic or World demand ends this loan first.
-pub(super) fn settle_retained_native_command<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
-    boxes: &ReplayBoxes<G>,
-    max_save_stack: &mut usize,
-    initial_effect_pos: tex_state::EffectPos,
-) -> bool {
-    let settled = processor.apply_completed_command(|context, state, effects, _, _observer| {
-        if context.page_fire_up().is_some()
-            || context.page_builder_resume_after_output_pending()
-            || !effects.is_empty()
-            || effects.has_first_recoverable()
-            || state.has_afterassignment()
-            || state.has_pending_named_token_list_pushes()
-            || context.tracked_region_is_active()
-            || context.reported_error_count() > 0
-            || context.effect_pos() != initial_effect_pos
-        {
-            return false;
-        }
-        *max_save_stack = (*max_save_stack).max(MainControl::save_stack_words(
-            context,
-            boxes,
-            state,
-            state.profile(),
-        ));
-        true
-    });
-    if settled {
-        processor.settle_completed_command();
-    }
-    settled
 }

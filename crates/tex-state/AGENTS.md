@@ -257,7 +257,8 @@ expose substores or introduce another arena.
   generation-owned reusable output-attempt lane, typed Page/Durable/Scratch
   traversal coordinates and token/node source handles, scalar suffix marks,
   warmed direct-row construction, and compile/runtime escape controls.
-- `src/journal.rs`: Separate compact TeX group saves, indexed host-epoch
+- `src/journal.rs`: Native save-push maxima (classic and e-TeX) and box-spec
+  words, independent of nonrefundable host statistics. Separate compact TeX group saves, indexed host-epoch
   first-touch and owning named-checkpoint deltas holding one
   reversible alternate per written cell, fixed save-stack projections, exact
   capacity-change accounting for constant-time budget reads, synchronous unsave observation with its actual popped preimage owner, and

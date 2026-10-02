@@ -359,7 +359,7 @@ impl<T> RetainedScalarScan<T> {
 }
 
 /// A value accepted by TeX's internal-quantity scanner.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum InternalValue {
     Integer(i32),
     Dimension(Scaled),
@@ -408,7 +408,7 @@ fn scalar_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
 ///
 /// §413 distinguishes an internal result from a token that never entered its
 /// case table. §416 recovery is itself an ordinary committed internal result.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 enum InternalScan {
     /// The command is not an internal quantity: `cur_cmd` is outside §413's
     /// `min_internal..max_internal` range, so TeX never enters §413 at all and
@@ -3255,7 +3255,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     | UnexpandablePrimitive::MuToGlue
             )
         ) {
-            self.observe_internal_value(value.clone());
+            self.observe_internal_value(&value);
         }
         Ok(InternalScan::Value(value))
     }
@@ -3274,7 +3274,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let value = self
             .coerce_internal_value(InternalValue::Dimension(Scaled::from_raw(0)), level)?
             .expect("TeX82 §429 always lowers §416's dimen_val zero");
-        self.observe_internal_value(value.clone());
+        self.observe_internal_value(&value);
         Ok(InternalScan::Value(value))
     }
 
@@ -3896,15 +3896,18 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The value committed here is the one §413 returns -- after §429's
     /// lowering cascade and §430's negation -- so this must stay reachable
     /// only from [`Self::scan_something_internal`]'s exits.
-    fn observe_internal_value(&mut self, value: InternalValue) {
+    fn observe_internal_value(&mut self, value: &InternalValue) {
+        if !self.is_observed() {
+            return;
+        }
         let value = match value {
-            InternalValue::Integer(value) => ObservationValue::Integer(i64::from(value)),
+            InternalValue::Integer(value) => ObservationValue::Integer(i64::from(*value)),
             InternalValue::Dimension(value) => ObservationValue::Scaled(i64::from(value.raw())),
-            InternalValue::Glue(glue) | InternalValue::MuGlue(glue) => observed_glue_value(&glue),
+            InternalValue::Glue(glue) | InternalValue::MuGlue(glue) => observed_glue_value(glue),
             // TeX82 §413's `ident_val`: the font's own control-sequence
             // spelling, never a font number or file name.
             InternalValue::Font(symbol) => {
-                ObservationValue::Name(self.state.resolve(symbol).to_owned())
+                ObservationValue::Name(self.state.resolve(*symbol).to_owned())
             }
             InternalValue::Tokens { tokens, .. } => {
                 let words = self
@@ -3912,12 +3915,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .attempt
                     .token_words(tokens)
                     .map_err(crate::scan_toks::attempt_command_error)
-                    .expect("internal token value belongs to the installed attempt")
-                    .to_vec();
+                    .expect("internal token value belongs to the installed attempt");
                 ObservationValue::Tokens(
                     words
-                        .into_iter()
-                        .map(|word| self.observed_token(word))
+                        .iter()
+                        .map(|&word| self.observed_token(word))
                         .collect(),
                 )
             }

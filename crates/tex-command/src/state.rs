@@ -456,9 +456,17 @@ impl<G> CommandState<G> {
     /// attempt remains installed.
     pub fn attempt_token_words(
         &self,
-        id: crate::AttemptTokenListId,
+        id: &crate::AttemptTokenListId,
     ) -> Result<crate::attempt::AttemptTokenListView<'_>, crate::AttemptError> {
         self.attempt.token_words(id)
+    }
+
+    /// Discards the sealed scratch owner after its actual consumer finishes.
+    pub fn discard_attempt_tokens(
+        &mut self,
+        id: crate::AttemptTokenListId,
+    ) -> Result<(), crate::AttemptError> {
+        self.attempt.discard_token_list(id)
     }
 
     /// Returns the number of live TeX input levels retained by this command state.
@@ -1997,7 +2005,7 @@ impl std::error::Error for UnknownRegisteredSource {}
 /// Live temporary data referenced by persistent command state.
 ///
 /// Builder contents and rollback roots are semantic while live.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct TransientState {
     pub(crate) builders: Vec<LiveTokenBuilder>,
     pub(crate) rollback_roots: Vec<u64>,
@@ -2009,7 +2017,7 @@ pub(crate) struct TransientState {
 }
 
 /// One semantic token builder named by a scanner-status variant.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct LiveTokenBuilder {
     pub(crate) identity: u64,
     pub(crate) tokens: crate::attempt::AttemptTokenBufferId,

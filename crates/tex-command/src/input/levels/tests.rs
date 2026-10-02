@@ -23,11 +23,11 @@ fn admit(
     words: &mut Vec<TracedTokenWord>,
     pending: &mut Vec<TracedTokenWord>,
 ) -> ResidentTokenStorage<()> {
-    let attempt = AttemptArena::<()>::default();
+    let mut attempt = AttemptArena::<()>::default();
     source.admit(
         words,
         TokenSources {
-            attempt: &attempt,
+            attempt: &mut attempt,
             pending_insertions: pending,
         },
     )

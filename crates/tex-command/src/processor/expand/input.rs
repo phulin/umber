@@ -101,7 +101,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::input_invariant());
         };
         let mut top = ResidentSourceTop { source };
-        if !command_state.delivery_mode.allows_character_run() {
+        if !command_state.delivery_mode.allows_character_run()
+            || state.int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS) > 1
+        {
             return Ok(None);
         }
 

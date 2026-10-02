@@ -1,18 +1,8 @@
-//! Command-boundary scratch settlement and checkpoint-replay cleanup.
+//! Synchronous scanner scopes and halted checkpoint abandonment.
 
 use super::CommandState;
 
 impl<G> CommandState<G> {
-    /// Releases the attempt rows of the command that just finished.
-    ///
-    /// Attempt rows never outlive their command, so the arena is clear at
-    /// every command boundary. A command that allocated nothing pays one
-    /// test of the arena's root lengths.
-    #[inline(always)]
-    pub fn settle_attempt(&mut self) {
-        self.attempt.settle();
-    }
-
     /// Whether the running command holds no attempt rows.
     #[must_use]
     pub fn attempt_is_clear(&self) -> bool {

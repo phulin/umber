@@ -99,7 +99,11 @@ horizontal-lookahead labels, synchronous operand scanning, semantic application
 and demanded evidence. Nested assignment and diagnostic entry use the same
 arms. No eligibility lane, universal operation union, prepare/apply carrier,
 ready mailbox, alternate dispatch or per-command rollback root remains.
-`settle_attempt` releases genuine scanner scratch; it is not a rollback protocol.
+There is no successful-command settlement or cleanup stage. Sealed scanner
+roots are consumed by publication, insertion, rendering or splicing. Save-stack
+maxima update at actual pushes, and assignments own afterassignment insertion.
+See [Native command ownership](native_command_ownership.md) for the current
+ownership rules; they supersede the earlier boundary-clear policy.
 Specialized node/box/shipout transactions keep their real semantic obligations.
 
 ## Full aggregate checkpoint and replay
@@ -216,7 +220,7 @@ be reported as a measured percentage.
 | Matcher and final arguments           | `macro_definition.rs`, `definition_arena/body.rs`, `macro_call.rs`, `input/arguments.rs`; delimiter, forwarded-origin, abort, tail-reuse and zero-arity tests.                                                         |
 | Native group and checkpoint histories | `tex-state/src/journal{,/groups,/checkpoints}.rs`, `env/restoration.rs`; local/global/sparse/box chronology, repeated restore, epoch exhaustion and pruning tests.                                                     |
 | Counted definitions                   | `definition_arena{,/body,/build_lane}.rs`; ownership tests cover aliases, independent histories, stale keys, frame survival and final accounting.                                                                      |
-| Direct execution                      | `tex-exec/src/main_control/direct/`, native semantic leaves and settlement; observation, resource, prefix and mode tests.                                                                                              |
+| Direct execution                      | `tex-exec/src/main_control/direct/`, native semantic leaves and demanded host boundaries; observation, resource, prefix and mode tests.                                                                                |
 | Aggregate restart                     | `checkpoint.rs`, `canonical_step.rs`, `Universe`, retained-generation and incremental drivers; capture rejection/exhaustion, interrupted-owner replay, repeated output restore, candidates and cold-equivalence tests. |
 
 Every implementation deletes its displaced representation and ports real

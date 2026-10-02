@@ -44,7 +44,7 @@ pub enum PdfActionSpec<T = AttemptTokenListId> {
     Thread(PdfActionDestination<T>),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ExpandedWriteText {
     pub tokens: AttemptTokenListId,
     pub unbalanced: bool,

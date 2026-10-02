@@ -284,7 +284,7 @@ pub enum ExecError {
         request: Box<tex_command::FontLoadRequest>,
     },
     MissingPdfImage {
-        request: Box<tex_command::PdfImageRequest>,
+        request: Box<tex_command::PdfImageRequest<()>>,
     },
     /// A synchronous retained-resource provider failed. This is distinct
     /// from all missing-resource variants and must not enter replay.

@@ -1,4 +1,4 @@
-//! Direct-operation settlement evidence and publication ownership.
+//! Demanded diagnostics, evidence admission and bounded host-driver boundaries.
 
 use super::*;
 
@@ -372,23 +372,6 @@ impl<G> MainControl<G> {
         self.advance_telemetry.commits += 1;
     }
 
-    pub(super) fn assert_command_scratch_clear(&self) {
-        debug_assert!(
-            self.command.attempt_is_clear(),
-            "command scratch is clear at every operation boundary"
-        );
-    }
-
-    pub(super) fn commit_direct_operation(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) {
-        self.promote_first_recoverable(stores, diagnostic_effects);
-        self.command.settle_attempt();
-        self.finish_pending_page_region_succession(stores);
-    }
-
     /// Halts the session at a failed operation without undoing it.
     ///
     /// pdfTeX has no per-command rollback, and nothing a halted session does
@@ -411,7 +394,9 @@ impl<G> MainControl<G> {
     ) -> Option<ExecError> {
         let evidence_error = self.admit_observed_receipt(stores, termination);
         self.error_operation_committed = true;
-        self.commit_direct_operation(stores, diagnostic_effects);
+        if diagnostic_effects.has_first_recoverable() {
+            self.promote_first_recoverable(stores, diagnostic_effects);
+        }
         evidence_error
     }
 

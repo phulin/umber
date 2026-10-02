@@ -774,14 +774,14 @@ pub(in crate::main_control) fn replay_text<G>(
     diagnostics.extend(pending.into_iter().map(PendingDiagnostic::Command));
     let expanded = expanded?;
     let mut text = String::new();
-    let expanded = command
+    let expanded_words = command
         .state
         .state()
-        .attempt_token_words(expanded)
+        .attempt_token_words(&expanded)
         .map_err(|_| ExecError::MissingToken {
             context: "expanded output replay",
         })?;
-    for word in expanded {
+    for word in expanded_words {
         let token = word.semantic_token();
         match kind {
             crate::shipout::ReplayTextKind::Special => {
@@ -792,6 +792,11 @@ pub(in crate::main_control) fn replay_text<G>(
             }
         }
     }
+    command
+        .state
+        .state_mut()
+        .discard_attempt_tokens(expanded)
+        .expect("rendered output replay consumed");
     if matches!(kind, crate::shipout::ReplayTextKind::PdfLiteral) {
         return Ok(text.into_bytes());
     }
@@ -841,13 +846,18 @@ pub(in crate::main_control) fn replay_write<G>(
     let words = command
         .state
         .state()
-        .attempt_token_words(expanded.tokens)
+        .attempt_token_words(&expanded.tokens)
         .map_err(|_| ExecError::MissingToken {
             context: "expanded write replay",
         })?;
     for word in words {
         tex_state::token_show::append_token_string_text(&*stores, word.semantic_token(), &mut text);
     }
+    command
+        .state
+        .state_mut()
+        .discard_attempt_tokens(expanded.tokens)
+        .expect("rendered write consumed");
     let mut text = crate::diagnostics::print_text_with_newlinechar(&*stores, &text);
     text.push('\n');
     let bytes = encode_write_text(command.state.profile(), &text);
@@ -1564,7 +1574,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                 command
                     .state
                     .state()
-                    .attempt_token_words(tokens)
+                    .attempt_token_words(&tokens)
                     .map_err(|_| ExecError::MissingToken {
                         context: "expanded deferred write",
                     })?;
@@ -1583,6 +1593,11 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                     &mut text,
                 );
             }
+            command
+                .state
+                .state_mut()
+                .discard_attempt_tokens(tokens)
+                .expect("rendered deferred write consumed");
             let text = crate::diagnostics::print_text_with_newlinechar(&context, &text);
             Ok::<_, ExecError>((observed_tokens, unbalanced, error_context, text))
         })();

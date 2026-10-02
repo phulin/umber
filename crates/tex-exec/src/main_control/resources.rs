@@ -219,7 +219,7 @@ impl<G> MainControl<G> {
             page_box: request.page_box,
             page_box_explicit: request.page_box_explicit,
             resolution: request.resolution,
-            attr: request.attr,
+            attr: None,
         };
         loop {
             let Some((resolved_resource, dependencies)) =
@@ -295,7 +295,7 @@ impl<G> MainControl<G> {
 
     pub(super) fn refresh_pdf_image_origin(
         &mut self,
-        request: &PdfImageRequest,
+        request: &PdfImageRequest<()>,
         stores: &Universe<G>,
     ) -> Result<(), ExecError> {
         let Some((path, _)) = self.capabilities.pdf_image_selection(request) else {

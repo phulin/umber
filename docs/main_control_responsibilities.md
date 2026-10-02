@@ -20,9 +20,10 @@ and root completion policy. `main_control/discretionary.rs` applies the live
 Their operand scanners belong to `tex-command`.
 
 `main_control/semantic_owners.rs` lends real owners and publishes ordered
-semantic evidence. `main_control/settlement.rs` closes actual scanner scratch,
-handles diagnostic/error completion, and seals eligible outer-paragraph
-checkpoints. Failure latches the session; replay restores every aggregate
+semantic evidence only when requested. `main_control/host_boundaries.rs`
+handles demanded diagnostic/error publication and eligible outer-paragraph
+checkpoints. Scanner consumers reclaim their own scratch; no successful-command
+settlement or cleanup stage exists. Failure latches the session; replay restores every aggregate
 root rather than rolling back one command.
 
 Ordinary dispatch must not reacquire generation ownership merely to inspect

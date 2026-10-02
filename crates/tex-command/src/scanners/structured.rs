@@ -116,7 +116,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .ok_or_else(|| CommandError::input_invariant())?;
                     self.command
                         .attempt
-                        .push_buffer_token(expanded, command.spelling())
+                        .push_buffer_token(&expanded, command.spelling())
                         .map_err(|_| CommandError::input_invariant())?;
                 }
                 DeliveryStatus::ReplayCompleted(completed) if completed == episode => break,

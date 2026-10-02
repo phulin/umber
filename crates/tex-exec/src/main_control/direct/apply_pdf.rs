@@ -68,7 +68,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             self.provider,
         )?;
         let mut request = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()
@@ -176,7 +176,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()
@@ -203,7 +203,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()
@@ -230,7 +230,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()
@@ -277,7 +277,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()
@@ -304,7 +304,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()
@@ -331,7 +331,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()
@@ -382,7 +382,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let (mut first, mut second) = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()
@@ -415,7 +415,7 @@ impl<G> DirectDispatch<'_, '_, G> {
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
         let mut operand0 = publication::publish_tokens(
-            self.control.command.state(),
+            self.control.command.state_mut(),
             &mut self
                 .stores
                 .command_context()

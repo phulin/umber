@@ -224,7 +224,7 @@ fn synchronous_attempt_child_scope_reclaims_only_its_exact_suffix() {
         .allocate_token_list([word('x')])
         .expect("child scratch");
     assert_eq!(
-        state.attempt_token_words(scratch).expect("scratch words"),
+        state.attempt_token_words(&scratch).expect("scratch words"),
         &[word('x')]
     );
 
@@ -232,10 +232,10 @@ fn synchronous_attempt_child_scope_reclaims_only_its_exact_suffix() {
         .close_attempt_child_scope(child)
         .expect("move-only receipt closes its exact child");
     assert_eq!(
-        state.attempt_token_words(scratch),
+        state.attempt_token_words(&scratch),
         Err(AttemptError::InvalidCoordinate)
     );
-    state.settle_attempt();
+    state.abandon_checkpoint_attempt();
 }
 
 #[test]

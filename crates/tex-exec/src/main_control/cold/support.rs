@@ -625,18 +625,21 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     if !kind.horizontal() {
         commit_box_normal_paragraph(modes, stores, command);
     }
-    boxes.push_box(ActiveReplayBox {
-        target,
-        shipout_region,
-        box_segment_start,
-        migration_segment_start: None,
-        migration_segments: Vec::new(),
-        kind,
-        group_kind,
-        packing,
-        leader_kind: None,
-        shift: None,
-    });
+    boxes.push_box(
+        stores,
+        ActiveReplayBox {
+            target,
+            shipout_region,
+            box_segment_start,
+            migration_segment_start: None,
+            migration_segments: Vec::new(),
+            kind,
+            group_kind,
+            packing,
+            leader_kind: None,
+            shift: None,
+        },
+    );
     schedule_everybox(command.state, stores, kind.horizontal());
     Ok(())
 }

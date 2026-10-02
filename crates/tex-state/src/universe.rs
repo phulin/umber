@@ -3387,6 +3387,11 @@ impl<G> Universe<G> {
         Ok(core.state().checked_save_stack_words(source_lines))
     }
 
+    pub fn max_save_stack_words(&self, source_lines: bool) -> Result<usize, UniverseError> {
+        let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
+        Ok(core.state().max_save_stack_words(source_lines))
+    }
+
     /// Prepares §1012's page-owner transition from the complete page owner.
     ///
     /// Durable box and form closures already own independent regions. The

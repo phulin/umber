@@ -41,7 +41,7 @@ fn token_register_assignment_returns_attempt_local_balanced_text() {
             processor
                 .command
                 .attempt_token_words(
-                    scanned
+                    &scanned
                         .tokens
                         .expect("new balanced text has attempt-local storage"),
                 )

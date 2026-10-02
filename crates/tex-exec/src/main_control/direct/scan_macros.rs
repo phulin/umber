@@ -31,36 +31,45 @@ macro_rules! direct_finish_scan {
 // the still-live context. Evidence remains demand-owned at the common tail.
 macro_rules! direct_native_semantic {
     ($this:ident, $processor:ident, $admission:ident, $receipts:ident,
-     $result:ident, $pending:ident, $checked:ident, $apply:expr, $settle:block) => {{
+     $result:ident, $apply:expr) => {{
         $this.cursor = Some($processor.delivery_cursor());
         let diagnostics = $processor.take_semantic_diagnostics();
         if !diagnostics.is_empty() {
-            $this.diagnostics.extend(diagnostics.into_iter().map(PendingDiagnostic::Command));
+            $this
+                .diagnostics
+                .extend(diagnostics.into_iter().map(PendingDiagnostic::Command));
         }
         drop($processor);
         $this.control.report_scan_in_context(
-            &mut $admission, $this.effects, std::mem::take(&mut $this.diagnostics),
+            &mut $admission,
+            $this.effects,
+            std::mem::take(&mut $this.diagnostics),
         )?;
         $this.control.main_loop_active = false;
-        let $receipts = &mut $this.control.operation_observations.is_some().then(Vec::new);
+        let $receipts = &mut $this
+            .control
+            .operation_observations
+            .is_some()
+            .then(Vec::new);
         let $result = $apply;
         if $result.is_ok() && $this.control.command.has_pending_named_token_list_pushes() {
             publish_named_token_list_pushes(
-                &mut $this.control.command, &mut $admission, $this.effects,
+                &mut $this.control.command,
+                &mut $admission,
+                $this.effects,
                 &mut $this.control.operation_observations,
             );
         }
-        let $checked = MainControl::save_stack_words(
-            &$admission, &$this.control.boxes, &$this.control.command,
-            $this.control.command.profile(),
-        );
-        let $pending = PendingPageOutputFacts::capture(&$admission);
-        $settle
         drop($admission);
-        $this.control.finish_direct_semantic_step(
-            $this.stores, $this.effects, $this.output_start, $result, $pending,
-            $checked, None, $receipts.take(),
-        )
+        if $result.is_ok() && $this.control.operation_observations.is_some() {
+            $this.control.publish_semantic_observations(
+                $this.stores,
+                $this.output_start,
+                None,
+                $receipts.take(),
+            );
+        }
+        $result
     }};
 }
 
@@ -72,15 +81,12 @@ macro_rules! direct_apply_relax {
             $admission,
             receipts,
             result,
-            pending,
-            checked,
             semantic::execute_relax(
                 &mut $admission,
                 Some(&mut $this.control.modes),
                 $this.effects,
                 $this.control.fuel.fuel_mut(),
-            ),
-            {}
+            )
         )
     }};
 }

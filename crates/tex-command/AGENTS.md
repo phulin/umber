@@ -58,9 +58,10 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 - `src/lib.rs`: intentionally small public facade and private module tree.
 - `src/attempt.rs`, `src/attempt/token_lane.rs`, and `src/attempt/tests.rs`:
   command-lifetime token scratch in one fixed-chunk lane and one row table. An open collector and its sealed list use the same row; sealing changes only its phase. Coordinates reject foreign arenas, consumed or stale reused rows, and writes through a sealed buffer alias. Row serials advance locally without rollback; only arena creation allocates a global identity. There are no attempt definition/glue/provenance/name lanes, parallel origin arrays, contiguous word copies, or mixed promotion protocol. Truncation returns whole chunks. Macro invocation storage does not use this
-  arena. The arena is clear at every command boundary: settling a command
-  releases its rows, and a failed synchronous scanner or child scope
-  truncates its own suffix to a mark. A resource miss halts the command and
+  arena. Sealed list coordinates are move-only: publication, insertion, rendering
+  and splicing consume their roots and return their chunks immediately. Failed
+  scanners truncate their serial-frontier suffix; there is no command cleanup.
+  A resource miss halts the command and
   the host replays from a full checkpoint.
 - `src/execution_scratch.rs`, `src/execution_scratch/tests.rs`: reusable
   bounded expression frames and admission/sinks for ordinary resident runs.
@@ -107,8 +108,8 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   persistent command state, retirement-owned executor replay-completion
   fences transferred directly to §325/§390 descendants, current-generation
   execution scratch, pending afterassignment, and direct semantic mutation. It owns no group topology or aftergroup lane. `CommandProcessor::end_group` consumes the native state stack and links aftergroup words directly into final backup input; restoration callbacks run synchronously.
-  `src/state/attempt_transition.rs` owns command-boundary scratch settlement,
-  synchronous child scopes, and checkpoint-replay cleanup;
+  `src/state/attempt_transition.rs` owns synchronous child scopes
+  and halted full-checkpoint abandonment;
   `src/state/projection.rs` owns allocation-free retained-byte
   and dependency views; `src/state/executor_publication.rs` owns ordered
   executor-facing fact transfer and demand-only queued-list publication. Each is an inherent implementation on the
@@ -211,7 +212,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   caller-owned admitted context, session-owned fuel, observer, and
   operation-local diagnostic-effects collector directly and constructs no
   temporary owned ledger or whole-context handoff.
-  Its scoped native callback reborrows the real context, command state, effects, and fuel after synchronous scans return; completed-command settlement clears actual scanner temporaries and attempt scratch while retaining the processor. Actual Drop still owns resource-failure cleanup.
+  Its scoped native callback reborrows the real context, command state, effects, and fuel after synchronous scans return; sealed scanner products are consumed at their actual destination without a completed-command stage. Actual Drop still owns resource-failure cleanup.
 - `src/command.rs`: test builds count resolved-command writes for structural
   assertions. Profiling builds derive that exact one-write-per-raw-delivery
   volume from the singular command-work ledger, so the resident loop does not

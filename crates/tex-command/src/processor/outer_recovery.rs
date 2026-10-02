@@ -204,7 +204,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .builders
                     .iter()
                     .find(|builder| builder.identity == context.builder.0)
-                    .and_then(|builder| self.command.attempt.token_buffer(builder.tokens).ok())
+                    .and_then(|builder| self.command.attempt.token_buffer(&builder.tokens).ok())
                     .map_or_else(String::new, |tokens| {
                         tokens.iter().fold(String::new(), |mut text, token| {
                             super::expand_render::append_token_list_token_text(

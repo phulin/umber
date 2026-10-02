@@ -76,12 +76,11 @@ consume the old owner before replacement.
 `semantic_owners.rs` lends actual command, mode, box, alignment, and output
 owners to a concrete call. Case-specific code publishes alignment and
 assignment facts at their semantic positions. The common tail preserves show
-completion, deferred print, shipout, page-output, and paragraph ordering. Native
-context-consuming semantics use that same settlement tail without constructing
-an unused command machine.
+completion, deferred print, shipout, page-output, and paragraph ordering. Native context-consuming semantics return directly without constructing
+an unused command machine or entering a command settlement stage.
 Observed execution emits its ordered mutation/effect/artifact receipts;
-unobserved execution constructs no receipt batch. `settlement.rs` clears real
-scanner scratch, commits demanded receipts, and latches failures. It creates
+unobserved execution constructs no receipt batch. `host_boundaries.rs` admits
+demanded receipts and latches failures. Actual consumers reclaim scanner scratch. It creates
 no per-command savepoint or lifecycle capability.
 
 Host misses unwind call-local scanner and semantic owners. The host restores a

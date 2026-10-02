@@ -525,7 +525,7 @@ pub(crate) fn push_untraced_words(words: &mut Vec<TracedTokenWord>, list: &[Toke
 
 /// Storage a token-list source may copy its words from.
 pub(crate) struct TokenSources<'a, G> {
-    pub(crate) attempt: &'a crate::attempt::AttemptArena<G>,
+    pub(crate) attempt: &'a mut crate::attempt::AttemptArena<G>,
     pub(crate) pending_insertions: &'a mut Vec<TracedTokenWord>,
 }
 
@@ -571,11 +571,15 @@ impl<G> PackedTokenSpanSource<G> for PackedTokenSpanHandle<G> {
                 words.extend(
                     sources
                         .attempt
-                        .token_words(list)
+                        .token_words(&list)
                         .expect("admitted attempt list")
                         .iter()
                         .copied(),
                 );
+                sources
+                    .attempt
+                    .discard_token_list(list)
+                    .expect("admitted attempt list consumed");
                 ResidentTokenStorage::List(PackedTokenOwnership::Stored)
             }
             Self::Word(word) => {

@@ -23,13 +23,15 @@ fn scanner_destinations_share_fixed_chunks_and_are_mark_bounded() {
             .allocate_token_buffer()
             .expect("test fixture is valid");
         attempt
-            .push_buffer_token(buffer, word('a'))
+            .push_buffer_token(&buffer, word('a'))
             .expect("test fixture is valid");
         attempt
-            .push_buffer_token(buffer, word('b'))
+            .push_buffer_token(&buffer, word('b'))
             .expect("test fixture is valid");
         assert_eq!(
-            attempt.token_buffer(buffer).expect("test fixture is valid"),
+            attempt
+                .token_buffer(&buffer)
+                .expect("test fixture is valid"),
             &[word('a'), word('b')]
         );
         let retained_chunks = attempt.token_lane.retained_chunks();
@@ -37,7 +39,7 @@ fn scanner_destinations_share_fixed_chunks_and_are_mark_bounded() {
             .finish_token_buffer(buffer)
             .expect("test fixture is valid");
         assert_eq!(
-            attempt.token_words(frozen).expect("test fixture is valid"),
+            attempt.token_words(&frozen).expect("test fixture is valid"),
             &[word('a'), word('b')]
         );
         assert_eq!(attempt.token_lane.retained_chunks(), retained_chunks);
@@ -52,22 +54,22 @@ fn scanner_destinations_share_fixed_chunks_and_are_mark_bounded() {
             "retiring the scanner result returns its chunks to the shared attempt lane"
         );
         assert_eq!(
-            attempt.token_buffer(buffer),
+            attempt.token_buffer(&buffer),
             Err(AttemptError::InvalidCoordinate)
         );
         assert!(
             attempt
-                .token_buffer(recycled)
+                .token_buffer(&recycled)
                 .expect("recycled sink")
                 .is_empty()
         );
         assert_eq!(
-            attempt.token_words(frozen),
+            attempt.token_words(&frozen),
             Err(AttemptError::InvalidCoordinate)
         );
         attempt.truncate(mark).expect("recycled buffer retires");
         assert_eq!(
-            attempt.token_buffer(recycled),
+            attempt.token_buffer(&recycled),
             Err(AttemptError::InvalidCoordinate)
         );
     })
@@ -82,7 +84,7 @@ fn nested_scanner_suffix_truncation_preserves_the_parent_destination() {
         .expect("outer scanner destination");
     for _ in 0..65 {
         attempt
-            .push_buffer_token(outer, word('a'))
+            .push_buffer_token(&outer, word('a'))
             .expect("outer scanner word");
     }
 
@@ -92,7 +94,7 @@ fn nested_scanner_suffix_truncation_preserves_the_parent_destination() {
         .expect("child scanner destination");
     for _ in 0..65 {
         attempt
-            .push_buffer_token(child, word('x'))
+            .push_buffer_token(&child, word('x'))
             .expect("child scanner word");
     }
     attempt
@@ -100,17 +102,17 @@ fn nested_scanner_suffix_truncation_preserves_the_parent_destination() {
         .expect("child scanner suffix truncates");
 
     attempt
-        .push_buffer_token(outer, word('b'))
+        .push_buffer_token(&outer, word('b'))
         .expect("outer destination continues in place");
     let outer = attempt
         .finish_token_buffer(outer)
         .expect("outer scanner result");
-    let words = attempt.token_words(outer).expect("outer scanner words");
+    let words = attempt.token_words(&outer).expect("outer scanner words");
     assert_eq!(words.len(), 66);
     assert!(words.iter().take(65).all(|entry| *entry == word('a')));
     assert_eq!(words.get(65).copied(), Some(word('b')));
     assert_eq!(
-        attempt.token_buffer(child),
+        attempt.token_buffer(&child),
         Err(AttemptError::InvalidCoordinate)
     );
     assert_eq!(attempt.token_lane.retained_chunks(), 4);
@@ -125,14 +127,14 @@ fn one_and_4096_child_scanner_splices_transfer_ownership_without_copy() {
             .allocate_token_buffer()
             .expect("parent scanner destination");
         attempt
-            .push_buffer_token(parent, word('p'))
+            .push_buffer_token(&parent, word('p'))
             .expect("parent prefix");
         let child = attempt
             .allocate_token_buffer()
             .expect("child scanner destination");
         for _ in 0..token_count {
             attempt
-                .push_buffer_token(child, word('c'))
+                .push_buffer_token(&child, word('c'))
                 .expect("child scanner word");
         }
         let child = attempt
@@ -145,7 +147,7 @@ fn one_and_4096_child_scanner_splices_transfer_ownership_without_copy() {
         let moved = {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
             attempt
-                .consume_token_list_into_buffer(child, parent)
+                .consume_token_list_into_buffer(child.test_alias(), &parent)
                 .expect("child chain transfers to parent")
         };
         let allocations_after =
@@ -161,14 +163,14 @@ fn one_and_4096_child_scanner_splices_transfer_ownership_without_copy() {
             0
         );
         assert_eq!(
-            attempt.token_words(child),
+            attempt.token_words(&child),
             Err(AttemptError::InvalidCoordinate)
         );
         let parent = attempt
             .finish_token_buffer(parent)
             .expect("completed parent list");
         let words = attempt
-            .token_words(parent)
+            .token_words(&parent)
             .expect("transferred parent words");
         assert_eq!(words.len(), token_count as usize + 1);
         assert_eq!(words.first().copied(), Some(word('p')));
@@ -184,7 +186,7 @@ fn one_and_4096_parent_owned_scans_reuse_chunks_without_allocation_or_transfer()
         let buffer = attempt.allocate_token_buffer().expect("scanner buffer");
         for _ in 0..65 {
             attempt
-                .push_buffer_token(buffer, word('x'))
+                .push_buffer_token(&buffer, word('x'))
                 .expect("scanner word");
         }
         let before_finish = attempt.token_lane.counters();
@@ -194,7 +196,7 @@ fn one_and_4096_parent_owned_scans_reuse_chunks_without_allocation_or_transfer()
             before_finish,
             "finalization only publishes the existing sink coordinate"
         );
-        let words = attempt.token_words(result).expect("scanner words");
+        let words = attempt.token_words(&result).expect("scanner words");
         assert_eq!(words.len(), 65);
         assert_eq!(words.first().copied(), Some(word('x')));
         assert_eq!(words.get(64).copied(), Some(word('x')));
@@ -258,12 +260,12 @@ fn truncated_row_cannot_alias_a_reallocated_coordinate() {
             .expect("test fixture is valid");
 
         assert_eq!(
-            attempt.token_words(stale),
+            attempt.token_words(&stale),
             Err(AttemptError::InvalidCoordinate)
         );
         assert_eq!(
             attempt
-                .token_words(replacement)
+                .token_words(&replacement)
                 .expect("test fixture is valid"),
             &[word('b')]
         );
@@ -290,18 +292,18 @@ fn child_scopes_close_exact_lifo_suffixes() {
         .close_child_scope(child)
         .expect("child closes first");
     assert_eq!(
-        attempt.token_words(child_value),
+        attempt.token_words(&child_value),
         Err(AttemptError::InvalidCoordinate)
     );
     assert_eq!(
-        attempt.token_words(parent_value).expect("parent words"),
+        attempt.token_words(&parent_value).expect("parent words"),
         &[word('a')]
     );
     attempt
         .close_child_scope(parent)
         .expect("parent closes second");
     assert_eq!(
-        attempt.token_words(retained).expect("retained words"),
+        attempt.token_words(&retained).expect("retained words"),
         &[word('p')]
     );
 }
@@ -311,11 +313,11 @@ fn sealed_or_consumed_rows_cannot_be_written_through_the_old_buffer_alias() {
     let mut arena = AttemptArena::<()>::default();
     let child = arena.allocate_token_buffer().expect("child");
     arena
-        .push_buffer_token(child, word('x'))
+        .push_buffer_token(&child, word('x'))
         .expect("child word");
     let list = arena.finish_token_buffer(child).expect("seal child");
     assert_eq!(
-        arena.push_buffer_token(child, word('y')),
+        arena.push_buffer_token(&child, word('y')),
         Err(AttemptError::InvalidCoordinate)
     );
     assert_eq!(
@@ -324,22 +326,22 @@ fn sealed_or_consumed_rows_cannot_be_written_through_the_old_buffer_alias() {
     );
     let parent = arena.allocate_token_buffer().expect("parent");
     arena
-        .consume_token_list_into_buffer(list, parent)
+        .consume_token_list_into_buffer(list.test_alias(), &parent)
         .expect("transfer child");
     assert_eq!(
-        arena.token_words(list),
+        arena.token_words(&list),
         Err(AttemptError::InvalidCoordinate)
     );
     assert_eq!(
-        arena.token_buffer(child),
+        arena.token_buffer(&child),
         Err(AttemptError::InvalidCoordinate)
     );
     assert_eq!(
-        arena.consume_token_list_into_buffer(list, parent),
+        arena.consume_token_list_into_buffer(list.test_alias(), &parent),
         Err(AttemptError::InvalidCoordinate)
     );
     assert_eq!(
-        arena.token_buffer(parent).expect("parent words"),
+        arena.token_buffer(&parent).expect("parent words"),
         &[word('x')]
     );
 }
@@ -358,24 +360,50 @@ fn serial_exhaustion_and_foreign_marks_do_not_publish_rows() {
         arena.allocate_token_buffer(),
         Err(AttemptError::CapacityOverflow)
     );
-    assert_eq!(arena.mark(), before);
+    assert!(arena.is_clear());
+    let _ = before;
     assert!(arena.is_clear());
 }
 
 #[test]
-fn settlement_reclaims_sealed_and_unfinished_sinks_and_invalidates_old_coordinates() {
+fn consumers_retire_rows_without_a_command_boundary() {
     let mut arena = AttemptArena::<()>::default();
     let old = arena.allocate_token_list([word('a')]).expect("list");
+    let alias = old.test_alias();
+    let child = arena.mark();
     let open = arena.allocate_token_buffer().expect("open sink");
-    arena.push_buffer_token(open, word('b')).expect("open word");
-    arena.settle();
-    assert!(arena.is_clear());
-    assert!(arena.mark().is_empty());
-    let new = arena.allocate_token_list([word('c')]).expect("new list");
-    assert_eq!(arena.token_words(old), Err(AttemptError::InvalidCoordinate));
+    arena
+        .push_buffer_token(&open, word('b'))
+        .expect("open word");
+    arena
+        .discard_token_list(old)
+        .expect("consumer releases root below child");
     assert_eq!(
-        arena.push_buffer_token(open, word('d')),
+        arena.token_words(&alias),
         Err(AttemptError::InvalidCoordinate)
     );
-    assert_eq!(arena.token_words(new).expect("new words"), &[word('c')]);
+    arena
+        .truncate(child)
+        .expect("failed child discards its suffix");
+    assert!(arena.is_clear());
+    let new = arena.allocate_token_list([word('c')]).expect("new list");
+    assert_eq!(arena.token_words(&new).expect("new words"), &[word('c')]);
+    arena.discard_token_list(new).expect("new consumer");
+    assert!(arena.is_clear());
+}
+
+#[test]
+fn consumed_parent_does_not_invalidate_a_child_serial_frontier() {
+    let mut arena = AttemptArena::<()>::default();
+    let parent = arena.allocate_token_list([word('p')]).expect("parent");
+    let child = arena.begin_child_scope();
+    arena.discard_token_list(parent).expect("parent consumer");
+    let child_value = arena.allocate_token_list([word('c')]).expect("child value");
+    arena
+        .discard_token_list(child_value)
+        .expect("child consumer");
+    arena
+        .close_child_scope(child)
+        .expect("serial frontier survives recycled rows");
+    assert!(arena.is_clear());
 }

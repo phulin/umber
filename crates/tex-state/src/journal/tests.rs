@@ -362,3 +362,33 @@ fn null_token_parameter_uses_tex_restore_zero_word() {
         1
     );
 }
+
+#[test]
+fn save_maxima_follow_actual_pushes_and_survive_unsave_and_restore() {
+    let mut journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
+    let checkpoint = journal.checkpoint_cursor(0).expect("quiescent checkpoint");
+    journal.add_box_spec_words(2);
+    let outer = enter_group(&mut journal, 1);
+    record_saved_count(&mut journal, 0, 17);
+    journal.add_box_spec_words(3);
+    let inner = enter_group(&mut journal, 2);
+    record_saved_count(&mut journal, 1, 29);
+    let classic = journal.max_save_stack_words(false);
+    let etex = journal.max_save_stack_words(true);
+    assert!(classic >= 5);
+    assert!(etex > classic);
+    journal.record_group_exit(inner);
+    journal.remove_box_spec_words(3);
+    journal.record_group_exit(outer);
+    journal.remove_box_spec_words(2);
+    assert_eq!(journal.max_save_stack_words(false), classic);
+    assert_eq!(journal.max_save_stack_words(true), etex);
+    journal.restore_group_cursor(checkpoint);
+    assert_eq!(journal.max_save_stack_words(false), classic);
+    assert_eq!(journal.max_save_stack_words(true), etex);
+    let next = enter_group(&mut journal, 3);
+    journal.record_group_exit(next);
+    assert_eq!(journal.max_save_stack_words(false), classic);
+    assert_eq!(journal.max_save_stack_words(true), etex);
+}

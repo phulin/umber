@@ -57,7 +57,7 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
         if let ReplayBoxKind::Insert(class, pre) = box_kind {
             let step = finish_insert_or_adjust_group(class, pre, modes, stores, command)?;
             let inserted = boxes
-                .pop_box()
+                .pop_box(stores)
                 .expect("successful insert completion retains its active owner");
             if let Some(start) = inserted.migration_segment_start {
                 let segment = stores.close_page_box_segment(start);
@@ -217,7 +217,7 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
                 Node::MathNoad(MathNoad::new(NoadKind::VCenter, MathField::SubBox(boxed))),
             );
             boxes
-                .pop_box()
+                .pop_box(stores)
                 .expect("successful vcenter completion retains its active owner");
             return Ok(ReplayStep::Continue);
         }
@@ -228,11 +228,11 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
                 })?;
             boxes.pending_leader = Some((kind, payload));
             boxes
-                .pop_box()
+                .pop_box(stores)
                 .expect("successful leader completion retains its active owner");
         } else if *ships_out {
             let box_state = boxes
-                .pop_box()
+                .pop_box(stores)
                 .expect("successful shipout packaging retains its active owner");
             let region = box_state
                 .shipout_region
@@ -244,7 +244,7 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
             });
         } else if has_target {
             let target = boxes
-                .pop_box()
+                .pop_box(stores)
                 .expect("successful setbox packaging retains its active owner")
                 .target
                 .expect("setbox completion retains its target");
@@ -276,7 +276,7 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
                 crate::box_runtime::apply_box_shift_delta(&mut node, shift.delta)?;
             }
             let box_state = boxes
-                .pop_box()
+                .pop_box(stores)
                 .expect("successful box append retains its active owner");
             if let Some(start) = box_state.box_segment_start {
                 crate::box_runtime::append_box_node_with_segment(

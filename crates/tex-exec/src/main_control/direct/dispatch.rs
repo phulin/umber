@@ -12,7 +12,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             .stores
             .command_context()
             .expect("direct scanner admission");
-        'native: loop {
+        {
             let mode = self.control.modes.current_mode();
             let boxes = &self.control.boxes;
             let main_loop_active = self.control.main_loop_active;
@@ -141,32 +141,19 @@ impl<G> DirectDispatch<'_, '_, G> {
                             admitted_context,
                             $receipts,
                             result,
-                            pending,
-                            checked,
-                            $apply,
-                            {
-                                if result.is_ok()
-                                    && self.completed_operations + 1 < self.remaining_operations
-                                    && self.control.settle_native_context_command(
-                                        &admitted_context,
-                                        self.effects,
-                                        pending,
-                                        checked,
-                                        self.initial_effect_pos,
-                                    )
-                                {
-                                    self.completed_operations += 1;
-                                    self.current_origin = None;
-                                    command_slot = None;
-                                    continue 'native;
-                                }
-                            }
+                            $apply
                         )
                     };
                 }
 
                 macro_rules! retained_semantic {
-                    ($receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident, $observer:ident| $apply:expr) => {{
+                    ($($args:tt)*) => { retained_apply!(false, $($args)*) };
+                }
+                macro_rules! retained_assignment {
+                    ($($args:tt)*) => { retained_apply!(true, $($args)*) };
+                }
+                macro_rules! retained_apply {
+                    ($assignment:expr, $receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident, $observer:ident| $apply:expr) => {{
                         // Reports from scanning precede semantic application. Their
                         // actual demand releases the scanner before publication.
                         if owned_processor.has_pending_reports() {
@@ -185,21 +172,19 @@ impl<G> DirectDispatch<'_, '_, G> {
                         } else {
                             self.control.main_loop_active = false;
                             let $receipts = &mut observation_receipts;
-                            let completed = owned_processor.apply_completed_command(
+                            let mut completed = owned_processor.apply_completed_command(
                                 |$context, $state, $effects, $fuel, $observer| $apply,
                             );
+                            if $assignment && retain_commands && completed.is_ok() {
+                                if let Err(error) = owned_processor.complete_assignment() {
+                                    completed = Err(command_error(error));
+                                }
+                            }
                             let can_continue = completed.is_ok()
                                 && !owned_processor.has_pending_reports()
                                 && retain_commands
                                 && self.completed_operations + 1 < self.remaining_operations;
-                            if can_continue
-                                && semantic_owners::settle_retained_native_command(
-                                    &mut owned_processor,
-                                    boxes,
-                                    &mut self.control.max_save_stack,
-                                    self.initial_effect_pos,
-                                )
-                            {
+                            if can_continue {
                                 self.completed_operations += 1;
                                 self.current_origin = None;
                                 command_slot = None;
@@ -213,13 +198,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     .map(PendingDiagnostic::Command),
                             );
                             drop(owned_processor);
-                            let checked = MainControl::save_stack_words(
-                                &admitted_context,
-                                boxes,
-                                &self.control.command,
-                                self.control.command.profile(),
-                            );
-                            let pending = PendingPageOutputFacts::capture(&admitted_context);
                             self.control.report_scan_in_context(
                                 &mut admitted_context,
                                 self.effects,
@@ -236,16 +214,15 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 );
                             }
                             drop(admitted_context);
-                            self.control.finish_direct_semantic_step(
-                                self.stores,
-                                self.effects,
-                                self.output_start,
-                                completed,
-                                pending,
-                                checked,
-                                None,
-                                $receipts.take(),
-                            )
+                            if completed.is_ok() && self.control.operation_observations.is_some() {
+                                self.control.publish_semantic_observations(
+                                    self.stores,
+                                    self.output_start,
+                                    None,
+                                    $receipts.take(),
+                                );
+                            }
+                            completed
                         }
                     }};
                 }
@@ -951,7 +928,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         })
                                     })
                                 } else {
-                                    retained_semantic!(
+                                    retained_assignment!(
                                         receipts,
                                         |native_context,
                                          _native_state,
@@ -1005,7 +982,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         })
                                     })
                                 } else {
-                                    retained_semantic!(
+                                    retained_assignment!(
                                         receipts,
                                         |native_context,
                                          _native_state,
@@ -1038,6 +1015,19 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         )
                                     )
                                 } else {
+                                    // §1045 has no semantic action. With no live word to flush,
+                                    // the real switch arm goes straight to its next fetch.
+                                    if retain_commands
+                                        && !processor.has_pending_reports()
+                                        && self.completed_operations + 1 < self.remaining_operations
+                                    {
+                                        self.control.main_loop_active = false;
+                                        self.completed_operations += 1;
+                                        self.current_origin = None;
+                                        command_slot = None;
+                                        continue 'processor;
+                                    }
+
                                     retained_semantic!(
                                         receipts,
                                         |native_context,
@@ -1295,7 +1285,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     scan_origin
                                 )
                                 .value;
-                                let step = retained_semantic!(
+                                let step = retained_assignment!(
                                     receipts,
                                     |native_context,
                                      _native_state,
@@ -1340,7 +1330,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     scan_origin
                                 )
                                 .value;
-                                let step = retained_semantic!(
+                                let step = retained_assignment!(
                                     receipts,
                                     |native_context,
                                      _native_state,
@@ -1434,7 +1424,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 .value;
                                 let source_identity = processor.scanned_glue_identity();
                                 let source_register = processor.scanned_glue_register();
-                                let step = retained_semantic!(
+                                let step = retained_assignment!(
                                     receipts,
                                     |native_context,
                                      _native_state,
@@ -1858,7 +1848,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return {
-                                    let step = retained_semantic!(
+                                    let step = retained_assignment!(
                                         receipts,
                                         |native_context,
                                          native_state,
@@ -1913,7 +1903,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         .map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     return {
-                                        let step = retained_semantic!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
+                                        let step = retained_assignment!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
     let tokens = match source { Some(source) => Some(source), None => publication::publish_tokens(native_state, native_context, tokens)? };
     semantic::execute_toks(native_context, native_effects, native_state, receipts, index, tokens, global, false)
 })?;
@@ -1941,7 +1931,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     scan_origin
                                 )
                                 .value;
-                                let step = retained_semantic!(
+                                let step = retained_assignment!(
                                     receipts,
                                     |native_context,
                                      native_state,
@@ -1981,7 +1971,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     scan_origin
                                 )
                                 .value;
-                                let step = retained_semantic!(
+                                let step = retained_assignment!(
                                     receipts,
                                     |native_context,
                                      native_state,
@@ -2071,7 +2061,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         .map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     return {
-                                        let step = retained_semantic!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
+                                        let step = retained_assignment!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
     let tokens = match tokens.source { Some(source) => Some(source), None => publication::publish_tokens(native_state, native_context, tokens.tokens)? };
     semantic::execute_toks(native_context, native_effects, native_state, receipts, index, tokens, global, true)
 })?;
@@ -2098,7 +2088,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     .scan_glue_parameter_assignment(index, mu)
                                     .map_err(command_error)
                                     .map_err(|error| scan_error(error, scan_origin))?;
-                                let step = retained_semantic!(
+                                let step = retained_assignment!(
                                     receipts,
                                     |native_context,
                                      native_state,
@@ -2975,7 +2965,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     primitive,
                                     scan_origin,
                                 )?;
-                                let step = retained_semantic!(
+                                let step = retained_assignment!(
                                     receipts,
                                     |native_context,
                                      native_state,
@@ -3928,10 +3918,17 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         // discards with `scan_toks(false,false)`. Unlike §961's
                                         // pattern-word loop, §473 therefore enters `absorbing`
                                         // before §403 reads the opening brace.
-                                        let _ = (processor
+                                        let discarded = (processor
                                             .scan_balanced_text(false)
                                             .map_err(command_error))
                                         .map_err(|error| scan_error(error, scan_origin))?;
+                                        processor
+                                            .apply_completed_command(|_, state, _, _, _| {
+                                                state.discard_attempt_tokens(discarded.tokens)
+                                            })
+                                            .map_err(|_| ExecError::MissingToken {
+                                                context: "discarded late patterns",
+                                            })?;
                                         return {
                                             let (
                                                 direct_arg0,

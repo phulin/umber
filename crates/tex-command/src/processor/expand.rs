@@ -519,7 +519,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         debug_assert!(destination.is_none());
         let mut consumed_characters = false;
         loop {
-            let allows_characters = self.command.delivery_mode.allows_character_run();
+            let allows_characters = self.command.delivery_mode.allows_character_run()
+                && self
+                    .state
+                    .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
+                    <= 1;
             #[cfg(feature = "profiling")]
             let kind = match self.command.roots.input.levels.rows.last() {
                 Some(crate::input::InputLevel::Resident(row))
@@ -1569,7 +1573,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[cold]
     #[inline(never)]
     fn trace_hot_conditional(&mut self, command: &CurrentCommand<G>) {
-        if self.command.delivery_mode.tracing() {
+        if self
+            .state
+            .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
+            > 1
+        {
             self.print_command_trace(crate::PrintCommand::from_current(command));
         }
     }
@@ -1643,7 +1651,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         // branch and has no primitive trace of its own.
         if report_trace
             && primitive != ExpandablePrimitive::EndTemplate
-            && self.command.delivery_mode.tracing()
+            && (self
+                .state
+                .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
+                > 1)
         {
             self.print_command_trace(crate::PrintCommand::from_current(command));
         }
@@ -1844,7 +1855,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: &CurrentCommand<G>,
         report_trace: bool,
     ) -> Result<(), CommandError> {
-        if report_trace && self.command.delivery_mode.tracing() {
+        if report_trace
+            && (self
+                .state
+                .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
+                > 1)
+        {
             self.print_command_trace(crate::PrintCommand::from_current(command));
         }
         #[cfg(feature = "profiling")]

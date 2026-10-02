@@ -13,6 +13,10 @@ raw/expanded fetching kernel, observation specialization, and validation.
 `main_control_dispatch.md` maps the single direct mode/command/prefix engine,
 its scanner/application ownership, and the deletion of eligibility handoffs.
 
+`native_command_ownership.md` defines direct continuation without a successful
+command settlement/cleanup stage: consumers release scratch, native stack
+changes record usage, and actual tracing and semantic events own their work.
+
 `structured_scanner_ownership.md` maps the structured command scanner
 families, their shared processor authority, and their replay boundary.
 

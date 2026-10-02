@@ -47,7 +47,7 @@ pub enum ResourceNeed {
     Font { request: FontLoadRequest },
     /// pdfTeX's `scan_image` completed an immutable request, but its retained
     /// bytes and validated metadata have not been supplied by the host.
-    PdfImage { request: PdfImageRequest },
+    PdfImage { request: PdfImageRequest<()> },
 }
 
 /// Typed answer to one [`ResourceNeed`].
@@ -69,7 +69,7 @@ pub enum ResourceFulfillment {
         resource: Box<FontResource>,
     },
     PdfImage {
-        request: PdfImageRequest,
+        request: PdfImageRequest<()>,
         resource: Box<PdfImageResource>,
     },
 }
@@ -685,7 +685,7 @@ struct RetainedImageSelection {
 
 #[derive(Debug)]
 struct HostPdfImageResource {
-    request: PdfImageRequest,
+    request: PdfImageRequest<()>,
     resource: PdfImageResource,
     dependencies: Arc<[InputDependency]>,
     selection: Option<RetainedImageSelection>,
@@ -1085,7 +1085,7 @@ impl CommandHostCapabilities {
     }
 
     /// Registers a validated immutable image response for its exact request.
-    pub fn register_pdf_image(&mut self, request: PdfImageRequest, resource: PdfImageResource) {
+    pub fn register_pdf_image(&mut self, request: PdfImageRequest<()>, resource: PdfImageResource) {
         self.register_pdf_image_with_dependencies(request, resource, Arc::from([]));
     }
 
@@ -1093,7 +1093,7 @@ impl CommandHostCapabilities {
     /// resolve that exact request.
     pub fn register_pdf_image_with_dependencies(
         &mut self,
-        request: PdfImageRequest,
+        request: PdfImageRequest<()>,
         resource: PdfImageResource,
         dependencies: impl Into<Arc<[InputDependency]>>,
     ) {
@@ -1118,7 +1118,7 @@ impl CommandHostCapabilities {
     }
 
     #[must_use]
-    pub fn pdf_image(&self, request: &PdfImageRequest) -> Option<PdfImageResource> {
+    pub fn pdf_image<T>(&self, request: &PdfImageRequest<T>) -> Option<PdfImageResource> {
         self.images
             .iter()
             .find(|image| image.request.same_resource_as(request))
@@ -1126,9 +1126,9 @@ impl CommandHostCapabilities {
     }
 
     #[must_use]
-    pub fn pdf_image_with_dependencies(
+    pub fn pdf_image_with_dependencies<T>(
         &self,
-        request: &PdfImageRequest,
+        request: &PdfImageRequest<T>,
     ) -> Option<(PdfImageResource, Arc<[InputDependency]>)> {
         self.images
             .iter()
@@ -1139,7 +1139,10 @@ impl CommandHostCapabilities {
     /// Returns the selected physical path and its retained origin for a
     /// value-only image capability.
     #[must_use]
-    pub fn pdf_image_selection(&self, request: &PdfImageRequest) -> Option<(PathBuf, InputOrigin)> {
+    pub fn pdf_image_selection<T>(
+        &self,
+        request: &PdfImageRequest<T>,
+    ) -> Option<(PathBuf, InputOrigin)> {
         self.images
             .iter()
             .find(|image| image.request.same_resource_as(request))
@@ -1149,7 +1152,7 @@ impl CommandHostCapabilities {
 
     /// Refreshes an image's origin after provider settlement. The active host
     /// read already happened; this only records its current same-run status.
-    pub fn set_pdf_image_origin(&mut self, request: &PdfImageRequest, origin: InputOrigin) {
+    pub fn set_pdf_image_origin<T>(&mut self, request: &PdfImageRequest<T>, origin: InputOrigin) {
         if let Some(image) = self
             .images
             .iter_mut()
@@ -1163,7 +1166,7 @@ impl CommandHostCapabilities {
     /// Drops one positive image answer after its selected output bytes have
     /// changed. The next cold use must ask the provider to parse current
     /// bytes and metadata.
-    pub fn invalidate_pdf_image(&mut self, request: &PdfImageRequest) {
+    pub fn invalidate_pdf_image<T>(&mut self, request: &PdfImageRequest<T>) {
         self.images
             .retain(|image| !image.request.same_resource_as(request));
     }
@@ -1612,14 +1615,14 @@ impl<'a, G> CommandHostContext<'a, G> {
     }
 
     #[must_use]
-    pub fn pdf_image(&self, request: &PdfImageRequest) -> Option<PdfImageResource> {
+    pub fn pdf_image<T>(&self, request: &PdfImageRequest<T>) -> Option<PdfImageResource> {
         self.capabilities.pdf_image(request)
     }
 
     #[must_use]
-    pub fn pdf_image_with_dependencies(
+    pub fn pdf_image_with_dependencies<T>(
         &self,
-        request: &PdfImageRequest,
+        request: &PdfImageRequest<T>,
     ) -> Option<(PdfImageResource, Arc<[InputDependency]>)> {
         self.capabilities.pdf_image_with_dependencies(request)
     }

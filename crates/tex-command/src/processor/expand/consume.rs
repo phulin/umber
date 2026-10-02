@@ -37,7 +37,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         nested_conditions: &mut u32,
     ) -> Result<DeliveryStatus, CommandError> {
         if self.is_observed()
-            || self.command.delivery_mode.tracing()
+            || (self
+                .state
+                .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
+                > 1)
             || self.command.delivery_mode.requires_persistent_settlement()
         {
             return self.get_next_into(destination);

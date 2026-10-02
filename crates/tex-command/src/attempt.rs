@@ -1,9 +1,7 @@
-//! One command-lifetime packed-token lane and bounded scratch coordinates.
+//! Fixed-chunk packed-token scratch with consumer-owned sealed coordinates.
 //!
-//! Values in this module are coordinates, never owners. One [`AttemptArena`]
-//! owns all backing storage. It is clear at every command boundary: a
-//! command's rows are released when the command settles, and a synchronous
-//! scanner that fails truncates its own suffix to a fixed-size mark.
+//! Reading borrows a sealed root; its consumer releases the chunks and row.
+//! Failed synchronous scanners discard their own serial-ordered suffix.
 
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
@@ -40,14 +38,15 @@ pub struct CommandAttemptChildScope {
 }
 macro_rules! attempt_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        #[derive(Debug, Eq, Hash, PartialEq)]
+        #[must_use = "scratch storage must be consumed or discarded by its owner"]
         pub struct $name {
             key: NonZeroU64,
             row: u32,
             serial: NonZeroU64,
         }
         impl $name {
-            const fn index(self) -> usize {
+            const fn index(&self) -> usize {
                 self.row as usize
             }
         }
@@ -55,16 +54,26 @@ macro_rules! attempt_id {
 }
 attempt_id!(AttemptTokenListId);
 attempt_id!(AttemptTokenBufferId);
+#[cfg(test)]
+impl AttemptTokenListId {
+    pub(crate) fn test_alias(&self) -> Self {
+        Self {
+            key: self.key,
+            row: self.row,
+            serial: self.serial,
+        }
+    }
+}
+impl Copy for AttemptTokenBufferId {}
+impl Clone for AttemptTokenBufferId {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AttemptMark {
     key: NonZeroU64,
-    rows: u32,
-}
-impl AttemptMark {
-    #[cfg(test)]
-    pub(crate) const fn is_empty(self) -> bool {
-        self.rows == 0
-    }
+    serial_frontier: u64,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttemptError {
@@ -207,12 +216,12 @@ impl<G> AttemptArena<G> {
     pub(crate) fn mark(&self) -> AttemptMark {
         AttemptMark {
             key: self.key.0,
-            rows: u32::try_from(self.rows.len()).expect("bounded scratch rows"),
+            serial_frontier: self.next_serial,
         }
     }
     pub(crate) fn validate_mark(&self, mark: AttemptMark) -> Result<(), AttemptError> {
         self.validate_key(mark.key)?;
-        if mark.rows as usize > self.rows.len() {
+        if mark.serial_frontier > self.next_serial {
             return Err(AttemptError::InvalidCoordinate);
         }
         Ok(())
@@ -220,7 +229,7 @@ impl<G> AttemptArena<G> {
     pub(crate) fn clear(&mut self) {
         self.truncate(AttemptMark {
             key: self.key.0,
-            rows: 0,
+            serial_frontier: 1,
         })
         .expect("empty mark is a valid suffix");
     }
@@ -229,11 +238,6 @@ impl<G> AttemptArena<G> {
         self.rows.is_empty()
     }
     #[inline(always)]
-    pub(crate) fn settle(&mut self) {
-        if !self.is_clear() {
-            self.clear();
-        }
-    }
     pub(crate) fn begin_child_scope(&self) -> CommandAttemptChildScope {
         CommandAttemptChildScope {
             opening: self.mark(),
@@ -247,10 +251,15 @@ impl<G> AttemptArena<G> {
     }
     pub(crate) fn truncate(&mut self, mark: AttemptMark) -> Result<(), AttemptError> {
         self.validate_mark(mark)?;
-        while self.rows.len() > mark.rows as usize {
+        while self
+            .rows
+            .last()
+            .is_some_and(|row| row.serial.get() >= mark.serial_frontier)
+        {
             let row = self.rows.pop().expect("nonempty scratch suffix");
             self.token_lane.release(row.sink)?;
         }
+        self.retire_consumed_suffix();
         Ok(())
     }
     pub(crate) fn allocate_token_list(
@@ -261,7 +270,7 @@ impl<G> AttemptArena<G> {
         let result = (|| {
             let buffer = self.allocate_token_buffer()?;
             for word in words {
-                self.push_buffer_token(buffer, word)?;
+                self.push_buffer_token(&buffer, word)?;
             }
             self.finish_token_buffer(buffer)
         })();
@@ -272,7 +281,7 @@ impl<G> AttemptArena<G> {
     }
     pub(crate) fn token_words(
         &self,
-        id: AttemptTokenListId,
+        id: &AttemptTokenListId,
     ) -> Result<AttemptTokenListView<'_>, AttemptError> {
         self.validate_key(id.key)?;
         let row = self
@@ -305,9 +314,26 @@ impl<G> AttemptArena<G> {
         });
         Ok(id)
     }
+    pub(crate) fn discard_token_buffer(
+        &mut self,
+        id: AttemptTokenBufferId,
+    ) -> Result<(), AttemptError> {
+        self.validate_key(id.key)?;
+        let row = self
+            .rows
+            .get_mut(id.index())
+            .filter(|row| row.serial == id.serial && row.phase == TokenPhase::Open)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        let sink = core::mem::take(&mut row.sink);
+        row.phase = TokenPhase::Consumed;
+        self.token_lane.release(sink)?;
+        self.retire_consumed_suffix();
+        Ok(())
+    }
+
     pub(crate) fn token_buffer(
         &self,
-        id: AttemptTokenBufferId,
+        id: &AttemptTokenBufferId,
     ) -> Result<AttemptTokenListView<'_>, AttemptError> {
         self.validate_key(id.key)?;
         let row = self
@@ -321,7 +347,7 @@ impl<G> AttemptArena<G> {
     }
     pub(crate) fn push_buffer_token(
         &mut self,
-        id: AttemptTokenBufferId,
+        id: &AttemptTokenBufferId,
         word: TracedTokenWord,
     ) -> Result<(), AttemptError> {
         #[cfg(feature = "profiling")]
@@ -340,7 +366,7 @@ impl<G> AttemptArena<G> {
     pub(crate) fn consume_token_list_into_buffer(
         &mut self,
         source: AttemptTokenListId,
-        destination: AttemptTokenBufferId,
+        destination: &AttemptTokenBufferId,
     ) -> Result<u32, AttemptError> {
         self.validate_key(source.key)?;
         self.validate_key(destination.key)?;
@@ -366,6 +392,7 @@ impl<G> AttemptArena<G> {
         self.token_lane
             .append_sink(&mut destination_row.sink, &mut source_row.sink)?;
         source_row.phase = TokenPhase::Consumed;
+        self.retire_consumed_suffix();
         Ok(moved)
     }
     pub(crate) fn finish_token_buffer(
@@ -384,6 +411,33 @@ impl<G> AttemptArena<G> {
             row: id.row,
             serial: id.serial,
         })
+    }
+    /// Publication, insertion and rendering release their actual sealed owner.
+    pub(crate) fn discard_token_list(
+        &mut self,
+        id: AttemptTokenListId,
+    ) -> Result<(), AttemptError> {
+        self.validate_key(id.key)?;
+        let row = self
+            .rows
+            .get_mut(id.index())
+            .filter(|row| row.serial == id.serial && row.phase == TokenPhase::Finished)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        let sink = std::mem::take(&mut row.sink);
+        row.phase = TokenPhase::Consumed;
+        self.token_lane.release(sink)?;
+        self.retire_consumed_suffix();
+        Ok(())
+    }
+
+    fn retire_consumed_suffix(&mut self) {
+        while self
+            .rows
+            .last()
+            .is_some_and(|row| row.phase == TokenPhase::Consumed)
+        {
+            self.rows.pop();
+        }
     }
     fn validate_key(&self, key: NonZeroU64) -> Result<(), AttemptError> {
         if key == self.key.0 {

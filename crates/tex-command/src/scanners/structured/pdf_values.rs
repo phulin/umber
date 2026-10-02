@@ -27,6 +27,22 @@ pub struct PdfImageRequest<T = AttemptTokenListId> {
 }
 
 impl<T> PdfImageRequest<T> {
+    /// Host lookup owns detached scalar data, never a scanner's attribute capability.
+    pub fn resource_request(&self) -> PdfImageRequest<()> {
+        PdfImageRequest {
+            name: self.name.clone(),
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            page: self.page.clone(),
+            color_space_object: self.color_space_object,
+            page_box: self.page_box,
+            page_box_explicit: self.page_box_explicit,
+            resolution: self.resolution,
+            attr: None,
+        }
+    }
+
     /// Whether two requests select the same immutable host image resource.
     ///
     /// pdftex.web §1550's `read_image` receives the file/page/page-box facts;
@@ -35,7 +51,7 @@ impl<T> PdfImageRequest<T> {
     /// Attribute text is command-attempt state, not part of host resource
     /// identity. A replayed request obtains its fresh coordinate from the
     /// ordinary scan.
-    pub(crate) fn same_resource_as(&self, other: &Self) -> bool {
+    pub(crate) fn same_resource_as<U>(&self, other: &PdfImageRequest<U>) -> bool {
         self.name == other.name
             && self.width == other.width
             && self.height == other.height
@@ -133,7 +149,7 @@ pub enum PdfFormRequest<T = AttemptTokenListId> {
     },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ScannedPdfFontAction {
     pub font: Option<FontId>,
     pub first: Option<AttemptTokenListId>,

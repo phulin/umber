@@ -245,3 +245,39 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
         });
     }
 }
+
+#[test]
+fn observed_assignment_publishes_its_mutation_before_the_saved_token_backup() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\afterassignment\relax\count0=17 \end");
+        let mut observations = ObservationRecorder::default();
+        run_to_end_observed(&mut control, stores, &mut observations);
+        let mutation = observations
+            .0
+            .iter()
+            .position(|event| {
+                matches!(event,
+                    CommandObservation::Mutation(record)
+                        if record.key == ObservationValue::Name("count:0".into())
+                            && record.value == ObservationValue::Integer(17)
+                )
+            })
+            .expect("assignment mutation");
+        let backup = observations
+            .0
+            .iter()
+            .position(|event| {
+                matches!(event,
+                    CommandObservation::Recovery(record)
+                        if record.kind == tex_command::RecoveryKind::Backup
+                            && record.tokens == [ObservedToken::ControlSequence("relax".into())]
+                )
+            })
+            .expect("saved afterassignment token");
+        assert!(
+            mutation < backup,
+            "mutation must precede the actual saved-token backup"
+        );
+    });
+}

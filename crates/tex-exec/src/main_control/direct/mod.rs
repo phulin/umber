@@ -55,7 +55,6 @@ struct DirectDispatch<'call, 'provider, G> {
     suppress_left_boundary: bool,
     remaining_operations: usize,
     completed_operations: usize,
-    initial_effect_pos: tex_state::EffectPos,
 }
 
 impl<G> DirectDispatch<'_, '_, G> {
@@ -180,7 +179,6 @@ impl<G> MainControl<G> {
         if tracked {
             self.observe_control_projections(stores);
         }
-        let initial_effect_pos = stores.world().effect_pos();
         let mut direct = DirectDispatch {
             control: self,
             stores,
@@ -193,7 +191,6 @@ impl<G> MainControl<G> {
             suppress_left_boundary: false,
             remaining_operations,
             completed_operations: 0,
-            initial_effect_pos,
         };
         let result = if let Some(command) = settled {
             direct.run_command(Some(command), None, true, None)
@@ -281,9 +278,8 @@ impl<G> DirectDispatch<'_, '_, G> {
 impl<G> MainControl<G> {
     pub(super) fn update_save_stack_highwater(&mut self, stores: &mut Universe<G>) {
         let words = stores
-            .checked_save_stack_words(self.command_profile().capabilities().supports_etex())
-            .expect("save-stack highwater")
-            .saturating_add(self.boxes.box_spec_words);
+            .max_save_stack_words(self.command_profile().capabilities().supports_etex())
+            .expect("save-stack highwater");
         self.max_save_stack = self.max_save_stack.max(words);
     }
 }

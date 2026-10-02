@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn parsed_source_key_excludes_output_only_color_selection() {
-    let mut request = tex_command::PdfImageRequest {
+    let mut request: tex_command::PdfImageRequest<()> = tex_command::PdfImageRequest {
         name: "figure.png".to_owned(),
         width: None,
         height: None,

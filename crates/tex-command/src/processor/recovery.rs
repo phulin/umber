@@ -340,6 +340,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         outcome: tex_state::print::ErrorOutcome,
     ) -> Result<(), CommandError> {
+        self.synchronous_error_reported = true;
         self.complete_first_recoverable_site(None);
         match outcome {
             tex_state::print::ErrorOutcome::Continue => Ok(()),

@@ -25,7 +25,10 @@ pub(crate) struct PdfImageSourceKey {
 }
 
 impl PdfImageSourceKey {
-    pub(crate) fn from_request(request: &tex_command::PdfImageRequest, resolution: u32) -> Self {
+    pub(crate) fn from_request<T>(
+        request: &tex_command::PdfImageRequest<T>,
+        resolution: u32,
+    ) -> Self {
         Self {
             name: request.name.clone(),
             page: request.page.clone(),

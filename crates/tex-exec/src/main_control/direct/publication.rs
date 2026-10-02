@@ -3,14 +3,14 @@ use super::*;
 use tex_command::TokenRequest;
 
 pub(super) fn publish_tokens<G, T: TokenRequest<tex_command::AttemptTokenListId>>(
-    command: &CommandState<G>,
+    command: &mut CommandState<G>,
     stores: &mut CommandContext<'_, G>,
     request: T,
 ) -> Result<T::Mapped<tex_state::TokenListId<G>>, ExecError> {
     let mut rows = 0usize;
     let mut words = 0usize;
     let mut invalid = false;
-    request.visit_tokens(&mut |source| match command.attempt_token_words(*source) {
+    request.visit_tokens(&mut |source| match command.attempt_token_words(source) {
         Ok(tokens) => {
             if let (Some(next_rows), Some(next_words)) =
                 (rows.checked_add(1), words.checked_add(tokens.len()))
@@ -35,11 +35,15 @@ pub(super) fn publish_tokens<G, T: TokenRequest<tex_command::AttemptTokenListId>
         })?;
     Ok(request.map_tokens(&mut |source| {
         let words = command
-            .attempt_token_words(source)
+            .attempt_token_words(&source)
             .expect("all scanner roots validated before publication");
-        stores
+        let published = stores
             .allocate_reserved_token_list(words.iter().map(|word| word.token_word()))
-            .expect("all native destinations reserved before publication")
+            .expect("all native destinations reserved before publication");
+        command
+            .discard_attempt_tokens(source)
+            .expect("validated source consumed");
+        published
     }))
 }
 pub(super) fn publish_alignment_preamble<G>(
@@ -58,8 +62,9 @@ pub(super) fn publish_alignment_preamble<G>(
     for column in &preamble.columns {
         for source in column
             .u_template
+            .as_ref()
             .into_iter()
-            .chain(std::iter::once(column.v_template))
+            .chain(std::iter::once(&column.v_template))
         {
             match command.attempt_token_words(source) {
                 Ok(tokens) => {
@@ -88,11 +93,15 @@ pub(super) fn publish_alignment_preamble<G>(
         })?;
     let mut publish = |source| {
         let words = command
-            .attempt_token_words(source)
+            .attempt_token_words(&source)
             .expect("validated alignment source");
-        stores
+        let published = stores
             .allocate_reserved_token_list(words.iter().map(|word| word.token_word()))
-            .expect("reserved alignment destination")
+            .expect("reserved alignment destination");
+        command
+            .discard_attempt_tokens(source)
+            .expect("validated template consumed");
+        published
     };
     let columns = preamble
         .columns

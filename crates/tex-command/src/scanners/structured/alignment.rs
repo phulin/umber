@@ -16,7 +16,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .tokens;
         self.command
             .attempt
-            .push_buffer_token(live_tokens, spelling)
+            .push_buffer_token(&live_tokens, spelling)
             .map_err(|_| CommandError::input_invariant())
     }
 
@@ -25,10 +25,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         pending: AlignmentPreambleState<G>,
     ) -> Result<(), CommandError> {
         self.finish_scanner_episode(pending.scanner_episode);
-        self.command
+        let live = self
+            .command
             .transient
             .builders
-            .retain(|live| live.identity != pending.builder.0);
+            .pop()
+            .ok_or_else(CommandError::input_invariant)?;
+        if live.identity != pending.builder.0 {
+            return Err(CommandError::input_invariant());
+        }
+        self.command
+            .attempt
+            .discard_token_buffer(live.tokens)
+            .map_err(|_| CommandError::input_invariant())?;
         Ok(())
     }
     /// Runs TeX82 §774 `init_align`'s `scan_spec(align_group,false)`: §645's
@@ -326,7 +335,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             && self
                                 .command
                                 .attempt
-                                .token_buffer(pending.u_template)
+                                .token_buffer(&pending.u_template)
                                 .map_err(|_| CommandError::input_invariant())?
                                 .is_empty()
                             && pending.repeat_start.is_none()
@@ -367,13 +376,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ) || !self
                         .command
                         .attempt
-                        .token_buffer(pending.u_template)
+                        .token_buffer(&pending.u_template)
                         .map_err(|_| CommandError::input_invariant())?
                         .is_empty()
                     {
                         self.command
                             .attempt
-                            .push_buffer_token(pending.u_template, command.spelling())
+                            .push_buffer_token(&pending.u_template, command.spelling())
                             .map_err(|_| CommandError::input_invariant())?;
                         self.push_alignment_live_token(pending.builder, command.spelling())?;
                     }
@@ -445,7 +454,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     self.command
                         .attempt
-                        .push_buffer_token(pending.v_template, command.spelling())
+                        .push_buffer_token(&pending.v_template, command.spelling())
                         .map_err(|_| CommandError::input_invariant())?;
                     self.push_alignment_live_token(pending.builder, command.spelling())?;
                 }
@@ -479,10 +488,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         // its completion, then restore normal status; otherwise an exit record
         // loses its `aligning` identity and reverses the canonical ordering.
         self.finish_scanner_episode(pending.scanner_episode);
-        self.command
+        let live = self
+            .command
             .transient
             .builders
-            .retain(|live| live.identity != pending.builder.0);
+            .pop()
+            .ok_or_else(CommandError::input_invariant)?;
+        if live.identity != pending.builder.0 {
+            return Err(CommandError::input_invariant());
+        }
+        self.command
+            .attempt
+            .discard_token_buffer(live.tokens)
+            .map_err(|_| CommandError::input_invariant())?;
         Ok(())
     }
 

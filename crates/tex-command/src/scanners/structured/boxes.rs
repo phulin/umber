@@ -147,13 +147,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let mut text = String::new();
                 let words = self
                     .command
-                    .attempt_token_words(tokens)
-                    .map_err(crate::scan_toks::attempt_command_error)?
-                    .to_vec();
+                    .attempt_token_words(&tokens)
+                    .map_err(crate::scan_toks::attempt_command_error)?;
                 for token in words {
                     self.state
                         .append_token_selector_text(token.semantic_token(), &mut text);
                 }
+                self.command
+                    .attempt
+                    .discard_token_list(tokens)
+                    .map_err(crate::scan_toks::attempt_command_error)?;
                 text
             }
         };

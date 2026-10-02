@@ -1712,6 +1712,18 @@ impl<G> DenseState<G> {
             .saturating_sub(latest.map_or(0, |(_, words)| words))
     }
 
+    pub(crate) fn max_save_stack_words(&self, source_lines: bool) -> usize {
+        self.journal().max_save_stack_words(source_lines)
+    }
+
+    pub(crate) fn add_box_spec_words(&mut self, words: usize) {
+        self.journal_mut().add_box_spec_words(words);
+    }
+
+    pub(crate) fn remove_box_spec_words(&mut self, words: usize) {
+        self.journal_mut().remove_box_spec_words(words);
+    }
+
     pub(crate) fn begin_group(
         &mut self,
         kind: GroupKind,

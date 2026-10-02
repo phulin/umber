@@ -273,6 +273,7 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     pub(crate) write_expansion_depth: u32,
     command_trace_mode_prefix: Option<String>,
     command_trace_printed: bool,
+    synchronous_error_reported: bool,
     command_trace_count: usize,
     /// TeX82 §365's temporary permission belongs exclusively to the next
     /// source-tokenization step. Canonical token and command delivery never
@@ -587,6 +588,8 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     /// processor episode. Expansion may consume it before main control sees
     /// the resulting unexpandable command.
     pub fn set_command_trace_mode_prefix(&mut self, mode_prefix: Option<String>) {
+        self.command_trace_printed = false;
+        self.command_trace_count = 0;
         self.command_trace_mode_prefix = mode_prefix;
     }
 
@@ -610,7 +613,8 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     /// or a command trace.
     #[must_use]
     pub fn has_pending_reports(&self) -> bool {
-        self.command_trace_printed
+        self.synchronous_error_reported
+            || self.command_trace_printed
             || !self.command.semantic_diagnostics.is_empty()
             || !self.diagnostic_effects.is_empty()
             || self.diagnostic_effects.has_first_recoverable()
@@ -642,26 +646,16 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         )
     }
 
-    /// Closes the real scratch and trace boundary before the next native fetch.
-    pub fn settle_completed_command(&mut self) {
-        self.command.settle_attempt();
-        debug_assert!(self.command.attempt_is_clear());
-        self.command_trace_mode_prefix = None;
-        self.command_trace_printed = false;
-        self.command_trace_count = 0;
-        // Raw fetch, input retirement, matching, deferred-write and scalar
-        // scanners own their own temporary state. In particular par_token is
-        // immutable spelling throughout this native context loan, not meaning.
-        debug_assert_eq!(self.expansion_depth, 0);
-        debug_assert_eq!(self.write_expansion_depth, 0);
-        debug_assert!(!self.is_in_csname);
-        debug_assert!(!self.create_source_control_sequences);
-        self.command.delivery_mode.begin_episode(
-            self.observer.is_some(),
-            self.state
-                .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
-                > 1,
-        );
+    /// TeX82 §1269: insert the pending token at the assignment's completion.
+    pub fn complete_assignment(&mut self) -> Result<(), CommandError> {
+        if let Some(token) = self
+            .command
+            .take_afterassignment(self.state)
+            .map_err(|_| CommandError::input_invariant())?
+        {
+            self.back_input_token(token)?;
+        }
+        Ok(())
     }
 
     /// Number of §299 command traces printed during this processor episode.
@@ -684,10 +678,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Self {
         command.observe_tracked_dependencies(state);
-        command.delivery_mode.begin_episode(
-            observer.is_some(),
-            state.int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS) > 1,
-        );
+        command.delivery_mode.begin_episode(observer.is_some());
         Self {
             command,
             state,
@@ -714,6 +705,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             write_expansion_depth: 0,
             command_trace_mode_prefix: None,
             command_trace_printed: false,
+            synchronous_error_reported: false,
             command_trace_count: 0,
             create_source_control_sequences: false,
         }

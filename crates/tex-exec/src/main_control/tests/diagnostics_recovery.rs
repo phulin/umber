@@ -1013,18 +1013,21 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         modes
             .push(Mode::RestrictedHorizontal)
             .expect("test mode push");
-        boxes.push_box(ActiveReplayBox {
-            target: None,
-            shipout_region: None,
-            box_segment_start: None,
-            migration_segment_start: None,
-            migration_segments: Vec::new(),
-            kind: ReplayBoxKind::HBox,
-            group_kind: GroupKind::AdjustedHBox,
-            packing: PackSpec::Exactly(Scaled::from_raw(20 * 65_536)),
-            leader_kind: None,
-            shift: None,
-        });
+        boxes.push_box(
+            &mut stores.command_context().expect("box scope"),
+            ActiveReplayBox {
+                target: None,
+                shipout_region: None,
+                box_segment_start: None,
+                migration_segment_start: None,
+                migration_segments: Vec::new(),
+                kind: ReplayBoxKind::HBox,
+                group_kind: GroupKind::AdjustedHBox,
+                packing: PackSpec::Exactly(Scaled::from_raw(20 * 65_536)),
+                leader_kind: None,
+                shift: None,
+            },
+        );
         let diagnostic = admitted!(stores, |context| detached_showgroups(
             context,
             &None,

@@ -947,7 +947,10 @@ fn pdf_image_create_rejects_dvi_and_direct_retry_before_allocation() {
         assert_eq!(request.page, tex_command::PdfImagePageSelection::Number(2));
         assert_eq!(request.page_box, tex_command::PdfImagePageBox::Media);
         assert!(request.page_box_explicit);
-        assert!(request.attr.is_some());
+        assert!(
+            request.attr.is_none(),
+            "resource need does not retain scanner attributes"
+        );
 
         control.capabilities_mut().register_pdf_image(
             request,
@@ -1029,7 +1032,10 @@ fn immediate_pdf_image_rejects_direct_retry_after_resource_need() {
         assert_eq!(request.depth, Some(Scaled::from_raw(2 * Scaled::UNITY)));
         assert_eq!(request.page, tex_command::PdfImagePageSelection::Number(3));
         assert_eq!(request.page_box, tex_command::PdfImagePageBox::Crop);
-        assert!(request.attr.is_some());
+        assert!(
+            request.attr.is_none(),
+            "resource need does not retain scanner attributes"
+        );
 
         control.capabilities_mut().register_pdf_image(
             request,

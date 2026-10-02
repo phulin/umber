@@ -61,7 +61,7 @@ impl AlignmentIdentity {
 }
 
 /// Exact identities of the templates selected for one cell.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub struct AlignmentCellTemplates {
     /// Prefix replayed before the cell body. `None` is TeX's `\omit` path.
     pub u_template: Option<AttemptTokenListId>,
@@ -120,7 +120,7 @@ pub struct FinishedAlignmentCell {
 }
 
 /// Frozen template pairs collected during one raw alignment preamble scan.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub struct AlignmentPreamble {
     pub columns: Vec<AlignmentCellTemplates>,
     /// TeX82 §759's `\tabskip` value at each preamble boundary.
@@ -306,7 +306,13 @@ impl<G> AlignmentDeliveryState<G> {
         debug_assert!(self.suspended.is_empty() && self.align_stack.is_empty());
         Self {
             align_state: self.align_state,
-            completed_preamble: self.completed_preamble.clone(),
+            completed_preamble: {
+                assert!(
+                    self.completed_preamble.is_none(),
+                    "named capture excludes unfinished preambles"
+                );
+                None
+            },
             pending_fin_col_delimiter: self.pending_fin_col_delimiter,
             extra_tab_recovery: self.extra_tab_recovery,
             pending_outer_recovery_cr: self.pending_outer_recovery_cr,

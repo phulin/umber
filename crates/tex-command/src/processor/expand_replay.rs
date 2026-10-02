@@ -19,15 +19,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         let words = self
             .command
             .attempt
-            .token_words(tokens)
-            .map_err(crate::scan_toks::attempt_command_error)?
-            .to_vec();
+            .token_words(&tokens)
+            .map_err(crate::scan_toks::attempt_command_error)?;
         let mut text = String::new();
         let _ = self.state.int_param(IntParam::ESCAPE_CHAR);
         for word in words {
             self.state
                 .append_token_string_text(word.semantic_token(), &mut text);
         }
+        self.command
+            .attempt
+            .discard_token_list(tokens)
+            .map_err(crate::scan_toks::attempt_command_error)?;
         Ok(text)
     }
 

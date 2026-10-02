@@ -60,7 +60,7 @@ fn case_shift_one_64_and_4096_write_once_without_copy_or_warmed_allocation() {
                     .back_input(opening)
                     .expect("restore measured opening");
             }
-            command.settle_attempt();
+            assert!(command.attempt_is_clear());
 
             command.profile_reset_token_collector_path_counters();
             reset_case_shift_path_counters();
@@ -120,7 +120,7 @@ fn case_shift_one_64_and_4096_write_once_without_copy_or_warmed_allocation() {
                 "no unfinished scanner builder"
             );
             assert!(!command.roots.input.levels.arguments.is_matching());
-            command.settle_attempt();
+            assert!(command.attempt_is_clear());
         });
     }
 }
@@ -174,7 +174,7 @@ fn case_shift_empty_and_nested_groups_replay_the_final_span_directly() {
             ]
         );
         drop(processor);
-        command.settle_attempt();
+        assert!(command.attempt_is_clear());
     });
 }
 
@@ -211,7 +211,7 @@ fn assert_read_failure_is_fully_cleaned(raw_catcodes: bool) {
             .begin_definition_build(OriginId::UNKNOWN)
             .expect("failed read returned its native writer");
         context.abort_definition_build(build);
-        command.settle_attempt();
+        assert!(command.attempt_is_clear());
         assert!(command.attempt.is_clear());
     });
 }
@@ -261,7 +261,7 @@ fn balanced_collection_freezes_nested_tokens_in_the_attempt_arena() {
         assert_eq!(
             processor
                 .command
-                .attempt_token_words(scanned.replacement_text)
+                .attempt_token_words(&scanned.replacement_text)
                 .expect("attempt words")
                 .iter()
                 .map(|word| word.semantic_token())
@@ -332,7 +332,7 @@ fn eof_recovery_renders_balanced_text_only_after_the_runaway_exists() {
             .expect("EOF recovery closes the balanced scan");
         assert_eq!(
             processor
-                .attempt_words(scanned.replacement_text)
+                .attempt_words(&scanned.replacement_text)
                 .expect("replacement text")
                 .iter()
                 .map(|word| word.semantic_token())
@@ -348,8 +348,13 @@ fn eof_recovery_renders_balanced_text_only_after_the_runaway_exists() {
             Some(("Runaway text?", "abc"))
         );
         assert_eq!(runaway_render_count(), 1);
+        processor
+            .command
+            .attempt
+            .discard_token_list(scanned.replacement_text)
+            .expect("test consumes scanner result");
         drop(processor);
-        command.settle_attempt();
+        assert!(command.attempt_is_clear());
     });
 }
 
@@ -390,7 +395,7 @@ fn eof_recovery_streams_macro_parameter_and_replacement_slices_once() {
         );
         assert_eq!(runaway_render_count(), 1);
         drop(processor);
-        command.settle_attempt();
+        assert!(command.attempt_is_clear());
     });
 }
 
@@ -432,7 +437,7 @@ fn outer_recovery_renders_only_the_collected_balanced_prefix() {
             &mut diagnostic_effects,
         );
 
-        processor
+        let scanned = processor
             .scan_toks(ScanToksMode::General { expanded: false })
             .expect("outer recovery closes the scan");
         assert_eq!(
@@ -440,8 +445,13 @@ fn outer_recovery_renders_only_the_collected_balanced_prefix() {
             Some(("Runaway text?", "a"))
         );
         assert_eq!(runaway_render_count(), 1);
+        processor
+            .command
+            .attempt
+            .discard_token_list(scanned.replacement_text)
+            .expect("test consumes scanner result");
         drop(processor);
-        command.settle_attempt();
+        assert!(command.attempt_is_clear());
     });
 }
 
@@ -475,11 +485,15 @@ fn warmed_successful_scan_builds_no_runaway_and_allocates_nothing() {
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            processor
+            let scanned = processor
                 .scan_toks(ScanToksMode::General { expanded: false })
                 .expect("warm scan");
+            processor
+                .command
+                .discard_attempt_tokens(scanned.replacement_text)
+                .expect("fixture consumes scanner result");
         }
-        command.settle_attempt();
+        assert!(command.attempt_is_clear());
 
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
@@ -493,15 +507,19 @@ fn warmed_successful_scan_builds_no_runaway_and_allocates_nothing() {
                 &mut diagnostic_effects,
             );
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-            processor
+            let scanned = processor
                 .scan_toks(ScanToksMode::General { expanded: false })
                 .expect("measured scan");
+            processor
+                .command
+                .discard_attempt_tokens(scanned.replacement_text)
+                .expect("fixture consumes scanner result");
         }
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
         assert_eq!(runaway_render_count(), 0);
-        command.settle_attempt();
+        assert!(command.attempt_is_clear());
     });
 }
 
@@ -537,21 +555,33 @@ fn run_mixed_scan_workload<G>(
     rounds: usize,
 ) {
     for _ in 0..rounds {
-        processor
+        let scanned = processor
             .scan_toks(ScanToksMode::General { expanded: false })
             .expect("unexpanded general scan");
         processor
+            .command
+            .discard_attempt_tokens(scanned.replacement_text)
+            .expect("fixture consumes scanner result");
+        let scanned = processor
             .scan_toks(ScanToksMode::General { expanded: true })
             .expect("expanded general scan");
         processor
+            .command
+            .discard_attempt_tokens(scanned.replacement_text)
+            .expect("fixture consumes scanner result");
+        processor
             .scan_toks_buffers(ScanToksMode::MacroDefinition { expanded: false })
             .expect("definition scan");
-        processor
+        let scanned = processor
             .scan_toks(ScanToksMode::GeneralFor {
                 expanded: false,
                 owner,
             })
             .expect("write-like owned scan");
+        processor
+            .command
+            .discard_attempt_tokens(scanned.replacement_text)
+            .expect("fixture consumes scanner result");
     }
 }
 
@@ -578,7 +608,7 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
                 );
                 run_mixed_scan_workload(&mut processor, owner, rounds);
             }
-            command.settle_attempt();
+            assert!(command.attempt_is_clear());
 
             crate::test_harness::push(&mut command, mixed_scan_workload(rounds));
             command.profile_reset_token_collector_path_counters();
@@ -614,7 +644,7 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
             assert_eq!(counters.4, counters.0, "one monotonic phase transition");
             assert_eq!(counters.5, 0, "duplicate phase dispatches");
             assert_eq!(counters.6, 0, "fact rescans");
-            assert_eq!(counters.7, counters.0, "one final settlement");
+            assert_eq!(counters.7, counters.0, "one final publication");
             assert_eq!(counters.8, 0, "whole token-list copies");
             assert_eq!(counters.9, 0, "whole command copies");
             assert_eq!(counters.10, 0, "whole frame copies");
@@ -627,7 +657,7 @@ fn one_and_4096_mixed_scans_use_one_resident_collector_write_per_token() {
                 0
             );
 
-            command.settle_attempt();
+            assert!(command.attempt_is_clear());
         });
     }
 }
@@ -678,7 +708,7 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
         assert_eq!(
             processor
                 .command
-                .attempt_token_words(scanned.replacement_text)
+                .attempt_token_words(&scanned.replacement_text)
                 .expect("replacement survives nested retirement")
                 .iter()
                 .map(|word| word.semantic_token())
@@ -763,7 +793,7 @@ fn expanded_scan_adopts_unexpanded_child_tokens_without_recursive_expansion() {
             .scan_toks(ScanToksMode::General { expanded: true })
             .expect("expanded parent scan");
         let words = processor
-            .attempt_words(scanned.replacement_text)
+            .attempt_words(&scanned.replacement_text)
             .expect("adopted parent words");
         assert_eq!(
             words

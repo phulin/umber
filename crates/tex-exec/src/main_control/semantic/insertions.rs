@@ -62,18 +62,21 @@ pub(in crate::main_control) fn execute_begin_insert<G>(
         // \hangafter local to the just-opened insert group, exactly like
         // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
         crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
-        boxes.push_box(ActiveReplayBox {
-            target: None,
-            shipout_region: None,
-            box_segment_start: None,
-            migration_segment_start,
-            migration_segments: Vec::new(),
-            kind: ReplayBoxKind::Insert(class, construction.pre),
-            group_kind: GroupKind::Insert,
-            packing: PackSpec::Natural,
-            leader_kind: None,
-            shift: None,
-        });
+        boxes.push_box(
+            stores,
+            ActiveReplayBox {
+                target: None,
+                shipout_region: None,
+                box_segment_start: None,
+                migration_segment_start,
+                migration_segments: Vec::new(),
+                kind: ReplayBoxKind::Insert(class, construction.pre),
+                group_kind: GroupKind::Insert,
+                packing: PackSpec::Natural,
+                leader_kind: None,
+                shift: None,
+            },
+        );
         // Unlike `\hbox`/`\vbox`/`\vtop`, §1099 never begins the
         // `\everyhbox`/`\everyvbox` token list for an insertion body.
         Ok(ReplayStep::Continue)

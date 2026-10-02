@@ -72,20 +72,20 @@ mod delivery;
 mod direct;
 mod discretionary;
 mod executor_facts;
+mod host_boundaries;
 mod leader_values;
 mod resources;
 mod root_source;
 mod semantic;
 mod semantic_owners;
-mod settlement;
 
 use code_table::recover_code_table_value;
 
 use cold::*;
 use delivery::*;
 use executor_facts::ExecutorHostFacts;
+use host_boundaries::*;
 use leader_values::*;
-use settlement::*;
 
 fn font_metrics(resource: &FontResource) -> Option<&tex_state::FileContent> {
     match resource {
@@ -611,7 +611,6 @@ struct ReplayBoxes<G> {
     pending_shipout: Option<tex_state::node_region::PageClosureBuildMark>,
     pending_leader: Option<(GlueKind, LeaderPayload)>,
     active_boxes: Vec<ActiveReplayBox>,
-    box_spec_words: usize,
     suspended_alignments: Vec<ActiveReplayAlignment<G>>,
     recovery_simple_group_pending: bool,
     recovery_simple_group_open: bool,
@@ -626,7 +625,6 @@ impl<G> Default for ReplayBoxes<G> {
             pending_shipout: None,
             pending_leader: None,
             active_boxes: Vec::new(),
-            box_spec_words: 0,
             suspended_alignments: Vec::new(),
             recovery_simple_group_pending: false,
             recovery_simple_group_open: false,
@@ -637,14 +635,14 @@ impl<G> Default for ReplayBoxes<G> {
 }
 
 impl<G> ReplayBoxes<G> {
-    fn push_box(&mut self, active: ActiveReplayBox) {
-        self.box_spec_words += active.kind.save_stack_spec_words();
+    fn push_box(&mut self, stores: &mut CommandContext<'_, G>, active: ActiveReplayBox) {
+        stores.add_box_spec_words(active.kind.save_stack_spec_words());
         self.active_boxes.push(active);
     }
 
-    fn pop_box(&mut self) -> Option<ActiveReplayBox> {
+    fn pop_box(&mut self, stores: &mut CommandContext<'_, G>) -> Option<ActiveReplayBox> {
         let active = self.active_boxes.pop()?;
-        self.box_spec_words -= active.kind.save_stack_spec_words();
+        stores.remove_box_spec_words(active.kind.save_stack_spec_words());
         Some(active)
     }
 
@@ -2381,22 +2379,6 @@ impl<G> MainControl<G> {
         true
     }
 
-    /// The checked save-stack words §273 would count for the live group,
-    /// `\aftergroup`, and active-box state.
-    fn save_stack_words(
-        stores: &CommandContext<'_, G>,
-        boxes: &ReplayBoxes<G>,
-        _command: &tex_command::CommandState<G>,
-        profile: CommandProfile,
-    ) -> usize {
-        // TeX82 §§645/1083 keeps ordinary box specs immediately below their
-        // §273 boundaries. Vcenters and insertions deliberately have smaller
-        // projections (§§1167/1099), so derive the words from each live kind.
-        stores
-            .checked_save_stack_words(profile.capabilities().supports_etex())
-            .saturating_add(boxes.box_spec_words)
-    }
-
     /// Executes successful ordinary commands directly on canonical state.
     /// Group entry and exit, deferred effects, and nonpublishing PDF ledger
     /// mutations are ordinary journal/save-stack mutations, so the bounded
@@ -2434,7 +2416,6 @@ impl<G> MainControl<G> {
         self.episode_telemetry.record_attempt();
         self.advance_telemetry.attempts += 1;
         loop {
-            self.assert_command_scratch_clear();
             let mut diagnostic_effects = DiagnosticEffects::new();
             let mut completed_native_commands = 0;
             let pending =
@@ -2517,7 +2498,9 @@ impl<G> MainControl<G> {
                             );
                             return evidence.map_or(result, Err);
                         } else {
-                            self.commit_direct_operation(stores, &mut diagnostic_effects);
+                            if diagnostic_effects.has_first_recoverable() {
+                                self.promote_first_recoverable(stores, &mut diagnostic_effects);
+                            }
                         }
                         return result;
                     }
@@ -2540,10 +2523,14 @@ impl<G> MainControl<G> {
             if let Some(error) =
                 self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
             {
-                self.commit_direct_operation(stores, &mut diagnostic_effects);
+                if diagnostic_effects.has_first_recoverable() {
+                    self.promote_first_recoverable(stores, &mut diagnostic_effects);
+                }
                 return Err(error);
             }
-            self.commit_direct_operation(stores, &mut diagnostic_effects);
+            if diagnostic_effects.has_first_recoverable() {
+                self.promote_first_recoverable(stores, &mut diagnostic_effects);
+            }
             let tracked_result = tracked_mark.take().map(|mark| {
                 stores
                     .finish_dependency_region(mark)
@@ -2724,7 +2711,6 @@ impl<G> MainControl<G> {
         mut resource_provider: Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<DiagnosticStepResult, ExecError> {
         self.ensure_not_halted()?;
-        self.assert_command_scratch_clear();
         let mut diagnostic_effects = DiagnosticEffects::new();
         self.ensure_primitive_handles(stores);
         let (command, cursor) = {
@@ -2787,7 +2773,9 @@ impl<G> MainControl<G> {
                         // checkpoint; no expansion or caller frame survives.
                         self.halt_direct_operation();
                     } else {
-                        self.commit_direct_operation(stores, &mut diagnostic_effects);
+                        if diagnostic_effects.has_first_recoverable() {
+                            self.promote_first_recoverable(stores, &mut diagnostic_effects);
+                        }
                     }
                     return match result? {
                         StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
@@ -2803,7 +2791,9 @@ impl<G> MainControl<G> {
                 }
                 tex_command::DeliveryStatus::End => {
                     debug_assert!(destination.is_none());
-                    self.commit_direct_operation(stores, &mut diagnostic_effects);
+                    if diagnostic_effects.has_first_recoverable() {
+                        self.promote_first_recoverable(stores, &mut diagnostic_effects);
+                    }
                     return Ok(DiagnosticStepResult::Progress(DiagnosticStep::EndOfInput));
                 }
                 _ => unreachable!("diagnostic expanded delivery returns command or end"),
@@ -2815,7 +2805,9 @@ impl<G> MainControl<G> {
                     control_sequence: command.control_sequence(),
                     source_provenance,
                 };
-                self.commit_direct_operation(stores, &mut diagnostic_effects);
+                if diagnostic_effects.has_first_recoverable() {
+                    self.promote_first_recoverable(stores, &mut diagnostic_effects);
+                }
                 return Ok(DiagnosticStepResult::Progress(step));
             }
             (command, cursor)
@@ -2835,7 +2827,9 @@ impl<G> MainControl<G> {
                 if matches!(result, Ok(StepResult::Suspended(_))) {
                     self.halt_direct_operation();
                 } else {
-                    self.commit_direct_operation(stores, &mut diagnostic_effects);
+                    if diagnostic_effects.has_first_recoverable() {
+                        self.promote_first_recoverable(stores, &mut diagnostic_effects);
+                    }
                 }
                 return match result? {
                     StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
@@ -2848,7 +2842,9 @@ impl<G> MainControl<G> {
         };
         match applied {
             Ok(_) => {
-                self.commit_direct_operation(stores, &mut diagnostic_effects);
+                if diagnostic_effects.has_first_recoverable() {
+                    self.promote_first_recoverable(stores, &mut diagnostic_effects);
+                }
                 stores
                     .world_mut()
                     .publish_diagnostic_effects_preserving(&mut diagnostic_effects);
