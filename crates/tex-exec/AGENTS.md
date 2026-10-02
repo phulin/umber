@@ -6,7 +6,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 `tex-exec` consumes completed commands from `tex-command` and applies unexpandable TeX semantics to `tex-state::Universe`. `MainControl` is the only command-processing front. It installs and dispatches unexpandable primitives, manages the mode nest, performs assignments and grouping-sensitive state changes, builds horizontal and vertical material, invokes pure typesetting kernels, lowers shipped pages into `tex-out` artifacts, and emits diagnostics through the state/world boundary.
 
-Command operands are scanned by `tex-command` into typed request and result values. Execution code must apply those completed values after the processor borrow ends; it must not add another source cursor, raw-token delivery loop, scanner facade, or command compatibility adapter.
+Command operands are scanned by `tex-command` into typed request and result values. Execution code applies completed values through scoped reborrows of the actual retained processor owners, or after that borrow ends at a genuine mutable-mode or host boundary; it must not add another source cursor, raw-token delivery loop, scanner facade, or command compatibility adapter.
 
 Group close drives the same `CommandProcessor::end_group` native stack walk in the sole direct dispatcher. Its diagnostic callback renders each restoration while the saved owners are live; aftergroup words enter final input during unsave. There is no restoration receipt, token result vector, or delayed aftergroup scheduling helper. Ordinary, observed, diagnostic, and nested commands use that same group seam.
 
@@ -41,7 +41,7 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   methods organized by native command responsibility. `scan_macros.rs` releases
   actual scanner loans at cold owner and publication boundaries. The native
   fetch/reswitch loop retains its actual processor and context through RELAX, ordinary groups,
-  integer/dimension registers, and arithmetic, settling each command's real
+  integer/dimension registers, arithmetic, definitions and let assignments, settling each command's real
   scratch and respecting the caller's remaining budget. An existing pending
   character buffer demands mutable mode ownership and ends the processor loan. Actual diagnostic,
   observer/tracked, page/output, afterassignment and budget demands release the

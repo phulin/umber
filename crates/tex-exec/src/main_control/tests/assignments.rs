@@ -2304,68 +2304,77 @@ fn hot_definition_publication_precedes_afterassignment_and_its_host_effect() {
     // TeX82 §§1211/1269 commits `define`, publishes its mutation evidence,
     // and invokes §325 `back_input` before the saved macro can execute its
     // §1375 immediate write on the following main-control operation.
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = MainControl::tex82_initex(stores);
-        register_source(
+    for tracing in [0, 2] {
+        for assignment in [
+            r"\global\def\target{new}",
+            r"\global\edef\target{new}",
+            r"\global\let\target\replacement",
+        ] {
+            crate::test_harness::with_nonstop_plain_universe(|stores| {
+                let mut control = MainControl::tex82_initex(stores);
+                register_source(
             &mut control,
-            br"\def\mark{\immediate\write16{after}}\def\target{old}\afterassignment\mark\global\def\target{new}\end",
+            format!(r"\tracingcommands={tracing}\tracingonline=1\def\mark{{\immediate\write16{{after}}}}\def\target{{old}}\def\replacement{{new}}\afterassignment\mark{assignment}\end").as_bytes(),
         );
-        let mut observations = ObservationRecorder::default();
-        loop {
-            if matches!(
-                control
-                    .advance_with_observer(stores, &mut observations)
-                    .expect("hot definition and saved token execute"),
-                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)
-            ) {
-                break;
-            }
-        }
+                let mut observations = ObservationRecorder::default();
+                loop {
+                    if matches!(
+                        control
+                            .advance_with_observer(stores, &mut observations)
+                            .expect("hot definition and saved token execute"),
+                        StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)
+                    ) {
+                        break;
+                    }
+                }
 
-        let mutation = observations
-            .0
-            .iter()
-            .rposition(|observation| {
-                matches!(
-                    observation,
-                    CommandObservation::Mutation(record)
-                        if observation_name(&record.key) == Some("target") && record.global
-                )
-            })
-            .expect("global hot definition mutation");
-        let backup = observations
-            .0
-            .iter()
-            .enumerate()
-            .skip(mutation + 1)
-            .find_map(|(index, observation)| {
-                matches!(
-                    observation,
-                    CommandObservation::Input(record)
-                        if record.transition == InputTransition::Backup
-                            && record.reason == InputReason::Backup
-                )
-                .then_some(index)
-            })
-            .expect("afterassignment backup");
-        let write = observations
-            .0
-            .iter()
-            .enumerate()
-            .skip(backup + 1)
-            .find_map(|(index, observation)| {
-                matches!(
-                    observation,
-                    CommandObservation::Effect(record)
-                        if record.kind == ObservationEffectKind::Write
-                )
-                .then_some(index)
-            })
-            .expect("saved macro host effect");
-        assert!(mutation < backup && backup < write, "{:?}", observations.0);
-        assert_eq!(macro_character_text(stores, "target"), "new");
-    });
+                let mutation = observations
+                    .0
+                    .iter()
+                    .rposition(|observation| {
+                        matches!(
+                            observation,
+                            CommandObservation::Mutation(record)
+                                if observation_name(&record.key) == Some("target") && record.global
+                        )
+                    })
+                    .expect("global hot definition mutation");
+                let backup = observations
+                    .0
+                    .iter()
+                    .enumerate()
+                    .skip(mutation + 1)
+                    .find_map(|(index, observation)| {
+                        matches!(
+                            observation,
+                            CommandObservation::Input(record)
+                                if record.transition == InputTransition::Backup
+                                    && record.reason == InputReason::Backup
+                        )
+                        .then_some(index)
+                    })
+                    .expect("afterassignment backup");
+                let write = observations
+                    .0
+                    .iter()
+                    .enumerate()
+                    .skip(backup + 1)
+                    .find_map(|(index, observation)| {
+                        matches!(
+                            observation,
+                            CommandObservation::Effect(record)
+                                if record.kind == ObservationEffectKind::Write
+                        )
+                        .then_some(index)
+                    })
+                    .expect("saved macro host effect");
+                assert!(mutation < backup && backup < write, "{:?}", observations.0);
+                assert_eq!(macro_character_text(stores, "target"), "new");
+            });
+        }
+    }
 }
+
 #[test]
 fn setbox_scope_is_globaldefs_adjusted_before_the_box_is_scanned() {
     // TeX82 §1214's `<Adjust for the setting of \globaldefs>` runs inside

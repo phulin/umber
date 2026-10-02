@@ -16,7 +16,7 @@ labels. Borrowed source spans enter the actual horizontal material consumer.
 Prefixes and replacement commands dispatch in place without redelivery. The reswitch label derives one local packed switch key from its actual current command, refreshing it when a prefix or replacement fetch changes that command. Scalar scan scratch belongs only to the native arms that scan scalars. Each assignment arm resolves its effective global flag once before scanning; unrelated commands read no GLOBAL_DEFS. Brace and math consumers query the live group only when that semantic case needs it. Disabled tracing prepares and reports no command evidence. Each
 selected arm scans its concrete operands through the existing processor. A
 source-free native arm reborrows that processor's actual context, command state,
-fuel and diagnostic owners while the processor remains live. The callback owns
+fuel, diagnostic and observer owners while the processor remains live. The callback owns
 no payload, phase, counter or separate dispatcher. An actual pending character
 flush ends the processor's immutable mode-fact loan before borrowing the mode
 owner mutably; other context-consuming commands retain both processor and
@@ -51,7 +51,18 @@ all native rows/words, then consumes the request while streaming final token
 owners. Alignment templates use the same complete preflight discipline. There
 is no duplicate rooted request, operation union, phase placeholder, readiness
 mailbox, eligibility lane, prepare/apply protocol, or second executor.
-Definitions have counted native ownership; provisional shorthand diagnostics
+Definitions and let assignments use that same retained processor. A macro
+publication remains move-only through pending scan reports and any demanded
+character flush, then the central assignment acquires its installed root before
+releasing that publication. Let scans its complete RHS meaning before applying
+any LHS change, and central assignment acquires the alias before dropping the
+old cell. Protected-macro evidence uses the processor's actual observer; mutation
+receipts remain demanded and publish through the common ordered tail. Pending
+scan reports return the actual semantic result to the selected arm; they cannot
+skip its successful afterassignment tail. Failed character flushes settle that
+error before returning and never install the publication or fire afterassignment. No
+complete command machine is constructed for these arms. Definitions have
+counted native ownership; provisional shorthand diagnostics
 consume the old owner before replacement.
 
 `semantic_owners.rs` lends actual command, mode, box, alignment, and output

@@ -103,6 +103,9 @@ cargo bench --manifest-path benchmarks/tex-incr/Cargo.toml \
   --bench accepted_edit
 ```
 
+Interpreter instruction counts are advisory measurements; the microbenchmark
+fails on execution or TeX errors and enforces no numeric instruction target.
+
 The state script retains its established operator entry point, but now runs the
 final state/generation gate rather than the deleted snapshot-retention model.
 

@@ -171,8 +171,8 @@ target/profiling/umber run --profiling-stats \
 ## Interpreter primitive microbenchmark
 
 `scripts/interp-microbench.py` measures the per-primitive cost of the
-interpreter core and gates it against the per-operation targets in
-[Minimal hot loop](minimal_hot_loop.md). Each case runs an initex job with no
+interpreter core. Counts and ratios are evidence for source and profile
+analysis; historical instruction targets impose no numeric acceptance gate. Each case runs an initex job with no
 format that calls one snippet (for example `\advance\count2 by 1`,
 `\begingroup\endgroup`, or `\setbox2\hbox{}`) inside `\iter`, whose own body
 is an `\ifnum` test, an `\advance`, and an `\expandafter` self-call. The script
@@ -190,9 +190,9 @@ python3 scripts/interp-microbench.py --sudo --cpu 3 \
 Repeat `--umber LABEL=PATH` to compare builds; the ratio column divides the
 first engine by the last. `--pdftex` adds the pinned clean pdfTeX oracle in
 e-TeX initex mode, which makes the ratio the distance from TeX's own cost. The
-first Umber engine is gated against the targets, and the script exits nonzero
-when a gated case misses. The JSON receipt records the revision, host, engine
-hashes, per-iteration counts, and verdicts. Instruction counts are
+script fails on execution or TeX errors. Its JSON receipt records the revision,
+host, engine hashes, actual snippets, per-iteration counts, and execution verdict;
+it stores no compatibility gate keys or target table. Instruction counts are
 near-deterministic, so they remain meaningful on a shared host where wall time
 is not. `--sudo` runs `perf` through `sudo -n` when `perf_event_paranoid`
 forbids user counting.

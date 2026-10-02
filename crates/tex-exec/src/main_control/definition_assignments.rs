@@ -1,29 +1,31 @@
 //! Concrete definition, let, catcode, and group mutation helpers.
 //!
 //! TeX82 §§1211--1234 scan through the sole direct engine and pass completed
-//! native operands here after ending the processor loan. Published definitions
+//! native operands here through the actual retained processor owners. Published definitions
 //! enter the actual destination meaning cell; no operation carrier is created.
 
 use super::*;
 
+#[allow(clippy::too_many_arguments)] // concrete definition operands and actual diagnostic/observer owners
 pub(super) fn apply_macro_definition<G>(
     target: Symbol,
     definition: tex_state::PublishedDefinition<G>,
     flags: MeaningFlags,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    mut observer: Option<&mut dyn CommandObserver>,
+    receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<ReplayStep, ExecError> {
-    let observed_definition = command
-        .observes_mutations()
-        .then_some(definition.reference());
+    let observed_definition =
+        (observer.is_some() || receipts.is_some()).then_some(definition.reference());
     commit_macro_definition(
         target,
         definition,
         flags,
         global,
         stores,
-        command.diagnostic_effects,
+        diagnostic_effects,
     );
 
     // TeX82 §1211's trace seam reports the stored body. Walking that body is
@@ -35,15 +37,17 @@ pub(super) fn apply_macro_definition<G>(
             // a distinct token-list link after §477 has completed the macro
             // replacement. The canonical observer therefore sees this
             // transition before the definition becomes the target meaning.
-            command.retain_hot_observation(CommandObservation::TokenList(TokenListRecord {
-                transition: "complete",
-                purpose: "protected_macro",
-                tokens: observed_macro_body(
-                    stored.parameter_text(),
-                    stored.replacement_text(),
-                    stores,
-                ),
-            }));
+            if let Some(observer) = observer.as_mut() {
+                observer.committed(CommandObservation::TokenList(TokenListRecord {
+                    transition: "complete",
+                    purpose: "protected_macro",
+                    tokens: observed_macro_body(
+                        stored.parameter_text(),
+                        stored.replacement_text(),
+                        stores,
+                    ),
+                }));
+            }
         }
         let record = MutationRecord {
             target: MutationTarget::Meaning,
@@ -56,9 +60,11 @@ pub(super) fn apply_macro_definition<G>(
             )),
             global,
         };
-        command.retain_assignment_receipt(
-            crate::assignments::committer::MutationReceipt::observed(record),
-        );
+        if let Some(receipts) = receipts.as_mut() {
+            receipts.push(record);
+        } else if let Some(observer) = observer {
+            observer.committed(CommandObservation::Mutation(record));
+        }
     }
     Ok(ReplayStep::Continue)
 }
@@ -91,11 +97,12 @@ pub(super) fn apply_let<G>(
     meaning: tex_state::meaning::ResolvedMeaning<G>,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<ReplayStep, ExecError> {
-    let committed = commit_let(target, meaning, global, stores, command.diagnostic_effects)?;
+    let committed = commit_let(target, meaning, global, stores, diagnostic_effects)?;
     if let Some(meaning) = committed
-        && command.observes_mutations()
+        && let Some(receipts) = receipts.as_mut()
     {
         let record = MutationRecord {
             target: MutationTarget::Meaning,
@@ -103,9 +110,7 @@ pub(super) fn apply_let<G>(
             value: meaning_mutation_value(meaning, stores),
             global,
         };
-        command.retain_assignment_receipt(
-            crate::assignments::committer::MutationReceipt::observed(record),
-        );
+        receipts.push(record);
     }
     Ok(ReplayStep::Continue)
 }

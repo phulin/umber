@@ -618,6 +618,8 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
 
     /// Reborrows the actual owners for a completed source-free native command.
     /// Synchronous scanners have returned before their caller can invoke this.
+    /// The observer is reborrowed alongside the actual semantic owners, so
+    /// demanded evidence can commit without reconstructing an execution machine.
     /// No processor or native owner leaves this exclusive borrow.
     pub fn apply_completed_command<R>(
         &mut self,
@@ -626,9 +628,18 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             &mut CommandState<G>,
             &mut tex_state::diagnostic::DiagnosticEffects,
             &mut CommandFuel,
+            Option<&mut dyn CommandObserver>,
         ) -> R,
     ) -> R {
-        apply(self.state, self.command, self.diagnostic_effects, self.fuel)
+        apply(
+            self.state,
+            self.command,
+            self.diagnostic_effects,
+            self.fuel,
+            self.observer
+                .as_mut()
+                .map(|observer| &mut **observer as &mut dyn CommandObserver),
+        )
     }
 
     /// Closes the real scratch and trace boundary before the next native fetch.

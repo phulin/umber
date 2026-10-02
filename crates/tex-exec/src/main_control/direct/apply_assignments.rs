@@ -174,67 +174,6 @@ impl<G> DirectDispatch<'_, '_, G> {
         Ok(step)
     }
 
-    pub(super) fn execute_macro_definition(
-        &mut self,
-        target: Symbol,
-        definition: tex_state::PublishedDefinition<G>,
-        flags: MeaningFlags,
-        global: bool,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-        self.control.main_loop_active = false;
-
-        let step = self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, modes, _, _, command, _, _, _, _, _, _, _| {
-                crate::box_runtime::flush_pending_hchars_with_fuel(
-                    modes,
-                    stores,
-                    command.diagnostic_effects,
-                    command.fuel,
-                )?;
-                definition_assignments::apply_macro_definition(
-                    target, definition, flags, global, stores, command,
-                )
-            },
-        )?;
-        self.schedule_assignment_token()?;
-        Ok(step)
-    }
-
-    pub(super) fn execute_let(
-        &mut self,
-        target: Symbol,
-        meaning: ResolvedMeaning<G>,
-        global: bool,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-        self.control.main_loop_active = false;
-
-        let step = self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, modes, _, _, command, _, _, _, _, _, _, _| {
-                crate::box_runtime::flush_pending_hchars_with_fuel(
-                    modes,
-                    stores,
-                    command.diagnostic_effects,
-                    command.fuel,
-                )?;
-                definition_assignments::apply_let(target, meaning, global, stores, command)
-            },
-        )?;
-        self.schedule_assignment_token()?;
-        Ok(step)
-    }
-
     pub(super) fn execute_catcode(
         &mut self,
         character: char,

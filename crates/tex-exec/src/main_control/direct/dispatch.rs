@@ -156,82 +156,89 @@ impl<G> DirectDispatch<'_, '_, G> {
                 }
 
                 macro_rules! retained_semantic {
-                    ($receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident| $apply:expr) => {{
+                    ($receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident, $observer:ident| $apply:expr) => {{
                         // Reports from scanning precede semantic application. Their
                         // actual demand releases the scanner before publication.
                         if owned_processor.has_pending_reports() {
-                            return native_semantic!($receipts, {
+                            native_semantic!($receipts, {
                                 let $context = &mut admitted_context;
                                 let $state = &mut self.control.command;
                                 let $effects = &mut *self.effects;
                                 let $fuel = self.control.fuel.fuel_mut();
+                                let $observer = self
+                                    .control
+                                    .operation_observations
+                                    .as_mut()
+                                    .map(|buffer| buffer as &mut dyn CommandObserver);
                                 $apply
-                            });
-                        }
-                        self.control.main_loop_active = false;
-                        let $receipts = &mut owned_processor.is_observed().then(Vec::new);
-                        let completed = owned_processor
-                            .apply_completed_command(|$context, $state, $effects, $fuel| $apply);
-                        let can_continue = completed.is_ok()
-                            && !owned_processor.has_pending_reports()
-                            && !owned_processor.is_observed()
-                            && self.control.active_alignment.is_none()
-                            && !self.control.page_region_succession_pending
-                            && !self.control.paragraph_checkpoint_cut
-                            && self.completed_operations + 1 < self.remaining_operations;
-                        if can_continue
-                            && semantic_owners::settle_retained_native_command(
-                                &mut owned_processor,
+                            })
+                        } else {
+                            self.control.main_loop_active = false;
+                            let $receipts = &mut owned_processor.is_observed().then(Vec::new);
+                            let completed = owned_processor.apply_completed_command(
+                                |$context, $state, $effects, $fuel, $observer| $apply,
+                            );
+                            let can_continue = completed.is_ok()
+                                && !owned_processor.has_pending_reports()
+                                && !owned_processor.is_observed()
+                                && self.control.active_alignment.is_none()
+                                && !self.control.page_region_succession_pending
+                                && !self.control.paragraph_checkpoint_cut
+                                && self.completed_operations + 1 < self.remaining_operations;
+                            if can_continue
+                                && semantic_owners::settle_retained_native_command(
+                                    &mut owned_processor,
+                                    boxes,
+                                    &mut self.control.max_save_stack,
+                                    self.initial_effect_pos,
+                                )
+                            {
+                                self.completed_operations += 1;
+                                self.current_origin = None;
+                                continue 'processor;
+                            }
+                            self.cursor = Some(owned_processor.delivery_cursor());
+                            self.diagnostics.extend(
+                                owned_processor
+                                    .take_semantic_diagnostics()
+                                    .into_iter()
+                                    .map(PendingDiagnostic::Command),
+                            );
+                            drop(owned_processor);
+                            let checked = MainControl::save_stack_words(
+                                &admitted_context,
                                 boxes,
-                                &mut self.control.max_save_stack,
-                                self.initial_effect_pos,
-                            )
-                        {
-                            self.completed_operations += 1;
-                            self.current_origin = None;
-                            continue 'processor;
-                        }
-                        self.cursor = Some(owned_processor.delivery_cursor());
-                        self.diagnostics.extend(
-                            owned_processor
-                                .take_semantic_diagnostics()
-                                .into_iter()
-                                .map(PendingDiagnostic::Command),
-                        );
-                        drop(owned_processor);
-                        let checked = MainControl::save_stack_words(
-                            &admitted_context,
-                            boxes,
-                            &self.control.command,
-                            self.control.command.profile(),
-                        );
-                        let pending = PendingPageOutputFacts::capture(&admitted_context);
-                        self.control.report_scan_in_context(
-                            &mut admitted_context,
-                            self.effects,
-                            std::mem::take(&mut self.diagnostics),
-                        )?;
-                        if completed.is_ok()
-                            && self.control.command.has_pending_named_token_list_pushes()
-                        {
-                            publish_named_token_list_pushes(
-                                &mut self.control.command,
+                                &self.control.command,
+                                self.control.command.profile(),
+                            );
+                            let pending = PendingPageOutputFacts::capture(&admitted_context);
+                            self.control.report_scan_in_context(
                                 &mut admitted_context,
                                 self.effects,
-                                &mut self.control.operation_observations,
-                            );
+                                std::mem::take(&mut self.diagnostics),
+                            )?;
+                            if completed.is_ok()
+                                && self.control.command.has_pending_named_token_list_pushes()
+                            {
+                                publish_named_token_list_pushes(
+                                    &mut self.control.command,
+                                    &mut admitted_context,
+                                    self.effects,
+                                    &mut self.control.operation_observations,
+                                );
+                            }
+                            drop(admitted_context);
+                            self.control.finish_direct_semantic_step(
+                                self.stores,
+                                self.effects,
+                                self.output_start,
+                                completed,
+                                pending,
+                                checked,
+                                None,
+                                $receipts.take(),
+                            )
                         }
-                        drop(admitted_context);
-                        self.control.finish_direct_semantic_step(
-                            self.stores,
-                            self.effects,
-                            self.output_start,
-                            completed,
-                            pending,
-                            checked,
-                            None,
-                            $receipts.take(),
-                        )
                     }};
                 }
 
@@ -756,7 +763,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // An ancestor simple group must not make a nested box's body closer look
                     // like an ordinary group closer.
                     if command_code == Some(codes::CHAR_END_GROUP)
-                        && processor.apply_completed_command(|context, _, _, _| {
+                        && processor.apply_completed_command(|context, _, _, _, _observer| {
                             context.innermost_group_kind()
                         }) == Some(GroupKind::Simple)
                     {
@@ -786,7 +793,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     |_native_context,
                                      _native_state,
                                      _native_effects,
-                                     _native_fuel| group_result
+                                     _native_fuel,
+                                     _native_observer| {
+                                        group_result
+                                    }
                                 )
                             }
                         };
@@ -799,7 +809,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // not fall through to the ordinary or box brace arms below.
                     if command_code == Some(codes::CHAR_END_GROUP)
                         && let Some(kind @ (GroupKind::Math | GroupKind::MathChoice)) = processor
-                            .apply_completed_command(|context, _, _, _| {
+                            .apply_completed_command(|context, _, _, _, _observer| {
                                 context.innermost_group_kind()
                             })
                     {
@@ -809,7 +819,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                         };
                     }
                     if command_code == Some(codes::CHAR_END_GROUP)
-                        && processor.apply_completed_command(|context, _, _, _| {
+                        && processor.apply_completed_command(|context, _, _, _, _observer| {
                             context.innermost_group_kind()
                         }) == Some(GroupKind::Disc)
                     {
@@ -859,7 +869,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // `\aftergroup` tokens §282 backs up when it pops.
                     if command_code == Some(codes::CHAR_END_GROUP)
                         && let Some(box_state) = boxes.active_boxes.last()
-                        && processor.apply_completed_command(|context, _, _, _| {
+                        && processor.apply_completed_command(|context, _, _, _, _observer| {
                             context.innermost_group_kind()
                         }) == Some(box_state.group_kind)
                     {
@@ -889,7 +899,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // only the live output group can close the enclosing output routine.
                     if command_code == Some(codes::CHAR_END_GROUP)
                         && boxes.output_routine_active
-                        && processor.apply_completed_command(|context, _, _, _| {
+                        && processor.apply_completed_command(|context, _, _, _, _observer| {
                             context.innermost_group_kind()
                         }) == Some(GroupKind::Output)
                     {
@@ -952,7 +962,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             )
                                         )
                                     } else {
-                                        retained_semantic!(receipts, |native_context, native_state, native_effects, _native_fuel| {
+                                        retained_semantic!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
         enter_group(native_context, native_state, native_effects, direct_arg0);
         Ok(ReplayStep::Continue)
     })
@@ -973,7 +983,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             )
                                         )
                                     } else {
-                                        retained_semantic!(receipts, |native_context, native_state, native_effects, _native_fuel| {
+                                        retained_semantic!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
         enter_group(native_context, native_state, native_effects, direct_arg0);
         Ok(ReplayStep::Continue)
     })
@@ -981,9 +991,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                             }
                             (_, codes::PRIMITIVE_END_GROUP)
-                                if processor.apply_completed_command(|context, _, _, _| {
-                                    context.innermost_group_kind()
-                                }) == Some(GroupKind::SemiSimple) =>
+                                if processor.apply_completed_command(
+                                    |context, _, _, _, _observer| context.innermost_group_kind(),
+                                ) == Some(GroupKind::SemiSimple) =>
                             {
                                 return {
                                     let (direct_arg0, direct_arg1) =
@@ -1006,7 +1016,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             direct_arg0,
                                             direct_arg1,
                                         );
-                                        retained_semantic!(receipts, |_native_context, _native_state, _native_effects, _native_fuel| group_result)
+                                        retained_semantic!(receipts, |_native_context, _native_state, _native_effects, _native_fuel, _native_observer| group_result)
                                     }
                                 };
                             }
@@ -1045,76 +1055,121 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             Some(codes::PRIMITIVE_GDEF | codes::PRIMITIVE_XDEF)
                                         ),
                                 );
-                                let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                                    primitive @ (UnexpandablePrimitive::Def
-                                    | UnexpandablePrimitive::Edef
-                                    | UnexpandablePrimitive::Gdef
-                                    | UnexpandablePrimitive::Xdef),
-                                )) = command.meaning()
-                                else {
-                                    unreachable!(
-                                        "packed command selected its native operand family"
-                                    )
-                                };
-                                {
-                                    let definition = (processor
-                                        .scan_macro_definition(matches!(
-                                            primitive,
-                                            UnexpandablePrimitive::Edef
-                                                | UnexpandablePrimitive::Xdef
-                                        ))
-                                        .map_err(command_error))
+                                let definition = processor
+                                    .scan_macro_definition(matches!(
+                                        command_code,
+                                        Some(codes::PRIMITIVE_EDEF | codes::PRIMITIVE_XDEF)
+                                    ))
+                                    .map_err(command_error)
                                     .map_err(|error| scan_error(error, scan_origin))?;
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) = (
-                                            definition.target,
-                                            definition.definition,
-                                            flags,
-                                            global,
-                                        );
-                                        finish_scan!(self.execute_macro_definition(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2,
-                                            direct_arg3
-                                        ))
-                                    };
-                                }
+                                let step = if self
+                                    .control
+                                    .modes
+                                    .current_list()
+                                    .pending_hchars()
+                                    .is_some()
+                                {
+                                    native_semantic!(receipts, {
+                                        crate::box_runtime::flush_pending_hchars_with_fuel(
+                                            &mut self.control.modes,
+                                            &mut admitted_context,
+                                            self.effects,
+                                            self.control.fuel.fuel_mut(),
+                                        )
+                                        .and_then(|()| {
+                                            definition_assignments::apply_macro_definition(
+                                                definition.target,
+                                                definition.definition,
+                                                flags,
+                                                global,
+                                                &mut admitted_context,
+                                                self.effects,
+                                                self.control.operation_observations.as_mut().map(
+                                                    |buffer| buffer as &mut dyn CommandObserver,
+                                                ),
+                                                receipts,
+                                            )
+                                        })
+                                    })
+                                } else {
+                                    retained_semantic!(
+                                        receipts,
+                                        |native_context,
+                                         _native_state,
+                                         native_effects,
+                                         _native_fuel,
+                                         native_observer| {
+                                            definition_assignments::apply_macro_definition(
+                                                definition.target,
+                                                definition.definition,
+                                                flags,
+                                                global,
+                                                native_context,
+                                                native_effects,
+                                                native_observer,
+                                                receipts,
+                                            )
+                                        }
+                                    )
+                                }?;
+                                self.schedule_assignment_token()?;
+                                Ok(step)
                             }
                             (_, codes::PRIMITIVE_LET | codes::PRIMITIVE_FUTURE_LET) => {
                                 let global = effective_global(
                                     processor.int_param(IntParam::GLOBAL_DEFS),
                                     global,
                                 );
-                                let _meaning = static_meaning(command.meaning());
-                                {
-                                    let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                                        primitive @ (UnexpandablePrimitive::Let
-                                        | UnexpandablePrimitive::FutureLet),
-                                    )) = command.meaning()
-                                    else {
-                                        unreachable!(
-                                            "packed command selected its native operand family"
-                                        )
-                                    };
+                                let (target, meaning) = processor
+                                    .scan_let_assignment(
+                                        command_code == Some(codes::PRIMITIVE_FUTURE_LET),
+                                    )
+                                    .map_err(command_error)
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                let step =
+                                    if self.control.modes.current_list().pending_hchars().is_some()
                                     {
-                                        let (target, meaning) = (processor
-                                            .scan_let_assignment(
-                                                primitive == UnexpandablePrimitive::FutureLet,
+                                        native_semantic!(receipts, {
+                                            crate::box_runtime::flush_pending_hchars_with_fuel(
+                                                &mut self.control.modes,
+                                                &mut admitted_context,
+                                                self.effects,
+                                                self.control.fuel.fuel_mut(),
                                             )
-                                            .map_err(command_error))
-                                        .map_err(|error| scan_error(error, scan_origin))?;
-                                        return {
-                                            let (direct_arg0, direct_arg1, direct_arg2) =
-                                                (target, meaning, global);
-                                            finish_scan!(self.execute_let(
-                                                direct_arg0,
-                                                direct_arg1,
-                                                direct_arg2
-                                            ))
-                                        };
-                                    }
-                                }
+                                            .and_then(
+                                                |()| {
+                                                    definition_assignments::apply_let(
+                                                        target,
+                                                        meaning,
+                                                        global,
+                                                        &mut admitted_context,
+                                                        self.effects,
+                                                        receipts,
+                                                    )
+                                                },
+                                            )
+                                        })
+                                    } else {
+                                        retained_semantic!(
+                                        receipts,
+                                        |native_context,
+                                         _native_state,
+                                         native_effects,
+                                         _native_fuel,
+                                         _native_observer| {
+                                            definition_assignments::apply_let(
+                                                target,
+                                                meaning,
+                                                global,
+                                                native_context,
+                                                native_effects,
+                                                receipts,
+                                            )
+                                        }
+                                    )
+                                    }?;
+                                self.schedule_assignment_token()?;
+                                Ok(step)
                             }
                             (_, codes::RELAX) => {
                                 if self.control.modes.current_list().pending_hchars().is_some() {
@@ -1133,7 +1188,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         |native_context,
                                          _native_state,
                                          native_effects,
-                                         native_fuel| {
+                                         native_fuel,
+                                         _native_observer| {
                                             semantic::execute_relax(
                                                 native_context,
                                                 None,
@@ -1146,9 +1202,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::CHAR_END_GROUP) => {
                                 let (direct_arg0,) = (
-                                    match processor.apply_completed_command(|context, _, _, _| {
-                                        context.innermost_group_kind()
-                                    }) {
+                                    match processor.apply_completed_command(
+                                        |context, _, _, _, _observer| {
+                                            context.innermost_group_kind()
+                                        },
+                                    ) {
                                         Some(GroupKind::SemiSimple) => {
                                             Some(ForgottenGroupOpener::EndGroup)
                                         }
@@ -1254,7 +1312,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     |native_context,
                                      _native_state,
                                      native_effects,
-                                     _native_fuel| {
+                                     _native_fuel,
+                                     _native_observer| {
                                         semantic::execute_count(
                                             native_context,
                                             native_effects,
@@ -1306,7 +1365,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     |native_context,
                                      _native_state,
                                      native_effects,
-                                     _native_fuel| {
+                                     _native_fuel,
+                                     _native_observer| {
                                         semantic::execute_dimen(
                                             native_context,
                                             native_effects,
@@ -2879,7 +2939,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         Ok((target, operand)) => {
                                             let step = retained_semantic!(
                                             receipts,
-                                |native_context, native_state, native_effects, _native_fuel|
+                                |native_context, native_state, native_effects, _native_fuel, _native_observer|
                                             semantic::execute_arithmetic(
                                                 native_context,
                                                 native_effects,
@@ -3567,9 +3627,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         finish_scan!(self.execute_illegal_h_align(direct_arg0))
                                     };
                                 } else if mode == Mode::DisplayMath {
-                                    if processor.apply_completed_command(|context, _, _, _| {
-                                        context.innermost_group_kind()
-                                    }) != Some(GroupKind::MathShift)
+                                    if processor.apply_completed_command(
+                                        |context, _, _, _, _observer| {
+                                            context.innermost_group_kind()
+                                        },
+                                    ) != Some(GroupKind::MathShift)
                                     {
                                         return {
                                             let (direct_arg0,) = (command,);
@@ -3603,9 +3665,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::PRIMITIVE_V_ALIGN) => {
                                 if matches!(mode, Mode::Math | Mode::DisplayMath)
-                                    && processor.apply_completed_command(|context, _, _, _| {
-                                        context.innermost_group_kind()
-                                    }) != Some(GroupKind::MathShift)
+                                    && processor.apply_completed_command(
+                                        |context, _, _, _, _observer| {
+                                            context.innermost_group_kind()
+                                        },
+                                    ) != Some(GroupKind::MathShift)
                                 {
                                     return {
                                         let (direct_arg0,) = (command,);
@@ -3651,9 +3715,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::CHAR_MATH_SHIFT)
                                 if matches!(mode, Mode::Math | Mode::DisplayMath)
-                                    && processor.apply_completed_command(|context, _, _, _| {
-                                        context.innermost_group_kind()
-                                    }) != Some(GroupKind::MathShift) =>
+                                    && processor.apply_completed_command(
+                                        |context, _, _, _, _observer| {
+                                            context.innermost_group_kind()
+                                        },
+                                    ) != Some(GroupKind::MathShift) =>
                             {
                                 return {
                                     let (direct_arg0,) = (command,);

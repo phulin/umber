@@ -347,7 +347,7 @@ pub(super) fn settle_retained_native_command<G>(
     max_save_stack: &mut usize,
     initial_effect_pos: tex_state::EffectPos,
 ) -> bool {
-    let settled = processor.apply_completed_command(|context, state, effects, _| {
+    let settled = processor.apply_completed_command(|context, state, effects, _, _observer| {
         if context.page_fire_up().is_some()
             || context.page_builder_resume_after_output_pending()
             || !effects.is_empty()

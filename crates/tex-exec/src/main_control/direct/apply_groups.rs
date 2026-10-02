@@ -165,7 +165,7 @@ pub(super) fn finish_native_group_leave<G>(
     kind: GroupKind,
     error_context: &'static str,
 ) -> Result<ReplayStep, ExecError> {
-    let (level, frame) = processor.apply_completed_command(|context, _, _, _| {
+    let (level, frame) = processor.apply_completed_command(|context, _, _, _, _observer| {
         let frames = context.group_frames();
         (frames.len(), frames.last().copied())
     });
@@ -180,7 +180,7 @@ pub(super) fn finish_native_group_leave<G>(
     let frame = result.map_err(|_| ExecError::MissingToken {
         context: error_context,
     })?;
-    processor.apply_completed_command(|context, _, effects, _| {
+    processor.apply_completed_command(|context, _, effects, _, _observer| {
         context.trace_group_leave(
             effects,
             frame.kind(),
