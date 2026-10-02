@@ -34,9 +34,12 @@ The same packed switch selects context-consuming semantics and genuine outer
 owner calls. The delivered native token/site and command word stay in one opaque
 `CurrentCommand` from raw input through expansion and that switch; spelling and
 printed identity are projected only by their actual consumers. There is no
-HotCommand-to-CurrentCommand repacking boundary. Native callbacks branch on
-the real semantic Result before consuming narrow successful settlement facts,
-so a cold error payload is never nested in the common success-fact tuple. A diagnostic program cannot cross the next input acquisition:
+HotCommand-to-CurrentCommand repacking boundary. Native callbacks return only their actual semantic result. The shared native
+continuation routine reads the live page, command, diagnostic and World owners
+and updates the save-stack high-water mark in place. It copies no page-output
+facts for a command that continues. Only an actual outer cut captures those
+facts, before diagnostic and named-input publication; errors use that same
+ordered cut. No success-fact tuple or stored continuation predicate exists. A diagnostic program cannot cross the next input acquisition:
 nonempty diagnostics finish through their ordered publication boundary first.
 `scan_*` and `apply_*` files group concrete routines by responsibility;
 `semantic/` holds source-free semantics. The large authoritative switch stays

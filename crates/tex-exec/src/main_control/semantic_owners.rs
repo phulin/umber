@@ -338,3 +338,38 @@ impl<G> MainControl<G> {
         result
     }
 }
+
+/// Settles through the processor's actual owners without capturing cold output
+/// facts. A true page, input, diagnostic or World demand ends this loan first.
+pub(super) fn settle_retained_native_command<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    boxes: &ReplayBoxes<G>,
+    max_save_stack: &mut usize,
+    initial_effect_pos: tex_state::EffectPos,
+) -> bool {
+    let settled = processor.apply_completed_command(|context, state, effects, _| {
+        if context.page_fire_up().is_some()
+            || context.page_builder_resume_after_output_pending()
+            || !effects.is_empty()
+            || effects.has_first_recoverable()
+            || state.has_afterassignment()
+            || state.has_pending_named_token_list_pushes()
+            || context.tracked_region_is_active()
+            || context.reported_error_count() > 0
+            || context.effect_pos() != initial_effect_pos
+        {
+            return false;
+        }
+        *max_save_stack = (*max_save_stack).max(MainControl::save_stack_words(
+            context,
+            boxes,
+            state,
+            state.profile(),
+        ));
+        true
+    });
+    if settled {
+        processor.settle_completed_command();
+    }
+    settled
+}
