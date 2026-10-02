@@ -173,19 +173,6 @@ fn classify_native_command<G>(
     }
 }
 
-#[inline(always)]
-fn hot_decimal_digit<G>(command: &CurrentCommand<G>) -> Option<u8> {
-    match command.character() {
-        Some((ch @ '0'..='9', Catcode::Other)) => Some(ch as u8 - b'0'),
-        _ => None,
-    }
-}
-
-#[inline(always)]
-fn hot_is_space<G>(command: &CurrentCommand<G>) -> bool {
-    matches!(command.character(), Some((_, Catcode::Space)))
-}
-
 impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
@@ -1731,91 +1718,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !self.command.profile().capabilities().supports_etex() {
             self.observe_command_diagnostic("undefined_control_sequence", command);
         }
-        Ok(())
-    }
-
-    /// Fast path for the common decimal conversion opener.  The first digit
-    /// is obtained from raw delivery so a non-decimal prefix can be handed
-    /// back unchanged to the complete scalar scanner.  Subsequent digits are
-    /// expanded synchronously and a non-space terminator is backed up from
-    /// the same hot owner; no rich command is needed for the usual
-    /// `\number 123`/`\romannumeral 123` conversion.
-    #[inline(never)]
-    fn expand_number_compact(&mut self, origin: OriginId, roman: bool) -> Result<(), CommandError> {
-        // Alignment template termination is a semantic boundary owned by
-        // the ordinary rich scanner entry. Keep that exceptional transition
-        // on its established path; ordinary conversions stay entirely in
-        // the occupied hot command below.
-        if self.command.delivery_mode.alignment_active() {
-            return self.expand_number(origin, roman);
-        }
-        let mut first = None;
-        match self.expanded_next_hot(&mut first, None)? {
-            DeliveryStatus::End => {
-                self.observe_integer_value(0);
-                let text = if roman {
-                    super::expand_render::roman_numeral(0)
-                } else {
-                    "0".to_owned()
-                };
-                self.push_rendered_text(&text, origin);
-                return Ok(());
-            }
-            DeliveryStatus::Command | DeliveryStatus::PendingExpanded => {}
-            _ => return Err(CommandError::input_invariant()),
-        }
-        let first = first
-            .take()
-            .ok_or_else(|| CommandError::input_invariant())?;
-        let Some(digit) = hot_decimal_digit(&first) else {
-            let scan = self.scan_integer_from_leading_hot(first)?;
-            let text = if roman {
-                super::expand_render::roman_numeral(scan.value)
-            } else {
-                scan.value.to_string()
-            };
-            self.push_rendered_text(&text, origin);
-            return Ok(());
-        };
-        let mut value = i32::from(digit);
-        let mut overflowed = false;
-        loop {
-            let mut next = None;
-            match self.expanded_next_hot(&mut next, None)? {
-                DeliveryStatus::End => break,
-                DeliveryStatus::Command | DeliveryStatus::PendingExpanded => {}
-                _ => return Err(CommandError::input_invariant()),
-            }
-            let next = next.take().ok_or_else(|| CommandError::input_invariant())?;
-            if let Some(digit) = hot_decimal_digit(&next) {
-                match value
-                    .checked_mul(10)
-                    .and_then(|value| value.checked_add(i32::from(digit)))
-                {
-                    Some(next_value) => value = next_value,
-                    None => {
-                        value = i32::MAX;
-                        if !overflowed {
-                            let site = self.capture_hot_diagnostic_site(&next);
-                            self.number_too_big_error(Some(site))?;
-                            overflowed = true;
-                        }
-                    }
-                }
-                continue;
-            }
-            if !hot_is_space(&next) {
-                self.back_input(next)?;
-            }
-            break;
-        }
-        let text = if roman {
-            super::expand_render::roman_numeral(value)
-        } else {
-            value.to_string()
-        };
-        self.observe_integer_value(value);
-        self.push_rendered_text(&text, origin);
         Ok(())
     }
 }

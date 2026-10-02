@@ -126,6 +126,14 @@ completion use the reader's existing cold boundary, and every terminal resets
 the expanded-delivery fact before the next read. Fuel failures restore both
 reader and primitive expansion depths before those locals unwind.
 
+Numeric leading signs, coefficients and internal quantities also enter the
+actual scalar consumer directly. Character constants use the raw-spelling
+reader, including brace-accounting cancellation. Unit probes and optional space
+keep their canonical backups without constructing commands. Number conversion
+shares the integer scanner; there is no retained leading command, separate
+conversion digit loop or unused radix result tuple. These locals unwind with
+the ordinary scanner call and never enter a checkpoint.
+
 Expanded replacement collection lends its actual destination, parameter grammar
 and scanner episode to that same reader. Ordinary unobserved macro activation
 and ordinary replacement consumption construct no command; only observation
@@ -247,3 +255,10 @@ migration and proof cases live in
 [Minimal hot loop](minimal_hot_loop.md); no second engine, backwards
 compatibility surface, read-time census, relocation or tracing collector is
 part of the redesign.
+
+Internal token conversion and expanded replacement splicing consume their
+operand in the native expanded reader and keep only the resulting internal
+value. Font selection likewise consumes the meaning directly. Their invalid
+operand backups belong to the input stack; the scanner callback and resolved
+meaning borrow end before replay. Meaning printing takes native resolved facts
+only at its demanded cold string consumer.

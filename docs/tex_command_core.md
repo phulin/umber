@@ -173,7 +173,7 @@ Universe and aggregate state mutation
         |
         v
 tex-command
-  InputState -> get_next -> get_x_token -> CurrentCommand
+  InputState -> native read -> expand -> synchronous semantic consumer
                     |             |
                     |             +-- expand
                     +-- scanners, conditions, alignments, macro_call
@@ -214,17 +214,22 @@ geometry does not remain live merely for diagnostics. Macro chains remain
 iterative in one read/interpret loop. Matching's local storage belongs to its
 activation call, outside suspended primitive-expansion frames.
 
-A delivered command, primitive scanner boundary, observation, suppression,
-alignment, or outer recovery writes one native `CurrentCommand` from those
-already resolved facts. It contains the delivered token/site and native command
-word. Raw input, expansion, synchronous scanners and main control retain that
-same value; no separate command type or public-boundary repacking remains.
-Spelling and printed identity are projected only by actual consumers. It never
-repeats a dense meaning lookup. Raw
-callers that request a command use the same reader and settlement authority.
-The matcher retains its existing hot destination for command-sensitive scanning.
-Main-control text instead consumes characters directly; eligible source text
-lends a retained span to the character consumer.
+The hot path invokes its actual semantic consumer with native spelling, meaning
+and control-sequence identity. Ordinary primitive expansion, continuing scalar
+scans and replacement collection construct no intermediate command object.
+Numeric entry consumes signs and selects its substantive operand inside this
+same reader; conversions share the integer scanner rather than implementing a
+second digit-reading loop. Native facts are synchronous scalar arguments, not a
+renamed command bundle, queued operation or parked current-command state.
+
+Observation, suppression, alignment and outer recovery can demand a cold record
+of their actual identity and correction. Those records use the already-resolved
+meaning and never repeat a dense lookup. Explicit command-returning entry points
+remain migration boundaries; the required end state is direct execution and
+scanning from native facts, with records only at actual observation or
+exceptional semantic demand. Main-control source text already lends its retained
+span directly to the character consumer. Checkpoints retain semantic input
+frames and state owners, never ephemeral consumers or delivery products.
 
 Observation is specialized once per synchronous entry. Scanner, alignment,
 tracing, token-local suppression, and outer validity remain live semantic
@@ -1742,42 +1747,31 @@ Expandable versus unexpandable classification is a property of
 
 ### 11.4 Current command
 
-`CurrentCommand` is the value equivalent of TeX's `cur_cmd`, `cur_chr`,
-`cur_cs`, and `cur_tok`:
+The interpreter consumes native spelling, resolved `MeaningWord<G>` and
+control-sequence identity synchronously. These are TeX’s actual `cur_tok`,
+`cur_cmd`/`cur_chr` and `cur_cs` facts. There is no command object between an
+ordinary macro invocation, primitive expansion, replacement sink or numeric
+scanner and its reader. Numeric signs, radix introducers and digits stay in one
+reader call; internal values and font selectors likewise execute directly from
+native meaning.
 
-```rust
-pub struct CurrentCommand {
-    spelling: TracedTokenWord,
-    meaning: Meaning,
-    control_sequence: Option<Symbol>,
-}
-```
+`CurrentCommand<G>` is the opaque ephemeral record still used by explicit
+command-returning entry points, main-control dispatch, demanded observation and
+exceptional recovery. Its fields are a packed token with delivery policy and the
+same native `MeaningWord<G>`, rather than a decoded meaning or another
+classification column. Static meanings, definition coordinates/flags and font
+capabilities preserve their authoritative native representation. Constructing
+this record is not part of the ordinary native consumer contract. Main control
+and remaining command-returning scanner entry points are migration boundaries,
+not a reason to recreate a command product inside native consumers.
 
-The production value is 72 bytes. It keeps
-the packed spelling, resolved static meaning or sole macro owner, control-
-sequence identity, and alignment/recovery flags. It carries no delivery
-coordinate or source role. It does not repeat a decoded physical source range,
-active source identity, or diagnostic ancestry. There is no per-command box,
-allocation, provenance sidecar, or alternate fast representation.
-
-The deterministic layout gates record the canonical cutover from the
-pre-coordinate kernel at `ac3ba1b85`:
-
-| Resident carrier              | Before | Coordinate kernel | Reduction |
-| ----------------------------- | -----: | ----------------: | --------: |
-| `CurrentCommand<()>`          |    112 |                72 |        40 |
-| `PendingScalarFrame<()>`      |    592 |               208 |       384 |
-| executor `CommandEpisode<()>` |    672 |               632 |        40 |
-
-The keyword scanner now borrows its keyword and keeps only the actual bounded
-matched prefix locally. The former generation-branded prefix wrapper and copied
-inline keyword are deleted. Its character tests project the native resolved
-word directly, without constructing a whole decoded meaning.
-
-The focused optimized destination-delivery gate performs 24,576 warmed raw,
-token, and expanded deliveries through the one reusable command destination
-with zero allocations or requested bytes. These are state-movement and owner
-shape gates, not a competing fast path.
+The actual input frame owns its immutable definitions, token lists and physical
+reader. A native meaning borrow lasts only through its synchronous consumer;
+no dense eqtb-row reference survives a nested scan or assignment. A token backed
+up on input retains spelling and resolves its meaning again when read. A
+resource miss unwinds ordinary consumers and full checkpoint replay restores
+the actual input and semantic owners. Neither a command record nor a callback
+enters a checkpoint or format.
 
 The spelling's four-byte `OriginId` is the stable provenance coordinate. A
 direct source origin encodes its immutable registered-source position; a
@@ -1800,27 +1794,21 @@ This split preserves exact diagnostic provenance while removing cold source
 geometry from the default token path.
 
 The spelling and effective meaning may differ for the one delivery suppressed
-by `\noexpand`. The immediate-delivery coordinate proves the exact live input
-level and position that delivered the token. It is ephemeral, excluded from
-summaries, and never reconstructed from semantic token equality. The
-processor's episode-local sequence remains observation ordering, not
-provenance, and the current observation sequence is derived as the preceding
-position of that cursor rather than stored again. While a move-only command is
-eligible for exact backup, the processor mirrors its compact coordinate only
-to reject a stale command; the mirror is cleared on input movement. Only a
-command that crosses preflight, backup, or an exact stopper retirement retains
-the coordinate; internal ordinary expansion consumes the resident cursor fact
-directly. A resource miss drops it with the unwound call and full-checkpoint
-replay reconstructs delivery. No ordinary command constructs a
-suspension/checkpoint carrier speculatively.
+by `\noexpand`. The input frame owns that treatment. A demanded exceptional
+record preserves the suppression identity and alignment adjustment for its
+actual observer or recovery consumer. TeX82 §§325–326’s backup restores the
+spelling, including a saved token superseded by a later delivery; it introduces
+no command freshness mirror. The processor’s episode-local sequence orders
+observations and does not determine semantic token validity.
 
-Meaning resolution occurs once at raw delivery. An ordinary character resolves
-to its literal character-token meaning, while a control sequence reads its
+Meaning resolution occurs once when a token is interpreted. An ordinary
+character supplies its literal character-token meaning, while a control sequence reads its
 current meaning cell. An active character first resolves to its distinct
 active-character control-sequence identity and then reads that cell; it never
 aliases an escaped control sequence with the same printed spelling. The
-resolved value is retained in `CurrentCommand`, so later assignments cannot
-alter an already delivered command. Test and instrumentation observation
+resolved value is borrowed by the immediate native consumer or retained in an
+explicit delivery record, so later assignments cannot alter that interpreted
+meaning. Test and instrumentation observation
 translates TeX82 conditional primitives from their Rust meaning variants to
 the shared `if_test` command identity and canonical `cur_chr` operand (for
 example, `\iftrue` is operand 14), and maps the raw delimiters `\fi`,

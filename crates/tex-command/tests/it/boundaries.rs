@@ -367,6 +367,13 @@ fn resource_capable_scalar_scans_expose_typed_products_and_keep_raw_entries_priv
     assert!(!font.contains("pub fn scan_font_selector("));
     assert!(!structured.contains("pub fn scan_file_name("));
 
+    // Native internal consumers run synchronously under the current processor
+    // loan. Their real typed result needs no retained command handoff.
+    assert!(scalar.contains("pub(crate) fn scan_the_internal_value("));
+    assert!(scalar.contains("meaning: &tex_state::meaning::MeaningWord<G>"));
+    assert!(!scalar.contains("fn scan_the_internal_value_retained("));
+    assert!(!scalar.contains("fn scan_internal_value_or_zero_from_target("));
+
     assert!(scalar.contains("pub enum RetainedScalarScan<T>"));
     for forbidden in [
         "ScalarScanFrame",
@@ -397,8 +404,6 @@ fn resource_capable_scalar_scans_expose_typed_products_and_keep_raw_entries_priv
         ".scan_dimension()",
         ".scan_mu_dimension()",
         ".scan_glue(",
-        ".scan_internal_value_or_zero()",
-        ".scan_the_internal_value(",
         ".scan_character_number()",
         ".scan_eight_bit_register_index()",
         ".scan_profile_register_index()",

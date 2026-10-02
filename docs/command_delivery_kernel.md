@@ -151,6 +151,32 @@ Source tokenization and exceptional deliveries keep the scalar path. A run
 stops after the last available fuel charge so the next rejected token remains
 unread, as it would under scalar delivery.
 
+## Native numeric scanner entry
+
+Integer, dimension and glue scanners consume their leading spaces, signs and
+first substantive operand inside the shared expanded reader. The actual sign,
+provenance and final numeric result live in the scanner call. An accepted sign
+or numeric introducer never enters a command slot, and the first substantive
+meaning enters the scanner’s internal-value or constant branch directly.
+Integer signs, radix introducers and all following digits stay in this same
+reader call. The scanner’s actual radix, value and overflow flag are local;
+there is no command return or nested digit-reader call after the first digit.
+Internal-value scanning borrows the native meaning and original spelling;
+coercion, negation and its one observation boundary remain TeX82 §413’s.
+
+Canonical backup points remain real input mutations. Dimension and glue probes
+still back up their non-internal operand where §§448/461 require it. Optional
+space consumes one expanded token and backs up a non-spacer. Numeric error
+sites are constructed from the native spelling and meaning only when needed;
+observed and exceptional deliveries preserve their actual correction record.
+No reference to an input row or dense meaning cell survives nested scanning.
+
+Decimal text conversion uses this same integer scanner. The separate conversion
+digit reader, its command-return loop and its leading-command handoff are
+deleted. Overflow, signs, octal and hexadecimal introducers, alphabetic constants,
+internal values and terminator handling have one implementation. EOF follows that same scanner’s completion; a resource error unwinds all local
+scanner results for replay from the full checkpoint.
+
 ## Expanded token collection
 
 Expanded definition and general-text collection use the same expansion reader
@@ -544,3 +570,15 @@ Execution likewise boxes actual missing-font, missing-image, and World failure
 payloads only when raising them. Completed font/image operands stay native and
 unboxed. This removes cold request data from every main-control result without
 adding bookkeeping, allocation, or a result adapter on the successful path.
+
+## Internal operands and font selection
+
+The shared reader supplies `\the`, expanded replacement splicing and font
+selection with native spelling, meaning and control-sequence identity. Each
+scanner consumes its operand synchronously and retains only its semantic result.
+The replacement collector backs up an invalid internal operand on the actual
+input stack before ordinary `\the` recovery. Font rejection likewise restores
+the spelling before rendering TeX's error context. Observed and exceptional
+inputs lend their demanded cold record without creating one for ordinary input.
+Cold meaning rendering accepts the already resolved meaning and identity;
+printing an invalid operand does not require a command object.

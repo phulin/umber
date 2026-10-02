@@ -180,10 +180,11 @@ pub(crate) fn append_print_cs_text<G>(
 
 pub(crate) fn meaning_text<G>(
     state: &mut tex_state::CommandContext<'_, G>,
-    command: &CurrentCommand<G>,
+    meaning: ResolvedMeaning<G>,
+    control_sequence: Option<tex_state::interner::Symbol>,
 ) -> String {
     let mut text = String::new();
-    append_meaning_text_with_token_selector(state, command, false, &mut text);
+    append_meaning_text_with_token_selector(state, meaning, control_sequence, false, &mut text);
     text
 }
 
@@ -197,17 +198,24 @@ pub(crate) fn selector_meaning_text<G>(
     command: &CurrentCommand<G>,
 ) -> String {
     let mut text = String::new();
-    append_meaning_text_with_token_selector(state, command, true, &mut text);
+    append_meaning_text_with_token_selector(
+        state,
+        command.meaning(),
+        command.control_sequence(),
+        true,
+        &mut text,
+    );
     text
 }
 
 fn append_meaning_text_with_token_selector<G>(
     state: &mut tex_state::CommandContext<'_, G>,
-    command: &CurrentCommand<G>,
+    meaning: ResolvedMeaning<G>,
+    control_sequence: Option<tex_state::interner::Symbol>,
     active_selector: bool,
     text: &mut String,
 ) {
-    if let ResolvedMeaning::Macro { flags, definition } = command.meaning() {
+    if let ResolvedMeaning::Macro { flags, definition } = meaning {
         let macro_meaning = state.definition(definition);
         if flags.contains(MeaningFlags::PROTECTED) {
             append_print_esc_text(state, "protected", text);
@@ -240,7 +248,7 @@ fn append_meaning_text_with_token_selector<G>(
         );
         return;
     }
-    let ResolvedMeaning::Static(meaning) = command.meaning() else {
+    let ResolvedMeaning::Static(meaning) = meaning else {
         unreachable!("macro meanings returned above")
     };
     match meaning {
@@ -277,7 +285,7 @@ fn append_meaning_text_with_token_selector<G>(
         | Meaning::TokParam(_)
         | Meaning::PageDimension(_)
         | Meaning::PageInteger(_)) => {
-            append_meaning_control_sequence_text(state, command, meaning, text);
+            append_meaning_control_sequence_text(state, control_sequence, meaning, text);
         }
         Meaning::Font(font) => {
             text.push_str("select font ");
@@ -301,7 +309,7 @@ fn append_meaning_text_with_token_selector<G>(
         ) => {
             append_meaning_control_sequence_text(
                 state,
-                command,
+                control_sequence,
                 Meaning::ExpandablePrimitive(primitive),
                 text,
             );
@@ -319,7 +327,7 @@ fn append_meaning_text_with_token_selector<G>(
             );
         }
         meaning @ (Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_)) => {
-            append_meaning_control_sequence_text(state, command, meaning, text);
+            append_meaning_control_sequence_text(state, control_sequence, meaning, text);
         }
         Meaning::EndV => text.push_str("end of alignment template"),
         Meaning::Unknown(_) => text.push_str("unknown"),
@@ -531,15 +539,13 @@ fn append_print_command_control_sequence_text<G>(
 
 fn append_meaning_control_sequence_text<G>(
     state: &tex_state::CommandContext<'_, G>,
-    command: &CurrentCommand<G>,
+    control_sequence: Option<tex_state::interner::Symbol>,
     meaning: Meaning,
     text: &mut String,
 ) {
-    let name = state.primitive_name(meaning).or_else(|| {
-        command
-            .control_sequence()
-            .map(|symbol| state.resolve(symbol))
-    });
+    let name = state
+        .primitive_name(meaning)
+        .or_else(|| control_sequence.map(|symbol| state.resolve(symbol)));
     if let Some(name) = name {
         text.push('\\');
         text.push_str(name);

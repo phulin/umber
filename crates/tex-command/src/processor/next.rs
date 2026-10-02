@@ -7,7 +7,7 @@
 
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, ResolvedMeaning};
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token::{Token, TracedTokenWord};
 
 use crate::command::CurrentCommand;
 use crate::error::CommandError;
@@ -78,51 +78,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | super::DeliveryStatus::ReplayCompleted(_)
         ));
         Ok(delivery)
-    }
-    /// Delivers the raw token following TeX's backtick character-code
-    /// introducer.
-    ///
-    /// §442 reads it with `get_token`, so the delivery is an ordinary raw
-    /// command whose identity is its own category code -- the *scanner's*
-    /// later interpretation of `cur_chr` is category-independent, the
-    /// delivery is not. This observed nothing of its own until
-    /// `umber2-johp.141`: it used to force the observed spelling to
-    /// `other_char`, which existed only to feed a spelling-derived command
-    /// name in the transport and silently masked whatever category code the
-    /// engine actually held.
-    ///
-    /// It is `get_token`, not `get_next`, for the further reason §365 gives:
-    /// `get_token` is one of the two places TeX82 clears
-    /// `no_new_control_sequence`, so `` \`\newname `` enters `newname` in the
-    /// hash table exactly as any other `get_token` reader would.
-    pub(crate) fn get_next_character_code(
-        &mut self,
-    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut destination = None;
-        match self.get_token_into(&mut destination)? {
-            super::DeliveryStatus::End => return Ok(None),
-            super::DeliveryStatus::Command => {}
-            _ => unreachable!("ordinary token delivery returns only commands"),
-        }
-        if let Some(command) = &destination
-            && matches!(
-                command.spelling().semantic_token(),
-                Token::Char {
-                    cat: Catcode::BeginGroup | Catcode::EndGroup,
-                    ..
-                }
-            )
-        {
-            // TeX82 §442 immediately cancels `get_next`'s brace update
-            // when a brace token supplies an alphabetic character constant.
-            // The token is consumed as a character code, not as grouping
-            // material, so a following alignment delimiter must still see
-            // the entry's original `align_state`.
-            self.command
-                .alignment
-                .undo_delivery(command.alignment_adjustment());
-        }
-        Ok(destination)
     }
     /// Delivers one raw token directly into caller-provided final storage.
     pub fn get_token_into(

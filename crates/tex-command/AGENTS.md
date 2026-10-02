@@ -89,6 +89,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   lifetimes. Every Result exit releases an unfinished capture, and body
   retirement returns the region. Named captures exclude the allocator pool;
   restore clears abandoned owners and retains reusable engine capacity.
+- `src/scanners/scalar/numeric.rs`: native integer, dimension and glue entry consumes leading signs and substantive meaning directly in the shared reader; internal probes and canonical backups have one implementation, and number conversions share this scanner. No leading-command handoff or conversion-specific digit reader remains.
 - `src/scanner_kernel.rs`: stack-local synchronous scanner cursor shared by
   macro arguments and `scan_toks`. It keeps brace and first-token facts beside
   the caller-owned output sink and settles each accepted word inside plain

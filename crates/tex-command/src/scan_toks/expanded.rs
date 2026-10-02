@@ -71,10 +71,7 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for ReplacementCo
         primitive: ExpandablePrimitive,
     ) -> Result<bool, CommandError> {
         match primitive {
-            ExpandablePrimitive::The => {
-                let mut operand = None;
-                processor.append_direct_the_toks(self.collector, &mut operand)
-            }
+            ExpandablePrimitive::The => processor.append_direct_the_toks(self.collector),
             ExpandablePrimitive::Unexpanded => {
                 processor.append_unexpanded(self.collector)?;
                 Ok(true)

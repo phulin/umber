@@ -1,5 +1,7 @@
 //! Executor-facing canonical scalar scanners.
 
+mod numeric;
+
 use tex_state::env::banks::DimenParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
@@ -9,7 +11,7 @@ use tex_state::scaled::{
     PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction, scale_true_dimension_parts,
     scaled_from_decimal_parts, xn_over_d,
 };
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use tex_state::{BoxDimension, PenaltyArrayKind, PrepareMagDiagnostic};
 
@@ -17,7 +19,7 @@ use crate::observation::canonical_names::glue_order_name;
 use crate::scanners::RestrictedIntegerClass;
 use crate::{
     CommandError, CurrentCommand,
-    processor::{CommandProcessor, DeliveryStatus, meaning_text},
+    processor::{CommandProcessor, meaning_text},
 };
 use crate::{CommandObservation, ObservationValue, ScannerRecord};
 
@@ -378,10 +380,6 @@ const fn raise_infinite_order(order: Order) -> Order {
     }
 }
 
-/// TeX82 §440's initial `radix:=0`: no numeric constant was scanned, so no
-/// decimal fraction may follow.
-const NO_RADIX: u8 = 0;
-
 /// TeX82 §444's `radix:=10`, the only base a decimal fraction may follow.
 const DECIMAL_RADIX: u8 = 10;
 
@@ -395,10 +393,6 @@ const DECIMAL_RADIX: u8 = 10;
 /// `continental_point_token` to `point_token` twice, so a comma behaves
 /// exactly like a period: `3,5pt` is `3.5pt`, and a leading `,5pt` is
 /// `0.5pt`.
-fn is_point_token<G>(command: &CurrentCommand<G>) -> bool {
-    is_point_character(command.character())
-}
-
 /// TeX82 §445's digit test: decimal digits are others; hexadecimal letters
 /// may be letters or others. Character aliases use their resolved value.
 const fn radix_digit(character: Option<(char, Catcode)>) -> Option<u8> {
@@ -476,7 +470,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     pub fn scan_integer_retained(&mut self) -> RetainedScalarScan<ScannedScalar<i32>> {
-        match self.scan_integer_with_resource_continuation() {
+        match self.scan_integer_operand() {
             Ok(value) => RetainedScalarScan::Complete(value),
             Err(error) => self.finish_retained_integer_error(error),
         }
@@ -488,7 +482,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// retained entry.
     #[inline(never)]
     pub(crate) fn scan_integer_value_for_condition(&mut self) -> Result<i32, CommandError> {
-        match self.scan_integer_with_resource_continuation() {
+        match self.scan_integer_operand() {
             Ok(value) => Ok(value.value),
             Err(error) => {
                 if error.is_resource_suspension() {
@@ -740,201 +734,8 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Scans an integer or an internal integer quantity.
     fn scan_integer(&mut self, call: &mut ScalarCallFrame<ScannedScalar<i32>>) -> ScalarCallStatus {
-        let result = self.scan_integer_with_resource_continuation();
+        let result = self.scan_integer_operand();
         publish_scalar_result!(self, call, result)
-    }
-
-    fn scan_integer_with_resource_continuation(
-        &mut self,
-    ) -> Result<ScannedScalar<i32>, CommandError> {
-        let mut command = None;
-        let delivery = self.request_expanded_token(&mut command)?;
-        match delivery {
-            DeliveryStatus::Command => {}
-            DeliveryStatus::End => {
-                return Ok(ScannedScalar {
-                    value: 0,
-                    recovery: ScalarRecovery::InsertedZero,
-                    provenance: ScalarProvenance {
-                        primary: OriginId::UNKNOWN,
-                    },
-                });
-            }
-            _ => unreachable!("ordinary expanded delivery returns only commands"),
-        }
-        self.scan_integer_from_leading_hot(command.expect("command initializes destination"))
-    }
-
-    /// Continues TeX82 §440 after a caller has already consumed the first
-    /// token. The compact numeric conversion lane inspects that token for a
-    /// decimal digit, but a leading sign belongs to §440's sign loop and
-    /// must not be backed up before the full scanner resumes.
-    pub(crate) fn scan_integer_from_leading_hot(
-        &mut self,
-        first: CurrentCommand<G>,
-    ) -> Result<ScannedScalar<i32>, CommandError> {
-        let (mut negative, mut provenance) = (false, OriginId::UNKNOWN);
-        let mut command = Some(first);
-        let first = loop {
-            let command = match command.take() {
-                Some(command) => command,
-                None => {
-                    let mut destination = None;
-                    let delivery = self.request_expanded_token(&mut destination)?;
-                    match delivery {
-                        DeliveryStatus::Command => {
-                            destination.expect("command delivery initializes destination")
-                        }
-                        DeliveryStatus::End => {
-                            return Ok(ScannedScalar {
-                                value: 0,
-                                recovery: ScalarRecovery::InsertedZero,
-                                provenance: ScalarProvenance {
-                                    primary: provenance,
-                                },
-                            });
-                        }
-                        _ => unreachable!("ordinary expanded delivery returns only commands"),
-                    }
-                }
-            };
-            if provenance == OriginId::UNKNOWN {
-                provenance = command.origin();
-            }
-            match command.static_meaning() {
-                Some(Meaning::CharToken { ch: ' ', .. })
-                | Some(Meaning::CharToken { ch: '+', .. }) => {}
-                Some(Meaning::CharToken { ch: '-', .. }) => negative = !negative,
-                _ => break command,
-            }
-        };
-        self.finish_integer_hot(first, negative, provenance)
-    }
-
-    /// Materializes the terminal integer token only after recursive operand
-    /// expansion has returned. The waiting scanner frame therefore retains
-    /// only the compact token plus its sign and provenance.
-    #[inline(never)]
-    fn finish_integer_hot(
-        &mut self,
-        first: CurrentCommand<G>,
-        negative: bool,
-        provenance: OriginId,
-    ) -> Result<ScannedScalar<i32>, CommandError> {
-        // A category-12 decimal digit is never an internal quantity, so
-        // §440 goes straight to §444's constant without a rich command.
-        if let Some(Meaning::CharToken {
-            ch: ch @ '0'..='9',
-            cat: Catcode::Other,
-        }) = first.static_meaning()
-        {
-            let (value, _, _) = self.scan_radix_tail(Some(ch as u8 - b'0'), DECIMAL_RADIX)?;
-            return Ok(self.finish_integer(value, negative, provenance, ScalarRecovery::None));
-        }
-        Ok(self.complete_integer(first, negative, provenance)?.0)
-    }
-
-    /// TeX82 §440's `scan_int` body, from the token its
-    /// `<Get the next non-blank non-sign token>` left in hand.
-    ///
-    /// The second result is §440's `radix` global, which `scan_int`
-    /// initializes to zero and only §444's "Scan a numeric constant" sets:
-    /// 10 for a decimal constant (including §444's `vacuous` recovery, which
-    /// runs after `radix:=10`), 8 after `'`, and 16 after `"`. It stays zero
-    /// for an internal quantity and for §442's alphabetic character code.
-    /// §448 needs it because a decimal fraction may follow only a decimal
-    /// constant.
-    #[inline(never)]
-    fn complete_integer(
-        &mut self,
-        first: CurrentCommand<G>,
-        negative: bool,
-        provenance: OriginId,
-    ) -> Result<(ScannedScalar<i32>, u8), CommandError> {
-        // TeX82 §440's `scan_int` calls `scan_something_internal(int_val,
-        // false)`, so §413's §429 loop lowers every numeric level to an
-        // integer: a dimension keeps its scaled representation, and glue or mu
-        // glue first becomes its width. Plain's `\ht\z@` relies on the
-        // dimension step because `\z@` is a dimension register, not a numeric
-        // literal; `\ifnum\parskip>0` and `\count0=\skip3` rely on the glue
-        // step.
-        let mut internal_call = ScalarCallFrame::default();
-        let internal_status =
-            self.scan_something_internal(&first, InternalLevel::Integer, false, &mut internal_call);
-        let internal = match internal_status {
-            ScalarCallStatus::Complete => internal_call.take_complete(),
-            ScalarCallStatus::Failed => return Err(internal_call.take_error()),
-        };
-        let (value, radix, recovery) = match internal {
-            InternalScan::Value(InternalValue::Integer(value)) => {
-                (value, NO_RADIX, ScalarRecovery::None)
-            }
-            InternalScan::Value(_) => {
-                unreachable!("TeX82 §429 lowers an int_val request to an integer")
-            }
-            InternalScan::NotInternal => match scalar_meaning(first.meaning()) {
-                Meaning::CharToken {
-                    ch,
-                    cat: Catcode::Other,
-                } if ch.is_ascii_digit() => (
-                    self.scan_radix_tail(Some(ch as u8 - b'0'), DECIMAL_RADIX)?
-                        .0,
-                    DECIMAL_RADIX,
-                    ScalarRecovery::None,
-                ),
-                // TeX.web `scan_int` treats an apostrophe or double quote as
-                // an octal or hexadecimal introducer. The following digits
-                // still travel through `get_x_token`, so their deliveries are
-                // observable before the completed scanner result.
-                Meaning::CharToken {
-                    ch: '\'',
-                    cat: Catcode::Other,
-                } => {
-                    let (value, vacuous, site) = self.scan_radix_tail(None, 8)?;
-                    if vacuous {
-                        self.missing_number_error_at(site)?;
-                        return Ok((self.inserted_zero_integer(provenance), 8));
-                    }
-                    (value, 8, ScalarRecovery::None)
-                }
-                Meaning::CharToken {
-                    ch: '"',
-                    cat: Catcode::Other,
-                } => {
-                    let (value, vacuous, site) = self.scan_radix_tail(None, 16)?;
-                    if vacuous {
-                        self.missing_number_error_at(site)?;
-                        return Ok((self.inserted_zero_integer(provenance), 16));
-                    }
-                    (value, 16, ScalarRecovery::None)
-                }
-                // TeX's `\` character-code form consumes its following token
-                // through raw delivery: that token supplies a character code,
-                // rather than participating in ordinary expansion.  The
-                // optional following space remains an expanded scanner token.
-                // §442 never enters §444, so `radix` stays zero.
-                Meaning::CharToken {
-                    ch: '`',
-                    cat: Catcode::Other,
-                } => {
-                    let (value, recovery, optional_space) = self.scan_character_code()?;
-                    if optional_space && let Err(error) = self.scan_optional_space() {
-                        return Err(error);
-                    }
-                    (value, NO_RADIX, recovery)
-                }
-                _ => {
-                    // §444's `vacuous` case. `radix:=10` is assigned before
-                    // the accumulation loop, so it survives §446's recovery.
-                    let site = self.capture_diagnostic_site(Some(&first));
-                    self.back_input(first)?;
-                    self.missing_number_error_at(Some(site))?;
-                    return Ok((self.inserted_zero_integer(provenance), DECIMAL_RADIX));
-                }
-            },
-        };
-        let scanned = self.finish_integer(value, negative, provenance, recovery);
-        Ok((scanned, radix))
     }
 
     fn finish_integer(
@@ -1008,137 +809,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         finish_scalar_result!(self, result)
     }
 
-    fn scan_dimension_from_leading(
-        &mut self,
-        mut negative: bool,
-        mut provenance: OriginId,
-        allow_infinite: bool,
-        mu: bool,
-    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
-        // TeX82 §448's `<Get the next non-blank non-sign token>` leaves that
-        // token in hand and branches on it: an internal quantity (a command
-        // code in §208/§209's `min_internal..=max_internal`) goes straight to
-        // `scan_something_internal`, and only the other branch runs
-        // `back_input` before `scan_int` owns the constant. Backing the token
-        // up unconditionally and re-reading it would install a backup level
-        // and redeliver the command that TeX never re-delivers.
-        //
-        // `internal_value_from_command` is that command-code test: it is
-        // exhaustive over the internal families and consumes an internal
-        // quantity's own operand (a register index, a font selector, a
-        // character code), so it must see the token before any `back_input`
-        // could split the quantity from its operand.
-        let first = loop {
-            let mut command = None;
-            let delivery = self.request_expanded_token(&mut command)?;
-            let command = match delivery {
-                DeliveryStatus::Command => {
-                    command.expect("command delivery initializes destination")
-                }
-                DeliveryStatus::End => break None,
-                _ => unreachable!("ordinary expanded delivery returns only commands"),
-            };
-            if provenance == OriginId::UNKNOWN {
-                provenance = command.origin();
-            }
-            match scalar_meaning(command.meaning()) {
-                Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
-                Meaning::CharToken { ch: '-', .. } => negative = !negative,
-                _ => break Some(command),
-            }
-        };
-        let Some(first) = first else {
-            return self.finish_dimension(
-                Scaled::from_raw(0),
-                Order::Normal,
-                negative,
-                provenance,
-                ScalarRecovery::InsertedZero,
-                false,
-            );
-        };
-        self.scan_dimension_after_first(first, negative, provenance, allow_infinite, mu)
-    }
-
-    fn scan_dimension_after_first(
-        &mut self,
-        first: CurrentCommand<G>,
-        negative: bool,
-        provenance: OriginId,
-        allow_infinite: bool,
-        mu: bool,
-    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
-        // TeX82 §449's "Fetch an internal dimension and goto attach_sign,
-        // or fetch an internal integer": `scan_something_internal(mu_val,
-        // false)` when `mu`, and `scan_something_internal(dimen_val,false)`
-        // otherwise. A quantity that ends up at the requested dimension level
-        // is the whole answer and skips both the unit scan and its optional
-        // space; one that ends up an integer becomes the numeric prefix of an
-        // ordinary units scan (`\dimen0=\count5 pt`).
-        let level = if mu {
-            InternalLevel::MuGlue
-        } else {
-            InternalLevel::Dimension
-        };
-        let mut internal_call = ScalarCallFrame::default();
-        let internal = scalar_value_or_return!(
-            internal_call,
-            self.scan_something_internal(&first, level, false, &mut internal_call)
-        );
-        match internal {
-            InternalScan::Value(value) => match self.fetch_internal_dimension(value, mu)? {
-                InternalDimension::Complete(value) => self.finish_dimension(
-                    value,
-                    Order::Normal,
-                    negative,
-                    provenance,
-                    ScalarRecovery::None,
-                    false,
-                ),
-                InternalDimension::Prefix(integer) => {
-                    self.integer_terminator_character = None;
-                    self.scan_dimension_units(
-                        integer,
-                        false,
-                        negative,
-                        provenance,
-                        allow_infinite,
-                        mu,
-                        ScalarRecovery::None,
-                    )
-                }
-            },
-            // TeX82 §448's other branch: `back_input`, then either
-            // `scan_int` or §448's own `radix:=10; cur_val:=0` owns the
-            // numeric part, and the unit scan always follows.
-            InternalScan::NotInternal => {
-                let leading_point = is_point_token(&first);
-                self.back_input(first)?;
-                if leading_point {
-                    let mut point = None;
-                    match self.get_token_into(&mut point)? {
-                        DeliveryStatus::Command => {
-                            point.expect("command delivery initializes destination");
-                        }
-                        DeliveryStatus::End => {}
-                        _ => unreachable!("ordinary raw delivery returns only commands"),
-                    }
-                    self.scan_dimension_units(
-                        0,
-                        true,
-                        negative,
-                        provenance,
-                        allow_infinite,
-                        mu,
-                        ScalarRecovery::None,
-                    )
-                } else {
-                    self.scan_dimension_after_integer(negative, provenance, allow_infinite, mu)
-                }
-            }
-        }
-    }
-
     fn scan_dimension_after_integer(
         &mut self,
         negative: bool,
@@ -1151,14 +821,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let integer = scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call));
         let decimal = is_point_character(self.integer_terminator_character);
         if decimal {
-            let mut point = None;
-            match self.get_token_into(&mut point)? {
-                DeliveryStatus::Command => {
-                    point.expect("command delivery initializes destination");
-                }
-                DeliveryStatus::End => {}
-                _ => unreachable!("ordinary raw delivery returns only commands"),
-            }
+            self.consume_token_spelling(&mut |_, _, _| Ok(()))?;
         }
         self.scan_dimension_units(
             integer.value,
@@ -1356,153 +1019,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         finish_scalar_result!(self, result)
     }
 
-    fn scan_glue_from_leading(
-        &mut self,
-        mu: bool,
-        mut negative: bool,
-        mut provenance: OriginId,
-    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        // TeX82 §461's `<Get the next non-blank non-sign token>`: `scan_glue`
-        // owns its own leading signs so that §430 can negate an internal
-        // glue's three components as a unit (`\skip0=-\skip1`). Routing a
-        // signed internal glue through the width-only dimension scanner
-        // instead would drop its stretch and shrink.
-        let first = loop {
-            let mut command = None;
-            let delivery = self.request_expanded_token(&mut command)?;
-            let command = match delivery {
-                DeliveryStatus::Command => {
-                    command.expect("command delivery initializes destination")
-                }
-                DeliveryStatus::End => break None,
-                _ => unreachable!("ordinary expanded delivery returns only commands"),
-            };
-            if provenance == OriginId::UNKNOWN {
-                provenance = command.origin();
-            }
-            match scalar_meaning(command.meaning()) {
-                Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
-                Meaning::CharToken { ch: '-', .. } => negative = !negative,
-                _ => break Some(command),
-            }
-        };
-        match first {
-            Some(first) => self.scan_glue_after_first(first, mu, negative, provenance),
-            None => self.scan_glue_width(mu, negative),
-        }
-    }
-
-    fn scan_glue_after_first(
-        &mut self,
-        first: CurrentCommand<G>,
-        mu: bool,
-        negative: bool,
-        provenance: OriginId,
-    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        let level = if mu {
-            InternalLevel::MuGlue
-        } else {
-            InternalLevel::Glue
-        };
-        // TeX82 probes an internal glue quantity before treating the input as
-        // a width dimension.  An ordinary number therefore travels through
-        // one canonical backup/replay cycle before `scan_dimen` owns its
-        // integer prefix; collapsing the probe loses that input lifecycle and
-        // also prevents a direct `\skip` RHS from being accepted as glue.
-        let mut internal_call = ScalarCallFrame::default();
-        match scalar_value_or_return!(
-            internal_call,
-            self.scan_something_internal(&first, level, negative, &mut internal_call)
-        ) {
-            // §461 is the one caller that passes §413's `negative` flag, so
-            // §430 negates the committed value -- all three components of a
-            // glue specification together -- before §413 returns.
-            // §461: `if cur_val_level>=glue_val then begin if
-            // cur_val_level<>level then mu_error; return end`. The
-            // specification is the complete answer, so no `plus`/`minus`
-            // components follow it. §429 has already lowered a `mu_val`
-            // quantity to `glue_val` (reporting `mu_error` on the way), so
-            // the level test that remains here is §461's `glue_val`
-            // quantity where `mu_val` was requested.
-            InternalScan::Value(internal @ (InternalValue::Glue(_) | InternalValue::MuGlue(_))) => {
-                if internal.level() != level {
-                    self.mu_error()?;
-                }
-                if negative {
-                    // §430 changed the specification, so the physical pointer and
-                    // source-register identity captured while fetching the internal
-                    // value no longer describe the scanned result. Retaining them
-                    // would let e-TeX §277 mistake `\skip0=-\skip0` for an
-                    // identical-pointer reassignment and discard the negation.
-                    self.scanned_glue_identity = None;
-                    self.scanned_glue_register = None;
-                    self.scanned_glue_shared_zero = false;
-                }
-                let (InternalValue::Glue(glue) | InternalValue::MuGlue(glue)) = internal else {
-                    unreachable!("outer pattern restricts the value to a glue specification")
-                };
-                self.finish_glue(glue, ScalarRecovery::None, provenance)
-            }
-            // TeX82's `scan_glue` accepts an internal dimension as the
-            // width of an ordinary glue specification.  In particular,
-            // `\ht<box>` has already consumed its bounded box index;
-            // backing up the primitive here would both replay an
-            // incomplete internal value and use a stale delivery proof.
-            // See TeX.web §461 (`scan_glue`). A mu-level request reports
-            // `mu_error` first and keeps the dimension.
-            InternalScan::Value(InternalValue::Dimension(width)) => {
-                if mu {
-                    self.mu_error()?;
-                }
-                if negative {
-                    self.scanned_glue_identity = None;
-                    self.scanned_glue_register = None;
-                }
-                let result = self.scan_glue_plus_keyword(
-                    mu,
-                    GlueSpec {
-                        width,
-                        ..GlueSpec::ZERO
-                    },
-                    ScalarRecovery::None,
-                    provenance,
-                );
-                self.clear_fresh_glue_scan_origin();
-                result
-            }
-            // §461: `if cur_val_level=int_val then scan_dimen(mu,false,
-            // true)`. §430 has already negated the integer, which is the
-            // numeric prefix of a units-only dimension scan.
-            InternalScan::Value(InternalValue::Integer(integer)) => {
-                let width = self.scan_dimension_shortcut(integer, mu)?;
-                if negative {
-                    self.scanned_glue_identity = None;
-                    self.scanned_glue_register = None;
-                }
-                let result = self.scan_glue_plus_keyword(
-                    mu,
-                    GlueSpec {
-                        width,
-                        ..GlueSpec::ZERO
-                    },
-                    ScalarRecovery::None,
-                    provenance,
-                );
-                self.clear_fresh_glue_scan_origin();
-                result
-            }
-            InternalScan::Value(InternalValue::Font(_) | InternalValue::Tokens { .. }) => {
-                unreachable!("TeX82 §416 converts identifiers to dimen_val zero before §461")
-            }
-            // §461's non-internal branch: `back_input; scan_dimen(mu,
-            // false,false); if negative then negate(cur_val)`.
-            InternalScan::NotInternal => {
-                self.back_input(first)?;
-                self.scan_glue_width(mu, negative)
-            }
-        }
-    }
-
     fn scan_glue_width(
         &mut self,
         mu: bool,
@@ -1621,76 +1137,54 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// This operation owns the operand: §465 consumes an invalid target,
     /// reports `you_cant`,
     /// and publishes integer zero for both `\the` and `\showthe`.
-    fn scan_internal_value_or_zero(
+    pub(crate) fn scan_internal_value_or_zero(
         &mut self,
     ) -> Result<ScannedScalar<InternalValue>, CommandError> {
-        let mut command = None;
-        let delivery = self.request_expanded_token(&mut command)?;
-        if delivery != DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
-        }
-        let command = command.expect("command delivery initializes destination");
-        let provenance = ScalarProvenance {
-            primary: command.origin(),
-        };
-        let value = match self.scan_the_internal_value(&command)? {
-            Some(value) => value,
-            None => {
-                let rendered = meaning_text(self.state, &command);
-                let context = self.command.output_open_context(self.state);
-                let site = Some(self.current_diagnostic_site(Some(&command)));
-                let mut report = self
-                    .state
-                    .print_err(&format!("You can't use `{rendered}' after \\the"));
-                report
-                    .help(&["I'm forgetting what you said and using zero instead."])
-                    .context(context);
-                let outcome = report.error_with_effects_at(self.diagnostic_effects, site);
-                self.finish_error_outcome(outcome)?;
-                InternalValue::Integer(0)
-            }
-        };
-        Ok(ScannedScalar {
-            value,
-            recovery: ScalarRecovery::None,
-            provenance,
-        })
-    }
-
-    /// Scans an already-delivered `\the` operand without asking the expanded
-    /// delivery entry point for another token.  The iterative expansion
-    /// driver uses this boundary after it has settled a hot target command;
-    /// only the target's own scalar operand (for example a register index)
-    /// may open a typed scalar child.
-    pub(crate) fn scan_internal_value_or_zero_from_target(
-        &mut self,
-        command: &CurrentCommand<G>,
-    ) -> Result<ScannedScalar<InternalValue>, CommandError> {
-        let provenance = ScalarProvenance {
-            primary: command.origin(),
-        };
-        let value = match self.scan_the_internal_value(command)? {
-            Some(value) => value,
-            None => {
-                let rendered = meaning_text(self.state, command);
-                let context = self.command.output_open_context(self.state);
-                let site = Some(self.current_diagnostic_site(Some(command)));
-                let mut report = self
-                    .state
-                    .print_err(&format!("You can't use `{rendered}' after \\the"));
-                report
-                    .help(&["I'm forgetting what you said and using zero instead."])
-                    .context(context);
-                let outcome = report.error_with_effects_at(self.diagnostic_effects, site);
-                self.finish_error_outcome(outcome)?;
-                InternalValue::Integer(0)
-            }
-        };
-        Ok(ScannedScalar {
-            value,
-            recovery: ScalarRecovery::None,
-            provenance,
-        })
+        let mut scanned = None;
+        self.consume_expanded_words(&mut |processor,
+                                          spelling,
+                                          meaning,
+                                          control_sequence,
+                                          exceptional| {
+            let value = match processor.scan_the_internal_value(
+                spelling,
+                meaning,
+                control_sequence,
+                exceptional,
+            )? {
+                Some(value) => value,
+                None => {
+                    let rendered =
+                        meaning_text(processor.state, meaning.resolve(), control_sequence);
+                    let context = processor.command.output_open_context(processor.state);
+                    let site = processor.capture_consumed_site(
+                        spelling,
+                        meaning,
+                        control_sequence,
+                        exceptional,
+                    );
+                    let site = Some(processor.complete_diagnostic_site(site));
+                    let mut report = processor
+                        .state
+                        .print_err(&format!("You can't use `{rendered}' after \\the"));
+                    report
+                        .help(&["I'm forgetting what you said and using zero instead."])
+                        .context(context);
+                    let outcome = report.error_with_effects_at(processor.diagnostic_effects, site);
+                    processor.finish_error_outcome(outcome)?;
+                    InternalValue::Integer(0)
+                }
+            };
+            scanned = Some(ScannedScalar {
+                value,
+                recovery: ScalarRecovery::None,
+                provenance: ScalarProvenance {
+                    primary: spelling.origin(),
+                },
+            });
+            Ok(std::ops::ControlFlow::Break(()))
+        })?;
+        scanned.ok_or_else(CommandError::input_invariant)
     }
 
     pub fn scan_internal_value_or_zero_retained(
@@ -1706,142 +1200,71 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// `tok_val` is the top level, so §429's cascade never runs and a font
     /// identifier or token list is a value in its own right rather than §416's
     /// missing number. `None` is §413's "not an internal quantity" test.
-    fn scan_the_internal_value(
+    pub(crate) fn scan_the_internal_value(
         &mut self,
-        target: &CurrentCommand<G>,
+        spelling: TracedTokenWord,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+        control_sequence: Option<Symbol>,
+        exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<Option<InternalValue>, CommandError> {
-        let mut internal_call = ScalarCallFrame::default();
-        match scalar_value_or_return!(
-            internal_call,
-            self.scan_something_internal(target, InternalLevel::Tokens, false, &mut internal_call,)
-        ) {
+        match self.scan_something_internal(
+            spelling,
+            meaning,
+            control_sequence,
+            exceptional,
+            InternalLevel::Tokens,
+            false,
+        )? {
             InternalScan::Value(value) => Ok(Some(value)),
             InternalScan::NotInternal => Ok(None),
         }
     }
 
-    pub fn scan_the_internal_value_retained(
-        &mut self,
-        target: &CurrentCommand<G>,
-    ) -> RetainedScalarScan<Option<InternalValue>> {
-        let result = self.scan_the_internal_value(target);
-        self.detach_retained_scalar(result)
-    }
-
-    /// §445's `<Accumulate the constant until cur_tok is not a suitable
-    /// digit>`, plus §444's `vacuous` flag.
-    ///
-    /// `first` is the decimal introducer's own digit, which §444 has already
-    /// accumulated; `'` and `"` pass `None` because §444 consumed them with
-    /// `get_x_token` and no digit has been seen yet. The flag is the second
-    /// result because the two exits differ: §444 ends a constant that scanned
-    /// at least one digit with `else if cur_cmd<>spacer then back_input`,
-    /// absorbing one terminating space, while §446's `back_error` backs the
-    /// terminator up unconditionally before reporting the missing number.
-    fn scan_radix_tail(
-        &mut self,
-        first: Option<u8>,
-        radix: u8,
-    ) -> Result<(i32, bool, Option<tex_state::diagnostic::DiagnosticSite>), CommandError> {
-        let mut value = i32::from(first.unwrap_or(0));
-        let mut vacuous = first.is_none();
-        let mut overflowed = false;
-        let mut missing_site = None;
-        self.consume_expanded_words(&mut |processor,
-                                          spelling,
-                                          meaning,
-                                          control_sequence,
-                                          exceptional| {
-            let character = native_character(meaning);
-            match radix_digit(character) {
-                Some(digit) if digit < radix => {
-                    vacuous = false;
-                    let next = value
-                        .checked_mul(i32::from(radix))
-                        .and_then(|value| value.checked_add(i32::from(digit)));
-                    match next {
-                        Some(next) => value = next,
-                        None => {
-                            value = i32::MAX;
-                            // TeX82 §445 calls `error` as soon as the first
-                            // overflowing digit has been fetched, before the
-                            // following digit or optional space advances
-                            // `loc`. Later digits remain consumed, but do not
-                            // repeat the report (`OK_so_far:=false`).
-                            if !overflowed {
-                                let site = processor.capture_consumed_site(
-                                    spelling,
-                                    meaning,
-                                    control_sequence,
-                                    exceptional,
-                                );
-                                processor.number_too_big_error(Some(site))?;
-                                overflowed = true;
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    if vacuous {
-                        // §446's `back_error`, which is `back_input; error`
-                        // and so keeps even a spacer for the caller's report
-                        // to pseudoprint.
-                        missing_site = Some(processor.capture_consumed_site(
-                            spelling,
-                            meaning,
-                            control_sequence,
-                            exceptional,
-                        ));
-                        processor.back_consumed_word(spelling, exceptional)?;
-                    } else if !matches!(character, Some((_, Catcode::Space))) {
-                        processor.back_consumed_word(spelling, exceptional)?;
-                        // A numeric constant absorbs one terminating space,
-                        // so replay must not manufacture a backup transition
-                        // before publishing it.
-                        processor.integer_terminator_character = character;
-                    }
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-            }
-            Ok(std::ops::ControlFlow::Continue(()))
-        })?;
-        Ok((value, vacuous, missing_site))
-    }
-
     fn scan_character_code(&mut self) -> Result<(i32, ScalarRecovery, bool), CommandError> {
-        let Some(command) = self.get_next_character_code()? else {
-            return Ok((0, ScalarRecovery::None, false));
-        };
-        // TeX82 §442 tests `cur_tok`, not `cur_cmd`: an active character is
-        // represented by a control-sequence meaning, but remains a valid
-        // alphabetic character constant. Likewise a one-character control
-        // sequence denotes that character. Only multi-character (or null)
-        // control sequences take the improper-constant recovery path.
-        let value = match command.spelling().semantic_token() {
-            Token::Char { ch, .. } => i32::try_from(u32::from(ch)).unwrap_or(0),
-            Token::Cs(symbol) => {
-                let mut name = self.state.resolve(symbol).chars();
-                match (name.next(), name.next()) {
-                    (Some(ch), None) => i32::try_from(u32::from(ch)).unwrap_or(0),
-                    _ => {
-                        self.back_input(command)?;
-                        self.improper_alphabetic_constant_error()?;
-                        return Ok((0, ScalarRecovery::InsertedZero, false));
+        self.consume_token_spelling(&mut |processor, spelling, exceptional| {
+            let token = spelling.semantic_token();
+            // §442 cancels raw brace accounting before interpreting cur_tok
+            // as a character code. Active characters use their spelling too.
+            if matches!(
+                token,
+                Token::Char {
+                    cat: Catcode::BeginGroup | Catcode::EndGroup,
+                    ..
+                }
+            ) {
+                let adjustment = exceptional.map_or_else(
+                    || crate::processor::AlignmentDeliveryState::<G>::back_input_adjustment(token),
+                    CurrentCommand::alignment_adjustment,
+                );
+                processor.command.alignment.undo_delivery(adjustment);
+            }
+            let value = match token {
+                Token::Char { ch, .. } => Some(ch as i32),
+                Token::Cs(symbol) => {
+                    let mut name = processor.state.resolve(symbol).chars();
+                    match (name.next(), name.next()) {
+                        (Some(ch), None) => Some(ch as i32),
+                        _ => None,
                     }
                 }
+                _ => None,
+            };
+            if let Some(value) = value
+                && (value <= i32::from(u8::MAX)
+                    || processor
+                        .command
+                        .profile()
+                        .capabilities()
+                        .supports_unicode())
+            {
+                Ok((value, ScalarRecovery::None, true))
+            } else {
+                processor.back_consumed_word(spelling, exceptional)?;
+                processor.improper_alphabetic_constant_error()?;
+                Ok((0, ScalarRecovery::InsertedZero, false))
             }
-            _ => {
-                self.back_input(command)?;
-                self.improper_alphabetic_constant_error()?;
-                return Ok((0, ScalarRecovery::InsertedZero, false));
-            }
-        };
-        if value > i32::from(u8::MAX) && !self.command.profile().capabilities().supports_unicode() {
-            self.back_input(command)?;
-            self.improper_alphabetic_constant_error()?;
-            return Ok((0, ScalarRecovery::InsertedZero, false));
-        }
-        Ok((value, ScalarRecovery::None, true))
+        })
+        .map(|result| result.unwrap_or((0, ScalarRecovery::None, false)))
     }
 
     fn scan_decimal_dimension(
@@ -1889,15 +1312,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             // `scan_int` has already observed and backed up the leading `f`.
             // Replay it once, then finish the `fil` suffix without routing the
             // same candidate through unrelated physical-unit keywords.
-            let mut first = None;
-            if self.request_expanded_token(&mut first)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            let first = first.expect("command delivery initializes destination");
-            if !matches!(
-                scalar_meaning(first.meaning()),
-                Meaning::CharToken { ch: 'f', .. }
-            ) {
+            let mut matched = false;
+            self.consume_expanded_words(&mut |_, _, meaning, _, _| {
+                matched = matches!(native_character(meaning), Some(('f', _)));
+                Ok(std::ops::ControlFlow::Break(()))
+            })?;
+            if !matched {
                 return Err(CommandError::input_invariant());
             }
             (self.scan_infinite_unit_from_fil()?, None)
@@ -2112,116 +1532,62 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// token replayed by the fractional scanner, TeX's `back_input` first
     /// retires that exhausted backup before installing the new one.
     fn probe_dimension_unit(&mut self, mu: bool) -> Result<Option<Scaled>, CommandError> {
-        // §455 opens with §406's "Get the next non-blank non-call token"
-        // (`repeat get_x_token until cur_cmd<>spacer`), and only the surviving
-        // non-internal token is backed up -- the spaces it skipped are gone.
-        // §445 and §452 absorb one trailing space each, so this loop is what
-        // covers the coefficient forms that ran neither: §449's `int_val`
-        // internal quantity, and §448's `shortcut`. Reading a single token
-        // instead ended the probe on that space, so `\dimen0=\pretolerance
-        // \hsize` found no unit and §459 recovered it as `pt`
-        // (umber2-johp.115).
-        let command = loop {
-            let mut command = None;
-            let delivery = self.request_expanded_token(&mut command)?;
-            let command = match delivery {
-                DeliveryStatus::Command => {
-                    command.expect("command delivery initializes destination")
-                }
-                DeliveryStatus::End => return Ok(None),
-                _ => unreachable!("ordinary expanded delivery returns only commands"),
+        let mut unit = None;
+        self.consume_expanded_words(&mut |processor,
+                                          spelling,
+                                          meaning,
+                                          control_sequence,
+                                          exceptional| {
+            if matches!(native_character(meaning), Some((_, Catcode::Space))) {
+                return Ok(std::ops::ControlFlow::Continue(()));
+            }
+            // §455 probes at the requested numeric level. Only a range miss
+            // backs up the operand; leading spaces have already been consumed.
+            let level = if mu {
+                InternalLevel::MuGlue
+            } else {
+                InternalLevel::Dimension
             };
-            if !matches!(
-                scalar_meaning(command.meaning()),
-                Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                }
-            ) {
-                break command;
-            }
-        };
-        // §455 asks at `mu_val` when `mu` and at `dimen_val` otherwise, so
-        // §429 lowers an internal glue to its width for an ordinary unit.
-        let level = if mu {
-            InternalLevel::MuGlue
-        } else {
-            InternalLevel::Dimension
-        };
-        // §455's internal branch is selected by the command range, not by the
-        // level the resulting quantity happens to have. §413 has already
-        // performed every downward coercion requested above; an integer is a
-        // scaled unit unchanged, while either glue kind supplies its width.
-        // In a mu scan §455 reports `mu_error` for every level below `mu_val`,
-        // but still accepts that value as the unit.
-        let mut internal_call = ScalarCallFrame::default();
-        match scalar_value_or_return!(
-            internal_call,
-            self.scan_something_internal(&command, level, false, &mut internal_call)
-        ) {
-            InternalScan::Value(value) => {
-                if mu && !matches!(value, InternalValue::MuGlue(_)) {
-                    self.mu_error()?;
-                }
-                let unit = match value {
-                    InternalValue::Integer(value) => Scaled::from_raw(value),
-                    InternalValue::Dimension(value) => value,
-                    InternalValue::Glue(value) | InternalValue::MuGlue(value) => value.width,
-                    InternalValue::Font(_) | InternalValue::Tokens { .. } => {
-                        unreachable!("TeX82 §416 recovers nonnumeric internal values before §455")
+            unit = match processor.scan_something_internal(
+                spelling,
+                meaning,
+                control_sequence,
+                exceptional,
+                level,
+                false,
+            )? {
+                InternalScan::Value(value) => {
+                    if mu && !matches!(value, InternalValue::MuGlue(_)) {
+                        processor.mu_error()?;
                     }
-                };
-                Ok(Some(unit))
-            }
-            // Only this range-miss branch owns §455's `back_input`.
-            InternalScan::NotInternal => {
-                self.back_input(command)?;
-                Ok(None)
-            }
-        }
+                    Some(match value {
+                        InternalValue::Integer(value) => Scaled::from_raw(value),
+                        InternalValue::Dimension(value) => value,
+                        InternalValue::Glue(value) | InternalValue::MuGlue(value) => value.width,
+                        InternalValue::Font(_) | InternalValue::Tokens { .. } => unreachable!(
+                            "TeX82 §416 recovers nonnumeric internal values before §455"
+                        ),
+                    })
+                }
+                InternalScan::NotInternal => {
+                    processor.back_consumed_word(spelling, exceptional)?;
+                    None
+                }
+            };
+            Ok(std::ops::ControlFlow::Break(()))
+        })?;
+        Ok(unit)
     }
 
     /// TeX82 §443's `⟨Scan an optional space⟩`:
     /// `get_x_token; if cur_cmd<>spacer then back_input`.
     fn scan_optional_space(&mut self) -> Result<(), CommandError> {
-        let mut command = None;
-        let delivery = self.request_expanded_token(&mut command)?;
-        let command = match delivery {
-            DeliveryStatus::Command => command.expect("command delivery initializes destination"),
-            DeliveryStatus::End => return Ok(()),
-            _ => unreachable!("ordinary expanded delivery returns only commands"),
-        };
-        self.back_input_unless_spacer(command)?;
-        Ok(())
-    }
-
-    /// TeX82's `if cur_cmd<>spacer then back_input`, applied to a terminator
-    /// the caller already holds. Reports whether the command was backed up.
-    ///
-    /// This is one mechanism, not a coincidence repeated three times: §443's
-    /// `⟨Scan an optional space⟩`, §444's `⟨Scan a numeric constant⟩`, and
-    /// §452's `⟨Scan decimal fraction⟩` all end a numeric scan by absorbing a
-    /// terminating `spacer` and backing anything else up. A scan that backs
-    /// the space up instead publishes a spurious backup input level and then
-    /// re-reads the space, which the next scanner sees as an extra token.
-    ///
-    /// The test is on the command, so it is the token's category code and not
-    /// its character: §207 makes `spacer` the command a category-10 character
-    /// carries, and §349's "Enter `skip_blanks` state, emit a space" is what
-    /// normalizes such a character's `cur_chr` to a space inside §341's
-    /// `get_next`.
-    fn back_input_unless_spacer(
-        &mut self,
-        command: CurrentCommand<G>,
-    ) -> Result<bool, CommandError> {
-        // §379's inserted frozen_relax remains a non-space command. The
-        // numeric scanner must back it up before conditional evaluation
-        // resumes, just as it does for an ordinary explicit \relax.
-        if command.character_catcode() == Some(Catcode::Space) {
-            return Ok(false);
-        }
-        self.back_input(command)?;
-        Ok(true)
+        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
+            if !matches!(native_character(meaning), Some((_, Catcode::Space))) {
+                processor.back_consumed_word(spelling, exceptional)?;
+            }
+            Ok(std::ops::ControlFlow::Break(()))
+        })
     }
 
     fn scan_infinite_unit(&mut self, mut order: Order) -> Result<DimensionUnit, CommandError> {
@@ -2241,15 +1607,13 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn scan_infinite_unit_from_fil(&mut self) -> Result<DimensionUnit, CommandError> {
         for expected in ['i', 'l'] {
-            let mut command = None;
-            if self.request_expanded_token(&mut command)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            let command = command.expect("command delivery initializes destination");
-            if !matches!(
-                scalar_meaning(command.meaning()),
-                Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&expected)
-            ) {
+            let mut matched = false;
+            self.consume_expanded_words(&mut |_, _, meaning, _, _| {
+                matched = native_character(meaning)
+                    .is_some_and(|(ch, _)| ch.eq_ignore_ascii_case(&expected));
+                Ok(std::ops::ControlFlow::Break(()))
+            })?;
+            if !matched {
                 return Err(CommandError::input_invariant());
             }
         }
@@ -2571,21 +1935,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Every caller therefore names its level here rather than coercing
     /// afterwards, which is also what keeps §429's cascade from being
     /// re-derived once per scanner.
+    #[allow(clippy::too_many_arguments)]
     fn scan_something_internal(
         &mut self,
-        command: &CurrentCommand<G>,
-        level: InternalLevel,
-        negative: bool,
-        call: &mut ScalarCallFrame<InternalScan>,
-    ) -> ScalarCallStatus {
-        let command = *command;
-        let result = self.scan_something_internal_from(command, level, negative);
-        publish_scalar_result!(self, call, result)
-    }
-
-    fn scan_something_internal_from(
-        &mut self,
-        command: CurrentCommand<G>,
+        spelling: TracedTokenWord,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+        control_sequence: Option<tex_state::interner::Symbol>,
+        exceptional: Option<&CurrentCommand<G>>,
         level: InternalLevel,
         negative: bool,
     ) -> Result<InternalScan, CommandError> {
@@ -2597,15 +1953,27 @@ impl<G> CommandProcessor<'_, '_, G> {
         // `scan_four_bit_int`, and §415's `back_input; scan_font_ident` on a
         // path tex.web never reaches, consuming tokens TeX leaves in place.
         if level != InternalLevel::Tokens
-            && is_token_list_or_font_identifier(scalar_meaning(command.meaning()))
+            && is_token_list_or_font_identifier(scalar_meaning(meaning.resolve()))
         {
-            return self.missing_number_internal_result(&command, level);
+            return self.missing_number_internal_result(
+                spelling,
+                meaning,
+                control_sequence,
+                exceptional,
+                level,
+            );
         }
-        let Some(value) = self.fetch_internal_value(&command, level, negative)? else {
+        let Some(value) = self.fetch_internal_value(spelling, meaning, exceptional)? else {
             return Ok(InternalScan::NotInternal);
         };
         let Some(value) = self.coerce_internal_value(value, level)? else {
-            return self.missing_number_internal_result(&command, level);
+            return self.missing_number_internal_result(
+                spelling,
+                meaning,
+                control_sequence,
+                exceptional,
+                level,
+            );
         };
         let value = if negative {
             negated_internal_value(value)
@@ -2620,7 +1988,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // the requesting `scan_int`/`scan_dimen`/`scan_glue` publishes the
         // outer typed result.
         if !matches!(
-            scalar_meaning(command.meaning()),
+            scalar_meaning(meaning.resolve()),
             Meaning::UnexpandablePrimitive(
                 UnexpandablePrimitive::NumExpr
                     | UnexpandablePrimitive::DimExpr
@@ -2640,11 +2008,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// lowers the result for its caller.
     fn missing_number_internal_result(
         &mut self,
-        command: &CurrentCommand<G>,
+        spelling: TracedTokenWord,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+        control_sequence: Option<tex_state::interner::Symbol>,
+        exceptional: Option<&CurrentCommand<G>>,
         level: InternalLevel,
     ) -> Result<InternalScan, CommandError> {
-        let site = self.capture_diagnostic_site(Some(command));
-        self.back_input(command.copy_for_backup())?;
+        let site = self.capture_consumed_site(spelling, meaning, control_sequence, exceptional);
+        self.back_consumed_word(spelling, exceptional)?;
         self.missing_number_error_at(Some(site))?;
         let value = self
             .coerce_internal_value(InternalValue::Dimension(Scaled::from_raw(0)), level)?
@@ -2662,11 +2033,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// would publish a level TeX never commits.
     fn fetch_internal_value(
         &mut self,
-        command: &CurrentCommand<G>,
-        _level: InternalLevel,
-        _negative: bool,
+        spelling: TracedTokenWord,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+        exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<Option<InternalValue>, CommandError> {
-        let value = match scalar_meaning(command.meaning()) {
+        let value = match scalar_meaning(meaning.resolve()) {
             // TeX82 `scan_something_internal` owns a register primitive's
             // restricted (`scan_eight_bit_int`) index scan. e-TeX 2.6
             // [26.415], [26.420], and [26.427] replace it with
@@ -3168,7 +2539,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | UnexpandablePrimitive::ScriptFont
                 | UnexpandablePrimitive::ScriptScriptFont,
             ) => {
-                self.back_input(command.copy_for_backup())?;
+                self.back_consumed_word(spelling, exceptional)?;
                 let font = self.scan_font_selector_child()?;
                 self.font_identity(font)
             }

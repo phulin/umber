@@ -1508,25 +1508,30 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn append_direct_the_toks(
         &mut self,
         collector: &mut TokenCollector<G>,
-        target: &mut Option<CurrentCommand<G>>,
     ) -> Result<bool, CommandError> {
-        if target.is_none()
-            && self.request_expanded_token(target)? != crate::DeliveryStatus::Command
-        {
+        let mut operand_read = false;
+        let mut value = None;
+        self.consume_expanded_words(&mut |processor,
+                                          spelling,
+                                          meaning,
+                                          control_sequence,
+                                          exceptional| {
+            operand_read = true;
+            value = processor.scan_the_internal_value(
+                spelling,
+                meaning,
+                control_sequence,
+                exceptional,
+            )?;
+            if value.is_none() {
+                processor.back_consumed_word(spelling, exceptional)?;
+            }
+            Ok(std::ops::ControlFlow::Break(()))
+        })?;
+        if !operand_read {
             return Err(CommandError::input_invariant());
         }
-        // The scalar scanner consumes the target's effective meaning and is
-        // therefore a genuine outward scanner boundary. Keep the `\the`
-        // opener and all ordinary collector tokens compact; materialize only
-        // this one target at the existing boundary.
-        let target = target.take().expect("target was installed");
-        let scan = self.scan_the_internal_value_retained(&target);
-        let value = match scan {
-            crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Failed(error) => return Err(error),
-        };
         let Some(value) = value else {
-            self.back_input(target)?;
             return Ok(false);
         };
         // Built only for an observed episode: an unobserved one leaves this

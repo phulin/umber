@@ -406,3 +406,238 @@ fn glue_scanner_preserves_width_stretch_shrink_and_orders() {
         );
     });
 }
+
+#[test]
+fn numeric_heads_and_operands_need_no_unobserved_command_records() {
+    struct Observer;
+    impl crate::CommandObserver for Observer {
+        fn committed(&mut self, _: crate::CommandObservation) {}
+    }
+    for observed in [false, true] {
+        for signs in [0, 4096] {
+            for kind in 0..6 {
+                crate::test_harness::with_universe(|universe| {
+                    let mut input = vec![other('-'); signs];
+                    let expected = match kind {
+                        0 => {
+                            input.extend([other('4'), other('2')]);
+                            42
+                        }
+                        1 => {
+                            input.extend([
+                                other('1'),
+                                other('.'),
+                                other('2'),
+                                other('5'),
+                                letter('p'),
+                                letter('t'),
+                            ]);
+                            81920
+                        }
+                        2 => {
+                            input.extend([
+                                other('1'),
+                                letter('p'),
+                                letter('t'),
+                                other(' '),
+                                letter('p'),
+                                letter('l'),
+                                letter('u'),
+                                letter('s'),
+                                other(' '),
+                                other('2'),
+                                letter('p'),
+                                letter('t'),
+                            ]);
+                            65536
+                        }
+                        3 => {
+                            let name = universe.intern("native-internal-value").expect("name");
+                            universe
+                                .assign_meaning(
+                                    name,
+                                    tex_state::meaning::MeaningWord::from_static(
+                                        Meaning::CharGiven('*'),
+                                    ),
+                                    tex_state::env::AssignmentScope::Global,
+                                )
+                                .expect("internal meaning");
+                            input.push(Token::Cs(name.symbol()));
+                            42
+                        }
+                        4 => {
+                            input.extend([
+                                other('`'),
+                                Token::Char {
+                                    ch: '}',
+                                    cat: Catcode::EndGroup,
+                                },
+                            ]);
+                            125
+                        }
+                        _ => {
+                            input.extend([
+                                other('1'),
+                                letter('p'),
+                                letter('t'),
+                                other(' '),
+                                letter('p'),
+                                letter('l'),
+                                letter('u'),
+                                letter('s'),
+                                other(' '),
+                                other('2'),
+                                letter('f'),
+                                letter('i'),
+                                letter('l'),
+                            ]);
+                            65536
+                        }
+                    };
+                    input.push(other('X'));
+                    let mut command = CommandState::default();
+                    crate::test_harness::push(&mut command, input);
+                    let mut capabilities = CommandHostCapabilities::default();
+                    let mut fuel = crate::CommandFuelLedger::default();
+                    let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                    let mut observer = Observer;
+                    let mut context = universe.command_context().expect("context");
+                    let processor = crate::test_harness::processor(
+                        &mut command,
+                        &mut context,
+                        &mut capabilities,
+                        &mut fuel,
+                        &mut effects,
+                    );
+                    let mut processor = if observed {
+                        processor.with_observer(&mut observer)
+                    } else {
+                        processor
+                    };
+                    let alignment_before = processor.command.alignment.align_state;
+                    let before = crate::command::command_ownership_counters();
+                    let value = match kind {
+                        1 => processor
+                            .scan_dimension_retained()
+                            .into_result()
+                            .expect("dimension")
+                            .value
+                            .raw(),
+                        2 | 5 => {
+                            let glue = processor
+                                .scan_glue_retained(false)
+                                .into_result()
+                                .expect("glue")
+                                .value;
+                            assert_eq!(glue.stretch.raw(), 131072);
+                            assert_eq!(
+                                glue.stretch_order,
+                                if kind == 5 { Order::Fil } else { Order::Normal }
+                            );
+                            glue.width.raw()
+                        }
+                        _ => {
+                            processor
+                                .scan_integer_retained()
+                                .into_result()
+                                .expect("integer")
+                                .value
+                        }
+                    };
+                    assert_eq!(value, expected);
+                    assert_eq!(
+                        processor.command.alignment.align_state, alignment_before,
+                        "alphabetic brace constants cancel their raw brace accounting"
+                    );
+                    let after = crate::command::command_ownership_counters();
+                    if observed {
+                        assert!(after.resolved_writes > before.resolved_writes);
+                    } else {
+                        assert_eq!(
+                            after.resolved_writes, before.resolved_writes,
+                            "numeric signs, introducers, internal values, units and backups consume native facts"
+                        );
+                    }
+                    let next = crate::test_harness::expect_expanded_command(&mut processor);
+                    assert_eq!(next.spelling().semantic_token(), other('X'));
+                    assert_eq!(processor.command.transient.active_expansion_depth, 0);
+                });
+            }
+        }
+    }
+}
+
+#[test]
+fn internal_expansion_and_font_selection_consume_native_operands() {
+    crate::test_harness::with_universe(|universe| {
+        let integer = universe.intern("native-internal").expect("name");
+        let the = universe.intern("the").expect("name");
+        let font = universe.intern("native-font").expect("name");
+        for (name, meaning) in [
+            (integer, Meaning::CharGiven('*')),
+            (
+                the,
+                Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::The),
+            ),
+            (font, Meaning::Font(tex_state::font::NULL_FONT)),
+        ] {
+            universe
+                .assign_meaning(
+                    name,
+                    tex_state::meaning::MeaningWord::from_static(meaning),
+                    tex_state::env::AssignmentScope::Global,
+                )
+                .expect("meaning");
+        }
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                Token::Cs(the.symbol()),
+                Token::Cs(integer.symbol()),
+                Token::Cs(font.symbol()),
+                other('X'),
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        let before = crate::command::command_ownership_counters();
+        let mut text = String::new();
+        processor
+            .consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
+                if let Some((ch, _)) = super::native_character(meaning) {
+                    text.push(ch);
+                    Ok(std::ops::ControlFlow::Continue(()))
+                } else {
+                    processor.back_consumed_word(spelling, exceptional)?;
+                    Ok(std::ops::ControlFlow::Break(()))
+                }
+            })
+            .expect("internal conversion");
+        assert_eq!(text, "42");
+        assert_eq!(
+            processor
+                .scan_font_selector_retained()
+                .into_result()
+                .expect("font"),
+            tex_state::font::NULL_FONT
+        );
+        let after = crate::command::command_ownership_counters();
+        assert_eq!(after.resolved_writes, before.resolved_writes);
+        assert_eq!(
+            crate::test_harness::expect_expanded_command(&mut processor)
+                .spelling()
+                .semantic_token(),
+            other('X')
+        );
+    });
+}

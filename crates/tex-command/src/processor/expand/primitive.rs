@@ -119,18 +119,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             ExpandablePrimitive::CsName => self.expand_csname(origin),
             ExpandablePrimitive::String => self.expand_string(origin),
             ExpandablePrimitive::Meaning => self.expand_meaning(origin),
-            ExpandablePrimitive::Number => self.expand_number_compact(origin, false),
-            ExpandablePrimitive::RomanNumeral => self.expand_number_compact(origin, true),
+            ExpandablePrimitive::Number => self.expand_number(origin, false),
+            ExpandablePrimitive::RomanNumeral => self.expand_number(origin, true),
             ExpandablePrimitive::The => {
-                let mut target = None;
-                match self.request_expanded_token(&mut target)? {
-                    DeliveryStatus::Command => {}
-                    _ => return Err(CommandError::input_invariant()),
-                }
-                let target = target
-                    .take()
-                    .ok_or_else(|| CommandError::input_invariant())?;
-                let scanned = self.scan_internal_value_or_zero_from_target(&target)?;
+                let scanned = self.scan_internal_value_or_zero()?;
                 self.expand_the_value(origin, scanned.value)
             }
             ExpandablePrimitive::Unexpanded => self.expand_unexpanded(),

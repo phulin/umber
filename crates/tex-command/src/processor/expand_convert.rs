@@ -76,7 +76,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let target = destination
             .take()
             .expect("command status initializes destination");
-        let text = meaning_text(self.state, &target);
+        let text = meaning_text(self.state, target.meaning(), target.control_sequence());
         self.push_rendered_text(&text, opener);
         Ok(())
     }
