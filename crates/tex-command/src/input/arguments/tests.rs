@@ -211,6 +211,9 @@ fn forwarded_capture_survives_parent_release_and_abort_preserves_live_parent() {
         .expect("parent owner");
     let mut child = arena.begin_match().expect("child match");
     let mut cursor = arena.begin_argument(&child);
+    for _ in &words {
+        cursor.cursor.settle_argument_delta(0);
+    }
     arena
         .append_region(&mut cursor, parent, 0..words.len())
         .expect("forward final words");

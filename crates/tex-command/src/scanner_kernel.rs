@@ -56,6 +56,12 @@ impl ScannerCursor {
             Some(Catcode::EndGroup) => -1_i8,
             _ => 0,
         };
+        self.settle_argument_delta(delta)
+    }
+
+    /// Settles an admitted spelling whose literal brace class is already known.
+    #[inline(always)]
+    pub(crate) fn settle_argument_delta(&mut self, delta: i8) -> u32 {
         if self.word_count == 0 {
             self.outer_group_candidate = delta == 1;
         } else if self.brace_depth == 0 {

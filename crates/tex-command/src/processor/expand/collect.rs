@@ -37,22 +37,17 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(false);
         };
         // The body's own closing brace (depth one) ends the run.
-        let admission =
-            ArgumentRunAdmission::with_commands(self.state, None, None, cursor.brace_depth(), 1)
-                .stopping_at_parameters(macro_definition);
+        let admission = ArgumentRunAdmission::with_commands(self.state, None, None, 1)
+            .stopping_at_parameters(macro_definition);
         let admission = if self.command.delivery_mode.alignment_active() {
             admission.characters_only()
         } else {
             admission
         };
-        let mut sink = DefinitionReplacementSink {
-            writer,
-            depth_delta: 0,
-        };
+        let mut sink = DefinitionReplacementSink { writer, cursor };
         let run = self
             .command
             .consume_plain_resident_run(&mut sink, self.fuel, admission)?;
-        cursor.advance_balanced_depth(sink.depth_delta);
         Ok(run.at_transition)
     }
 

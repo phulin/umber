@@ -1091,7 +1091,7 @@ impl<G> crate::CommandState<G> {
         let count = if let Some(span) = direct_span {
             span[..bound]
                 .iter()
-                .take_while(|&&word| admission.admits(word))
+                .take_while(|&&word| admission.admits(word, writer))
                 .count()
         } else {
             traced_span
@@ -1099,7 +1099,7 @@ impl<G> crate::CommandState<G> {
                 .get(..bound)
                 .expect("bounded input span")
                 .iter()
-                .take_while(|word| admission.admits(word.token_word()))
+                .take_while(|word| admission.admits(word.token_word(), writer))
                 .count()
         };
         // An out-parameter can only stand in a macro replacement.

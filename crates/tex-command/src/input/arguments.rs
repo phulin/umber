@@ -245,9 +245,6 @@ impl ArgumentArena {
                 TracedTokenWord::from_parts(word, tex_state::token::OriginId::UNKNOWN)
             }),
         );
-        for &word in words {
-            writer.cursor.settle_argument_word(word, false);
-        }
         writer.visible_end = self.tail(writer.region);
         Ok(())
     }
@@ -403,15 +400,21 @@ impl ArgumentArena {
         };
         let words = &from[range];
         to.extend_from_slice(words);
-        for word in words {
-            writer.cursor.settle_argument_word(word.token_word(), false);
-        }
         writer.visible_end = to.len() as u32;
         Ok(())
     }
 }
 
 impl<G> PlainRunSink<G> for ArgumentCursor {
+    #[inline(always)]
+    fn brace_depth(&self) -> u32 {
+        self.cursor.brace_depth()
+    }
+
+    #[inline(always)]
+    fn settle_admitted_word(&mut self, brace_delta: i8) {
+        self.cursor.settle_argument_delta(brace_delta);
+    }
     fn append_region_span(
         &mut self,
         arena: &mut ArgumentArena,

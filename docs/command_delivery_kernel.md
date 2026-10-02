@@ -196,8 +196,11 @@ their TeX82 loops inspect only a few facts of each token.
   character after one outer probe, crosses balanced interior groups while
   tracking depth, and stops at the brace that would close an undelimited
   argument, at a stray closing brace of a delimited argument, at the paragraph
-  token, or at the delimiter's first token at depth zero. Each word settles
-  through the same scanner-cursor step as a delivered token.
+  token, or at the delimiter's first token at depth zero. The selected span borrows its caller’s real scanner cursor: admission reads
+  that cursor’s depth and settles each accepted word there once. Appending the
+  accepted contiguous words copies storage without a second semantic walk. An
+  open definition lends its balanced-body cursor in the same way; admission
+  owns no duplicate depth or completed scan facts.
 
 Both runs require that no alignment is active, so no delimiter interception can
 apply to a consumed word, and both fall back to character-only admission in
@@ -219,6 +222,19 @@ published an effect or artifact, returns to the enclosing episode driver.
 Between admitted commands the executor only releases the finished command's
 attempt scratch. The attempt arena is clear at every command boundary, so a
 command that allocated nothing pays one test of its root-table lengths.
+Scanner outputs and matching/recovery flags initialize at their actual scalar,
+macro-match, and deferred-write boundaries. They are not cleared on unrelated
+commands. The processor retains a successfully interned paragraph spelling for
+its whole native context loan: assignments can change its meaning but not the
+symbol it names. Full restore ends that loan. Actual command trace ownership
+and the delivery regime still settle before the next command.
+
+Admission is bounded by remaining raw fuel before accepting a span. Rejected
+delimiters, paragraph tokens, outer commands, and closing braces do not advance
+the scanner cursor. The final append must succeed before the authoritative
+input position, alignment delta, and fuel commit. An append failure unwinds
+the synchronous scanner and its unpublished argument or definition owner; no
+partially accepted cursor is published or retained for replay.
 
 ## Validation
 

@@ -1014,7 +1014,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.state,
             paragraph_token,
             stop_word,
-            tokens.brace_depth(),
             close_floor,
         );
         let admission = if stop_word.is_none() {

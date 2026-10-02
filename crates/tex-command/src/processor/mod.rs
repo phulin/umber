@@ -649,22 +649,13 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         self.command_trace_mode_prefix = None;
         self.command_trace_printed = false;
         self.command_trace_count = 0;
-        self.immediate_write_retirement = None;
-        self.pending_file_warning_context = None;
-        self.paragraph_word = None;
-        self.pending_diagnostic_location = None;
-        self.read_line_ended = false;
-        self.outer_recovered_while_matching = false;
-        self.outer_recovered_while_absorbing = false;
-        self.eof_recovered_while_matching = false;
+        // Raw fetch, input retirement, matching, deferred-write and scalar
+        // scanners own their own temporary state. In particular par_token is
+        // immutable spelling throughout this native context loan, not meaning.
         debug_assert_eq!(self.expansion_depth, 0);
         debug_assert_eq!(self.write_expansion_depth, 0);
         debug_assert!(!self.is_in_csname);
         debug_assert!(!self.create_source_control_sequences);
-        self.last_integer_terminator = None;
-        self.scanned_glue_identity = None;
-        self.scanned_glue_register = None;
-        self.scanned_glue_shared_zero = false;
         self.command.delivery_mode.begin_episode(
             self.observer.is_some(),
             self.state
