@@ -28,13 +28,12 @@ pub(in crate::main_control) fn execute_code_table<G>(
                     value,
                 })? as LcCode;
                 let old = stores.lccode(*character);
-                let record = code_table_mutation("lccode", *character, value as i64, *global);
+
                 let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                    .scoped_word(
+                    .direct_scoped_word(
                         old,
                         value,
                         *global,
-                        record,
                         |stores, global| {
                             stores
                                 .assign_code(
@@ -57,18 +56,24 @@ pub(in crate::main_control) fn execute_code_table<G>(
                             )
                         },
                     );
-                command.retain_assignment_receipt(receipt);
+                if receipt && command.observes_mutations() {
+                    command.retain_assignment_mutation(code_table_mutation(
+                        "lccode",
+                        *character,
+                        value as i64,
+                        *global,
+                    ));
+                }
             }
             UnexpandablePrimitive::UcCode => {
                 let value = checked_character_code(value, "\\uccode")? as UcCode;
                 let old = stores.uccode(*character);
-                let record = code_table_mutation("uccode", *character, value as i64, *global);
+
                 let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                    .scoped_word(
+                    .direct_scoped_word(
                         old,
                         value,
                         *global,
-                        record,
                         |stores, global| {
                             stores
                                 .assign_code(
@@ -91,7 +96,14 @@ pub(in crate::main_control) fn execute_code_table<G>(
                             )
                         },
                     );
-                command.retain_assignment_receipt(receipt);
+                if receipt && command.observes_mutations() {
+                    command.retain_assignment_mutation(code_table_mutation(
+                        "uccode",
+                        *character,
+                        value as i64,
+                        *global,
+                    ));
+                }
             }
             UnexpandablePrimitive::SfCode => {
                 let value = u16::try_from(value)
@@ -102,13 +114,12 @@ pub(in crate::main_control) fn execute_code_table<G>(
                         value,
                     })? as SfCode;
                 let old = stores.sfcode(*character);
-                let record = code_table_mutation("sfcode", *character, i64::from(value), *global);
+
                 let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                    .scoped_word(
+                    .direct_scoped_word(
                         old,
                         value,
                         *global,
-                        record,
                         |stores, global| {
                             stores
                                 .assign_code(
@@ -131,7 +142,14 @@ pub(in crate::main_control) fn execute_code_table<G>(
                             )
                         },
                     );
-                command.retain_assignment_receipt(receipt);
+                if receipt && command.observes_mutations() {
+                    command.retain_assignment_mutation(code_table_mutation(
+                        "sfcode",
+                        *character,
+                        i64::from(value),
+                        *global,
+                    ));
+                }
             }
             UnexpandablePrimitive::MathCode => {
                 let value = u32::try_from(value)
@@ -142,13 +160,12 @@ pub(in crate::main_control) fn execute_code_table<G>(
                         value,
                     })? as MathCode;
                 let old = stores.mathcode(*character);
-                let record = code_table_mutation("mathcode", *character, value as i64, *global);
+
                 let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                    .scoped_word(
+                    .direct_scoped_word(
                         old,
                         value,
                         *global,
-                        record,
                         |stores, global| {
                             stores
                                 .assign_code(
@@ -171,7 +188,14 @@ pub(in crate::main_control) fn execute_code_table<G>(
                             )
                         },
                     );
-                command.retain_assignment_receipt(receipt);
+                if receipt && command.observes_mutations() {
+                    command.retain_assignment_mutation(code_table_mutation(
+                        "mathcode",
+                        *character,
+                        value as i64,
+                        *global,
+                    ));
+                }
             }
             UnexpandablePrimitive::DelCode => {
                 let value = (-1..=0xFF_FFFF)
@@ -182,13 +206,12 @@ pub(in crate::main_control) fn execute_code_table<G>(
                         value,
                     })?;
                 let old = stores.delcode(*character);
-                let record = code_table_mutation("delcode", *character, i64::from(value), *global);
+
                 let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                    .scoped_word(
+                    .direct_scoped_word(
                         old,
                         value,
                         *global,
-                        record,
                         |stores, global| {
                             stores
                                 .assign_code(
@@ -211,7 +234,14 @@ pub(in crate::main_control) fn execute_code_table<G>(
                             )
                         },
                     );
-                command.retain_assignment_receipt(receipt);
+                if receipt && command.observes_mutations() {
+                    command.retain_assignment_mutation(code_table_mutation(
+                        "delcode",
+                        *character,
+                        i64::from(value),
+                        *global,
+                    ));
+                }
             }
             _ => unreachable!("only code-table primitives are scanned"),
         }

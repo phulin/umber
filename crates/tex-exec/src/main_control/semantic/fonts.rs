@@ -34,7 +34,7 @@ pub(in crate::main_control) fn execute_font_dimen<G>(
                 let number =
                     u32::try_from(*number).expect("a writable parameter number is a positive u32");
                 match AssignmentCommitter::new(stores, command.diagnostic_effects)
-                    .try_unscoped(None, |stores| stores.set_font_dimen(*font, number, *value))
+                    .try_unscoped(|stores| stores.set_font_dimen(*font, number, *value))
                 {
                     Ok(_) => {}
                     Err(capacity) => {
@@ -60,7 +60,7 @@ pub(in crate::main_control) fn execute_font_integer<G>(
     let mut linear_stores = LinearCommandContext::new(stores);
     let stores = &mut linear_stores;
     {
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
+        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
             if *skew {
                 stores.set_font_skew_char(*font, *value)
             } else {
@@ -108,7 +108,6 @@ pub(in crate::main_control) fn execute_hyphenation_data<G>(
         // caused them; installing is all that is left here.
         if *patterns {
             AssignmentCommitter::new(stores, command.diagnostic_effects).try_unscoped(
-                None,
                 |stores| {
                     crate::paragraph_end::apply_scanned_patterns(
                         stores,
@@ -117,7 +116,7 @@ pub(in crate::main_control) fn execute_hyphenation_data<G>(
                 },
             )?;
         } else {
-            AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
+            AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
                 crate::paragraph_end::apply_scanned_hyphenation_exceptions(
                     stores,
                     std::mem::take(words),
@@ -137,7 +136,7 @@ pub(in crate::main_control) fn execute_font_select<G>(
     let mut linear_stores = LinearCommandContext::new(stores);
     let stores = &mut linear_stores;
     {
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
+        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
             stores
                 .assign_current_font(*font, assignment_scope(*global))
                 .expect("current font belongs to admitted state")
@@ -161,7 +160,8 @@ pub(in crate::main_control) fn execute_font_definition<G>(
         // the synthesized string `FONT<char>` rather than their bare
         // control-sequence text.
         let identifier = font_identifier_for_definition(stores, request.target);
-        let observe_font_definition = command.state.profile().capabilities().supports_etex();
+        let observe_font_definition =
+            command.observes_mutations() && command.state.profile().capabilities().supports_etex();
         // TeX82 §1258/§1259 report an illegal `at`/`scaled` size and
         // continue with the replaced value; §1257 then loads the font
         // normally. The replacement is the scanner's, the report this
@@ -178,7 +178,7 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                     *global,
                     observe_font_definition,
                 );
-                AssignmentCommitter::new(stores, diagnostic_effects).unscoped(record, |stores| {
+                AssignmentCommitter::new(stores, diagnostic_effects).unscoped(|stores| {
                     stores
                         .assign_resolved_meaning(
                             request.target,
@@ -189,7 +189,8 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                         )
                         .expect("font selector belongs to admitted state");
                     stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
-                })
+                });
+                record
             };
         let resource = font_resource.expect("font resource is resolved before application");
         if matches!(resource, FontResource::Unavailable) {
@@ -215,7 +216,9 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                 request.error_context.clone(),
             )?;
             let receipt = bind_null_font(stores, command.diagnostic_effects);
-            command.retain_assignment_receipt(receipt);
+            if let Some(record) = receipt {
+                command.retain_assignment_mutation(record);
+            }
             return Ok(ReplayStep::Continue);
         }
         let loaded = match load_font(request, resource) {
@@ -238,7 +241,9 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                     request.error_context.clone(),
                 )?;
                 let receipt = bind_null_font(stores, command.diagnostic_effects);
-                command.retain_assignment_receipt(receipt);
+                if let Some(record) = receipt {
+                    command.retain_assignment_mutation(record);
+                }
                 return Ok(ReplayStep::Continue);
             }
             Err(error) => return Err(error),
@@ -259,7 +264,9 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                     request.error_context.clone(),
                 )?;
                 let receipt = bind_null_font(stores, command.diagnostic_effects);
-                command.retain_assignment_receipt(receipt);
+                if let Some(record) = receipt {
+                    command.retain_assignment_mutation(record);
+                }
                 return Ok(ReplayStep::Continue);
             }
         };
@@ -268,19 +275,18 @@ pub(in crate::main_control) fn execute_font_definition<G>(
         // string, so flushing it would retire an unrelated allocation.
         let record =
             font_definition_mutation(stores, request.target, *global, observe_font_definition);
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(
-            record,
-            |stores| {
-                stores
-                    .assign_resolved_meaning(
-                        request.target,
-                        tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
-                        assignment_scope(*global),
-                    )
-                    .expect("font selector belongs to admitted state")
-            },
-        );
-        command.retain_assignment_receipt(receipt);
+        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
+            stores
+                .assign_resolved_meaning(
+                    request.target,
+                    tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
+                    assignment_scope(*global),
+                )
+                .expect("font selector belongs to admitted state")
+        });
+        if let Some(record) = record {
+            command.retain_assignment_mutation(record);
+        }
         Ok(ReplayStep::Continue)
     }
 }
@@ -327,20 +333,24 @@ pub(in crate::main_control) fn execute_generated_font_definition<G>(
                 id
             }
         };
-        let record = font_definition_mutation(stores, definition.target, *global, true);
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(
-            record,
-            |stores| {
-                stores
-                    .assign_resolved_meaning(
-                        definition.target,
-                        tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
-                        assignment_scope(*global),
-                    )
-                    .expect("generated-font selector belongs to admitted state")
-            },
+        let record = font_definition_mutation(
+            stores,
+            definition.target,
+            *global,
+            command.observes_mutations(),
         );
-        command.retain_assignment_receipt(receipt);
+        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
+            stores
+                .assign_resolved_meaning(
+                    definition.target,
+                    tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
+                    assignment_scope(*global),
+                )
+                .expect("generated-font selector belongs to admitted state")
+        });
+        if let Some(record) = record {
+            command.retain_assignment_mutation(record);
+        }
         Ok(ReplayStep::Continue)
     }
 }

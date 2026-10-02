@@ -12,9 +12,14 @@ pub(in crate::main_control) fn execute_count<G>(
     let receipt = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
         .count(index, value, global);
     if let Some(receipts) = receipts
-        && let Some(record) = receipt.into_record()
+        && receipt
     {
-        receipts.push(record);
+        receipts.push(MutationRecord {
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("count:{index}")),
+            value: ObservationValue::Integer(i64::from(value)),
+            global,
+        });
     }
     Ok(ReplayStep::Continue)
 }
@@ -30,127 +35,136 @@ pub(in crate::main_control) fn execute_dimen<G>(
     let receipt = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
         .dimension(index, value, global);
     if let Some(receipts) = receipts
-        && let Some(record) = receipt.into_record()
+        && receipt
     {
-        receipts.push(record);
+        receipts.push(MutationRecord {
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("dimen:{index}")),
+            value: ObservationValue::Scaled(i64::from(value.raw())),
+            global,
+        });
     }
     Ok(ReplayStep::Continue)
 }
 
+#[allow(clippy::too_many_arguments)] // actual glue operand, scope, pointer identity, and observation owner
 pub(in crate::main_control) fn execute_skip<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    index: &mut u16,
-    value: &mut GlueSpec,
-    redundant: &mut bool,
-    reassigning: &mut bool,
-    global: &mut bool,
+    stores: &mut CommandContext<'_, G>,
+    effects: &mut DiagnosticEffects,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    index: u16,
+    value: GlueSpec,
+    global: bool,
+    mu: bool,
+    redundant: bool,
+    reassigning: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
+    let committed = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects).skip(
+        index,
+        value,
+        global,
+        mu,
+        redundant,
+        reassigning,
+    );
+    if let Some(receipts) = receipts
+        && committed
     {
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).skip(
-            *index,
-            *value,
-            *global,
-            false,
-            *redundant,
-            *reassigning,
-        );
-        command.retain_assignment_receipt(receipt);
-        Ok(ReplayStep::Continue)
+        receipts.push(MutationRecord {
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("{}:{index}", if mu { "muskip" } else { "skip" })),
+            value: crate::assignments::committer::glue_value(&value),
+            global,
+        });
     }
+    Ok(ReplayStep::Continue)
 }
 
-pub(in crate::main_control) fn execute_muskip<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    index: &mut u16,
-    value: &mut GlueSpec,
-    redundant: &mut bool,
-    reassigning: &mut bool,
-    global: &mut bool,
-) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
-    {
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).skip(
-            *index,
-            *value,
-            *global,
-            true,
-            *redundant,
-            *reassigning,
-        );
-        command.retain_assignment_receipt(receipt);
-        Ok(ReplayStep::Continue)
-    }
-}
-
+#[allow(clippy::too_many_arguments)] // actual native assignment and demanded observation owners
 pub(in crate::main_control) fn execute_int_param<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    index: &mut u16,
-    value: &mut i32,
-    global: &mut bool,
+    stores: &mut CommandContext<'_, G>,
+    effects: &mut DiagnosticEffects,
+    state: &CommandState<G>,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    index: u16,
+    value: i32,
+    global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
+    let committed = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
+        .int_parameter(index, value, global);
+    if let Some(receipts) = receipts
+        && committed
     {
-        let key = parameter_mutation_key_for_dialect(
-            command.state.profile().dialect(),
-            ParameterClass::Integer,
-            *index,
-        );
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .int_parameter(*index, *value, key, *global);
-        command.retain_assignment_receipt(receipt);
-        Ok(ReplayStep::Continue)
+        receipts.push(MutationRecord {
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
+                state.profile().dialect(),
+                ParameterClass::Integer,
+                index,
+            )),
+            value: ObservationValue::Integer(i64::from(value)),
+            global,
+        });
     }
+    Ok(ReplayStep::Continue)
 }
 
+#[allow(clippy::too_many_arguments)] // actual native assignment and demanded observation owners
 pub(in crate::main_control) fn execute_dimen_param<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    index: &mut u16,
-    value: &mut Scaled,
-    global: &mut bool,
+    stores: &mut CommandContext<'_, G>,
+    effects: &mut DiagnosticEffects,
+    state: &CommandState<G>,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    index: u16,
+    value: Scaled,
+    global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
+    let committed = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
+        .dimension_parameter(index, value, global);
+    if let Some(receipts) = receipts
+        && committed
     {
-        let key = parameter_mutation_key_for_dialect(
-            command.state.profile().dialect(),
-            ParameterClass::Dimension,
-            *index,
-        );
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .dimension_parameter(*index, *value, key, *global);
-        command.retain_assignment_receipt(receipt);
-        Ok(ReplayStep::Continue)
+        receipts.push(MutationRecord {
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
+                state.profile().dialect(),
+                ParameterClass::Dimension,
+                index,
+            )),
+            value: ObservationValue::Scaled(i64::from(value.raw())),
+            global,
+        });
     }
+    Ok(ReplayStep::Continue)
 }
 
+#[allow(clippy::too_many_arguments)] // actual native assignment and demanded observation owners
 pub(in crate::main_control) fn execute_glue_param<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    index: &mut u16,
-    value: &mut GlueSpec,
-    global: &mut bool,
+    stores: &mut CommandContext<'_, G>,
+    effects: &mut DiagnosticEffects,
+    state: &CommandState<G>,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    index: u16,
+    value: GlueSpec,
+    global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
+    let committed = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
+        .glue_parameter(index, value, global);
+    if let Some(receipts) = receipts
+        && committed
     {
-        let key = parameter_mutation_key_for_dialect(
-            command.state.profile().dialect(),
-            ParameterClass::Glue,
-            *index,
-        );
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .glue_parameter(*index, *value, key, *global);
-        command.retain_assignment_receipt(receipt);
-        Ok(ReplayStep::Continue)
+        receipts.push(MutationRecord {
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
+                state.profile().dialect(),
+                ParameterClass::Glue,
+                index,
+            )),
+            value: crate::assignments::committer::glue_value(&value),
+            global,
+        });
     }
+    Ok(ReplayStep::Continue)
 }
 
 #[allow(clippy::too_many_arguments)] // concrete arithmetic operands and actual native evidence owners
@@ -180,6 +194,7 @@ pub(in crate::main_control) fn execute_arithmetic<G>(
             state.profile(),
             stores,
             effects,
+            receipts.as_mut(),
         ) {
             Err(ExecError::ArithmeticOverflow) => {
                 let context = state.output_open_context(&**stores);
@@ -191,13 +206,7 @@ pub(in crate::main_control) fn execute_arithmetic<G>(
                 report.context(context);
                 report.error().defer_recovery(effects)?;
             }
-            Ok(receipt) => {
-                if let Some(receipts) = receipts
-                    && let Some(record) = receipt.into_record()
-                {
-                    receipts.push(record);
-                }
-            }
+            Ok(()) => {}
             Err(error) => return Err(error),
         }
         Ok(ReplayStep::Continue)

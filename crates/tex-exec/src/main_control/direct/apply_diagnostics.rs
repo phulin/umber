@@ -65,8 +65,14 @@ impl<G> DirectDispatch<'_, '_, G> {
         mut error: bool,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
-        let mut tokens =
-            publication::publish_tokens(self.control.command.state(), self.stores, tokens)?;
+        let mut tokens = publication::publish_tokens(
+            self.control.command.state(),
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
+            tokens,
+        )?;
         let context = self.stores.command_context().expect("effect observation");
         let effect = if self.control.operation_observations.is_some() {
             Some(EffectRecord {
@@ -142,8 +148,14 @@ impl<G> DirectDispatch<'_, '_, G> {
         tokens: tex_command::AttemptTokenListId,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
-        let mut tokens =
-            publication::publish_tokens(self.control.command.state(), self.stores, tokens)?;
+        let mut tokens = publication::publish_tokens(
+            self.control.command.state(),
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
+            tokens,
+        )?;
         let context = self.stores.command_context().expect("effect observation");
         let effect = if self.control.operation_observations.is_some() {
             Some(EffectRecord {

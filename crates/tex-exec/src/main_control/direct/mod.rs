@@ -37,9 +37,7 @@ mod scan_math;
 mod scan_meaning_recovery;
 mod scan_pdf_fonts;
 mod scan_primitive_recovery;
-mod scan_registers;
 mod scan_replay;
-mod scan_scalars;
 mod scan_shapes;
 mod scan_streams;
 use command_codes as codes;
@@ -324,28 +322,6 @@ impl<G> DirectDispatch<'_, '_, G> {
             self.effects,
             &mut context,
         )
-    }
-    fn record_glue_source(&mut self, mu: bool, index: u16, source: Option<GlueId<G>>) {
-        let context = self
-            .stores
-            .command_context()
-            .expect("glue source admission");
-        let physical = if mu {
-            context.muskip(index)
-        } else {
-            context.glue_register(index).ok().flatten()
-        };
-        if let Some(physical) = physical {
-            let pointers = if mu {
-                &mut self.control.muskip_pointer_sources
-            } else {
-                &mut self.control.skip_pointer_sources
-            };
-            if pointers.len() <= usize::from(index) {
-                pointers.resize(usize::from(index) + 1, None);
-            }
-            pointers[usize::from(index)] = Some((physical, source));
-        }
     }
 }
 impl<G> MainControl<G> {

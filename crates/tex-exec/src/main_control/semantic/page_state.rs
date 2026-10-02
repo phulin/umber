@@ -15,7 +15,7 @@ pub(in crate::main_control) fn execute_page_dimension<G>(
         // diagnostic, and no save-stack entry (§1242: "these definitions
         // are always global"). The page builder reads the same slots.
         AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .unscoped(None, |stores| stores.set_page_dimension(*dimension, *value));
+            .unscoped(|stores| stores.set_page_dimension(*dimension, *value));
         Ok(ReplayStep::Continue)
     }
 }
@@ -35,7 +35,7 @@ pub(in crate::main_control) fn execute_page_integer<G>(
         // `\maxdeadcycles`, so a wrong value here is only visible once a
         // page ships.
         AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .unscoped(None, |stores| stores.set_page_integer(*integer, *value));
+            .unscoped(|stores| stores.set_page_integer(*integer, *value));
         Ok(ReplayStep::Continue)
     }
 }
@@ -186,9 +186,8 @@ pub(in crate::main_control) fn execute_prev_depth<G>(
             modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ));
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |_| {
-            modes.current_list_mutation().set_prev_depth(*value)
-        });
+        AssignmentCommitter::new(stores, command.diagnostic_effects)
+            .unscoped(|_| modes.current_list_mutation().set_prev_depth(*value));
         Ok(ReplayStep::Continue)
     }
 }
@@ -211,7 +210,7 @@ pub(in crate::main_control) fn execute_space_factor<G>(
         // out-of-range value is diagnosed and left unchanged rather than
         // clamped.
         if (1..=32767).contains(value) {
-            AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |_| {
+            AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|_| {
                 modes.current_list_mutation().set_space_factor(*value);
             });
         } else {
@@ -255,7 +254,7 @@ pub(in crate::main_control) fn execute_prev_graf<G>(
                 .int_error(*value)
                 .defer_recovery(command.diagnostic_effects)?;
         } else {
-            AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |_| {
+            AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|_| {
                 modes.set_enclosing_vertical_prev_graf(*value);
             });
         }

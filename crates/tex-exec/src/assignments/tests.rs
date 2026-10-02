@@ -1,4 +1,3 @@
-use tex_command::ObservationValue;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::TokParam;
 use tex_state::env::banks::{GlueParam, IntParam};
@@ -44,7 +43,6 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
         AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).toks(
             0,
             Some(replacement_register),
-            ObservationValue::Integer(0),
             true,
         );
         assert_eq!(
@@ -73,8 +71,6 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
         AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).token_parameter(
             parameter.raw(),
             Some(replacement_parameter),
-            ObservationValue::Integer(0),
-            "everypar".into(),
             true,
         );
         assert_eq!(
@@ -111,7 +107,6 @@ fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
         AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).toks(
             0,
             Some(replacement),
-            ObservationValue::Integer(0),
             false,
         );
 
@@ -185,7 +180,6 @@ fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
         AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).glue_parameter(
             parameter.raw(),
             glue(6),
-            "baselineskip".into(),
             true,
         );
         assert_eq!(

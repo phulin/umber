@@ -38,8 +38,8 @@ pub(in crate::main_control) fn execute_input_stream<G>(
                     )),
                     global,
                 });
-                let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                    .unscoped_with_effects(record, |stores, diagnostic_effects| {
+                AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped_with_effects(
+                    |stores, diagnostic_effects| {
                         assignment_tracing::trace_meaning_write(
                             stores,
                             diagnostic_effects,
@@ -57,8 +57,11 @@ pub(in crate::main_control) fn execute_input_stream<G>(
                                     .expect("prepared read definition belongs to admitted state")
                             },
                         );
-                    });
-                command.retain_assignment_receipt(receipt);
+                    },
+                );
+                if let Some(record) = record {
+                    command.retain_assignment_mutation(record);
+                }
             }
         }
         Ok(ReplayStep::Continue)

@@ -25,11 +25,10 @@ pub(in crate::main_control) fn execute_character_definition<G>(
             UnexpandablePrimitive::MathCharDef => ObservationValue::Integer(i64::from(*value)),
             _ => unreachable!("character-definition step carries only §1224 primitives"),
         };
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).meaning(
+        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).direct_meaning(
             *target,
             Token::Cs(*target),
             meaning,
-            observed,
             *global,
             |stores| {
                 stores
@@ -41,7 +40,14 @@ pub(in crate::main_control) fn execute_character_definition<G>(
                     .expect("character-definition target belongs to admitted state")
             },
         );
-        command.retain_assignment_receipt(receipt);
+        if receipt && command.observes_mutations() {
+            command.retain_assignment_mutation(MutationRecord {
+                target: MutationTarget::Meaning,
+                key: ObservationValue::Name(stores.resolve(*target).to_owned()),
+                value: observed,
+                global: *global,
+            });
+        }
         Ok(ReplayStep::Continue)
     }
 }
@@ -82,11 +88,10 @@ pub(in crate::main_control) fn execute_register_definition<G>(
                     _ => unreachable!("register-definition step carries only §1224 primitives"),
                 }
             };
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).meaning(
+        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).direct_meaning(
             *target,
             Token::Cs(*target),
             meaning,
-            ObservationValue::Name(observed_name.into()),
             *global,
             |stores| {
                 stores
@@ -98,7 +103,14 @@ pub(in crate::main_control) fn execute_register_definition<G>(
                     .expect("register-definition target belongs to admitted state")
             },
         );
-        command.retain_assignment_receipt(receipt);
+        if receipt && command.observes_mutations() {
+            command.retain_assignment_mutation(MutationRecord {
+                target: MutationTarget::Meaning,
+                key: ObservationValue::Name(stores.resolve(*target).to_owned()),
+                value: ObservationValue::Name(observed_name.into()),
+                global: *global,
+            });
+        }
         Ok(ReplayStep::Continue)
     }
 }
@@ -124,7 +136,7 @@ pub(in crate::main_control) fn execute_paragraph_shape<G>(
         // straight through and silently ignored a nonzero
         // `\globaldefs`; it was missed by both earlier sweeps because
         // `set_shape` belongs to neither definition family.
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
+        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
             stores
                 .assign_paragraph_shape(lines, assignment_scope(*global))
                 .expect("paragraph shape fits admitted durable storage")
@@ -160,8 +172,8 @@ pub(in crate::main_control) fn execute_penalty_array<G>(
             value: ObservationValue::Tokens(Vec::new()),
             global: *global,
         });
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .unscoped_with_effects(record, |stores, diagnostic_effects| {
+        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped_with_effects(
+            |stores, diagnostic_effects| {
                 let old = stores.penalty_array(*kind);
                 stores
                     .assign_penalty_array(*kind, values, assignment_scope(*global))
@@ -174,78 +186,71 @@ pub(in crate::main_control) fn execute_penalty_array<G>(
                     &old,
                     values,
                 );
-            });
-        command.retain_assignment_receipt(receipt);
+            },
+        );
+        if let Some(record) = record {
+            command.retain_assignment_mutation(record);
+        }
         Ok(ReplayStep::Continue)
     }
 }
 
+#[allow(clippy::too_many_arguments)] // final native token owner, scope, and demanded observation
 pub(in crate::main_control) fn execute_toks<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    index: &mut u16,
-    tokens: &mut Option<tex_state::TokenListId<G>>,
-    global: &mut bool,
+    stores: &mut CommandContext<'_, G>,
+    effects: &mut DiagnosticEffects,
+    state: &CommandState<G>,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    index: u16,
+    tokens: Option<tex_state::TokenListId<G>>,
+    global: bool,
+    parameter: bool,
 ) -> Result<ReplayStep, ExecError> {
     let mut linear_stores = LinearCommandContext::new(stores);
     let stores = &mut linear_stores;
+    let mut committer = AssignmentCommitter::new(stores, effects);
+    let committed = if parameter {
+        committer.token_parameter(index, tokens, global)
+    } else {
+        committer.toks(index, tokens, global)
+    };
+    if let Some(receipts) = receipts
+        && committed
     {
-        let new = tokens.as_ref();
-        let observed = ObservationValue::Tokens(
-            new.map(|new| {
-                stores
-                    .token_list(new.clone())
+        let new = if parameter {
+            stores.token_parameter(TokParam::new(index))
+        } else {
+            stores.token_register(index)
+        }
+        .expect("admitted token assignment");
+        let words = new
+            .as_ref()
+            .map(|tokens| {
+                tokens
+                    .words()
                     .iter()
                     .map(|word| observed_macro_token(word.semantic_token(), stores))
                     .collect()
             })
-            .unwrap_or_default(),
-        );
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).toks(
-            *index,
-            tokens.take(),
-            observed,
-            *global,
-        );
-        command.retain_assignment_receipt(receipt);
-        Ok(ReplayStep::Continue)
+            .unwrap_or_default();
+        receipts.push(MutationRecord {
+            target: if parameter {
+                MutationTarget::Parameter
+            } else {
+                MutationTarget::Register
+            },
+            key: ObservationValue::Name(if parameter {
+                parameter_mutation_key_for_dialect(
+                    state.profile().dialect(),
+                    ParameterClass::Token,
+                    index,
+                )
+            } else {
+                format!("toks:{index}")
+            }),
+            value: ObservationValue::Tokens(words),
+            global,
+        });
     }
-}
-
-pub(in crate::main_control) fn execute_tok_param<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    index: &mut u16,
-    tokens: &mut Option<tex_state::TokenListId<G>>,
-    global: &mut bool,
-) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
-    {
-        let new = tokens.as_ref();
-        let observed = ObservationValue::Tokens(
-            new.map(|tokens| {
-                stores
-                    .token_list(tokens.clone())
-                    .iter()
-                    .map(|word| observed_macro_token(word.semantic_token(), stores))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        );
-        let key = parameter_mutation_key_for_dialect(
-            command.state.profile().dialect(),
-            ParameterClass::Token,
-            *index,
-        );
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).token_parameter(
-            *index,
-            tokens.take(),
-            observed,
-            key,
-            *global,
-        );
-        command.retain_assignment_receipt(receipt);
-        Ok(ReplayStep::Continue)
-    }
+    Ok(ReplayStep::Continue)
 }

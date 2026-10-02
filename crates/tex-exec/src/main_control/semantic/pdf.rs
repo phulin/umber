@@ -12,17 +12,16 @@ pub(in crate::main_control) fn execute_pdf_font_code<G>(
     let mut linear_stores = LinearCommandContext::new(stores);
     let stores = &mut linear_stores;
     {
-        let record = MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!("{table:?}:{}:{character}", font.raw())),
-            value: ObservationValue::Integer(i64::from(*value)),
-            global: true,
-        };
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .unscoped(Some(record), |stores| {
-                stores.set_pdf_font_code(*table, *font, *character, *value)
+        AssignmentCommitter::new(stores, command.diagnostic_effects)
+            .unscoped(|stores| stores.set_pdf_font_code(*table, *font, *character, *value));
+        if command.observes_mutations() {
+            command.retain_assignment_mutation(MutationRecord {
+                target: MutationTarget::Register,
+                key: ObservationValue::Name(format!("{table:?}:{}:{character}", font.raw())),
+                value: ObservationValue::Integer(i64::from(*value)),
+                global: true,
             });
-        command.retain_assignment_receipt(receipt);
+        }
         Ok(ReplayStep::Continue)
     }
 }
@@ -35,17 +34,16 @@ pub(in crate::main_control) fn execute_pdf_no_ligatures<G>(
     let mut linear_stores = LinearCommandContext::new(stores);
     let stores = &mut linear_stores;
     {
-        let record = MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name("pdf_no_ligatures".into()),
-            value: ObservationValue::Name(font.raw().to_string()),
-            global: true,
-        };
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .unscoped(Some(record), |stores| {
-                stores.disable_pdf_font_ligatures(*font)
+        AssignmentCommitter::new(stores, command.diagnostic_effects)
+            .unscoped(|stores| stores.disable_pdf_font_ligatures(*font));
+        if command.observes_mutations() {
+            command.retain_assignment_mutation(MutationRecord {
+                target: MutationTarget::Register,
+                key: ObservationValue::Name("pdf_no_ligatures".into()),
+                value: ObservationValue::Name(font.raw().to_string()),
+                global: true,
             });
-        command.retain_assignment_receipt(receipt);
+        }
         Ok(ReplayStep::Continue)
     }
 }

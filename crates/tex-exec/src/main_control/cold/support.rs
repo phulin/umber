@@ -297,6 +297,7 @@ pub(in crate::main_control) fn pdf_font_code_table(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // concrete arithmetic operands and actual native evidence owners
 pub(in crate::main_control) fn apply_arithmetic<G>(
     primitive: UnexpandablePrimitive,
     target: ArithmeticTarget,
@@ -305,8 +306,9 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
     profile: CommandProfile,
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-) -> Result<crate::assignments::committer::MutationReceipt, ExecError> {
-    let receipt = match (target, operand) {
+    observations: Option<&mut Vec<MutationRecord>>,
+) -> Result<(), ExecError> {
+    let observable = match (target, operand) {
         (ArithmeticTarget::IntegerRegister(index), ArithmeticOperand::Integer(rhs)) => {
             let value = arithmetic_integer(
                 primitive,
@@ -319,13 +321,7 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
         }
         (ArithmeticTarget::IntegerParameter(index), ArithmeticOperand::Integer(rhs)) => {
             let value = arithmetic_integer(primitive, stores.int_param(IntParam::new(index)), rhs)?;
-            let key = parameter_mutation_key_for_dialect(
-                profile.dialect(),
-                ParameterClass::Integer,
-                index,
-            );
-            AssignmentCommitter::new(stores, diagnostic_effects)
-                .int_parameter(index, value, key, global)
+            AssignmentCommitter::new(stores, diagnostic_effects).int_parameter(index, value, global)
         }
         (ArithmeticTarget::DimensionRegister(index), operand) => {
             let value = arithmetic_dimension(primitive, stores.dimen(index), operand)?;
@@ -337,13 +333,8 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
                 stores.dimen_param(DimenParam::new(index)),
                 operand,
             )?;
-            let key = parameter_mutation_key_for_dialect(
-                profile.dialect(),
-                ParameterClass::Dimension,
-                index,
-            );
             AssignmentCommitter::new(stores, diagnostic_effects)
-                .dimension_parameter(index, value, key, global)
+                .dimension_parameter(index, value, global)
         }
         (ArithmeticTarget::GlueRegister { index, mu }, operand) => {
             let old = if mu {
@@ -363,14 +354,81 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
                 .glue_param(GlueParam::new(index))
                 .map_or(GlueSpec::ZERO, |id| stores.glue(id));
             let value = arithmetic_glue(primitive, old, operand)?;
-            let key =
-                parameter_mutation_key_for_dialect(profile.dialect(), ParameterClass::Glue, index);
             AssignmentCommitter::new(stores, diagnostic_effects)
-                .glue_parameter(index, value, key, global)
+                .glue_parameter(index, value, global)
         }
         _ => return Err(ExecError::UnsupportedAssignmentTarget),
     };
-    Ok(receipt)
+    if observable && let Some(observations) = observations {
+        let (target, key, value) = match target {
+            ArithmeticTarget::IntegerRegister(index) => (
+                MutationTarget::Register,
+                format!("count:{index}"),
+                ObservationValue::Integer(i64::from(
+                    stores.count(index).expect("admitted integer"),
+                )),
+            ),
+            ArithmeticTarget::DimensionRegister(index) => (
+                MutationTarget::Register,
+                format!("dimen:{index}"),
+                ObservationValue::Scaled(i64::from(stores.dimen(index).raw())),
+            ),
+            ArithmeticTarget::IntegerParameter(index) => (
+                MutationTarget::Parameter,
+                parameter_mutation_key_for_dialect(
+                    profile.dialect(),
+                    ParameterClass::Integer,
+                    index,
+                ),
+                ObservationValue::Integer(i64::from(stores.int_param(IntParam::new(index)))),
+            ),
+            ArithmeticTarget::DimensionParameter(index) => (
+                MutationTarget::Parameter,
+                parameter_mutation_key_for_dialect(
+                    profile.dialect(),
+                    ParameterClass::Dimension,
+                    index,
+                ),
+                ObservationValue::Scaled(i64::from(
+                    stores.dimen_param(DimenParam::new(index)).raw(),
+                )),
+            ),
+            ArithmeticTarget::GlueRegister { index, mu } => {
+                let id = if mu {
+                    stores.muskip(index)
+                } else {
+                    stores.glue_register(index).expect("admitted glue")
+                };
+                let glue = id.map_or(GlueSpec::ZERO, |id| stores.glue(id));
+                (
+                    MutationTarget::Register,
+                    format!("{}:{index}", if mu { "muskip" } else { "skip" }),
+                    crate::assignments::committer::glue_value(&glue),
+                )
+            }
+            ArithmeticTarget::GlueParameter { index, .. } => {
+                let glue = stores
+                    .glue_param(GlueParam::new(index))
+                    .map_or(GlueSpec::ZERO, |id| stores.glue(id));
+                (
+                    MutationTarget::Parameter,
+                    parameter_mutation_key_for_dialect(
+                        profile.dialect(),
+                        ParameterClass::Glue,
+                        index,
+                    ),
+                    crate::assignments::committer::glue_value(&glue),
+                )
+            }
+        };
+        observations.push(MutationRecord {
+            target,
+            key: ObservationValue::Name(key),
+            value,
+            global,
+        });
+    }
+    Ok(())
 }
 
 pub(in crate::main_control) fn arithmetic_integer(
@@ -619,18 +677,22 @@ pub(in crate::main_control) fn commit_box_normal_paragraph<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) {
-    let record =
-        (!stores.penalty_array(PenaltyArrayKind::InterLine).is_empty()).then(|| MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name("toks:256".into()),
-            value: ObservationValue::Tokens(Vec::new()),
-            global: false,
-        });
-    let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-        .unscoped_with_effects(record, |stores, diagnostic_effects| {
+    let record = (command.observes_mutations()
+        && !stores.penalty_array(PenaltyArrayKind::InterLine).is_empty())
+    .then(|| MutationRecord {
+        target: MutationTarget::Register,
+        key: ObservationValue::Name("toks:256".into()),
+        value: ObservationValue::Tokens(Vec::new()),
+        global: false,
+    });
+    AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped_with_effects(
+        |stores, diagnostic_effects| {
             crate::paragraph_end::normal_paragraph(modes, stores, diagnostic_effects);
-        });
-    command.retain_assignment_receipt(receipt);
+        },
+    );
+    if let Some(record) = record {
+        command.retain_assignment_mutation(record);
+    }
 }
 
 /// Applies a scanned TeX82 §1073 box-shift prefix (`\raise`, `\lower`,
@@ -860,7 +922,9 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
                 .expect("box assignment transfers its admitted construction")
         },
     );
-    command.retain_assignment_receipt(receipt);
+    if receipt {
+        observe_box_assignment(command, target.index, target.global, traced_box.is_some());
+    }
 }
 
 pub(in crate::main_control) fn commit_unique_register_take_target<G>(
@@ -887,7 +951,9 @@ pub(in crate::main_control) fn commit_unique_register_take_target<G>(
                 )
                 .expect("exclusive register handoff belongs to the live owner store");
         });
-    command.retain_assignment_receipt(receipt);
+    if receipt {
+        observe_box_assignment(command, target.index, target.global, true);
+    }
 }
 
 pub(in crate::main_control) fn commit_output_carrier_take_target<G>(
@@ -916,7 +982,9 @@ pub(in crate::main_control) fn commit_output_carrier_take_target<G>(
         modes,
     ) {
         Ok(receipt) => {
-            command.retain_assignment_receipt(receipt);
+            if receipt {
+                observe_box_assignment(command, target.index, target.global, true);
+            }
             Ok(())
         }
         Err(error) => Err(Box::new((
@@ -956,7 +1024,9 @@ pub(in crate::main_control) fn commit_interleaved_set_box_target<G>(
                 .expect("preflighted interleaved box transfers into its durable owner")
         },
     );
-    command.retain_assignment_receipt(receipt);
+    if receipt {
+        observe_box_assignment(command, target.index, target.global, true);
+    }
 }
 
 /// Applies TeX82 §1073's `shift_amount(cur_box):=box_context` to an already
@@ -2003,5 +2073,21 @@ pub(in crate::main_control) fn command_error(error: CommandError) -> ExecError {
         | CommandError::ParagraphInMacroArgument
         | CommandError::OuterInMacroArgument
         | CommandError::UnsupportedExpandablePrimitive(_) => ExecError::Command(error),
+    }
+}
+
+fn observe_box_assignment<G>(
+    command: &mut CommandMachine<'_, '_, G>,
+    index: u16,
+    global: bool,
+    occupied: bool,
+) {
+    if command.observes_mutations() {
+        command.retain_assignment_mutation(MutationRecord {
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("box:{index}")),
+            value: ObservationValue::Name(if occupied { "occupied" } else { "void" }.into()),
+            global,
+        });
     }
 }

@@ -57,18 +57,15 @@ pub(in crate::main_control) fn execute_math_family<G>(
     let mut linear_stores = LinearCommandContext::new(stores);
     let stores = &mut linear_stores;
     {
-        AssignmentCommitter::new(stores, command.diagnostic_effects).try_unscoped(
-            None,
-            |stores| {
-                assign_math_family_font(
-                    stores,
-                    MathFontSize::from(family.size),
-                    family.family,
-                    *font,
-                    *global,
-                )
-            },
-        )?;
+        AssignmentCommitter::new(stores, command.diagnostic_effects).try_unscoped(|stores| {
+            assign_math_family_font(
+                stores,
+                MathFontSize::from(family.size),
+                family.family,
+                *font,
+                *global,
+            )
+        })?;
         Ok(ReplayStep::Continue)
     }
 }

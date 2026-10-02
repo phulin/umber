@@ -41,7 +41,7 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   methods organized by native command responsibility. `scan_macros.rs` releases
   actual scanner loans at cold owner and publication boundaries. The native
   fetch/reswitch loop retains its actual processor and context through RELAX, ordinary groups,
-  integer/dimension registers, arithmetic, definitions and let assignments, settling each command's real
+  integer/dimension/glue/token registers and parameters, arithmetic, definitions and let assignments, settling each command's real
   scratch and respecting the caller's remaining budget. An existing pending
   character buffer demands mutable mode ownership and ends the processor loan. Actual diagnostic,
   observer/tracked, page/output, afterassignment and budget demands release the
@@ -55,8 +55,8 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   owner per processor loan; ordinary commands do not create/drop absent receipts. Register scans likewise stay in their native
   switch arms. These paths own no operation value or continuation. `characters.rs` consumes borrowed
   source spans in the existing horizontal loop. `publication.rs` validates and
-  reserves the complete scanner token root set before streaming final native
-  token owners. `command_codes.rs` derives switch keys from packed meanings;
+  reserves the complete scanner token root set in the already-admitted context before streaming final native
+  token owners and committing token assignments. Scalar and glue scans execute directly in their selected switch arm; no separate scanner admission or assignment application wrapper remains for these state-only writes. `command_codes.rs` derives switch keys from packed meanings;
   `paragraph_start.rs` selects the native §1090 vertical cases with those keys.
   The startup prologue admits once; scalar page/save queries borrow their real
   stores without generation admission, and host settlement has one page fire-up
@@ -121,7 +121,7 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   exact suffix retry. Prepared openout replacements move complete artifact
   receipts and share their immutable bytes with the matching PDF page rows.
 - `src/assignments/`: the `AssignmentCommitter` authority for scoped writes,
-  e-TeX redundant-local decisions, tracing, and typed mutation receipts, plus
+  e-TeX redundant-local decisions and tracing. Writes return only their observable-write decision; actual consumers construct final mutation records only when observation is demanded. It also owns
   primitive registration delegated from `tex-command`'s integrated catalogue.
 - `src/assignments/tests.rs`: focused typed-owner controls for token assignment
   pre/post images across global replacement and local undo-backed writes.

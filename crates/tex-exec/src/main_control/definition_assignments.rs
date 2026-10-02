@@ -180,9 +180,7 @@ pub(super) fn apply_catcode<G>(
             ),
             global,
         };
-        command.retain_assignment_receipt(
-            crate::assignments::committer::MutationReceipt::observed(record),
-        );
+        command.retain_assignment_mutation(record);
     }
     Ok(ReplayStep::Continue)
 }

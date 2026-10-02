@@ -1066,20 +1066,7 @@ impl<G> CommandMachine<'_, '_, G> {
         }
     }
 
-    fn retain_assignment_receipt(
-        &mut self,
-        receipt: crate::assignments::committer::MutationReceipt,
-    ) {
-        // Receipt payloads are detached instrumentation.  In particular,
-        // indexed registers defer formatting their canonical key until this
-        // operation actually has an observer; the ordinary execution path
-        // must not pay to serialize a mutation that nobody can consume.
-        if self.assignment_receipts.is_none() && self.observations.is_none() {
-            return;
-        }
-        let Some(record) = receipt.into_record() else {
-            return;
-        };
+    fn retain_assignment_mutation(&mut self, record: MutationRecord) {
         if let Some(receipts) = self.assignment_receipts.as_mut() {
             receipts.push(record);
         } else if let Some(observations) = self.observations.as_mut() {

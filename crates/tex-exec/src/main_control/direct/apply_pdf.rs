@@ -67,8 +67,14 @@ impl<G> DirectDispatch<'_, '_, G> {
             self.stores,
             self.provider,
         )?;
-        let mut request =
-            publication::publish_tokens(self.control.command.state(), self.stores, request)?;
+        let mut request = publication::publish_tokens(
+            self.control.command.state(),
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
+            request,
+        )?;
         self.control.main_loop_active = false;
 
         self.control.apply_direct_leaf(
@@ -169,8 +175,14 @@ impl<G> DirectDispatch<'_, '_, G> {
         operand0: tex_command::AttemptTokenListId,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
-        let mut operand0 =
-            publication::publish_tokens(self.control.command.state(), self.stores, operand0)?;
+        let mut operand0 = publication::publish_tokens(
+            self.control.command.state(),
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
+            operand0,
+        )?;
         self.control.main_loop_active = false;
 
         self.control.apply_direct_leaf(
@@ -190,8 +202,14 @@ impl<G> DirectDispatch<'_, '_, G> {
         operand0: tex_command::PdfGraphicsRequest<tex_command::AttemptTokenListId>,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
-        let mut operand0 =
-            publication::publish_tokens(self.control.command.state(), self.stores, operand0)?;
+        let mut operand0 = publication::publish_tokens(
+            self.control.command.state(),
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
+            operand0,
+        )?;
         self.control.main_loop_active = false;
 
         self.control.apply_direct_leaf(
@@ -211,8 +229,14 @@ impl<G> DirectDispatch<'_, '_, G> {
         operand0: tex_command::PdfObjectRequest<tex_command::AttemptTokenListId>,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
-        let mut operand0 =
-            publication::publish_tokens(self.control.command.state(), self.stores, operand0)?;
+        let mut operand0 = publication::publish_tokens(
+            self.control.command.state(),
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
+            operand0,
+        )?;
         self.control.main_loop_active = false;
 
         self.control.apply_direct_leaf(
@@ -252,8 +276,14 @@ impl<G> DirectDispatch<'_, '_, G> {
         operand0: tex_command::PdfFormRequest<tex_command::AttemptTokenListId>,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
-        let mut operand0 =
-            publication::publish_tokens(self.control.command.state(), self.stores, operand0)?;
+        let mut operand0 = publication::publish_tokens(
+            self.control.command.state(),
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
+            operand0,
+        )?;
         self.control.main_loop_active = false;
 
         self.control.apply_direct_leaf(
@@ -273,8 +303,14 @@ impl<G> DirectDispatch<'_, '_, G> {
         operand0: tex_command::PdfDocumentFragmentRequest<tex_command::AttemptTokenListId>,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
-        let mut operand0 =
-            publication::publish_tokens(self.control.command.state(), self.stores, operand0)?;
+        let mut operand0 = publication::publish_tokens(
+            self.control.command.state(),
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
+            operand0,
+        )?;
         self.control.main_loop_active = false;
 
         self.control.apply_direct_leaf(
@@ -294,8 +330,14 @@ impl<G> DirectDispatch<'_, '_, G> {
         operand0: tex_command::PdfNavigationRequest<tex_command::AttemptTokenListId>,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
-        let mut operand0 =
-            publication::publish_tokens(self.control.command.state(), self.stores, operand0)?;
+        let mut operand0 = publication::publish_tokens(
+            self.control.command.state(),
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
+            operand0,
+        )?;
         self.control.main_loop_active = false;
 
         self.control.apply_direct_leaf(
@@ -341,7 +383,10 @@ impl<G> DirectDispatch<'_, '_, G> {
         self.report_scan()?;
         let (mut first, mut second) = publication::publish_tokens(
             self.control.command.state(),
-            self.stores,
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
             (first, second),
         )?;
         self.control.main_loop_active = false;
@@ -369,8 +414,14 @@ impl<G> DirectDispatch<'_, '_, G> {
         operand0: tex_command::ImmediateExtension<tex_command::AttemptTokenListId>,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
-        let mut operand0 =
-            publication::publish_tokens(self.control.command.state(), self.stores, operand0)?;
+        let mut operand0 = publication::publish_tokens(
+            self.control.command.state(),
+            &mut self
+                .stores
+                .command_context()
+                .expect("token publication admission"),
+            operand0,
+        )?;
         if let tex_command::ImmediateExtension::PdfForm(request) = &mut operand0 {
             return self.execute_immediate_pdf_form(request);
         }

@@ -54,62 +54,6 @@ impl<G> DirectDispatch<'_, '_, G> {
         Ok(step)
     }
 
-    pub(super) fn execute_toks(
-        &mut self,
-        mut index: u16,
-        tokens: Option<tex_command::AttemptTokenListId>,
-        source: Option<tex_state::TokenListId<G>>,
-        mut global: bool,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-        let mut tokens = match source {
-            Some(source) => Some(source),
-            None => publication::publish_tokens(self.control.command.state(), self.stores, tokens)?,
-        };
-        self.control.main_loop_active = false;
-
-        let step = self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, _, _, _, command, _, _, _, _, _, _, _| {
-                semantic::execute_toks(stores, command, &mut index, &mut tokens, &mut global)
-            },
-        )?;
-        self.schedule_assignment_token()?;
-        Ok(step)
-    }
-
-    pub(super) fn execute_tok_param(
-        &mut self,
-        mut index: u16,
-        tokens: Option<tex_command::AttemptTokenListId>,
-        source: Option<tex_state::TokenListId<G>>,
-        mut global: bool,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-        let mut tokens = match source {
-            Some(source) => Some(source),
-            None => publication::publish_tokens(self.control.command.state(), self.stores, tokens)?,
-        };
-        self.control.main_loop_active = false;
-
-        let step = self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, _, _, _, command, _, _, _, _, _, _, _| {
-                semantic::execute_tok_param(stores, command, &mut index, &mut tokens, &mut global)
-            },
-        )?;
-        self.schedule_assignment_token()?;
-        Ok(step)
-    }
-
     pub(super) fn execute_character_definition(
         &mut self,
         mut primitive: UnexpandablePrimitive,

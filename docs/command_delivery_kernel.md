@@ -315,3 +315,36 @@ and resource/fuel failure. Compare observed and unobserved semantic outputs and
 fuel without conflating optional record production with TeX work. Run focused
 tests, the native routine suite, and the authoritative `scripts/check.sh` gate.
 Report missing pinned assets and pre-existing failures explicitly.
+
+## Assignment ownership and demanded observation
+
+A completed assignment scans, publishes any final immutable payload, and commits
+through the same admitted command owners. Integer/dimension parameters, glue
+registers/parameters and token registers/parameters require no separate scanner
+admission or execution machine. Their switch arm consumes its typed result in
+place. Only real mode material, diagnostic publication, resource, output,
+afterassignment or observation boundaries release that loan. This extends the
+existing native group/count/definition boundary rather than adding another lane.
+
+The assignment committer owns state writes, e-TeX redundant-local decisions and
+TeX assignment tracing. Its return is only the actual observable-write decision;
+it constructs no mutation receipt, deferred indexed-register product, observer
+key, or token presentation. Actual observed consumers construct and publish a
+mutation record after a successful observable write, in the existing order.
+Unobserved assignments never render parameter names, walk token lists for
+observation, or construct observer values. TeX tracing remains an independent
+semantic demand, including old token/glue ownership through synchronous tracing.
+
+Token publication validates every scanner root and reserves native destinations
+before any allocation or assignment. Publication uses the already-admitted
+context rather than releasing and reacquiring the generation. A native alias
+transfers its existing immutable owner; a scanned list is published once from
+its actual attempt storage. Only successful assignment schedules afterassignment.
+The existing native group saves and checkpoint first-touch journals remain the
+sole histories; reads and observation absence introduce no journal work.
+
+The expected savings come from deleting repeated scanner/context admissions,
+execution-machine setup, receipt construction/transport and unused observer
+serialization across an entire assignment family. Completed-document counters
+and exact output comparisons establish the aggregate effect; isolated helper
+size or a new numerical threshold does not establish completion.

@@ -948,7 +948,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                     }
 
                     return {
-                        let command_origin = command.origin();
                         match (
                             mode,
                             command_code
@@ -1409,167 +1408,156 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     };
                                 }
                             }
-                            (_, codes::PRIMITIVE_SKIP) => {
+                            (
+                                _,
+                                codes::PRIMITIVE_SKIP
+                                | codes::SKIP_REGISTER
+                                | codes::PRIMITIVE_MUSKIP
+                                | codes::MUSKIP_REGISTER,
+                            ) => {
                                 let global = effective_global(
                                     processor.int_param(IntParam::GLOBAL_DEFS),
                                     global,
                                 );
-                                return {
-                                    let (direct_arg0, direct_arg1, direct_arg2) =
-                                        (None, global, false);
-                                    finish_scan!(self.scan_glue_register_assignment(
-                                        direct_arg0,
-                                        direct_arg1,
-                                        direct_arg2
-                                    ))
-                                };
-                            }
-                            (_, codes::SKIP_REGISTER) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
+                                let mu = matches!(
+                                    command_code,
+                                    Some(codes::PRIMITIVE_MUSKIP | codes::MUSKIP_REGISTER)
                                 );
-                                let ResolvedMeaning::Static(Meaning::SkipRegister(index)) =
-                                    command.meaning()
-                                else {
-                                    unreachable!(
-                                        "packed command selected its native operand family"
-                                    )
+                                let index = match command.meaning() {
+                                    ResolvedMeaning::Static(
+                                        Meaning::SkipRegister(index)
+                                        | Meaning::MuskipRegister(index),
+                                    ) => index,
+                                    _ => take_native_scalar!(
+                                        processor.scan_profile_register_index_retained(),
+                                        scan_origin
+                                    ),
                                 };
-                                {
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (Some(index), global, false);
-                                        finish_scan!(self.scan_glue_register_assignment(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
-                            }
-                            (_, codes::PRIMITIVE_MUSKIP) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
+                                let _ = take_native_scalar!(
+                                    processor.scan_optional_equals_retained(),
+                                    scan_origin
                                 );
-                                return {
-                                    let (direct_arg0, direct_arg1, direct_arg2) =
-                                        (None, global, true);
-                                    finish_scan!(self.scan_glue_register_assignment(
-                                        direct_arg0,
-                                        direct_arg1,
-                                        direct_arg2
-                                    ))
-                                };
-                            }
-                            (_, codes::MUSKIP_REGISTER) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let ResolvedMeaning::Static(Meaning::MuskipRegister(index)) =
-                                    command.meaning()
-                                else {
-                                    unreachable!(
-                                        "packed command selected its native operand family"
-                                    )
-                                };
-                                {
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (Some(index), global, true);
-                                        finish_scan!(self.scan_glue_register_assignment(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
+                                let value = take_native_scalar!(
+                                    processor.scan_glue_retained(mu),
+                                    scan_origin
+                                )
+                                .value;
+                                let source_identity = processor.scanned_glue_identity();
+                                let source_register = processor.scanned_glue_register();
+                                let step = retained_semantic!(
+                                    receipts,
+                                    |native_context,
+                                     _native_state,
+                                     native_effects,
+                                     _native_fuel,
+                                     _native_observer| {
+                                        let reassigning =
+                                            MainControl::direct_glue_pointer_reassigned(
+                                                native_context,
+                                                mu,
+                                                index,
+                                                value,
+                                                source_identity,
+                                                source_register,
+                                                global,
+                                                &self.control.skip_pointer_sources,
+                                                &self.control.muskip_pointer_sources,
+                                            );
+                                        let redundant = native_context
+                                            .int_param(IntParam::ETEX_EXTENDED_MODE)
+                                            > 0
+                                            && reassigning;
+                                        let result = semantic::execute_skip(
+                                            native_context,
+                                            native_effects,
+                                            receipts,
+                                            index,
+                                            value,
+                                            global,
+                                            mu,
+                                            redundant,
+                                            reassigning,
+                                        );
+                                        if result.is_ok() && !redundant {
+                                            let physical = if mu {
+                                                native_context.muskip(index)
+                                            } else {
+                                                native_context.glue_register(index).ok().flatten()
+                                            };
+                                            if let Some(physical) = physical {
+                                                let pointers = if mu {
+                                                    &mut self.control.muskip_pointer_sources
+                                                } else {
+                                                    &mut self.control.skip_pointer_sources
+                                                };
+                                                if pointers.len() <= usize::from(index) {
+                                                    pointers.resize(usize::from(index) + 1, None);
+                                                }
+                                                pointers[usize::from(index)] =
+                                                    Some((physical, source_identity));
+                                            }
+                                        }
+                                        result
+                                    }
+                                )?;
+                                self.schedule_assignment_token()?;
+                                Ok(step)
                             }
                             (_, codes::PRIMITIVE_H_SKIP) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (meaning, global, command_origin);
-                                        finish_scan!(self.scan_unary_scalar_operation(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
+                                return {
+                                    let value = take_native_scalar!(
+                                        processor.scan_glue_retained(false),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    let shared_zero_glue = processor.scanned_glue_shared_zero();
+                                    finish_scan!(
+                                        self.execute_horizontal_skip(value, shared_zero_glue)
+                                    )
+                                };
                             }
                             (_, codes::PRIMITIVE_KERN) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (meaning, global, command_origin);
-                                        finish_scan!(self.scan_unary_scalar_operation(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
+                                return {
+                                    let value = take_native_scalar!(
+                                        processor.scan_dimension_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    finish_scan!(self.execute_kern(value))
+                                };
                             }
                             (_, codes::PRIMITIVE_PENALTY) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (meaning, global, command_origin);
-                                        finish_scan!(self.scan_unary_scalar_operation(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
+                                return {
+                                    let value = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    finish_scan!(self.execute_penalty(value))
+                                };
                             }
                             (_, codes::PRIMITIVE_CONTROL_SPACE) => {
                                 return finish_scan!(self.execute_control_space());
                             }
                             (_, codes::PRIMITIVE_PREV_DEPTH) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-                                        return {
-                                            let (direct_arg0, direct_arg1, direct_arg2) =
-                                                (meaning, global, command_origin);
-                                            finish_scan!(self.scan_unary_scalar_operation(
-                                                direct_arg0,
-                                                direct_arg1,
-                                                direct_arg2
-                                            ))
-                                        };
-                                    } else {
-                                        return {
-                                            let (direct_arg0,) =
-                                                (command.spelling().semantic_token(),);
-                                            finish_scan!(
-                                                self.execute_illegal_prev_depth(direct_arg0)
-                                            )
-                                        };
-                                    }
+                                if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                                    return {
+                                        let _ = take_native_scalar!(
+                                            processor.scan_optional_equals_retained(),
+                                            scan_origin
+                                        );
+                                        let value = take_native_scalar!(
+                                            processor.scan_dimension_retained(),
+                                            scan_origin
+                                        )
+                                        .value;
+                                        finish_scan!(self.execute_prev_depth(value))
+                                    };
+                                } else {
+                                    return {
+                                        let (direct_arg0,) = (command.spelling().semantic_token(),);
+                                        finish_scan!(self.execute_illegal_prev_depth(direct_arg0))
+                                    };
                                 }
                             }
                             (
@@ -1596,90 +1584,69 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_INTERACTION_MODE) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (meaning, global, command_origin);
-                                        finish_scan!(self.scan_unary_scalar_operation(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
+                                return {
+                                    let _ = take_native_scalar!(
+                                        processor.scan_optional_equals_retained(),
+                                        scan_origin
+                                    );
+                                    let value = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    let context = processor.diagnostic_context_coordinate();
+                                    finish_scan!(
+                                        self.execute_set_interaction_mode_value(value, context)
+                                    )
+                                };
                             }
                             (_, codes::PRIMITIVE_SPACE_FACTOR) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
-                                    {
-                                        return {
-                                            let (direct_arg0, direct_arg1, direct_arg2) =
-                                                (meaning, global, command_origin);
-                                            finish_scan!(self.scan_unary_scalar_operation(
-                                                direct_arg0,
-                                                direct_arg1,
-                                                direct_arg2
-                                            ))
-                                        };
-                                    } else {
-                                        return {
-                                            let (direct_arg0,) =
-                                                (command.spelling().semantic_token(),);
-                                            finish_scan!(
-                                                self.execute_illegal_space_factor(direct_arg0)
-                                            )
-                                        };
-                                    }
+                                if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
+                                    return {
+                                        let _ = take_native_scalar!(
+                                            processor.scan_optional_equals_retained(),
+                                            scan_origin
+                                        );
+                                        let value = take_native_scalar!(
+                                            processor.scan_integer_retained(),
+                                            scan_origin
+                                        )
+                                        .value;
+                                        finish_scan!(self.execute_space_factor(value))
+                                    };
+                                } else {
+                                    return {
+                                        let (direct_arg0,) = (command.spelling().semantic_token(),);
+                                        finish_scan!(self.execute_illegal_space_factor(direct_arg0))
+                                    };
                                 }
                             }
                             (_, codes::PRIMITIVE_PREV_GRAF) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (meaning, global, command_origin);
-                                        finish_scan!(self.scan_unary_scalar_operation(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
+                                return {
+                                    let _ = take_native_scalar!(
+                                        processor.scan_optional_equals_retained(),
+                                        scan_origin
+                                    );
+                                    let value = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    finish_scan!(self.execute_prev_graf(value))
+                                };
                             }
                             (_, codes::PRIMITIVE_CHAR) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    let origin = processor
-                                        .active_macro_origin()
-                                        .unwrap_or_else(|| command.origin());
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (meaning, global, origin);
-                                        finish_scan!(self.scan_unary_scalar_operation(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
+                                let origin = processor
+                                    .active_macro_origin()
+                                    .unwrap_or_else(|| command.origin());
+                                return {
+                                    let value = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    finish_scan!(self.execute_character_code(value, origin, false))
+                                };
                             }
                             (_, codes::PRIMITIVE_ACCENT) => {
                                 let (direct_arg0,) =
@@ -1771,22 +1738,17 @@ impl<G> DirectDispatch<'_, '_, G> {
                             (_, codes::PRIMITIVE_V_SKIP)
                                 if matches!(mode, Mode::Vertical | Mode::InternalVertical) =>
                             {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (meaning, global, command_origin);
-                                        finish_scan!(self.scan_unary_scalar_operation(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
+                                return {
+                                    let value = take_native_scalar!(
+                                        processor.scan_glue_retained(false),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    let shared_zero_glue = processor.scanned_glue_shared_zero();
+                                    finish_scan!(
+                                        self.execute_vertical_skip(value, shared_zero_glue)
+                                    )
+                                };
                             }
                             (
                                 _,
@@ -1906,18 +1868,35 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     .map_err(command_error))
                                 .map_err(|error| scan_error(error, scan_origin))?;
                                 return {
-                                    let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) = (
-                                        assignment.index,
-                                        assignment.tokens,
-                                        assignment.source,
-                                        global,
-                                    );
-                                    finish_scan!(self.execute_toks(
-                                        direct_arg0,
-                                        direct_arg1,
-                                        direct_arg2,
-                                        direct_arg3
-                                    ))
+                                    let step = retained_semantic!(
+                                        receipts,
+                                        |native_context,
+                                         native_state,
+                                         native_effects,
+                                         _native_fuel,
+                                         _native_observer| {
+                                            let tokens = match assignment.source {
+                                                Some(source) => Some(source),
+                                                None => publication::publish_tokens(
+                                                    native_state,
+                                                    native_context,
+                                                    assignment.tokens,
+                                                )?,
+                                            };
+                                            semantic::execute_toks(
+                                                native_context,
+                                                native_effects,
+                                                native_state,
+                                                receipts,
+                                                assignment.index,
+                                                tokens,
+                                                global,
+                                                false,
+                                            )
+                                        }
+                                    )?;
+                                    self.schedule_assignment_token()?;
+                                    Ok(step)
                                 };
                             }
                             (_, codes::TOKS_REGISTER) => {
@@ -1944,14 +1923,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         .map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     return {
-                                        let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) =
-                                            (index, tokens, source, global);
-                                        finish_scan!(self.execute_toks(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2,
-                                            direct_arg3
-                                        ))
+                                        let step = retained_semantic!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
+    let tokens = match source { Some(source) => Some(source), None => publication::publish_tokens(native_state, native_context, tokens)? };
+    semantic::execute_toks(native_context, native_effects, native_state, receipts, index, tokens, global, false)
+})?;
+                                        self.schedule_assignment_token()?;
+                                        Ok(step)
                                     };
                                 }
                             }
@@ -1963,19 +1940,37 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 let ResolvedMeaning::Static(Meaning::IntParam(index)) =
                                     command.meaning()
                                 else {
-                                    unreachable!(
-                                        "packed command selected its native operand family"
-                                    )
+                                    unreachable!("native parameter operand")
                                 };
-                                {
-                                    let (direct_arg0, direct_arg1, direct_arg2) =
-                                        (Meaning::IntParam(index), global, command_origin);
-                                    finish_scan!(self.scan_unary_scalar_operation(
-                                        direct_arg0,
-                                        direct_arg1,
-                                        direct_arg2
-                                    ))
-                                }
+                                let _ = take_native_scalar!(
+                                    processor.scan_optional_equals_retained(),
+                                    scan_origin
+                                );
+                                let value = take_native_scalar!(
+                                    processor.scan_integer_retained(),
+                                    scan_origin
+                                )
+                                .value;
+                                let step = retained_semantic!(
+                                    receipts,
+                                    |native_context,
+                                     native_state,
+                                     native_effects,
+                                     _native_fuel,
+                                     _native_observer| {
+                                        semantic::execute_int_param(
+                                            native_context,
+                                            native_effects,
+                                            native_state,
+                                            receipts,
+                                            index,
+                                            value,
+                                            global,
+                                        )
+                                    }
+                                )?;
+                                self.schedule_assignment_token()?;
+                                Ok(step)
                             }
                             (_, codes::DIMEN_PARAM) => {
                                 let global = effective_global(
@@ -1985,25 +1980,39 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 let ResolvedMeaning::Static(Meaning::DimenParam(index)) =
                                     command.meaning()
                                 else {
-                                    unreachable!(
-                                        "packed command selected its native operand family"
-                                    )
+                                    unreachable!("native parameter operand")
                                 };
-                                {
-                                    let (direct_arg0, direct_arg1, direct_arg2) =
-                                        (Meaning::DimenParam(index), global, command_origin);
-                                    finish_scan!(self.scan_unary_scalar_operation(
-                                        direct_arg0,
-                                        direct_arg1,
-                                        direct_arg2
-                                    ))
-                                }
+                                let _ = take_native_scalar!(
+                                    processor.scan_optional_equals_retained(),
+                                    scan_origin
+                                );
+                                let value = take_native_scalar!(
+                                    processor.scan_dimension_retained(),
+                                    scan_origin
+                                )
+                                .value;
+                                let step = retained_semantic!(
+                                    receipts,
+                                    |native_context,
+                                     native_state,
+                                     native_effects,
+                                     _native_fuel,
+                                     _native_observer| {
+                                        semantic::execute_dimen_param(
+                                            native_context,
+                                            native_effects,
+                                            native_state,
+                                            receipts,
+                                            index,
+                                            value,
+                                            global,
+                                        )
+                                    }
+                                )?;
+                                self.schedule_assignment_token()?;
+                                Ok(step)
                             }
                             (_, codes::PAGE_DIMENSION) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
                                 let ResolvedMeaning::Static(Meaning::PageDimension(dimension)) =
                                     command.meaning()
                                 else {
@@ -2012,20 +2021,19 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     )
                                 };
                                 {
-                                    let (direct_arg0, direct_arg1, direct_arg2) =
-                                        (Meaning::PageDimension(dimension), global, command_origin);
-                                    finish_scan!(self.scan_unary_scalar_operation(
-                                        direct_arg0,
-                                        direct_arg1,
-                                        direct_arg2
-                                    ))
+                                    let _ = take_native_scalar!(
+                                        processor.scan_optional_equals_retained(),
+                                        scan_origin
+                                    );
+                                    let value = take_native_scalar!(
+                                        processor.scan_dimension_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    finish_scan!(self.execute_page_dimension(dimension, value))
                                 }
                             }
                             (_, codes::PAGE_INTEGER) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
                                 let ResolvedMeaning::Static(Meaning::PageInteger(integer)) =
                                     command.meaning()
                                 else {
@@ -2034,13 +2042,16 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     )
                                 };
                                 {
-                                    let (direct_arg0, direct_arg1, direct_arg2) =
-                                        (Meaning::PageInteger(integer), global, command_origin);
-                                    finish_scan!(self.scan_unary_scalar_operation(
-                                        direct_arg0,
-                                        direct_arg1,
-                                        direct_arg2
-                                    ))
+                                    let _ = take_native_scalar!(
+                                        processor.scan_optional_equals_retained(),
+                                        scan_origin
+                                    );
+                                    let value = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    finish_scan!(self.execute_page_integer(integer, value))
                                 }
                             }
                             (_, codes::TOK_PARAM) => {
@@ -2070,72 +2081,53 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         .map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     return {
-                                        let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) =
-                                            (index, tokens.tokens, tokens.source, global);
-                                        finish_scan!(self.execute_tok_param(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2,
-                                            direct_arg3
-                                        ))
+                                        let step = retained_semantic!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
+    let tokens = match tokens.source { Some(source) => Some(source), None => publication::publish_tokens(native_state, native_context, tokens.tokens)? };
+    semantic::execute_toks(native_context, native_effects, native_state, receipts, index, tokens, global, true)
+})?;
+                                        self.schedule_assignment_token()?;
+                                        Ok(step)
                                     };
                                 }
                             }
-                            (_, codes::GLUE_PARAM) => {
+                            (_, codes::GLUE_PARAM | codes::MU_GLUE_PARAM) => {
                                 let global = effective_global(
                                     processor.int_param(IntParam::GLOBAL_DEFS),
                                     global,
                                 );
-                                let ResolvedMeaning::Static(Meaning::GlueParam(index)) =
-                                    command.meaning()
-                                else {
-                                    unreachable!(
-                                        "packed command selected its native operand family"
-                                    )
+                                let (index, mu) = match command.meaning() {
+                                    ResolvedMeaning::Static(Meaning::GlueParam(index)) => {
+                                        (index, false)
+                                    }
+                                    ResolvedMeaning::Static(Meaning::MuGlueParam(index)) => {
+                                        (index, true)
+                                    }
+                                    _ => unreachable!("native glue parameter operand"),
                                 };
-                                {
-                                    let assignment = (processor
-                                        .scan_glue_parameter_assignment(index, false)
-                                        .map_err(command_error))
+                                let assignment = processor
+                                    .scan_glue_parameter_assignment(index, mu)
+                                    .map_err(command_error)
                                     .map_err(|error| scan_error(error, scan_origin))?;
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (assignment.index, assignment.value, global);
-                                        finish_scan!(self.execute_glue_param(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
-                            }
-                            (_, codes::MU_GLUE_PARAM) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let ResolvedMeaning::Static(Meaning::MuGlueParam(index)) =
-                                    command.meaning()
-                                else {
-                                    unreachable!(
-                                        "packed command selected its native operand family"
-                                    )
-                                };
-                                {
-                                    let assignment = (processor
-                                        .scan_glue_parameter_assignment(index, true)
-                                        .map_err(command_error))
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (assignment.index, assignment.value, global);
-                                        finish_scan!(self.execute_glue_param(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
+                                let step = retained_semantic!(
+                                    receipts,
+                                    |native_context,
+                                     native_state,
+                                     native_effects,
+                                     _native_fuel,
+                                     _native_observer| {
+                                        semantic::execute_glue_param(
+                                            native_context,
+                                            native_effects,
+                                            native_state,
+                                            receipts,
+                                            assignment.index,
+                                            assignment.value,
+                                            global,
+                                        )
+                                    }
+                                )?;
+                                self.schedule_assignment_token()?;
+                                Ok(step)
                             }
                             (
                                 _,
@@ -2242,11 +2234,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 _,
                                 codes::PRIMITIVE_PDF_X_IMAGE | codes::PRIMITIVE_PDF_REF_X_IMAGE,
                             ) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
                                 {
                                     let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                         primitive @ (UnexpandablePrimitive::PdfXImage
@@ -2283,13 +2270,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         }
                                         if primitive == UnexpandablePrimitive::PdfRefXImage {
                                             return {
-                                                let (direct_arg0, direct_arg1, direct_arg2) =
-                                                    (meaning, global, command_origin);
-                                                finish_scan!(self.scan_unary_scalar_operation(
-                                                    direct_arg0,
-                                                    direct_arg1,
-                                                    direct_arg2
-                                                ))
+                                                let value = take_native_scalar!(
+                                                    processor.scan_integer_retained(),
+                                                    scan_origin
+                                                )
+                                                .value;
+                                                finish_scan!(self.execute_pdf_ref_x_image(value))
                                             };
                                         }
                                         return {
@@ -2308,22 +2294,16 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_PDF_SET_RANDOM_SEED) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    return {
-                                        let (direct_arg0, direct_arg1, direct_arg2) =
-                                            (meaning, global, command_origin);
-                                        finish_scan!(self.scan_unary_scalar_operation(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2
-                                        ))
-                                    };
-                                }
+                                return {
+                                    let value = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    finish_scan!(
+                                        self.execute_pdf_set_random_seed(value.saturating_abs())
+                                    )
+                                };
                             }
                             (_, codes::PRIMITIVE_PDF_RESET_TIMER) => {
                                 return finish_scan!(self.execute_pdf_reset_timer());
@@ -2782,32 +2762,20 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                             }
                             (_, codes::PRIMITIVE_SET_LANGUAGE) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
-                                    {
-                                        return {
-                                            let (direct_arg0, direct_arg1, direct_arg2) =
-                                                (meaning, global, command_origin);
-                                            finish_scan!(self.scan_unary_scalar_operation(
-                                                direct_arg0,
-                                                direct_arg1,
-                                                direct_arg2
-                                            ))
-                                        };
-                                    } else {
-                                        return {
-                                            let (direct_arg0,) =
-                                                (command.spelling().semantic_token(),);
-                                            finish_scan!(
-                                                self.execute_illegal_set_language(direct_arg0)
-                                            )
-                                        };
-                                    }
+                                if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
+                                    return {
+                                        let value = take_native_scalar!(
+                                            processor.scan_integer_retained(),
+                                            scan_origin
+                                        )
+                                        .value;
+                                        finish_scan!(self.execute_set_language(value))
+                                    };
+                                } else {
+                                    return {
+                                        let (direct_arg0,) = (command.spelling().semantic_token(),);
+                                        finish_scan!(self.execute_illegal_set_language(direct_arg0))
+                                    };
                                 }
                             }
                             (

@@ -33,7 +33,7 @@ expose substores or introduce another arena.
   parts directly from `Universe`; no monolithic command-state owner, copied
   store, heap indirection, or raw alias is involved. This includes name-free compact
   control-sequence dense-row access and the destination-directed packed-token
-  command write implemented beside the token encoding, typed register mutation,
+  command write implemented beside the token encoding, complete scanner token destination reservation and final-owner publication, typed register mutation,
   page-list/page-builder access, the live reported-error count and World publication position used before
   executor diagnostic settlement and native-loop effect cuts, font metrics and detached artifact recipes,
   generated-font lookup, grouped box transfer, page marks, hyphenation,

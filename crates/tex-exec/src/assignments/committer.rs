@@ -2,9 +2,8 @@
 //!
 //! Scanners deliver typed values; this boundary alone decides whether an
 //! e-TeX local write is redundant, selects the local/global state barrier,
-//! emits `\tracingassigns`, and returns the mutation that became observable.
+//! emits `\tracingassigns`, and returns only the observable-write decision.
 
-use tex_command::{MutationRecord, MutationTarget, ObservationValue};
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::AssignmentScope;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
@@ -31,59 +30,6 @@ pub(crate) fn redundant_local_assignment<T: Eq>(
     global: bool,
 ) -> bool {
     etex_extended && !global && current == replacement
-}
-
-/// The result of one authoritative assignment commit.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum MutationReceipt {
-    Silent,
-    Ready(MutationRecord),
-    IndexedRegister {
-        class: &'static str,
-        index: u16,
-        value: ObservationValue,
-        global: bool,
-    },
-}
-
-impl MutationReceipt {
-    pub(crate) const SILENT: Self = Self::Silent;
-
-    pub(crate) fn observed(record: MutationRecord) -> Self {
-        Self::Ready(record)
-    }
-
-    fn indexed_register(
-        class: &'static str,
-        index: u16,
-        value: ObservationValue,
-        global: bool,
-    ) -> Self {
-        Self::IndexedRegister {
-            class,
-            index,
-            value,
-            global,
-        }
-    }
-
-    pub(crate) fn into_record(self) -> Option<MutationRecord> {
-        match self {
-            Self::Silent => None,
-            Self::Ready(record) => Some(record),
-            Self::IndexedRegister {
-                class,
-                index,
-                value,
-                global,
-            } => Some(MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name(format!("{class}:{index}")),
-                value,
-                global,
-            }),
-        }
-    }
 }
 
 /// Borrow-scoped authority for all state written by TeX assignment families.
@@ -118,33 +64,11 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             && replacement.has_zero_components()
     }
 
-    pub(crate) fn scoped_word<T, Write, Trace>(
-        &mut self,
-        current: T,
-        replacement: T,
-        global: bool,
-        record: MutationRecord,
-        write: Write,
-        trace: Trace,
-    ) -> MutationReceipt
-    where
-        T: Eq + Copy,
-        Write: FnOnce(&mut CommandContext<'_, G>, bool),
-        Trace: FnOnce(&mut CommandContext<'_, G>, &mut DiagnosticEffects, bool),
-    {
-        if self.direct_scoped_word(current, replacement, global, write, trace) {
-            MutationReceipt::observed(record)
-        } else {
-            MutationReceipt::SILENT
-        }
-    }
-
     /// Commits one packed scalar without constructing detached observation
     /// payloads. The boolean says whether the canonical write is observable.
     ///
-    /// Hot direct handlers use this seam so an unobserved interpreter pays
-    /// only for the dense write and its group journal. Cold callers retain
-    /// [`Self::scoped_word`], which adds the requested detached receipt.
+    /// Observation consumers use the returned decision to publish their record.
+    /// Unobserved commands construct no detached mutation product.
     pub(crate) fn direct_scoped_word<T, Write, Trace>(
         &mut self,
         current: T,
@@ -171,43 +95,29 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         !redundant
     }
 
-    pub(crate) fn unscoped<Write>(
-        &mut self,
-        record: Option<MutationRecord>,
-        write: Write,
-    ) -> MutationReceipt
+    pub(crate) fn unscoped<Write>(&mut self, write: Write)
     where
         Write: FnOnce(&mut CommandContext<'_, G>),
     {
         write(self.stores);
-        record.map_or(MutationReceipt::SILENT, MutationReceipt::observed)
     }
 
-    pub(crate) fn unscoped_with_effects<Write>(
-        &mut self,
-        record: Option<MutationRecord>,
-        write: Write,
-    ) -> MutationReceipt
+    pub(crate) fn unscoped_with_effects<Write>(&mut self, write: Write)
     where
         Write: FnOnce(&mut CommandContext<'_, G>, &mut DiagnosticEffects),
     {
         write(self.stores, self.diagnostic_effects);
-        record.map_or(MutationReceipt::SILENT, MutationReceipt::observed)
     }
 
-    pub(crate) fn try_unscoped<E, Write>(
-        &mut self,
-        record: Option<MutationRecord>,
-        write: Write,
-    ) -> Result<MutationReceipt, E>
+    pub(crate) fn try_unscoped<E, Write>(&mut self, write: Write) -> Result<(), E>
     where
         Write: FnOnce(&mut CommandContext<'_, G>) -> Result<(), E>,
     {
         write(self.stores)?;
-        Ok(record.map_or(MutationReceipt::SILENT, MutationReceipt::observed))
+        Ok(())
     }
 
-    pub(crate) fn count(&mut self, index: u16, value: i32, global: bool) -> MutationReceipt {
+    pub(crate) fn count(&mut self, index: u16, value: i32, global: bool) -> bool {
         let old = self
             .stores
             .count(index)
@@ -230,19 +140,10 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             old,
             value,
         );
-        if redundant && index <= 255 {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::indexed_register(
-                "count",
-                index,
-                ObservationValue::Integer(i64::from(value)),
-                global,
-            )
-        }
+        !redundant || index > 255
     }
 
-    pub(crate) fn dimension(&mut self, index: u16, value: Scaled, global: bool) -> MutationReceipt {
+    pub(crate) fn dimension(&mut self, index: u16, value: Scaled, global: bool) -> bool {
         let old = self
             .stores
             .dimension(index)
@@ -265,16 +166,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             old,
             value,
         );
-        if redundant && index <= 255 {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::indexed_register(
-                "dimen",
-                index,
-                ObservationValue::Scaled(i64::from(value.raw())),
-                global,
-            )
-        }
+        !redundant || index > 255
     }
 
     pub(crate) fn skip(
@@ -285,7 +177,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         mu: bool,
         redundant: bool,
         reassigning: bool,
-    ) -> MutationReceipt {
+    ) -> bool {
         // TeX82 §1237 canonicalizes every zero assignment to `zero_glue`,
         // including zero components with non-normal stretch/shrink orders.
         let value = if value.has_zero_components() {
@@ -357,28 +249,10 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
                 changed,
             );
         }
-        if redundant && index <= 255 {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name(format!(
-                    "{}:{index}",
-                    if mu { "muskip" } else { "skip" }
-                )),
-                value: glue_value(&value),
-                global,
-            })
-        }
+        !redundant || index > 255
     }
 
-    pub(crate) fn toks(
-        &mut self,
-        index: u16,
-        value: Option<TokenListId<G>>,
-        observed: ObservationValue,
-        global: bool,
-    ) -> MutationReceipt {
+    pub(crate) fn toks(&mut self, index: u16, value: Option<TokenListId<G>>, global: bool) -> bool {
         // e-TeX 2.6 [19.277--279] observes the old eqtb token pointer before
         // `eq_destroy` can release it. Keep both operation-local values rooted
         // across Umber's combined write-and-trace boundary.
@@ -405,25 +279,10 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             old,
             new,
         );
-        if redundant && index <= 255 {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name(format!("toks:{index}")),
-                value: observed,
-                global,
-            })
-        }
+        !redundant || index > 255
     }
 
-    pub(crate) fn int_parameter(
-        &mut self,
-        index: u16,
-        value: i32,
-        key: String,
-        global: bool,
-    ) -> MutationReceipt {
+    pub(crate) fn int_parameter(&mut self, index: u16, value: i32, global: bool) -> bool {
         let parameter = IntParam::new(index);
         let old = self.stores.int_param(parameter);
         let tracing_before = self.stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
@@ -446,25 +305,10 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             old,
             value,
         );
-        if redundant {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Parameter,
-                key: ObservationValue::Name(key),
-                value: ObservationValue::Integer(i64::from(value)),
-                global,
-            })
-        }
+        !redundant
     }
 
-    pub(crate) fn dimension_parameter(
-        &mut self,
-        index: u16,
-        value: Scaled,
-        key: String,
-        global: bool,
-    ) -> MutationReceipt {
+    pub(crate) fn dimension_parameter(&mut self, index: u16, value: Scaled, global: bool) -> bool {
         let parameter = DimenParam::new(index);
         let old = self.stores.dimen_param(parameter);
         let redundant = !global && self.redundant_word(&old, &value);
@@ -485,26 +329,15 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             old,
             value,
         );
-        if redundant {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Parameter,
-                key: ObservationValue::Name(key),
-                value: ObservationValue::Scaled(i64::from(value.raw())),
-                global,
-            })
-        }
+        !redundant
     }
 
     pub(crate) fn token_parameter(
         &mut self,
         index: u16,
         value: Option<TokenListId<G>>,
-        observed: ObservationValue,
-        key: String,
         global: bool,
-    ) -> MutationReceipt {
+    ) -> bool {
         let parameter = TokParam::new(index);
         let old = self
             .stores
@@ -528,25 +361,10 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             old,
             value,
         );
-        if redundant {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Parameter,
-                key: ObservationValue::Name(key),
-                value: observed,
-                global,
-            })
-        }
+        !redundant
     }
 
-    pub(crate) fn glue_parameter(
-        &mut self,
-        index: u16,
-        value: GlueSpec,
-        key: String,
-        global: bool,
-    ) -> MutationReceipt {
+    pub(crate) fn glue_parameter(&mut self, index: u16, value: GlueSpec, global: bool) -> bool {
         let value = if value.has_zero_components() {
             GlueSpec::ZERO
         } else {
@@ -587,40 +405,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             value,
             !redundant,
         );
-        if redundant {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Parameter,
-                key: ObservationValue::Name(key),
-                value: glue_value(&value),
-                global,
-            })
-        }
-    }
-
-    pub(crate) fn meaning<F>(
-        &mut self,
-        target: Symbol,
-        token: Token,
-        meaning: Meaning,
-        observed: ObservationValue,
-        global: bool,
-        write: F,
-    ) -> MutationReceipt
-    where
-        F: FnOnce(&mut CommandContext<'_, G>),
-    {
-        if self.direct_meaning(target, token, meaning, global, write) {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Meaning,
-                key: ObservationValue::Name(self.stores.resolve(target).to_owned()),
-                value: observed,
-                global,
-            })
-        } else {
-            MutationReceipt::SILENT
-        }
+        !redundant
     }
 
     /// Commits a meaning directly, preserving e-TeX's redundant-local and
@@ -662,7 +447,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         boxed: Option<&tex_state::page_node_arena::PageListId>,
         global: bool,
         write: F,
-    ) -> MutationReceipt
+    ) -> bool
     where
         F: FnOnce(&mut CommandContext<'_, G>),
     {
@@ -674,18 +459,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             boxed,
             write,
         );
-        if index <= 255 {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name(format!("box:{index}")),
-                value: ObservationValue::Name(
-                    if boxed.is_some() { "occupied" } else { "void" }.into(),
-                ),
-                global,
-            })
-        }
+        index > 255
     }
 
     /// Commits a unique durable-register handoff. Tracing alone creates an
@@ -697,7 +471,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         destination: u16,
         global: bool,
         write: F,
-    ) -> MutationReceipt
+    ) -> bool
     where
         F: FnOnce(&mut CommandContext<'_, G>, tex_state::UniqueBoxRegisterTake),
     {
@@ -717,16 +491,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             traced.as_ref(),
             |stores| write(stores, taken),
         );
-        if destination <= 255 {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name(format!("box:{destination}")),
-                value: ObservationValue::Name("occupied".into()),
-                global,
-            })
-        }
+        destination > 255
     }
 
     pub(crate) fn box_register_output_carrier(
@@ -734,7 +499,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         destination: u16,
         global: bool,
         modes: tex_state::page::ModeListRegionPreflight,
-    ) -> Result<MutationReceipt, tex_state::page_node_arena::OutputCarrierTakeError> {
+    ) -> Result<bool, tex_state::page_node_arena::OutputCarrierTakeError> {
         tracing::trace_output_carrier_write(
             self.stores,
             self.diagnostic_effects,
@@ -752,21 +517,12 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
                 )
             },
         )?;
-        if destination <= 255 {
-            Ok(MutationReceipt::SILENT)
-        } else {
-            Ok(MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name(format!("box:{destination}")),
-                value: ObservationValue::Name("occupied".into()),
-                global,
-            }))
-        }
+        Ok(destination > 255)
     }
 }
 
-fn glue_value(value: &GlueSpec) -> ObservationValue {
-    ObservationValue::Glue {
+pub(crate) fn glue_value(value: &GlueSpec) -> tex_command::ObservationValue {
+    tex_command::ObservationValue::Glue {
         width: i64::from(value.width.raw()),
         stretch: i64::from(value.stretch.raw()),
         stretch_order: tex_command::canonical_names::glue_order_name(value.stretch_order),

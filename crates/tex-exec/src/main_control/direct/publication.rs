@@ -4,7 +4,7 @@ use tex_command::TokenRequest;
 
 pub(super) fn publish_tokens<G, T: TokenRequest<tex_command::AttemptTokenListId>>(
     command: &CommandState<G>,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     request: T,
 ) -> Result<T::Mapped<tex_state::TokenListId<G>>, ExecError> {
     let mut rows = 0usize;

@@ -1094,6 +1094,23 @@ impl<'a, G> CommandContext<'a, G> {
         Ok(id)
     }
 
+    /// Reserves every final token destination before a scanner request is published.
+    pub fn reserve_token_lists(
+        &mut self,
+        rows: usize,
+        words: usize,
+    ) -> Result<(), DurableAllocationError> {
+        self.admitted.reserve_token_lists(rows, words)
+    }
+
+    /// Streams validated scanner words into a pre-reserved native token owner.
+    pub fn allocate_reserved_token_list(
+        &mut self,
+        words: impl ExactSizeIterator<Item = TokenWord>,
+    ) -> Result<TokenListId<G>, DurableAllocationError> {
+        self.admitted.allocate_reserved_token_list(words)
+    }
+
     /// Publishes a synthesized node-only immutable list once in this
     /// generation and returns its copy-only node coordinate.
     pub fn allocate_node_token_list(

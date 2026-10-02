@@ -86,9 +86,8 @@ pub(in crate::main_control) fn execute_box_dimension_assignment<G>(
         // directly rather than through the save stack, so the assignment
         // prefix does not change which binding level is affected.
         let _ = global;
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
-            assign_box_dimension(stores, *index, *dimension, *value)
-        });
+        AssignmentCommitter::new(stores, command.diagnostic_effects)
+            .unscoped(|stores| assign_box_dimension(stores, *index, *dimension, *value));
         Ok(ReplayStep::Continue)
     }
 }

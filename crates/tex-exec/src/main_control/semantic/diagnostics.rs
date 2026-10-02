@@ -26,7 +26,7 @@ pub(in crate::main_control) fn execute_set_interaction_mode<G>(
         // alfh.9`): the terminal's stale column then forces an extra,
         // unwanted newline into the log too, the first time anything
         // prints through the restored `term_and_log` selector.
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
+        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
             stores.printer().print_ln();
             stores.set_interaction_mode(mode);
         });
@@ -60,7 +60,7 @@ pub(in crate::main_control) fn execute_set_interaction_mode_value<G>(
             }
         };
         // See the sibling `SetInteractionMode` arm's comment.
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(None, |stores| {
+        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
             stores.printer().print_ln();
             stores.set_interaction_mode(mode);
         });
