@@ -109,6 +109,14 @@ Balanced-text destinations preserve each exact optional/repeated phase.
 [Structured scanner ownership](structured_scanner_ownership.md) names the
 families and their processor authority.
 
+Keyword, optional-equals and numeric-digit consumers remain in the shared
+expanded reader across successive terminal commands. Their actual prefix,
+value, overflow, and provenance locals live in the synchronous scanner call;
+no result tape or scanner continuation is retained. EOF and stored-replay
+completion use the reader's existing cold boundary, and every terminal resets
+the expanded-delivery fact before the next read. Fuel failures restore both
+reader and primitive expansion depths before those locals unwind.
+
 A resource miss unwinds all those locals, matching holdback, builders and
 borrowed contexts. The host restores the full aggregate, not the immediate
 collector mark. Verified readiness belongs to the host/VFS outside rollback.

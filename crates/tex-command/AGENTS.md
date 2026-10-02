@@ -45,6 +45,12 @@ activation and primitive expansion continue that reader’s semantic back edge,
 which charges every newly consumed token once. Cold input transitions retry
 under the existing charge.
 
+Keyword, optional-equals and numeric-digit scanners keep their synchronous terminal consumer
+inside the same reader across accepted characters and leading spaces. They
+stop at the actual operand completion or a cold EOF/replay boundary, resetting
+expanded-delivery state for each accepted terminal. Single-command delivery is
+another static consumer of this same loop; there is no second scanner reader.
+
 Resident input completes directly into its consumer or leaves the authoritative
 row/cursor at a real source, exhaustion or parameter boundary. There is no
 input-transition descriptor or immediately consuming transition dispatcher.

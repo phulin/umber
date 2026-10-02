@@ -172,18 +172,8 @@ macro_rules! publish_scalar_result {
     ($processor:expr, $call:ident, $result:expr $(,)?) => {{
         match $result {
             Ok(value) => {
-                let mut terminal_error = None;
-                let status = $processor.finish_scalar_success(&mut terminal_error);
-                if status == ScalarCallStatus::Complete {
-                    $call.put_complete(value);
-                } else {
-                    $call.put_error(
-                        terminal_error
-                            .take()
-                            .expect("failed scalar completion stores its error"),
-                    );
-                }
-                status
+                $call.put_complete(value);
+                ScalarCallStatus::Complete
             }
             Err(error) => {
                 let mut terminal_error = None;
@@ -206,15 +196,7 @@ macro_rules! publish_scalar_result {
 macro_rules! finish_scalar_result {
     ($processor:expr, $result:expr $(,)?) => {{
         match $result {
-            Ok(value) => {
-                let mut terminal_error = None;
-                match $processor.finish_scalar_success(&mut terminal_error) {
-                    ScalarCallStatus::Complete => Ok(value),
-                    ScalarCallStatus::Failed => Err(terminal_error
-                        .take()
-                        .expect("failed scalar completion stores its error")),
-                }
-            }
+            Ok(value) => Ok(value),
             Err(error) => {
                 let mut terminal_error = None;
                 $processor.finish_scalar_error(error, &mut terminal_error);
@@ -546,14 +528,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         RetainedScalarScan::Failed(error)
     }
 
-    fn finish_scalar_success(
-        &mut self,
-        terminal_error: &mut Option<CommandError>,
-    ) -> ScalarCallStatus {
-        let _ = terminal_error;
-        ScalarCallStatus::Complete
-    }
-
     fn finish_scalar_error(
         &mut self,
         error: CommandError,
@@ -608,70 +582,37 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         call: &mut ScalarCallFrame<ScannedScalar<bool>>,
     ) -> ScalarCallStatus {
-        macro_rules! fail {
-            ($error:expr) => {{
-                call.put_error($error);
-                return ScalarCallStatus::Failed;
-            }};
-        }
-
         let mut provenance = OriginId::UNKNOWN;
-        loop {
-            let mut command = None;
-            let delivery = match self.request_expanded_token(&mut command) {
-                Ok(delivery) => delivery,
-                Err(error) => {
-                    return self.finish_scalar_destination_error(error, call);
-                }
-            };
-            let command = match delivery {
-                DeliveryStatus::Command => {
-                    command.expect("command delivery initializes destination")
-                }
-                DeliveryStatus::End => {
-                    call.put_complete(ScannedScalar {
-                        value: false,
-                        recovery: ScalarRecovery::None,
-                        provenance: ScalarProvenance {
-                            primary: provenance,
-                        },
-                    });
-                    return ScalarCallStatus::Complete;
-                }
-                _ => unreachable!("ordinary expanded delivery returns only commands"),
-            };
+        let mut equals = false;
+        let result = self.consume_expanded_commands(|processor, command| {
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
             match command.character() {
-                Some((' ', Catcode::Space)) => continue,
-                // §405 compares `cur_tok` with `other_token + '='`, not the
-                // character code alone. Every other-category variant is an
-                // operand and follows the canonical backup path below.
+                Some((' ', Catcode::Space)) => Ok(std::ops::ControlFlow::Continue(())),
+                // §405 compares the actual other-category '=' token.
                 Some(('=', Catcode::Other)) => {
-                    call.put_complete(ScannedScalar {
-                        value: true,
-                        recovery: ScalarRecovery::None,
-                        provenance: ScalarProvenance {
-                            primary: provenance,
-                        },
-                    });
-                    return ScalarCallStatus::Complete;
+                    equals = true;
+                    Ok(std::ops::ControlFlow::Break(()))
                 }
                 _ => {
-                    if let Err(error) = self.back_input(command) {
-                        fail!(error);
-                    }
-                    call.put_complete(ScannedScalar {
-                        value: false,
-                        recovery: ScalarRecovery::None,
-                        provenance: ScalarProvenance {
-                            primary: provenance,
-                        },
-                    });
-                    return ScalarCallStatus::Complete;
+                    processor.back_input(command)?;
+                    Ok(std::ops::ControlFlow::Break(()))
                 }
             }
+        });
+        match result {
+            Ok(()) => {
+                call.put_complete(ScannedScalar {
+                    value: equals,
+                    recovery: ScalarRecovery::None,
+                    provenance: ScalarProvenance {
+                        primary: provenance,
+                    },
+                });
+                ScalarCallStatus::Complete
+            }
+            Err(error) => self.finish_scalar_destination_error(error, call),
         }
     }
 
@@ -742,62 +683,48 @@ impl<G> CommandProcessor<'_, '_, G> {
             [crate::input::BackedUpToken; KEYWORD_PREFIX_INLINE_CAPACITY],
         >::new();
         let mut provenance = OriginId::UNKNOWN;
-        while let Some(&letter) = keyword.as_bytes().get(matched.len()) {
-            // Keyword letters are classified from the compact delivery; a
-            // mismatch backs the same compact command up.
-            let mut command = None;
-            let delivery = match self.request_expanded_token(&mut command) {
-                Ok(delivery) => delivery,
-                Err(error) => {
-                    return self.finish_scalar_destination_error(error, call);
+        let result = if keyword.is_empty() {
+            Ok(())
+        } else {
+            self.consume_expanded_commands(|processor, command| {
+                if provenance == OriginId::UNKNOWN {
+                    provenance = command.origin();
                 }
-            };
-            let command = match delivery {
-                DeliveryStatus::Command => {
-                    command.expect("command delivery initializes destination")
-                }
-                DeliveryStatus::End => {
-                    // tex.web cannot reach this: `get_x_token` always yields, and
-                    // exhausted input is `\end`'s business. Restore the prefix
-                    // the same way a mismatch would and report no keyword.
-                    if !matched.is_empty() {
-                        self.back_list(matched);
+                let letter = keyword.as_bytes()[matched.len()];
+                let character = command.character();
+                if command.control_sequence().is_none()
+                    && matches!(
+                        character,
+                        Some((ch, _)) if ch.eq_ignore_ascii_case(&char::from(letter))
+                    )
+                {
+                    matched.push(crate::input::BackedUpToken {
+                        spelling: command.spelling(),
+                    });
+                    if matched.len() == keyword.len() {
+                        return Ok(std::ops::ControlFlow::Break(()));
                     }
-                    call.put_complete(Self::keyword_result(false, provenance));
-                    return ScalarCallStatus::Complete;
+                } else if matched.is_empty() && matches!(character, Some((_, Catcode::Space))) {
+                    // §407 drops leading spaces without advancing the prefix.
+                } else {
+                    processor.back_input(command)?;
+                    return Ok(std::ops::ControlFlow::Break(()));
                 }
-                _ => unreachable!("ordinary expanded delivery returns only commands"),
-            };
-            if provenance == OriginId::UNKNOWN {
-                provenance = command.origin();
-            }
-            let character = command.character();
-            if command.control_sequence().is_none()
-                && matches!(
-                    character,
-                    Some((ch, _)) if ch.eq_ignore_ascii_case(&char::from(letter))
-                )
-            {
-                matched.push(crate::input::BackedUpToken {
-                    spelling: command.spelling(),
-                });
-            } else if matched.is_empty() && matches!(character, Some((_, Catcode::Space))) {
-                // `(cur_cmd<>spacer)or(p<>backup_head)` is false: §407 drops
-                // the space and rereads without advancing `k`.
-            } else {
-                if let Err(error) = self.back_input(command) {
-                    fail!(error);
-                }
-                if !matched.is_empty() {
-                    self.back_list(matched);
-                }
-                call.put_complete(Self::keyword_result(false, provenance));
-                return ScalarCallStatus::Complete;
-            }
+                Ok(std::ops::ControlFlow::Continue(()))
+            })
+        };
+        if let Err(error) = result {
+            return self.finish_scalar_destination_error(error, call);
+        }
+        let matched_keyword = matched.len() == keyword.len();
+        if !matched_keyword && !matched.is_empty() {
+            // A mismatch backs the offender first, then the prefix as a
+            // separate level. At EOF only the actual prefix exists.
+            self.back_list(matched);
         }
         // `flush_list(link(backup_head))`: a complete match consumes its
         // tokens outright.
-        call.put_complete(Self::keyword_result(true, provenance));
+        call.put_complete(Self::keyword_result(matched_keyword, provenance));
         ScalarCallStatus::Complete
     }
 
@@ -1814,30 +1741,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         first: Option<u8>,
         radix: u8,
     ) -> Result<(i32, bool, Option<tex_state::diagnostic::DiagnosticSite>), CommandError> {
-        self.scan_radix_tail_from(i32::from(first.unwrap_or(0)), first.is_none(), false, radix)
-    }
-
-    fn scan_radix_tail_from(
-        &mut self,
-        mut value: i32,
-        mut vacuous: bool,
-        mut overflowed: bool,
-        radix: u8,
-    ) -> Result<(i32, bool, Option<tex_state::diagnostic::DiagnosticSite>), CommandError> {
+        let mut value = i32::from(first.unwrap_or(0));
+        let mut vacuous = first.is_none();
+        let mut overflowed = false;
         let mut missing_site = None;
-        loop {
-            // Digits are classified from the compact delivery; only an
-            // overflow report or the terminator's recovery needs more than
-            // the packed character word.
-            let mut command = None;
-            let delivery = self.request_expanded_token(&mut command)?;
-            let command = match delivery {
-                DeliveryStatus::Command => {
-                    command.expect("command delivery initializes destination")
-                }
-                DeliveryStatus::End => break,
-                _ => unreachable!("ordinary expanded delivery returns only commands"),
-            };
+        self.consume_expanded_commands(|processor, command| {
             let character = command.character();
             match radix_digit(character) {
                 Some(digit) if digit < radix => {
@@ -1855,8 +1763,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                             // `loc`. Later digits remain consumed, but do not
                             // repeat the report (`OK_so_far:=false`).
                             if !overflowed {
-                                let site = self.capture_diagnostic_site(Some(&command));
-                                self.number_too_big_error(Some(site))?;
+                                let site = processor.capture_diagnostic_site(Some(&command));
+                                processor.number_too_big_error(Some(site))?;
                                 overflowed = true;
                             }
                         }
@@ -1867,18 +1775,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                         // §446's `back_error`, which is `back_input; error`
                         // and so keeps even a spacer for the caller's report
                         // to pseudoprint.
-                        missing_site = Some(self.capture_diagnostic_site(Some(&command)));
-                        self.back_input(command)?;
-                    } else if self.back_input_unless_spacer(command)? {
+                        missing_site = Some(processor.capture_diagnostic_site(Some(&command)));
+                        processor.back_input(command)?;
+                    } else if processor.back_input_unless_spacer(command)? {
                         // A numeric constant absorbs one terminating space,
                         // so replay must not manufacture a backup transition
                         // before publishing it.
-                        self.integer_terminator_character = character;
+                        processor.integer_terminator_character = character;
                     }
-                    break;
+                    return Ok(std::ops::ControlFlow::Break(()));
                 }
             }
-        }
+            Ok(std::ops::ControlFlow::Continue(()))
+        })?;
         Ok((value, vacuous, missing_site))
     }
 
@@ -1928,16 +1837,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut fraction = [0_u8; 17];
         let mut fraction_len = 0;
         if decimal {
-            loop {
-                let mut command = None;
-                let delivery = self.request_expanded_token(&mut command)?;
-                let command = match delivery {
-                    DeliveryStatus::Command => {
-                        command.expect("command delivery initializes destination")
-                    }
-                    DeliveryStatus::End => break,
-                    _ => unreachable!("ordinary expanded delivery returns only commands"),
-                };
+            self.consume_expanded_commands(|processor, command| {
                 match command.character() {
                     Some((ch, Catcode::Other)) if ch.is_ascii_digit() => {
                         if fraction_len < fraction.len() {
@@ -1951,11 +1851,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // unit scan with `i` still unread rather than with a
                     // backed-up space in front of it.
                     _ => {
-                        self.back_input_unless_spacer(command)?;
-                        break;
+                        processor.back_input_unless_spacer(command)?;
+                        return Ok(std::ops::ControlFlow::Break(()));
                     }
                 }
-            }
+                Ok(std::ops::ControlFlow::Continue(()))
+            })?;
         }
         let (unit, magnification) = if allow_infinite
             && !decimal

@@ -244,22 +244,31 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
         role: ExpandedReaderRole,
+        terminal: &mut impl FnMut(
+            &mut Self,
+            &mut Option<CurrentCommand<G>>,
+            DeliveryStatus,
+        ) -> Result<ControlFlow<()>, CommandError>,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut expanded = false;
-        if STOP_PROTECTED
+        let supplied = destination.is_some();
+        let initial_status = if STOP_PROTECTED
             && destination.as_ref().is_some_and(|command| {
                 Self::protected_terminal(command, classify_hot_command(command))
-            })
-        {
-            return Ok(DeliveryStatus::Command);
-        }
-        if destination.is_some() {
-            if let Some(status) =
-                self.consume_supplied_command::<OBSERVED>(destination, initial_action)?
-            {
+            }) {
+            Some(DeliveryStatus::Command)
+        } else if supplied {
+            self.consume_supplied_command::<OBSERVED>(destination, initial_action)?
+        } else {
+            None
+        };
+        if let Some(status) = initial_status {
+            if let ControlFlow::Break(()) = terminal(self, destination, status)? {
                 return Ok(status);
             }
-            expanded = true;
+            destination.take();
+        } else {
+            expanded = supplied;
         }
         let status = self.consume_input(
             self.create_source_control_sequences,
@@ -307,40 +316,44 @@ impl<G> CommandProcessor<'_, '_, G> {
                         resolution.literal_catcode(),
                     )?;
                     let action = classify_hot_command(command);
-                    if STOP_PROTECTED && Self::protected_terminal(command, action) {
-                        return Ok(ControlFlow::Break(DeliveryStatus::Command));
-                    }
-                    if PRESERVE_UNDEFINED
-                        && matches!(
-                            action,
-                            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
-                        )
+                    let terminal_status = if STOP_PROTECTED
+                        && Self::protected_terminal(command, action)
                     {
-                        return Ok(ControlFlow::Break(
-                            processor
-                                .finish_terminal_expansion::<OBSERVED>(command, action, expanded),
-                        ));
+                        DeliveryStatus::Command
+                    } else {
+                        if !(PRESERVE_UNDEFINED
+                            && matches!(
+                                action,
+                                ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
+                            ))
+                            && let ExpandedCommandAction::Expand(dispatch) = action
+                        {
+                            processor.execute_expansion_action(command, dispatch)?;
+                            expanded = true;
+                            return Ok(ControlFlow::Continue(()));
+                        }
+                        if role == ExpandedReaderRole::MainControl
+                            && !expanded
+                            && matches!(action, ExpandedCommandAction::EndTemplate)
+                            && !matches!(
+                                command.alignment_adjustment(),
+                                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                            )
+                        {
+                            destination.take();
+                            processor.insert_frozen_endv()?;
+                            return Ok(ControlFlow::Continue(()));
+                        }
+                        processor.finish_terminal_expansion::<OBSERVED>(command, action, expanded)
+                    };
+                    match terminal(processor, destination, terminal_status)? {
+                        ControlFlow::Break(()) => Ok(ControlFlow::Break(terminal_status)),
+                        ControlFlow::Continue(()) => {
+                            destination.take();
+                            expanded = false;
+                            Ok(ControlFlow::Continue(()))
+                        }
                     }
-                    if let ExpandedCommandAction::Expand(dispatch) = action {
-                        processor.execute_expansion_action(command, dispatch)?;
-                        expanded = true;
-                        return Ok(ControlFlow::Continue(()));
-                    }
-                    if role == ExpandedReaderRole::MainControl
-                        && !expanded
-                        && matches!(action, ExpandedCommandAction::EndTemplate)
-                        && !matches!(
-                            command.alignment_adjustment(),
-                            crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                        )
-                    {
-                        destination.take();
-                        processor.insert_frozen_endv()?;
-                        return Ok(ControlFlow::Continue(()));
-                    }
-                    Ok(ControlFlow::Break(
-                        processor.finish_terminal_expansion::<OBSERVED>(command, action, expanded),
-                    ))
                 }
             },
             |status| Ok(ControlFlow::Break(status)),

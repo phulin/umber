@@ -28,7 +28,12 @@ fn install_identity<G>(universe: &mut tex_state::Universe<G>, name: &str, body: 
 
 // A source parent, replacement parent and argument parent all resume after
 // nested input. Fuel cuts exercise every intermediate return/unwind position.
-fn nested_readers(observed: bool, main_control: bool, limit: u64) -> (String, u64, bool) {
+fn nested_readers(
+    observed: bool,
+    main_control: bool,
+    fused: bool,
+    limit: u64,
+) -> (String, u64, bool) {
     crate::test_harness::with_universe(|universe| {
         for (ch, cat) in [('{', Catcode::BeginGroup), ('}', Catcode::EndGroup)] {
             universe
@@ -73,31 +78,48 @@ fn nested_readers(observed: bool, main_control: bool, limit: u64) -> (String, u6
         };
         let mut output = String::new();
         let mut destination = None;
-        let exhausted = loop {
-            let result = if main_control {
-                processor.main_control_expanded_into(&mut destination)
-            } else {
-                processor.get_x_token_into(&mut destination)
-            };
+        let exhausted = if fused {
+            let result = processor.consume_expanded_commands(|_, current| {
+                let Token::Char { ch, .. } = current.spelling().semantic_token() else {
+                    panic!("expected expanded character");
+                };
+                output.push(ch);
+                Ok(std::ops::ControlFlow::Continue(()))
+            });
+            assert_eq!(processor.command.transient.active_expansion_depth, 0);
+            assert_eq!(processor.expansion_depth, 0);
             match result {
-                Ok(crate::DeliveryStatus::End) => {
-                    assert!(destination.is_none());
-                    break false;
-                }
-                Ok(_) => {
-                    let current = destination.take().expect("delivered command");
-                    let Token::Char { ch, .. } = current.spelling().semantic_token() else {
-                        panic!("expected expanded character");
-                    };
-                    output.push(ch);
-                }
-                Err(crate::CommandError::FuelExhausted(_)) => {
-                    assert!(destination.is_none());
-                    assert_eq!(processor.command.transient.active_expansion_depth, 0);
-                    assert_eq!(processor.expansion_depth, 0);
-                    break true;
-                }
+                Ok(()) => false,
+                Err(crate::CommandError::FuelExhausted(_)) => true,
                 Err(error) => panic!("unexpected delivery error: {error:?}"),
+            }
+        } else {
+            loop {
+                let result = if main_control {
+                    processor.main_control_expanded_into(&mut destination)
+                } else {
+                    processor.get_x_token_into(&mut destination)
+                };
+                match result {
+                    Ok(crate::DeliveryStatus::End) => {
+                        assert!(destination.is_none());
+                        break false;
+                    }
+                    Ok(_) => {
+                        let current = destination.take().expect("delivered command");
+                        let Token::Char { ch, .. } = current.spelling().semantic_token() else {
+                            panic!("expected expanded character");
+                        };
+                        output.push(ch);
+                    }
+                    Err(crate::CommandError::FuelExhausted(_)) => {
+                        assert!(destination.is_none());
+                        assert_eq!(processor.command.transient.active_expansion_depth, 0);
+                        assert_eq!(processor.expansion_depth, 0);
+                        break true;
+                    }
+                    Err(error) => panic!("unexpected delivery error: {error:?}"),
+                }
             }
         };
         let burned = processor.fuel.burned();
@@ -113,12 +135,12 @@ fn nested_readers(observed: bool, main_control: bool, limit: u64) -> (String, u6
 
 #[test]
 fn input_frame_readers_resume_identically_with_and_without_observation() {
-    let ordinary = nested_readers(false, false, 100);
+    let ordinary = nested_readers(false, false, false, 100);
     assert_eq!(ordinary.0, "ALBCRD");
     assert!(!ordinary.2);
     for observed in [false, true] {
         for main_control in [false, true] {
-            assert_eq!(nested_readers(observed, main_control, 100), ordinary);
+            assert_eq!(nested_readers(observed, main_control, false, 100), ordinary);
         }
     }
 }
@@ -126,15 +148,29 @@ fn input_frame_readers_resume_identically_with_and_without_observation() {
 #[test]
 fn observation_specialization_preserves_every_nested_fuel_cut() {
     for limit in 1..=20 {
-        let ordinary = nested_readers(false, false, limit);
+        let ordinary = nested_readers(false, false, false, limit);
         for observed in [false, true] {
             for main_control in [false, true] {
                 assert_eq!(
-                    nested_readers(observed, main_control, limit),
+                    nested_readers(observed, main_control, false, limit),
                     ordinary,
                     "fuel {limit}"
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn synchronous_consumer_preserves_nested_readers_and_every_fuel_cut() {
+    for limit in (1..=20).chain([100]) {
+        let ordinary = nested_readers(false, false, false, limit);
+        for observed in [false, true] {
+            assert_eq!(
+                nested_readers(observed, false, true, limit),
+                ordinary,
+                "fuel {limit}"
+            );
         }
     }
 }

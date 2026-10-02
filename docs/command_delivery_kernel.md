@@ -95,6 +95,20 @@ implementation. Expansion chains stay iterative. EOF, replay completion, and
 errors clear outward destinations; every recursive expansion depth is restored
 on error. No runtime consumer selector, boxed callback, parked continuation,
 parallel reader cache, or alternate recovery engine is introduced.
+
+Scalar scanners consume terminal commands synchronously inside this same
+expanded reader until their operand completes. Accepted keyword letters and
+leading spaces continue its existing back edge instead of returning through
+`get_x_token` and entering again. The ordinary single-command consumer stops
+at its first terminal command. Each scanner retains only its actual result,
+provenance, and any prefix needed for canonical backup.
+
+The consumer is selected statically for the call. Expansion, raw and expanded
+observation, alignment admission, provenance, and fuel still belong to the
+shared reader. The expanded-state fact resets after each consumed terminal
+command. Actual EOF and stored-replay completion use the existing cold input
+boundary; consumer locals never enter command state or a checkpoint.
+
 Conditional skipped-text delivery classifies into the final native meaning;
 it constructs no command for discarded tokens.
 When observation, command tracing, and alignment interception are absent,

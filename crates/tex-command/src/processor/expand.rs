@@ -381,6 +381,26 @@ impl<G> CommandProcessor<'_, '_, G> {
         initial_action: Option<ExpandedCommandAction>,
         role: ExpandedReaderRole,
     ) -> Result<DeliveryStatus, CommandError> {
+        self.consume_expanded_with_mode::<PRESERVE_UNDEFINED, STOP_PROTECTED>(
+            destination,
+            initial_action,
+            role,
+            &mut |_, _, _| Ok(std::ops::ControlFlow::Break(())),
+        )
+    }
+
+    #[inline(always)]
+    fn consume_expanded_with_mode<const PRESERVE_UNDEFINED: bool, const STOP_PROTECTED: bool>(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        initial_action: Option<ExpandedCommandAction>,
+        role: ExpandedReaderRole,
+        terminal: &mut impl FnMut(
+            &mut Self,
+            &mut Option<CurrentCommand<G>>,
+            DeliveryStatus,
+        ) -> Result<std::ops::ControlFlow<()>, CommandError>,
+    ) -> Result<DeliveryStatus, CommandError> {
         let depth = self.command.transient.active_expansion_depth;
         let Some(active_depth) = depth.checked_add(1) else {
             return self.fail_hot_expanded_delivery(
@@ -395,12 +415,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 destination,
                 initial_action,
                 role,
+                terminal,
             )
         } else {
             self.expanded_delivery_loop::<false, PRESERVE_UNDEFINED, STOP_PROTECTED>(
                 destination,
                 initial_action,
                 role,
+                terminal,
             )
         };
         debug_assert_eq!(self.command.transient.active_expansion_depth, active_depth);
@@ -884,6 +906,43 @@ impl<G> CommandProcessor<'_, '_, G> {
                 DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
                     unreachable!("expanded delivery does not own a character consumer")
                 }
+            }
+        }
+    }
+
+    /// Keeps the actual scanner consumer inside the shared expansion reader.
+    /// Replay completion and EOF leave only at their real input boundary.
+    pub(crate) fn consume_expanded_commands(
+        &mut self,
+        mut consume: impl FnMut(
+            &mut Self,
+            CurrentCommand<G>,
+        ) -> Result<std::ops::ControlFlow<()>, CommandError>,
+    ) -> Result<(), CommandError> {
+        let mut destination = None;
+        loop {
+            let result = self.consume_expanded_with_mode::<false, false>(
+                &mut destination,
+                None,
+                ExpandedReaderRole::Scanner,
+                &mut |processor, destination, status| {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    if status == DeliveryStatus::AlignmentEndTemplate {
+                        processor.begin_scalar_alignment_v_template(&command)?;
+                        return Ok(std::ops::ControlFlow::Continue(()));
+                    }
+                    consume(processor, command)
+                },
+            )?;
+            match result {
+                DeliveryStatus::ReplayCompleted(_) => continue,
+                DeliveryStatus::End
+                | DeliveryStatus::Command
+                | DeliveryStatus::PendingExpanded
+                | DeliveryStatus::AlignmentClosingBrace => return Ok(()),
+                _ => unreachable!("expanded scanner has no character consumer"),
             }
         }
     }
@@ -1409,12 +1468,12 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[cold]
     #[inline(never)]
-    fn fail_hot_expanded_delivery(
+    fn fail_hot_expanded_delivery<R>(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         depth: u32,
         failure: CommandError,
-    ) -> Result<DeliveryStatus, CommandError> {
+    ) -> Result<R, CommandError> {
         destination.take();
         self.command.transient.active_expansion_depth = depth;
         Err(failure)
