@@ -433,12 +433,15 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   the character: §207 makes `spacer` the command a category-10 character
   carries, and §349 is what normalizes such a character's `cur_chr` to a
   space inside §341's `get_next`. The same canonical scanner grammar handles
-  optional-equals, fixed-inline keyword prefixes, integers, dimensions, glue,
+  optional-equals, borrowed keywords with bounded matched prefixes, integers, dimensions, glue,
   filenames, internal values, expressions, and font selectors. Scalar state is
   call-local; it is never copied into an executor phase or retained across a
   resource boundary. Ordinary dimensions, glue coefficients and expression
   shortcuts share one synchronous decimal/unit grammar; no dimension progress
   enum, stage cursor or duplicated staged unit scanner remains.
+  Character tests project native character/category facts directly. The last
+  integer terminator retains only those facts for decimal and infinite-unit
+  lookahead, rather than a duplicate whole decoded meaning.
   Success and error cleanup close local scopes deepest-first,
   while a resource miss unwinds the whole call tree and the host replays from a
   full checkpoint. Do not add a root mailbox, caller-order result tape,

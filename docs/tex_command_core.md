@@ -1766,9 +1766,13 @@ pre-coordinate kernel at `ac3ba1b85`:
 | Resident carrier              | Before | Coordinate kernel | Reduction |
 | ----------------------------- | -----: | ----------------: | --------: |
 | `CurrentCommand<()>`          |    112 |                72 |        40 |
-| `MatchedKeywordPrefix<()>`    |    536 |               120 |       416 |
 | `PendingScalarFrame<()>`      |    592 |               208 |       384 |
 | executor `CommandEpisode<()>` |    672 |               632 |        40 |
+
+The keyword scanner now borrows its keyword and keeps only the actual bounded
+matched prefix locally. The former generation-branded prefix wrapper and copied
+inline keyword are deleted. Its character tests project the native resolved
+word directly, without constructing a whole decoded meaning.
 
 The focused optimized destination-delivery gate performs 24,576 warmed raw,
 token, and expanded deliveries through the one reusable command destination

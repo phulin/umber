@@ -86,6 +86,13 @@ optional-space scan; font-relative units consume their own optional space;
 and magnification errors report before the physical unit is read. Removing
 stages does not replace those semantic transitions with speculative lookahead.
 
+Keywords borrow their existing ASCII spelling. Their only local collection is
+the bounded matched prefix that a failed match must replay. They do not copy
+the keyword into a second inline string or attach a generation brand to
+temporary spellings. Character tests project character and category directly
+from the resolved native word; character aliases still use their resolved
+meaning, and control sequences remain ineligible as keyword letters.
+
 ## Verification
 
 Owner tests cover consumption, nested scopes, stale coordinates, failed

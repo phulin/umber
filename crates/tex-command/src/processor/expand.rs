@@ -89,24 +89,15 @@ fn classify_hot_command<G>(command: &CurrentCommand<G>) -> ExpandedCommandAction
 
 #[inline(always)]
 fn hot_decimal_digit<G>(command: &CurrentCommand<G>) -> Option<u8> {
-    match command.static_meaning() {
-        Some(Meaning::CharToken {
-            ch: ch @ '0'..='9',
-            cat: Catcode::Other,
-        }) => Some(ch as u8 - b'0'),
+    match command.character() {
+        Some((ch @ '0'..='9', Catcode::Other)) => Some(ch as u8 - b'0'),
         _ => None,
     }
 }
 
 #[inline(always)]
 fn hot_is_space<G>(command: &CurrentCommand<G>) -> bool {
-    matches!(
-        command.static_meaning(),
-        Some(Meaning::CharToken {
-            cat: Catcode::Space,
-            ..
-        })
-    )
+    matches!(command.character(), Some((_, Catcode::Space)))
 }
 
 impl<G> CommandProcessor<'_, '_, G> {

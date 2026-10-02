@@ -1355,6 +1355,25 @@ impl Meaning {
         word & OPERAND_MASK
     }
 
+    /// Projects a character command without decoding an unrelated meaning.
+    /// Character aliases retain their resolved value; `\chardef` is excluded.
+    #[doc(hidden)]
+    #[must_use]
+    #[inline]
+    pub const fn runtime_word_character(word: u64) -> Option<(char, Catcode)> {
+        if (word >> OPCODE_SHIFT) as u8 != OP_CHAR_TOKEN {
+            return None;
+        }
+        let operand = word & OPERAND_MASK;
+        match (
+            char::from_u32((operand >> 4) as u32),
+            catcode_from_raw((operand & 15) as u8),
+        ) {
+            (Some(ch), Some(cat)) => Some((ch, cat)),
+            _ => None,
+        }
+    }
+
     /// Decodes a validated runtime static-meaning word.
     ///
     /// Command delivery deliberately retains this word until a rich semantic

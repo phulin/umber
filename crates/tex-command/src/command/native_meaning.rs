@@ -72,19 +72,21 @@ impl<G> CurrentCommand<G> {
         }
     }
 
-    pub(crate) fn character_catcode(&self) -> Option<Catcode> {
-        match self.static_meaning() {
-            Some(Meaning::CharToken { cat, .. }) => Some(cat),
+    #[inline(always)]
+    pub(crate) fn character(&self) -> Option<(char, Catcode)> {
+        match self.command {
+            MeaningWord::Static(word) => Meaning::runtime_word_character(word),
             _ => None,
         }
     }
 
+    pub(crate) fn character_catcode(&self) -> Option<Catcode> {
+        self.character().map(|(_, cat)| cat)
+    }
+
     /// Literal character spelling excludes the numeric `\chardef` value.
     pub(crate) fn character_token(&self) -> Option<char> {
-        match self.static_meaning() {
-            Some(Meaning::CharToken { ch, .. }) => Some(ch),
-            _ => None,
-        }
+        self.character().map(|(ch, _)| ch)
     }
 
     /// TeX82 §26's numeric character value also includes `\chardef`.

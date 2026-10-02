@@ -286,6 +286,8 @@ expose substores or introduce another arena.
   inspects this native tag/operand without a derived command class. Main-control
   switch keys project disjoint small scalar/catcode/primitive ranges from the
   actual word; stored words and capabilities retain their native encodings.
+  Scalar character/category projections read that same native word directly,
+  preserving character aliases without decoding unrelated meaning variants.
 - `src/meaning/tests.rs`: Static codec, primitive, typed macro-meaning, and
   complete native selector/family non-aliasing tests.
 - `src/measurement.rs`, `src/measurement/hot_core.rs`, and

@@ -9,7 +9,7 @@ use tex_state::scaled::{
     PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction, scale_true_dimension_parts,
     scaled_from_decimal_parts, xn_over_d,
 };
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token};
 
 use tex_state::{BoxDimension, PenaltyArrayKind, PrepareMagDiagnostic};
 
@@ -34,51 +34,6 @@ const IMPROPER_AUXILIARY_HELP: &[&str] = &[
 /// The longest production keyword is 13 characters. Longer or non-ASCII
 /// spellings are rejected because they are outside the canonical vocabulary.
 const KEYWORD_PREFIX_INLINE_CAPACITY: usize = 13;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct InlineKeyword {
-    bytes: [u8; KEYWORD_PREFIX_INLINE_CAPACITY],
-    len: u8,
-}
-
-impl InlineKeyword {
-    fn parse(keyword: &str) -> Result<Self, CommandError> {
-        if !keyword.is_ascii() || keyword.len() > KEYWORD_PREFIX_INLINE_CAPACITY {
-            return Err(CommandError::input_invariant());
-        }
-        let mut bytes = [0; KEYWORD_PREFIX_INLINE_CAPACITY];
-        bytes[..keyword.len()].copy_from_slice(keyword.as_bytes());
-        Ok(Self {
-            bytes,
-            len: keyword.len() as u8,
-        })
-    }
-
-    fn get(self, index: usize) -> Option<char> {
-        (index < usize::from(self.len)).then(|| char::from(self.bytes[index]))
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct MatchedKeywordPrefix<G> {
-    inline: smallvec::SmallVec<[crate::input::BackedUpToken; KEYWORD_PREFIX_INLINE_CAPACITY]>,
-    _generation: core::marker::PhantomData<fn(&G) -> &G>,
-}
-
-impl<G> MatchedKeywordPrefix<G> {
-    fn is_empty(&self) -> bool {
-        self.inline.is_empty()
-    }
-
-    fn push(&mut self, spelling: TracedTokenWord) {
-        debug_assert!(self.inline.len() < KEYWORD_PREFIX_INLINE_CAPACITY);
-        self.inline.push(crate::input::BackedUpToken { spelling });
-    }
-
-    fn into_backed_up(self) -> impl Iterator<Item = crate::input::BackedUpToken> {
-        self.inline.into_iter()
-    }
-}
 
 fn observed_glue_value(value: &GlueSpec) -> ObservationValue {
     ObservationValue::Glue {
@@ -459,33 +414,21 @@ const DECIMAL_RADIX: u8 = 10;
 /// exactly like a period: `3,5pt` is `3.5pt`, and a leading `,5pt` is
 /// `0.5pt`.
 fn is_point_token<G>(command: &CurrentCommand<G>) -> bool {
-    is_point_meaning(&scalar_meaning(command.meaning()))
+    is_point_character(command.character())
 }
 
-/// TeX82 §445's digit test on the whole token: `0`-`9` are other
-/// characters, while `A`-`F` may be letters or others.
-const fn radix_digit(meaning: &Meaning) -> Option<u8> {
-    match *meaning {
-        Meaning::CharToken {
-            ch: ch @ '0'..='9',
-            cat: Catcode::Other,
-        } => Some(ch as u8 - b'0'),
-        Meaning::CharToken {
-            ch: ch @ 'A'..='F',
-            cat: Catcode::Letter | Catcode::Other,
-        } => Some(ch as u8 - b'A' + 10),
+/// TeX82 §445's digit test: decimal digits are others; hexadecimal letters
+/// may be letters or others. Character aliases use their resolved value.
+const fn radix_digit(character: Option<(char, Catcode)>) -> Option<u8> {
+    match character {
+        Some((ch @ '0'..='9', Catcode::Other)) => Some(ch as u8 - b'0'),
+        Some((ch @ 'A'..='F', Catcode::Letter | Catcode::Other)) => Some(ch as u8 - b'A' + 10),
         _ => None,
     }
 }
 
-const fn is_point_meaning(meaning: &Meaning) -> bool {
-    matches!(
-        meaning,
-        Meaning::CharToken {
-            ch: '.' | ',',
-            cat: Catcode::Other,
-        }
-    )
+const fn is_point_character(character: Option<(char, Catcode)>) -> bool {
+    matches!(character, Some(('.' | ',', Catcode::Other)))
 }
 
 /// The outcome of TeX82 §449's internal-quantity fetch inside `scan_dimen`.
@@ -700,18 +643,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
-            match command.static_meaning() {
-                Some(Meaning::CharToken {
-                    ch: ' ',
-                    cat: Catcode::Space,
-                }) => continue,
+            match command.character() {
+                Some((' ', Catcode::Space)) => continue,
                 // §405 compares `cur_tok` with `other_token + '='`, not the
                 // character code alone. Every other-category variant is an
                 // operand and follows the canonical backup path below.
-                Some(Meaning::CharToken {
-                    ch: '=',
-                    cat: Catcode::Other,
-                }) => {
+                Some(('=', Catcode::Other)) => {
                     call.put_complete(ScannedScalar {
                         value: true,
                         recovery: ScalarRecovery::None,
@@ -776,6 +713,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The comparison itself is on `cur_chr` alone, so a keyword letter
     /// matches under any category code, and `cur_chr-"a"+"A"` accepts the
     /// uppercase form of tex.web's all-lowercase keywords.
+    #[inline(always)]
     fn scan_keyword(&mut self, keyword: &str) -> Result<ScannedScalar<bool>, CommandError> {
         let mut call = ScalarCallFrame::default();
         match self.scan_keyword_into_call(keyword, &mut call) {
@@ -796,17 +734,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             }};
         }
 
-        let keyword = match InlineKeyword::parse(keyword) {
-            Ok(keyword) => keyword,
-            Err(error) => fail!(error),
-        };
-        // `link(backup_head)`: the tokens matched so far, in delivery order.
-        let mut matched = MatchedKeywordPrefix {
-            inline: smallvec::SmallVec::new(),
-            _generation: core::marker::PhantomData,
-        };
+        if !keyword.is_ascii() || keyword.len() > KEYWORD_PREFIX_INLINE_CAPACITY {
+            fail!(CommandError::input_invariant());
+        }
+        // `link(backup_head)`: only the prefix needed by a failed match.
+        let mut matched = smallvec::SmallVec::<
+            [crate::input::BackedUpToken; KEYWORD_PREFIX_INLINE_CAPACITY],
+        >::new();
         let mut provenance = OriginId::UNKNOWN;
-        while let Some(letter) = keyword.get(matched.inline.len()) {
+        while let Some(&letter) = keyword.as_bytes().get(matched.len()) {
             // Keyword letters are classified from the compact delivery; a
             // mismatch backs the same compact command up.
             let mut command = None;
@@ -825,7 +761,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // exhausted input is `\end`'s business. Restore the prefix
                     // the same way a mismatch would and report no keyword.
                     if !matched.is_empty() {
-                        self.back_matched_keyword_prefix(matched);
+                        self.back_list(matched);
                     }
                     call.put_complete(Self::keyword_result(false, provenance));
                     return ScalarCallStatus::Complete;
@@ -835,23 +771,17 @@ impl<G> CommandProcessor<'_, '_, G> {
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
-            let meaning = command.static_meaning();
+            let character = command.character();
             if command.control_sequence().is_none()
                 && matches!(
-                    meaning,
-                    Some(Meaning::CharToken { ch, .. }) if ch.eq_ignore_ascii_case(&letter)
+                    character,
+                    Some((ch, _)) if ch.eq_ignore_ascii_case(&char::from(letter))
                 )
             {
-                matched.push(command.spelling());
-            } else if matched.is_empty()
-                && matches!(
-                    meaning,
-                    Some(Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    })
-                )
-            {
+                matched.push(crate::input::BackedUpToken {
+                    spelling: command.spelling(),
+                });
+            } else if matched.is_empty() && matches!(character, Some((_, Catcode::Space))) {
                 // `(cur_cmd<>spacer)or(p<>backup_head)` is false: §407 drops
                 // the space and rereads without advancing `k`.
             } else {
@@ -859,7 +789,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     fail!(error);
                 }
                 if !matched.is_empty() {
-                    self.back_matched_keyword_prefix(matched);
+                    self.back_list(matched);
                 }
                 call.put_complete(Self::keyword_result(false, provenance));
                 return ScalarCallStatus::Complete;
@@ -869,13 +799,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         // tokens outright.
         call.put_complete(Self::keyword_result(true, provenance));
         ScalarCallStatus::Complete
-    }
-
-    /// §407's `back_list(link(backup_head))`, over commands rather than raw
-    /// tokens so the replayed prefix keeps each delivery's exact spelling and
-    /// source provenance.
-    fn back_matched_keyword_prefix(&mut self, matched: MatchedKeywordPrefix<G>) {
-        self.back_list(matched.into_backed_up());
     }
 
     const fn keyword_result(value: bool, primary: OriginId) -> ScannedScalar<bool> {
@@ -1244,7 +1167,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     false,
                 ),
                 InternalDimension::Prefix(integer) => {
-                    self.last_integer_terminator = None;
+                    self.integer_terminator_character = None;
                     self.scan_dimension_units(
                         integer,
                         false,
@@ -1294,13 +1217,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         allow_infinite: bool,
         mu: bool,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
-        self.last_integer_terminator = None;
+        self.integer_terminator_character = None;
         let mut integer_call = ScalarCallFrame::default();
         let integer = scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call));
-        let decimal = self
-            .last_integer_terminator
-            .as_ref()
-            .is_some_and(is_point_meaning);
+        let decimal = is_point_character(self.integer_terminator_character);
         if decimal {
             let mut point = None;
             match self.get_token_into(&mut point)? {
@@ -1470,7 +1390,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §448's `scan_dimen(mu,false,true)` shortcut: the integer part is
     /// already in hand, so only the units remain to be scanned.
     fn scan_dimension_shortcut(&mut self, integer: i32, mu: bool) -> Result<Scaled, CommandError> {
-        self.last_integer_terminator = None;
+        self.integer_terminator_character = None;
         let (units, flip) = self.scan_units_after_integer(integer, false, false, mu)?;
         if !units.attach_sign {
             self.scan_optional_space()?;
@@ -1918,8 +1838,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 DeliveryStatus::End => break,
                 _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
-            let meaning = command.static_meaning();
-            match meaning.as_ref().and_then(radix_digit) {
+            let character = command.character();
+            match radix_digit(character) {
                 Some(digit) if digit < radix => {
                     vacuous = false;
                     let next = value
@@ -1949,11 +1869,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                         // to pseudoprint.
                         missing_site = Some(self.capture_diagnostic_site(Some(&command)));
                         self.back_input(command)?;
-                    } else if self.back_hot_input_unless_spacer(command, meaning)? {
+                    } else if self.back_input_unless_spacer(command)? {
                         // A numeric constant absorbs one terminating space,
                         // so replay must not manufacture a backup transition
                         // before publishing it.
-                        self.last_integer_terminator = meaning;
+                        self.integer_terminator_character = character;
                     }
                     break;
                 }
@@ -2018,11 +1938,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     DeliveryStatus::End => break,
                     _ => unreachable!("ordinary expanded delivery returns only commands"),
                 };
-                match scalar_meaning(command.meaning()) {
-                    Meaning::CharToken {
-                        ch,
-                        cat: Catcode::Other,
-                    } if ch.is_ascii_digit() => {
+                match command.character() {
+                    Some((ch, Catcode::Other)) if ch.is_ascii_digit() => {
                         if fraction_len < fraction.len() {
                             fraction[fraction_len] = ch as u8 - b'0';
                             fraction_len += 1;
@@ -2043,9 +1960,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         let (unit, magnification) = if allow_infinite
             && !decimal
             && self
-                .last_integer_terminator
+                .integer_terminator_character
                 .as_ref()
-                .is_some_and(|meaning| matches!(meaning, Meaning::CharToken { ch: 'f', .. }))
+                .is_some_and(|&(ch, _)| ch == 'f')
         {
             // `scan_int` has already observed and backed up the leading `f`.
             // Replay it once, then finish the `fil` suffix without routing the
@@ -2352,28 +2269,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryStatus::End => return Ok(()),
             _ => unreachable!("ordinary expanded delivery returns only commands"),
         };
-        self.back_hot_input_unless_spacer(command, command.static_meaning())?;
+        self.back_input_unless_spacer(command)?;
         Ok(())
-    }
-
-    /// [`Self::back_input_unless_spacer`] for a compact delivery whose static
-    /// meaning the caller has already decoded.
-    fn back_hot_input_unless_spacer(
-        &mut self,
-        command: CurrentCommand<G>,
-        meaning: Option<Meaning>,
-    ) -> Result<bool, CommandError> {
-        if matches!(
-            meaning,
-            Some(Meaning::CharToken {
-                cat: Catcode::Space,
-                ..
-            })
-        ) {
-            return Ok(false);
-        }
-        self.back_input(command)?;
-        Ok(true)
     }
 
     /// TeX82's `if cur_cmd<>spacer then back_input`, applied to a terminator
@@ -2398,13 +2295,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §379's inserted frozen_relax remains a non-space command. The
         // numeric scanner must back it up before conditional evaluation
         // resumes, just as it does for an ordinary explicit \relax.
-        if matches!(
-            scalar_meaning(command.meaning()),
-            Meaning::CharToken {
-                cat: Catcode::Space,
-                ..
-            }
-        ) {
+        if command.character_catcode() == Some(Catcode::Space) {
             return Ok(false);
         }
         self.back_input(command)?;

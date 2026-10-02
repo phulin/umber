@@ -231,11 +231,10 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// Candidate for this raw fetch only. Every fetch clears it, and only a
     /// settled §342 command can publish it to the journaled command root.
     pending_diagnostic_location: Option<crate::DiagnosticLocation>,
-    /// The static meaning of the non-numeric command that completed the most
-    /// recent integer scan. The command itself remains backed up in input;
-    /// dimension scanning uses this semantic fact to decide whether that
-    /// replay is a decimal point or a unit.
-    pub(crate) last_integer_terminator: Option<tex_state::meaning::Meaning>,
+    /// Character facts of the most recent integer terminator, which remains
+    /// backed up in input. Dimension scanning needs only a decimal-point or
+    /// leading `f` test, never a copy of the whole decoded meaning.
+    pub(crate) integer_terminator_character: Option<(char, tex_state::token::Catcode)>,
     next_delivery_sequence: u64,
     /// Set only by canonical outer-validity recovery while a scalar macro
     /// matcher owns `ScannerStatus::Matching`.
@@ -689,7 +688,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             pending_file_warning_context: None,
             paragraph_word: None,
             pending_diagnostic_location: None,
-            last_integer_terminator: None,
+            integer_terminator_character: None,
             next_delivery_sequence: 0,
             read_line_ended: false,
             outer_recovered_while_matching: false,
