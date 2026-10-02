@@ -1,7 +1,7 @@
 //! Direct, consumer-selected reads of the authoritative input frame.
 
-use super::{InputFrameTransition, ReadSite};
-use crate::input::{InputLevel, InputLevelId, ResidentTokenStorage};
+use super::ReadSite;
+use crate::input::{InputLevel, ResidentTokenStorage};
 use crate::{CommandError, CommandProcessor};
 use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
@@ -29,15 +29,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             return Ok(false);
         }
-        let selected = self.consume_resident_input(
-            &mut |_, _, _, _, _, _| ControlFlow::<(), bool>::Continue(false),
-            &mut |_, _, _, _, _, _| Err(CommandError::input_invariant()),
-        )?;
-        let ControlFlow::Continue(transition) = selected else {
-            return Err(CommandError::input_invariant());
-        };
-        match self.transition_input_frame(
-            transition,
+        match self.advance_input_boundary(
             self.create_source_control_sequences,
             &mut |_, _, _, _, _, _| Err::<(), _>(CommandError::input_invariant()),
         )? {
@@ -68,45 +60,33 @@ impl<G> CommandProcessor<'_, '_, G> {
             ReadSite,
             crate::fuel::RawDeliveryKind,
         ) -> Result<R, CommandError>,
-    ) -> Result<ControlFlow<R, InputFrameTransition>, CommandError> {
+    ) -> Result<Option<R>, CommandError> {
         let levels = &mut self.command.roots.input.levels;
-        let Some(resident_index) = levels.rows.len().checked_sub(1) else {
-            return Ok(ControlFlow::Continue(InputFrameTransition::Boundary(
-                crate::input::ResidentBoundary::Empty,
-            )));
+        let Some(row) = levels.rows.last_mut() else {
+            return Ok(None);
         };
-        let row = match &mut levels.rows[resident_index] {
-            InputLevel::Source(_) => {
-                return Ok(ControlFlow::Continue(InputFrameTransition::Source {
-                    resident_index,
-                }));
-            }
-            InputLevel::Resident(row) => row,
+        let InputLevel::Resident(row) = row else {
+            return Ok(None);
         };
         let frame = &mut row.header.frame;
         if frame.position() >= frame.limit() {
-            return Ok(ControlFlow::Continue(
-                InputFrameTransition::ResidentExhausted {
-                    resident_index,
-                    identity: InputLevelId(frame.identity()),
-                },
-            ));
+            return Ok(None);
         }
         macro_rules! consume_run {
-            ($words:expr, $project:expr) => {{
+            ($words:expr, $project:expr, $parameters:expr) => {{
                 let words = $words;
                 let start = frame.start() as usize;
                 loop {
                     let position = frame.position();
                     if position >= frame.limit() {
-                        return Ok(ControlFlow::Continue(
-                            InputFrameTransition::ResidentExhausted {
-                                resident_index,
-                                identity: InputLevelId(frame.identity()),
-                            },
-                        ));
+                        return Ok(None);
                     }
                     let (word, origin) = $project(words[start + position as usize]);
+                    if $parameters && word.out_parameter_slot().is_some() {
+                        // The owning cold parameter call advances this position
+                        // exactly once before attempting substitution.
+                        return Ok(None);
+                    }
                     frame.advance_resident();
                     match admit(
                         self.state,
@@ -118,7 +98,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ) {
                         ControlFlow::Continue(true) => {}
                         ControlFlow::Continue(false) => break (word, origin),
-                        ControlFlow::Break(result) => return Ok(ControlFlow::Break(result)),
+                        ControlFlow::Break(result) => return Ok(Some(result)),
                     }
                 }
             }};
@@ -126,40 +106,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         let (word, origin) = match &row.storage {
             ResidentTokenStorage::MacroBody(body) => consume_run!(
                 body.body.definition_words(),
-                |word| (word, OriginId::UNKNOWN)
+                |word| (word, OriginId::UNKNOWN),
+                true
             ),
             ResidentTokenStorage::StoredList(list) => {
-                consume_run!(list.words(), |word| (word, OriginId::UNKNOWN))
+                consume_run!(list.words(), |word| (word, OriginId::UNKNOWN), true)
             }
             ResidentTokenStorage::MacroArgument { region, .. } => consume_run!(
                 levels.arguments.region(*region),
-                |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin())
+                |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin()),
+                false
             ),
-            _ => consume_run!(&levels.words, |word: tex_state::token::TracedTokenWord| (
-                word.token_word(),
-                word.origin()
-            )),
+            _ => consume_run!(
+                &levels.words,
+                |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin()),
+                true
+            ),
         };
-        if let Some(slot) = word.out_parameter_slot() {
-            let span = match &row.storage {
-                ResidentTokenStorage::MacroBody(body) => {
-                    Some(body.argument_span(&levels.parameters, slot))
-                }
-                ResidentTokenStorage::MacroArgument { .. } => None,
-                ResidentTokenStorage::List(_) | ResidentTokenStorage::StoredList(_) => Some(None),
-            };
-            if let Some(span) = span {
-                return Ok(ControlFlow::Continue(InputFrameTransition::Parameter {
-                    slot,
-                    region: match &row.storage {
-                        ResidentTokenStorage::MacroBody(body) => body.argument_region,
-                        _ => None,
-                    },
-                    span,
-                    active_source: frame.source_context(),
-                }));
-            }
-        }
         let suppress = frame.flags().contains(
             tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
         );
@@ -169,6 +132,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             _ => crate::fuel::RawDeliveryKind::StoredToken,
         };
-        finish(self, word, origin, suppress, ReadSite::Resident, kind).map(ControlFlow::Break)
+        finish(self, word, origin, suppress, ReadSite::Resident, kind).map(Some)
     }
 }

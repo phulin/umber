@@ -39,6 +39,13 @@ scalar result unions, publication frames and projection/status APIs are absent.
 Nested scalar calls retain their own typed value/error slots only at actual
 call boundaries that avoid copying cold error payloads on successful reads.
 
+Resident input completes directly into its consumer or leaves the authoritative
+row/cursor at a real source, exhaustion or parameter boundary. There is no
+input-transition descriptor or immediately consuming transition dispatcher.
+Actual cold input owners read that row after the span borrow ends. Parameter
+substitution advances once before pushing; consumed character prefixes return
+before exhaustion/retirement, and MacroArgument words remain raw.
+
 ## File Map
 
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.

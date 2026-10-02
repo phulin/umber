@@ -1,8 +1,8 @@
 //! Source reading and cold transitions of the shared semantic input stack.
 
-use super::{InputFrameTransition, ReadSite};
+use super::ReadSite;
 use crate::input::{
-    InputLevel, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
+    InputLevel, InputLevelId, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
     ResidentSourceTop, SourceNameClass,
 };
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
@@ -66,21 +66,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )
                 .map(|result| Some(ControlFlow::Continue(result)))
             }
-            ResidentSourceAdvance::InvalidCharacter => self.transition_input_frame(
-                InputFrameTransition::Boundary(ResidentBoundary::InvalidCharacter),
-                create_control_sequences,
-                finish,
-            ),
-            ResidentSourceAdvance::NeedLine(identity) => self.transition_input_frame(
-                InputFrameTransition::Boundary(ResidentBoundary::NeedLine(identity)),
-                create_control_sequences,
-                finish,
-            ),
-            ResidentSourceAdvance::Exhausted(identity) => self.transition_input_frame(
-                InputFrameTransition::Boundary(ResidentBoundary::SourceExhausted(identity)),
-                create_control_sequences,
-                finish,
-            ),
+            ResidentSourceAdvance::InvalidCharacter => {
+                self.finish_input_boundary(ResidentBoundary::InvalidCharacter, finish)
+            }
+            ResidentSourceAdvance::NeedLine(identity) => {
+                self.finish_input_boundary(ResidentBoundary::NeedLine(identity), finish)
+            }
+            ResidentSourceAdvance::Exhausted(identity) => {
+                self.finish_input_boundary(ResidentBoundary::SourceExhausted(identity), finish)
+            }
         }
     }
 
@@ -237,9 +231,8 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[cold]
     #[inline(never)]
-    pub(super) fn transition_input_frame<R>(
+    pub(super) fn advance_input_boundary<R>(
         &mut self,
-        transition: InputFrameTransition,
         create_control_sequences: bool,
         finish: &mut impl FnMut(
             &mut Self,
@@ -250,44 +243,78 @@ impl<G> CommandProcessor<'_, '_, G> {
             crate::fuel::RawDeliveryKind,
         ) -> Result<R, CommandError>,
     ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
-        let cold = match transition {
-            InputFrameTransition::Source { resident_index } => {
-                return self.advance_source_token(resident_index, create_control_sequences, finish);
-            }
-            InputFrameTransition::Boundary(boundary) => boundary,
-            InputFrameTransition::ResidentExhausted {
-                resident_index,
-                identity,
-            } => {
-                let retirement = self.command.finish_resident_exhaustion(
-                    resident_index,
-                    identity,
-                    &mut self.observer,
-                    &mut self.immediate_write_retirement,
-                );
-                let Some(retirement) = retirement else {
-                    return Ok(None);
-                };
-                retirement
-            }
-            InputFrameTransition::Parameter {
-                slot,
-                region,
-                span,
-                active_source,
-            } => {
-                self.command
-                    .push_resident_parameter_cursor(
-                        slot,
-                        region,
-                        span,
-                        active_source,
-                        &mut self.observer,
-                    )
-                    .map_err(|()| CommandError::input_invariant())?;
-                return Ok(None);
-            }
+        let Some(index) = self.command.roots.input.levels.rows.len().checked_sub(1) else {
+            return self.finish_input_boundary(ResidentBoundary::Empty, finish);
         };
+        if matches!(
+            self.command.roots.input.levels.rows[index],
+            InputLevel::Source(_)
+        ) {
+            return self.advance_source_token(index, create_control_sequences, finish);
+        }
+        let levels = &mut self.command.roots.input.levels;
+        let InputLevel::Resident(row) = &mut levels.rows[index] else {
+            return Err(CommandError::input_invariant());
+        };
+        let frame = &mut row.header.frame;
+        if frame.position() < frame.limit() {
+            let position = frame.start() as usize + frame.position() as usize;
+            let word = match &row.storage {
+                crate::input::ResidentTokenStorage::MacroBody(body) => {
+                    body.body.definition_words().get(position).copied()
+                }
+                crate::input::ResidentTokenStorage::StoredList(list) => {
+                    list.words().get(position).copied()
+                }
+                crate::input::ResidentTokenStorage::List(_) => {
+                    levels.words.get(position).map(|word| word.token_word())
+                }
+                crate::input::ResidentTokenStorage::MacroArgument { .. } => None,
+            }
+            .ok_or_else(CommandError::input_invariant)?;
+            let slot = word
+                .out_parameter_slot()
+                .ok_or_else(CommandError::input_invariant)?;
+            let (region, span) = match &row.storage {
+                crate::input::ResidentTokenStorage::MacroBody(body) => (
+                    body.argument_region,
+                    body.argument_span(&levels.parameters, slot),
+                ),
+                _ => (None, None),
+            };
+            let source = frame.source_context();
+            frame.advance_resident();
+            self.command
+                .push_resident_parameter_cursor(slot, region, span, source, &mut self.observer)
+                .map_err(|()| CommandError::input_invariant())?;
+            return Ok(None);
+        }
+        let identity = InputLevelId(frame.identity());
+        let Some(boundary) = self.command.finish_resident_exhaustion(
+            index,
+            identity,
+            &mut self.observer,
+            &mut self.immediate_write_retirement,
+        ) else {
+            return Ok(None);
+        };
+        self.finish_input_boundary(boundary, finish)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn finish_input_boundary<R>(
+        &mut self,
+        cold: ResidentBoundary,
+        finish: &mut impl FnMut(
+            &mut Self,
+            TokenWord,
+            OriginId,
+            bool,
+            ReadSite,
+            crate::fuel::RawDeliveryKind,
+        ) -> Result<R, CommandError>,
+    ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
         match cold {
             ResidentBoundary::Empty => {
                 observe!(

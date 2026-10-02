@@ -123,33 +123,30 @@ impl<G> CommandProcessor<'_, '_, G> {
                     },
                 )?;
                 let status = match selected {
-                    ControlFlow::Break(status) => status,
-                    ControlFlow::Continue(transition) => {
-                        match self.transition_input_frame(
-                            transition,
-                            self.create_source_control_sequences,
-                            &mut |processor, word, origin, suppress, site, kind| {
-                                processor.charge_command_action()?;
-                                processor
-                                    .finish_delivered_word::<false>(
-                                        word,
-                                        origin,
-                                        suppress,
-                                        site,
-                                        kind,
-                                        destination,
-                                    )
-                                    .map(Some)
-                            },
-                        )? {
-                            None => continue,
-                            Some(ControlFlow::Continue(status)) => status,
-                            Some(ControlFlow::Break(status)) => {
-                                destination.take();
-                                return Ok(status);
-                            }
+                    Some(status) => status,
+                    None => match self.advance_input_boundary(
+                        self.create_source_control_sequences,
+                        &mut |processor, word, origin, suppress, site, kind| {
+                            processor.charge_command_action()?;
+                            processor
+                                .finish_delivered_word::<false>(
+                                    word,
+                                    origin,
+                                    suppress,
+                                    site,
+                                    kind,
+                                    destination,
+                                )
+                                .map(Some)
+                        },
+                    )? {
+                        None => continue,
+                        Some(ControlFlow::Continue(status)) => status,
+                        Some(ControlFlow::Break(status)) => {
+                            destination.take();
+                            return Ok(status);
                         }
-                    }
+                    },
                 };
                 let Some(status) = status else {
                     return self.get_next_into(destination);

@@ -163,6 +163,29 @@ It checks 1,024 genuinely nested scans and the default capacity boundary for
 all five operand families on a dedicated 256 MiB virtual native stack.
 This is separate from the routine tests of exact boundary accounting.
 
+## Native word completion and cold input ownership
+
+Resident delivery returns only its actual consumer completion or no word. It
+never constructs an input-transition descriptor containing row coordinates,
+argument regions, parameter spans or source facts. When no word is available,
+the actual input owner selects the current top row and cursor after the span
+borrow ends. It handles source acquisition, exhaustion and parameter
+substitution directly, passing only the operands needed by the owning call.
+
+A replacement parameter stops the resident reader before advancing. Its actual
+substitution owner advances the cursor exactly once before attempting the
+argument push; a failed push keeps that same consumed position. A final
+replacement parameter is substituted before parent retirement. Words stored in
+a `MacroArgument` remain raw and do not acquire replacement-parameter semantics.
+Fuel remains charged at the existing semantic word admission, not at a new
+transition or span charge.
+
+A consumed character prefix returns before an empty or exhausted input owner
+retires. Its pending characters and observer metadata therefore retain their
+existing publication boundary. Source batching reads the actual top source
+owner. EOF, replay completion, diagnostics and resource failures leave through
+their real input owner, with no cached transition facts or extra dispatcher.
+
 ## Resident character runs
 
 Main control borrows the exposed resident reader once and consumes ordinary

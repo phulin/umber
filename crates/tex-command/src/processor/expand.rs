@@ -10,7 +10,7 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::CommandError;
 use crate::command::{CommandClass, CurrentCommand};
-use crate::input::{InputLevelId, ResidentBoundary};
+use crate::input::InputLevel;
 
 use super::expand_render::format_pdf_date;
 use super::{
@@ -26,23 +26,6 @@ use crate::observation::{
 enum ExpandedReaderRole {
     Scanner,
     MainControl,
-}
-
-enum InputFrameTransition {
-    Source {
-        resident_index: usize,
-    },
-    Boundary(ResidentBoundary),
-    ResidentExhausted {
-        resident_index: usize,
-        identity: InputLevelId,
-    },
-    Parameter {
-        slot: u8,
-        region: Option<crate::input::ArgumentRegionId>,
-        span: Option<crate::input::ArgumentSpan>,
-        active_source: Option<tex_state::packed_input::SourceContext>,
-    },
 }
 
 #[derive(Clone, Copy)]
@@ -309,23 +292,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.pending_diagnostic_location = None;
         self.charge_command_action()?;
         loop {
-            match self.consume_resident_input(
+            if let Some(result) = self.consume_resident_input(
                 &mut |_, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
                 finish,
             )? {
-                std::ops::ControlFlow::Break(result) => {
-                    return Ok(result);
-                }
-                std::ops::ControlFlow::Continue(transition) => {
-                    if let Some(result) =
-                        self.transition_input_frame(transition, create_control_sequences, finish)?
-                    {
-                        return Ok(match result {
-                            std::ops::ControlFlow::Continue(value) => value,
-                            std::ops::ControlFlow::Break(status) => finished(status),
-                        });
-                    }
-                }
+                return Ok(result);
+            }
+            if let Some(result) = self.advance_input_boundary(create_control_sequences, finish)? {
+                return Ok(match result {
+                    std::ops::ControlFlow::Continue(value) => value,
+                    std::ops::ControlFlow::Break(status) => finished(status),
+                });
             }
         }
     }
@@ -605,28 +582,38 @@ impl<G> CommandProcessor<'_, '_, G> {
                     )
                 },
             )?;
-            let transition = match selected {
-                std::ops::ControlFlow::Break(status) => return Ok(status),
-                std::ops::ControlFlow::Continue(transition) => transition,
-            };
+            if let Some(status) = selected {
+                return Ok(status);
+            }
             if consumed_characters
-                && matches!(
-                    transition,
-                    InputFrameTransition::Boundary(ResidentBoundary::Empty)
-                        | InputFrameTransition::ResidentExhausted { .. }
-                )
+                && self
+                    .command
+                    .roots
+                    .input
+                    .levels
+                    .rows
+                    .last()
+                    .is_none_or(|row| match row {
+                        InputLevel::Resident(row) => {
+                            row.header.frame.position() >= row.header.frame.limit()
+                        }
+                        InputLevel::Source(_) => false,
+                    })
             {
                 return Ok(DeliveryStatus::CharacterRun);
             }
-            if let InputFrameTransition::Source { resident_index } = transition
+            if let Some(index) = self.command.roots.input.levels.rows.len().checked_sub(1)
+                && matches!(
+                    self.command.roots.input.levels.rows[index],
+                    InputLevel::Source(_)
+                )
                 && self
-                    .advance_source_character_step(resident_index, consume)?
+                    .advance_source_character_step(index, consume)?
                     .is_some()
             {
                 return Ok(DeliveryStatus::CharacterRun);
             }
-            if let Some(result) = self.transition_input_frame(
-                transition,
+            if let Some(result) = self.advance_input_boundary(
                 self.create_source_control_sequences,
                 &mut |processor, word, origin, suppress, site, kind| {
                     processor.finish_character_boundary(
