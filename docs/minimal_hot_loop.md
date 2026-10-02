@@ -26,6 +26,8 @@ reads, so later assignments cannot change it. Font and definition capabilities
 keep their complete identities, and raw recovery, alignment, tracing and
 observation retain their existing settlement chronology.
 
+The native definition admission folds into its actual activation consumer;
+no separate bank-admission call copies an immediately consumed owner result.
 A macro frame retains the complete immutable
 words/matcher/origin payload once and then reads its slices directly. Stored
 lists similarly retain their real immutable owners. Meaning reads, replacement
@@ -48,7 +50,10 @@ meaning before replacement. There is no namespace promotion, delayed naked old
 meaning, definition frontier, accepted row tail or append-only payload history.
 
 `ArgumentArena` retains one pooled vector per simultaneous invocation. Matching
-writes every word once; at most nine half-open ranges describe arguments.
+writes every word and each of at most nine half-open ranges once into that
+final region. Publishing transfers only its owner coordinate; no call-local
+range array is copied into a separate parameter stack. A scalar live parameter
+count supplies TeX’s capacity and high-water bookkeeping.
 Parameter frames borrow the body-owned region. Delimiter holdback occupies an
 unpublished suffix, and brace trimming narrows the range. Parent retirement,
 child capture, recovery backup and forwarded-source reads have independent

@@ -21,17 +21,18 @@ impl ArgumentRegionId {
     }
 }
 
-/// Call-local ranges. Neither this value nor a matcher cursor enters a snapshot.
+/// Move-only capture owner; final ranges already reside beside the words.
+/// Neither this owner nor a matcher cursor enters a snapshot.
 #[derive(Debug)]
 pub(crate) struct MatchedArguments {
     region: ArgumentRegionId,
-    spans: [ArgumentSpan; 9],
-    count: u8,
 }
 
 #[derive(Debug, Default)]
 struct Region {
     words: Vec<TracedTokenWord>,
+    spans: [ArgumentSpan; 9],
+    count: u8,
     occupied: bool,
 }
 
@@ -51,9 +52,10 @@ impl Eq for ArgumentArena {}
 impl Hash for ArgumentArena {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.capture.hash(state);
-        for (index, words) in self.live_regions() {
+        for (index, words, spans) in self.live_regions() {
             index.hash(state);
             words.hash(state);
+            spans.hash(state);
         }
     }
 }
@@ -61,12 +63,18 @@ impl Hash for ArgumentArena {
 pub(crate) type MacroWords<'a> = core::iter::Copied<core::slice::Iter<'a, TracedTokenWord>>;
 
 impl ArgumentArena {
-    fn live_regions(&self) -> impl Iterator<Item = (usize, &[TracedTokenWord])> {
+    fn live_regions(&self) -> impl Iterator<Item = (usize, &[TracedTokenWord], &[ArgumentSpan])> {
         self.regions
             .iter()
             .enumerate()
             .filter(|(_, region)| region.occupied)
-            .map(|(index, region)| (index, region.words.as_slice()))
+            .map(|(index, region)| {
+                (
+                    index,
+                    region.words.as_slice(),
+                    &region.spans[..usize::from(region.count)],
+                )
+            })
     }
 
     pub(crate) fn begin_match(&mut self) -> Result<MatchedArguments, ScratchError> {
@@ -91,16 +99,13 @@ impl ArgumentArena {
             ArgumentRegionId(id)
         };
         self.regions[region.index()].occupied = true;
+        self.regions[region.index()].count = 0;
         self.capture = Some(region);
-        Ok(MatchedArguments {
-            region,
-            spans: [ArgumentSpan::default(); 9],
-            count: 0,
-        })
+        Ok(MatchedArguments { region })
     }
 
     pub(crate) fn begin_argument(&self, matching: &MatchedArguments) -> ArgumentCursor {
-        debug_assert!(matching.count < 9);
+        debug_assert!(self.regions[matching.region.index()].count < 9);
         let start = self.tail(matching.region);
         ArgumentCursor {
             region: matching.region,
@@ -113,20 +118,17 @@ impl ArgumentArena {
         }
     }
 
-    /// Publishes coordinates only; the body assumes the region's sole ownership.
-    pub(crate) fn publish(
-        &mut self,
-        matching: MatchedArguments,
-        parameters: &mut Vec<ArgumentSpan>,
-    ) -> Result<ArgumentRegionId, ScratchError> {
-        let count = usize::from(matching.count);
-        parameters
-            .try_reserve(count)
-            .map_err(|_| ScratchError::AllocationFailed)?;
-        parameters.extend_from_slice(&matching.spans[..count]);
+    /// Transfers the final region's sole owner; words and ranges stay in place.
+    pub(crate) fn publish(&mut self, matching: MatchedArguments) -> ArgumentRegionId {
         debug_assert_eq!(self.capture, Some(matching.region));
         self.capture = None;
-        Ok(matching.region)
+        matching.region
+    }
+
+    #[inline(always)]
+    pub(crate) fn spans(&self, id: ArgumentRegionId) -> &[ArgumentSpan] {
+        let region = &self.regions[id.index()];
+        &region.spans[..usize::from(region.count)]
     }
 
     pub(crate) fn abort_capture(&mut self) {
@@ -321,23 +323,24 @@ impl ArgumentArena {
     }
 
     pub(crate) fn publish_argument(
-        &self,
+        &mut self,
         matching: &mut MatchedArguments,
         writer: ArgumentCursor,
     ) -> Result<(), ScratchError> {
         if writer.region != matching.region
-            || matching.count >= 9
+            || self.regions[matching.region.index()].count >= 9
             || writer.holdback_len != 0
             || writer.visible_end != self.tail(writer.region)
         {
             return Err(ScratchError::InvalidCoordinate);
         }
         let (start, end) = writer.range()?;
-        matching.spans[usize::from(matching.count)] = ArgumentSpan {
+        let region = &mut self.regions[matching.region.index()];
+        region.spans[usize::from(region.count)] = ArgumentSpan {
             start,
             len: end - start,
         };
-        matching.count += 1;
+        region.count += 1;
         Ok(())
     }
 

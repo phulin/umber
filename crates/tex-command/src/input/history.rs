@@ -544,17 +544,16 @@ impl DiagnosticSourceCursor {
 /// Rows cover sources and token lists. Each source row owns its variable
 /// source state directly; transient token rows read `words`, while immutable
 /// definitions and durable lists retain their immutable owner in the row. Arguments
-/// read their body-owned pooled region. A macro activation's
-/// argument spans live in `parameters` (TeX82's `param_stack`). Pushing
-/// appends and popping truncates the corresponding LIFO owner; a checkpoint
-/// copies the stack instead of journaling it.
+/// read their body-owned pooled region, which also owns the final argument
+/// ranges. The live parameter count supplies native capacity bookkeeping.
+/// Popping returns the actual region; checkpoints admit no active macros.
 pub(crate) struct InputStack<G> {
     pub(crate) rows: Vec<InputLevel<G>>,
     /// Ordinary insertion and backup words, in push order.
     pub(crate) words: Vec<tex_state::token::TracedTokenWord>,
     pub(crate) arguments: super::ArgumentArena,
-    /// Argument spans of every live macro activation, in push order.
-    pub(crate) parameters: Vec<super::ArgumentSpan>,
+    /// Native live parameter count for TeX capacity/high-water bookkeeping.
+    pub(crate) parameter_count: usize,
     occupied_source_buffer_slots: usize,
     row_admissions: u64,
     source_owner_swaps: u64,
@@ -566,7 +565,7 @@ impl<G> Default for InputStack<G> {
             rows: Vec::new(),
             words: Vec::new(),
             arguments: super::ArgumentArena::default(),
-            parameters: Vec::new(),
+            parameter_count: 0,
             occupied_source_buffer_slots: 0,
             row_admissions: 0,
             source_owner_swaps: 0,
@@ -587,7 +586,7 @@ impl<G: PartialEq> PartialEq for InputStack<G> {
     fn eq(&self, other: &Self) -> bool {
         self.rows == other.rows
             && self.words == other.words
-            && self.parameters == other.parameters
+            && self.parameter_count == other.parameter_count
             && self.arguments == other.arguments
     }
 }
@@ -599,7 +598,7 @@ impl<G: Hash> Hash for InputStack<G> {
         self.rows.hash(state);
         self.words.hash(state);
         self.arguments.hash(state);
-        self.parameters.hash(state);
+        self.parameter_count.hash(state);
     }
 }
 
@@ -634,15 +633,16 @@ impl<'a, G> IntoIterator for &'a InputStack<G> {
 impl<G> InputStack<G> {
     /// Copies a quiescent stack for a checkpoint capture.
     ///
-    /// Quiescence excludes macro bodies and arguments, so the argument-span
-    /// stack is empty and every token row is a plain list.
+    /// Quiescence excludes macro bodies and arguments, so the live parameter
+    /// count is zero and every token row is a plain list.
     pub(crate) fn checkpoint_copy(&self) -> Self {
         debug_assert!(self.arguments.is_empty());
+        debug_assert_eq!(self.parameter_count, 0);
         Self {
             rows: self.rows.iter().map(InputLevel::checkpoint_copy).collect(),
             words: self.words.clone(),
             arguments: super::ArgumentArena::default(),
-            parameters: self.parameters.clone(),
+            parameter_count: self.parameter_count,
             occupied_source_buffer_slots: self.occupied_source_buffer_slots,
             row_admissions: 0,
             source_owner_swaps: 0,
@@ -658,7 +658,7 @@ impl<G> InputStack<G> {
         self.rows
             .extend(capture.rows.iter().map(InputLevel::checkpoint_copy));
         self.words.clone_from(&capture.words);
-        self.parameters.clone_from(&capture.parameters);
+        self.parameter_count = capture.parameter_count;
         self.occupied_source_buffer_slots = capture.occupied_source_buffer_slots;
         self.row_admissions = self.row_admissions.saturating_add(1);
         self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
@@ -770,7 +770,8 @@ impl<G> InputStack<G> {
             ) => Some((row, body)),
             _ => None,
         })?;
-        let arguments = self.parameters[body.parameter_base as usize..]
+        let arguments = body
+            .argument_spans(&self.arguments)
             .iter()
             .map(|span| {
                 self.arguments
@@ -1430,7 +1431,7 @@ impl<G> InputStack<G> {
                     row,
                     &mut self.words,
                     &mut self.arguments,
-                    &mut self.parameters,
+                    &mut self.parameter_count,
                 );
                 None
             }
@@ -1457,7 +1458,7 @@ impl<G> InputStack<G> {
                 row,
                 &mut self.words,
                 &mut self.arguments,
-                &mut self.parameters,
+                &mut self.parameter_count,
             );
             // The row owns its shared payload until suffix release finishes.
             // Drop it here without moving the enum and payload through temporaries.
@@ -1474,7 +1475,7 @@ impl<G> InputStack<G> {
         row: &super::ResidentTokenRow<G>,
         words: &mut Vec<tex_state::token::TracedTokenWord>,
         arguments: &mut super::ArgumentArena,
-        parameters: &mut Vec<super::ArgumentSpan>,
+        parameter_count: &mut usize,
     ) {
         match &row.storage {
             super::ResidentTokenStorage::List(_) => {
@@ -1483,9 +1484,9 @@ impl<G> InputStack<G> {
             super::ResidentTokenStorage::StoredList(_) => {}
             super::ResidentTokenStorage::MacroBody(body) => {
                 if let Some(region) = body.argument_region {
+                    *parameter_count -= arguments.spans(region).len();
                     arguments.release(region);
                 }
-                parameters.truncate(body.parameter_base as usize);
             }
             super::ResidentTokenStorage::MacroArgument { .. } => {}
         }
@@ -1566,11 +1567,6 @@ impl<G> InputStack<G> {
                     .saturating_mul(std::mem::size_of::<tex_state::token::TracedTokenWord>()),
             )
             .saturating_add(self.arguments.retained_bytes())
-            .saturating_add(
-                self.parameters
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<super::ArgumentSpan>()),
-            )
     }
 
     fn replace_source_buffer_slots(&mut self, prior: usize, current: usize) {

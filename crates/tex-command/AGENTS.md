@@ -70,9 +70,11 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   no duplicate scan depth, macro argument payload, or publication capability.
 - `src/input/arguments.rs`, `src/input/arguments/tests.rs`: final macro
   `ArgumentArena`, with one reusable vector per simultaneous invocation.
-  A call-local `MatchedArguments` holds at most nine ranges; `ArgumentCursor`
+  Each region holds at most nine final ranges; call-local `MatchedArguments` transfers only its owner coordinate, and `ArgumentCursor`
   holds brace/group facts and the unpublished delimiter suffix. Publication
-  transfers the region to the macro body without copying words; parameter
+  transfers the region to the macro body without copying words or ranges; no
+  separate parameter vector or body parameter-base/count cache remains. One
+  live parameter count preserves native capacity/high-water bookkeeping; parameter
   rows borrow it. Parent retirement and recovery input have independent
   lifetimes. Every Result exit releases an unfinished capture, and body
   retirement returns the region. Named captures exclude the allocator pool;
@@ -505,13 +507,14 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 - `src/token_collector.rs`: scanner-owned in-progress collector for token-list
   and definition scans. It owns their one raw packed-spelling classification,
   destination phase, and publication cursor. Macro argument matching reuses
-  only `ClassifiedToken`; its purpose-built writer and generation-owned words
-  live in `execution_scratch.rs`, with no generic destination dispatch.
-- `src/macro_call.rs`, `src/input/levels.rs`, and `src/execution_scratch.rs`:
+  only `ClassifiedToken`; its purpose-built writer and invocation-owned words
+  and ranges live in `input/arguments.rs`, with no generic destination dispatch.
+- `src/macro_call.rs`, `src/input/levels.rs`, and `src/input/arguments.rs`:
   activation retains the final definition body and transfers the invocation's
-  already-written argument region. The parameter stack holds at most nine
-  ranges into that region. A `MacroBody` row borrows the sealed replacement;
-  body retirement returns the region and truncates the parameter ranges.
+  already-written argument region, including its at most nine final ranges.
+  A `MacroBody` row borrows the sealed replacement; body retirement subtracts
+  the region's native parameter count and returns the whole owner. There is no
+  copied parameter vector or frame parameter-base/count cache.
   An out-parameter word pushes a `MacroArgument` row over its range.
   Parameterless macros create no matcher or argument state, and ordinary
   empty replacements retain no exhausted input row.

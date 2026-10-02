@@ -128,11 +128,6 @@ pub(crate) struct MacroBodyCursor<G> {
     pub(crate) invocation: OriginId,
     /// Sole owner of the invocation's final argument words, if parameterized.
     pub(crate) argument_region: Option<super::ArgumentRegionId>,
-    /// TeX82's `param_start`: the argument-span stack length before this
-    /// activation pushed its spans.
-    pub(crate) parameter_base: u32,
-    /// Number of argument spans published by this activation.
-    pub(crate) argument_count: u8,
     pub(crate) body: tex_state::ResidentMacroBody<G>,
 }
 
@@ -242,17 +237,26 @@ pub(crate) enum SourceRetirement {
 }
 
 impl<G> MacroBodyCursor<G> {
-    /// TeX82 §359's `param_stack[param_start+cur_chr-1]`: the span of
-    /// argument `#slot`, if this activation matched that many.
+    /// Argument ranges belong to this invocation's final region.
+    #[inline(always)]
+    pub(crate) fn argument_spans<'a>(
+        &self,
+        arguments: &'a super::ArgumentArena,
+    ) -> &'a [ArgumentSpan] {
+        self.argument_region
+            .map_or(&[], |region| arguments.spans(region))
+    }
+
+    /// TeX82 §359's argument `#slot`, if this activation matched that many.
     #[inline(always)]
     pub(crate) fn argument_span(
         &self,
-        parameters: &[ArgumentSpan],
+        arguments: &super::ArgumentArena,
         slot: u8,
     ) -> Option<ArgumentSpan> {
-        let index =
-            (self.parameter_base as usize).checked_add(usize::from(slot).checked_sub(1)?)?;
-        parameters.get(index).copied()
+        self.argument_spans(arguments)
+            .get(usize::from(slot).checked_sub(1)?)
+            .copied()
     }
 }
 

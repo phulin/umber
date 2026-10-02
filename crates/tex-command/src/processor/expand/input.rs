@@ -278,7 +278,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let (region, span) = match &row.storage {
                 crate::input::ResidentTokenStorage::MacroBody(body) => (
                     body.argument_region,
-                    body.argument_span(&levels.parameters, slot),
+                    body.argument_span(&levels.arguments, slot),
                 ),
                 _ => (None, None),
             };

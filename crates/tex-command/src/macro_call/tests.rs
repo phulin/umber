@@ -456,7 +456,7 @@ fn successful_macro_calls_admit_resident_replacement_and_argument_regions() {
             assert_eq!(!arguments.is_empty(), has_arguments);
             assert_eq!(replacement.len(), expected_replacement_len);
             assert_eq!(
-                processor.command.input.levels.parameters.len(),
+                processor.command.input.levels.parameter_count,
                 arguments.len()
             );
             assert!(processor.command.scratch.is_quiescent());
@@ -520,7 +520,7 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
             let activates = expected;
             assert_eq!(processor.macro_call(&mut call), Ok(expected));
             assert!(processor.command.scratch.is_quiescent());
-            assert!(processor.command.input.levels.parameters.is_empty());
+            assert_eq!(processor.command.input.levels.parameter_count, 0);
             if activates {
                 let (arguments, _) = processor
                     .command
@@ -1774,7 +1774,7 @@ fn parameterized_tail_chain_reuses_two_final_regions_and_preserves_forwarded_wor
             0,
             "final body retirement returns every region"
         );
-        assert!(processor.command.input.levels.parameters.is_empty());
+        assert_eq!(processor.command.input.levels.parameter_count, 0);
     });
 }
 

@@ -403,6 +403,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.definitions().admit_macro_body(id)
     }
 
+    #[inline(always)]
     pub(crate) fn admit_macro_definition(
         &self,
         id: DefinitionRef<G>,

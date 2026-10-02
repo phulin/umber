@@ -55,9 +55,7 @@ fn sequential_macro_body_reads_advance_once_in_optimized_delivery() {
             .admit_macro_body(definition)
             .expect("resident macro body");
         let mut command = CommandState::default();
-        command
-            .push_macro_activation(macro_name, body, None, OriginId::UNKNOWN)
-            .expect("macro activation");
+        command.push_macro_activation(macro_name, body, None, OriginId::UNKNOWN);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::new(2).expect("macro body delivery fuel");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();

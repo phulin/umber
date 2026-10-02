@@ -960,6 +960,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// Classifies one immutable definition while admitting only the owner an
     /// activation actually needs. Empty parameterless replacements retain no
     /// region owner on the ordinary path.
+    #[inline(always)]
     pub fn admit_macro_definition(
         &self,
         id: DefinitionRef<G>,

@@ -65,9 +65,7 @@ fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
         };
         let probe = body.clone();
         let mut command = CommandState::default();
-        command
-            .push_macro_activation(name.symbol(), body, None, OriginId::UNKNOWN)
-            .expect("macro activation");
+        command.push_macro_activation(name.symbol(), body, None, OriginId::UNKNOWN);
         assert!(command.input.levels.words.is_empty());
         assert_eq!(probe.profile_region_owner_count(), 3);
 
@@ -92,9 +90,7 @@ fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
         let summary = command
             .publish_summary(universe)
             .expect("quiescent checkpoint");
-        command
-            .push_macro_activation(name.symbol(), probe.clone(), None, OriginId::UNKNOWN)
-            .expect("retained body activation");
+        command.push_macro_activation(name.symbol(), probe.clone(), None, OriginId::UNKNOWN);
         command
             .restore_summary(&summary, universe)
             .expect("aggregate restore releases active body");

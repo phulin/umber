@@ -328,15 +328,8 @@ impl<G> CommandState<G> {
                 ) => header.frame.limit(),
                 // The activation's live argument spans; its parameter text and
                 // replacement stand for TeX's shared definition list.
-                ResidentTokenStorage::MacroBody(body) => self
-                    .input
-                    .levels
-                    .parameters
-                    .get(
-                        body.parameter_base as usize
-                            ..body.parameter_base as usize + usize::from(body.argument_count),
-                    )
-                    .unwrap_or_default()
+                ResidentTokenStorage::MacroBody(body) => body
+                    .argument_spans(&self.input.levels.arguments)
                     .iter()
                     .map(|span| span.len as usize)
                     .sum::<usize>() as u32,
@@ -357,22 +350,22 @@ impl<G> CommandState<G> {
     /// the matched arguments onto `param_stack`.
     ///
     /// The body row owns the final argument region and immutable definition span.
-    /// Retirement returns the region and truncates its parameter suffix.
+    /// Retirement returns the region and subtracts its actual parameter count.
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,
         body: tex_state::ResidentMacroBody<G>,
         matching: Option<MatchedArguments>,
         invocation: OriginId,
-    ) -> Result<InputLevelId, crate::execution_scratch::ScratchError> {
+    ) -> InputLevelId {
         let source = self.input.levels.current_source_context();
         let identity = self.allocate_input_level_identity();
         let levels = &mut self.roots.input.levels;
-        let parameter_base = levels.parameters.len();
         let argument_region = if let Some(matching) = matching {
-            let region = levels.arguments.publish(matching, &mut levels.parameters)?;
+            let region = levels.arguments.publish(matching);
+            levels.parameter_count += levels.arguments.spans(region).len();
             self.stack_usage
-                .record_parameter_push(levels.parameters.len());
+                .record_parameter_push(levels.parameter_count);
             Some(region)
         } else {
             None
@@ -388,20 +381,16 @@ impl<G> CommandState<G> {
             &ReplayTrace::MacroReplacement,
         );
         frame.set_source_context(source);
-        let argument_count = levels.parameters.len() - parameter_base;
         self.push_input_level(InputLevel::Resident(ResidentTokenRow {
             header: TokenRowHeader::new(frame),
             storage: ResidentTokenStorage::MacroBody(super::MacroBodyCursor {
                 name,
                 invocation,
                 argument_region,
-                parameter_base: parameter_base as u32,
-                argument_count: u8::try_from(argument_count)
-                    .expect("TeX macro parameter count fits u8"),
                 body,
             }),
         }));
-        Ok(identity)
+        identity
     }
 
     /// Accounts for TeX82's logical `begin_token_list` boundary when an empty
@@ -418,8 +407,7 @@ impl<G> CommandState<G> {
         let parameter_ptr = self
             .input
             .levels
-            .parameters
-            .len()
+            .parameter_count
             .saturating_add(parameter_count);
         self.stack_usage.record_parameter_push(parameter_ptr);
     }

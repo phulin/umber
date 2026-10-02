@@ -262,11 +262,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Ok(true);
             }
             self.conserve_input_stack_for_descendant()?;
-            let parameter_base = self.command.input.levels.parameters.len();
-            let _level = self
-                .command
-                .push_macro_activation(macro_name, body, matching.take(), call_site)
-                .map_err(|_| CommandError::input_invariant())?;
+            let _level =
+                self.command
+                    .push_macro_activation(macro_name, body, matching.take(), call_site);
             observe!(
                 self,
                 CommandObservation::Input(InputRecord {
@@ -283,10 +281,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 CommandObservation::Macro(MacroRecord::Activation {
                     control_sequence: self.state.resolve(macro_name).to_owned(),
                     argument_count: parameter_count as u8,
-                    token_count: self.command.input.levels.parameters[parameter_base..]
-                        .iter()
-                        .map(|span| u64::from(span.len))
-                        .sum(),
+                    token_count: match self.command.input.levels.rows.last() {
+                        Some(crate::input::InputLevel::Resident(row)) => match &row.storage {
+                            crate::input::ResidentTokenStorage::MacroBody(body) => body
+                                .argument_spans(&self.command.input.levels.arguments)
+                                .iter()
+                                .map(|span| u64::from(span.len))
+                                .sum(),
+                            _ => unreachable!("activation owns a macro body"),
+                        },
+                        _ => unreachable!("activation owns a resident row"),
+                    },
                 }),
             );
             Ok(true)
@@ -404,8 +409,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Some(body) = body {
             self.conserve_input_stack_for_descendant()?;
             self.command
-                .push_macro_activation(macro_name, body, None, call_site)
-                .map_err(|_| CommandError::input_invariant())?;
+                .push_macro_activation(macro_name, body, None, call_site);
         } else {
             self.conserve_input_stack()?;
             self.command.record_empty_macro_activation();

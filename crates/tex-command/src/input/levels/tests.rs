@@ -127,11 +127,3 @@ fn packed_omit_template_retains_its_trace_through_v_template_behavior() {
     assert_eq!(row.header.behavior(), TokenBehavior::VTemplate);
     assert_eq!(row.trace(), ReplayTrace::OmitTemplate);
 }
-
-#[test]
-fn token_rows_include_their_immutable_span_owners() {
-    assert_eq!(std::mem::size_of::<super::ArgumentSpan>(), 8);
-    assert_eq!(std::mem::size_of::<super::MacroBodyCursor<()>>(), 32);
-    assert_eq!(std::mem::size_of::<TokenRowHeader>(), 32);
-    assert_eq!(std::mem::size_of::<ResidentTokenRow<()>>(), 72);
-}

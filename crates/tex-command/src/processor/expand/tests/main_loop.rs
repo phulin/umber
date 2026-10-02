@@ -424,9 +424,7 @@ fn main_loop_character_run_charges_resident_macro_body_once_per_character() {
             .admit_macro_body(definition)
             .expect("resident macro body");
         let mut command = CommandState::default();
-        command
-            .push_macro_activation(macro_name, body, None, OriginId::UNKNOWN)
-            .expect("macro activation");
+        command.push_macro_activation(macro_name, body, None, OriginId::UNKNOWN);
 
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::new(4).expect("macro body character-run fuel");
@@ -518,9 +516,7 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
             .expect("macro body context")
             .admit_macro_body(body_definition)
             .expect("resident macro body");
-        command
-            .push_macro_activation(macro_name, body, Some(matching), OriginId::UNKNOWN)
-            .expect("macro activation");
+        command.push_macro_activation(macro_name, body, Some(matching), OriginId::UNKNOWN);
 
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::new(3).expect("macro argument fuel");

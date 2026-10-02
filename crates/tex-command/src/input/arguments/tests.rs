@@ -65,11 +65,14 @@ fn admitted_brace_delta_drives_nested_depth_and_first_scan_facts_once() {
         .expect("argument range");
 
     let address = arena.region(matching.region).as_ptr();
-    let mut parameters = Vec::new();
-    let region = arena
-        .publish(matching, &mut parameters)
-        .expect("publish coordinates");
-    assert_eq!(parameters, [ArgumentSpan { start: 1, len: 3 }]);
+    let ranges = arena.spans(matching.region).as_ptr();
+    let region = arena.publish(matching);
+    assert_eq!(
+        arena.spans(region).as_ptr(),
+        ranges,
+        "ranges stay in their final owner"
+    );
+    assert_eq!(arena.spans(region), [ArgumentSpan { start: 1, len: 3 }]);
     assert_eq!(&arena.region(region)[1..4], &words[1..4]);
     assert_eq!(
         arena.region(region).as_ptr(),
@@ -115,16 +118,13 @@ fn publication_keeps_delimiter_recovery_and_empty_argument_ranges() {
         .publish_argument(&mut matching, empty)
         .expect("empty argument");
 
-    let mut parameters = vec![ArgumentSpan { start: 7, len: 7 }];
-    let region = arena
-        .publish(matching, &mut parameters)
-        .expect("publish ranges");
+    let region = arena.publish(matching);
     assert_eq!(
         arena.region(region),
         [word('a'), word('b'), word('c'), word('x')]
     );
     assert_eq!(
-        parameters[1..],
+        arena.spans(region),
         [
             ArgumentSpan { start: 0, len: 2 },
             ArgumentSpan { start: 2, len: 2 },
@@ -206,9 +206,7 @@ fn forwarded_capture_survives_parent_release_and_abort_preserves_live_parent() {
     arena
         .publish_argument(&mut parent, cursor)
         .expect("parent span");
-    let parent = arena
-        .publish(parent, &mut Vec::new())
-        .expect("parent owner");
+    let parent = arena.publish(parent);
     let mut child = arena.begin_match().expect("child match");
     let mut cursor = arena.begin_argument(&child);
     for _ in &words {
@@ -228,7 +226,7 @@ fn forwarded_capture_survives_parent_release_and_abort_preserves_live_parent() {
     arena
         .publish_argument(&mut child, cursor)
         .expect("child span");
-    let child = arena.publish(child, &mut Vec::new()).expect("child owner");
+    let child = arena.publish(child);
     let failed = arena.begin_match().expect("next nested match");
     let mut cursor = arena.begin_argument(&failed);
     append_all(&mut arena, &mut cursor, [word('x')]);
@@ -279,4 +277,37 @@ fn checkpoint_reset_excludes_pool_semantics_and_retains_capacity_once() {
     append_all(&mut stack.arguments, &mut cursor, vec![word('y'); 1_024]);
     assert_eq!(stack.arguments.retained_bytes(), retained);
     stack.arguments.abort_capture();
+}
+
+#[test]
+fn reused_argument_region_does_not_retain_prior_range_suffix_as_semantic_state() {
+    fn capture(arena: &mut ArgumentArena, arguments: &[char]) -> ArgumentRegionId {
+        let mut matching = arena.begin_match().expect("match owner");
+        for &ch in arguments {
+            let mut cursor = arena.begin_argument(&matching);
+            append_all(arena, &mut cursor, [word(ch)]);
+            arena
+                .publish_argument(&mut matching, cursor)
+                .expect("argument range");
+        }
+        arena.publish(matching)
+    }
+    let mut reused = ArgumentArena::default();
+    let prior = capture(&mut reused, &['a', 'b', 'c']);
+    reused.release(prior);
+    let current = capture(&mut reused, &['x']);
+    let mut fresh = ArgumentArena::default();
+    let other = capture(&mut fresh, &['x']);
+    assert_eq!(reused.region(current), fresh.region(other));
+    assert_eq!(reused.spans(current), [ArgumentSpan { start: 0, len: 1 }]);
+    assert_eq!(
+        reused, fresh,
+        "unused prior ranges and pooled capacity are not semantic state"
+    );
+    fn semantic_hash(arena: &ArgumentArena) -> u64 {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        arena.hash(&mut hash);
+        hash.finish()
+    }
+    assert_eq!(semantic_hash(&reused), semantic_hash(&fresh));
 }

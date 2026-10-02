@@ -193,6 +193,7 @@ impl<G> DefinitionArena<G> {
     pub(crate) fn roots(&self) -> DefinitionRoots {
         DefinitionRoots(Rc::clone(&self.bank))
     }
+    #[inline(always)]
     pub(crate) fn admit_macro_definition(
         &self,
         id: DefinitionRef<G>,

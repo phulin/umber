@@ -90,8 +90,11 @@ mutation; do not wrap and revalidate old stamps.
 
 Macro arguments use invocation-owned pooled region vectors in the retained
 `ArgumentArena`. The macro body frame owns its invocation's argument region;
-parameter frames borrow that region. Construct all arguments into its one
-vector without per-argument allocation, second copy, or lease. Named
+parameter frames borrow that region. Construct all argument words and their
+at most nine ranges directly in this final owner, without a call-local range
+array, separate parameter vector, per-argument allocation, second copy, or
+lease. One scalar live parameter count supplies TeX capacity and high-water
+bookkeeping; body retirement subtracts its region’s count. Named
 checkpoint admission proves arguments empty. Returned vector capacities form
 an allocator cache charged once to the engine, not semantic checkpoint state.
 The `.10` implementation details may refine this physical pool without
