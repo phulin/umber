@@ -108,60 +108,76 @@ impl<G> DirectDispatch<'_, '_, G> {
             },
         )
     }
+}
 
-    pub(super) fn execute_enter_group(&mut self, kind: GroupKind) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-        self.control.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, modes, _, _, command, _, _, _, _, _, _, _| {
-                crate::box_runtime::flush_pending_hchars_with_fuel(
-                    modes,
-                    stores,
-                    command.diagnostic_effects,
-                    command.fuel,
-                )?;
-                {
-                    enter_group(stores, command.state, command.diagnostic_effects, kind);
-                    Ok(ReplayStep::Continue)
-                }
-            },
-        )
+impl<G> MainControl<G> {
+    pub(super) fn apply_native_group_enter(
+        &mut self,
+        context: &mut CommandContext<'_, G>,
+        effects: &mut DiagnosticEffects,
+        kind: GroupKind,
+    ) -> Result<ReplayStep, ExecError> {
+        crate::box_runtime::flush_pending_hchars_with_fuel(
+            &mut self.modes,
+            context,
+            effects,
+            self.fuel.fuel_mut(),
+        )?;
+        enter_group(context, &mut self.command, effects, kind);
+        Ok(ReplayStep::Continue)
     }
 
-    pub(super) fn execute_leave_group(
+    pub(super) fn apply_native_group_leave(
         &mut self,
+        context: &mut CommandContext<'_, G>,
+        effects: &mut DiagnosticEffects,
         kind: GroupKind,
-        context: &'static str,
+        error_context: &'static str,
     ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-        self.control.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, modes, _, _, command, _, _, _, _, _, _, _| {
-                crate::box_runtime::flush_pending_hchars_with_fuel(
-                    modes,
-                    stores,
-                    command.diagnostic_effects,
-                    command.fuel,
-                )?;
-                definition_assignments::leave_group(
-                    kind,
-                    context,
-                    &mut LinearCommandContext::new(stores),
-                    command,
-                )
-            },
-        )
+        crate::box_runtime::flush_pending_hchars_with_fuel(
+            &mut self.modes,
+            context,
+            effects,
+            self.fuel.fuel_mut(),
+        )?;
+        let (level, frame) = {
+            let frames = context.group_frames();
+            (frames.len(), frames.last().copied())
+        };
+        let mut facts = ExecutorHostFacts {
+            modes: &self.modes,
+            pdf_ignore_depth: self.pdf_ignore_depth,
+            telemetry: &mut self.episode_telemetry,
+        };
+        let mut processor = command_processor(
+            &mut self.command,
+            self.fuel.fuel_mut(),
+            &mut self.capabilities,
+            &mut facts,
+            &mut self.operation_observations,
+            effects,
+            context,
+        );
+        processor.set_output_routine_active(self.boxes.output_routine_active);
+        if let Some(frame) = frame {
+            processor.warn_cross_file_group_close(
+                level,
+                frame.kind().group_text(),
+                frame.entered_line(),
+            );
+        }
+        let result =
+            processor.end_group(kind, crate::assignments::tracing::trace_group_restoration);
+        drop(processor);
+        let frame = result.map_err(|_| ExecError::MissingToken {
+            context: error_context,
+        })?;
+        context.trace_group_leave(
+            effects,
+            frame.kind(),
+            u32::try_from(level).unwrap_or(u32::MAX),
+            frame.entered_line(),
+        );
+        Ok(ReplayStep::Continue)
     }
 }

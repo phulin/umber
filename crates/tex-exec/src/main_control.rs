@@ -2464,6 +2464,7 @@ impl<G> MainControl<G> {
         loop {
             self.assert_command_scratch_clear();
             let mut diagnostic_effects = DiagnosticEffects::new();
+            let mut completed_native_commands = 0;
             let pending =
                 if !self.page_region_succession_pending && !self.boxes.output_routine_active {
                     PendingPageOutputFacts::capture_runtime(stores)
@@ -2474,16 +2475,18 @@ impl<G> MainControl<G> {
                 self.fire_pending_page_output(stores, &mut diagnostic_effects, pending)
                     .map(|()| ReplayStep::Continue)
             } else {
-                self.execute_control(
+                self.execute_control_chunk(
                     stores,
                     None,
                     None,
                     &mut diagnostic_effects,
                     tracked_mark.is_some(),
                     &mut resource_provider,
+                    max_operations - operations,
+                    &mut completed_native_commands,
                 )
             };
-            operations += 1;
+            operations += completed_native_commands + 1;
             self.update_save_stack_highwater(stores);
             let boundary = self.episode_commit_boundary(
                 stores,

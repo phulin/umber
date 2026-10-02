@@ -8,7 +8,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 Command operands are scanned by `tex-command` into typed request and result values. Execution code must apply those completed values after the processor borrow ends; it must not add another source cursor, raw-token delivery loop, scanner facade, or command compatibility adapter.
 
-Group close calls `unsave_group`, which drives the same `CommandProcessor::end_group` native stack walk in the sole direct dispatcher. Its diagnostic callback renders each restoration while the saved owners are live; aftergroup words enter final input during unsave. There is no restoration receipt, token result vector, or delayed aftergroup scheduling helper. Ordinary, observed, diagnostic, and nested commands use that same group seam.
+Group close drives the same `CommandProcessor::end_group` native stack walk in the sole direct dispatcher. Its diagnostic callback renders each restoration while the saved owners are live; aftergroup words enter final input during unsave. There is no restoration receipt, token result vector, or delayed aftergroup scheduling helper. Ordinary, observed, diagnostic, and nested commands use that same group seam.
 
 ## Boundaries
 
@@ -39,9 +39,14 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
 - `src/main_control/direct/`: the single packed mode/command/prefix switch in
   `dispatch.rs`, with synchronous `scan_*` routines and concrete `apply_*`
   methods organized by native command responsibility. `scan_macros.rs` ends
-  the actual processor loan before applying completed operands; RELAX retains
-  its context for the authoritative character-boundary flush and then uses the
-  shared settlement tail. It owns no operation value or continuation. `characters.rs` consumes borrowed
+  the actual processor loan before applying completed operands. The native
+  fetch/reswitch loop retains its context through RELAX, ordinary groups,
+  integer/dimension registers, and arithmetic, settling each command's real
+  scratch and respecting the caller's remaining budget. Actual diagnostic,
+  observer/tracked, page/output, afterassignment and budget demands release the
+  loan for the common settlement tail. `scan_arithmetic.rs` scans concrete
+  operands in that same processor; register scans likewise stay in their native
+  switch arms. These paths own no operation value or continuation. `characters.rs` consumes borrowed
   source spans in the existing horizontal loop. `publication.rs` validates and
   reserves the complete scanner token root set before streaming final native
   token owners. `command_codes.rs` derives switch keys from packed meanings;

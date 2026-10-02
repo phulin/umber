@@ -3331,6 +3331,11 @@ impl<'a, G> CommandContext<'a, G> {
         self.resident.world.error_channel().error_count()
     }
 
+    /// Reads the real publication position before the next native command.
+    pub fn effect_pos(&self) -> crate::EffectPos {
+        self.resident.world.effect_pos()
+    }
+
     pub fn clear_error_count(&mut self) {
         self.resident.world.error_channel_mut().clear_error_count();
     }

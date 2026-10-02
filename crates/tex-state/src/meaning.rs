@@ -1319,6 +1319,7 @@ impl Meaning {
     /// register indices, character values, and other scanned operands do not.
     #[doc(hidden)]
     #[must_use]
+    #[inline]
     pub const fn runtime_word_control_code(word: u64) -> u64 {
         let opcode = (word >> OPCODE_SHIFT) as u8;
         let modifier = match opcode {

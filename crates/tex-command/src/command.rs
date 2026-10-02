@@ -1140,6 +1140,7 @@ impl<G> CurrentCommand<G> {
 
     /// Native packed command family and modifier for mode/command dispatch.
     #[must_use]
+    #[inline]
     pub fn control_code(&self) -> Option<u64> {
         match self.meaning {
             CommandWord::Static { word, .. } => Some(Meaning::runtime_word_control_code(word)),

@@ -244,14 +244,3 @@ pub(super) fn catcode_from_value(value: i32) -> Result<Catcode, ExecError> {
         }),
     }
 }
-
-pub(super) fn leave_group<G>(
-    kind: GroupKind,
-    context: &'static str,
-    stores: &mut LinearCommandContext<'_, '_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
-    warn_cross_file_group_close(stores, command);
-    unsave_group(stores, command, kind).map_err(|_| ExecError::MissingToken { context })?;
-    Ok(ReplayStep::Continue)
-}

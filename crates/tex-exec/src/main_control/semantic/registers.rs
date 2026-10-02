@@ -2,37 +2,39 @@
 use super::super::*;
 
 pub(in crate::main_control) fn execute_count<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    index: &mut u16,
-    value: &mut i32,
-    global: &mut bool,
+    stores: &mut CommandContext<'_, G>,
+    effects: &mut DiagnosticEffects,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    index: u16,
+    value: i32,
+    global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
+    let receipt = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
+        .count(index, value, global);
+    if let Some(receipts) = receipts
+        && let Some(record) = receipt.into_record()
     {
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .count(*index, *value, *global);
-        command.retain_assignment_receipt(receipt);
-        Ok(ReplayStep::Continue)
+        receipts.push(record);
     }
+    Ok(ReplayStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_dimen<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    index: &mut u16,
-    value: &mut Scaled,
-    global: &mut bool,
+    stores: &mut CommandContext<'_, G>,
+    effects: &mut DiagnosticEffects,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    index: u16,
+    value: Scaled,
+    global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
+    let receipt = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
+        .dimension(index, value, global);
+    if let Some(receipts) = receipts
+        && let Some(record) = receipt.into_record()
     {
-        let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .dimension(*index, *value, *global);
-        command.retain_assignment_receipt(receipt);
-        Ok(ReplayStep::Continue)
+        receipts.push(record);
     }
+    Ok(ReplayStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_skip<G>(
@@ -151,13 +153,16 @@ pub(in crate::main_control) fn execute_glue_param<G>(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // concrete arithmetic operands and actual native evidence owners
 pub(in crate::main_control) fn execute_arithmetic<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    primitive: &mut UnexpandablePrimitive,
-    target: &mut ArithmeticTarget,
-    operand: &mut ArithmeticOperand,
-    global: &mut bool,
+    effects: &mut DiagnosticEffects,
+    state: &tex_command::CommandState<G>,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    primitive: UnexpandablePrimitive,
+    target: ArithmeticTarget,
+    operand: ArithmeticOperand,
+    global: bool,
 ) -> Result<ReplayStep, ExecError> {
     let mut linear_stores = LinearCommandContext::new(stores);
     let stores = &mut linear_stores;
@@ -168,26 +173,30 @@ pub(in crate::main_control) fn execute_arithmetic<G>(
         // arm of `apply_arithmetic` computes its value before writing it,
         // so the target is provably unwritten on this path.
         match apply_arithmetic(
-            *primitive,
-            *target,
-            *operand,
-            *global,
-            command.state.profile(),
+            primitive,
+            target,
+            operand,
+            global,
+            state.profile(),
             stores,
-            command.diagnostic_effects,
+            effects,
         ) {
             Err(ExecError::ArithmeticOverflow) => {
-                let context = command.state.output_open_context(&**stores);
+                let context = state.output_open_context(&**stores);
                 let mut report = stores.print_err("Arithmetic overflow");
                 report.help(&[
                     "I can't carry out that multiplication or division,",
                     "since the result is out of range.",
                 ]);
                 report.context(context);
-                report.error().defer_recovery(command.diagnostic_effects)?;
+                report.error().defer_recovery(effects)?;
             }
             Ok(receipt) => {
-                command.retain_assignment_receipt(receipt);
+                if let Some(receipts) = receipts
+                    && let Some(record) = receipt.into_record()
+                {
+                    receipts.push(record);
+                }
             }
             Err(error) => return Err(error),
         }

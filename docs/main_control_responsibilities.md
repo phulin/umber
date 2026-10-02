@@ -44,13 +44,19 @@ operands after scanning. Observed and unobserved execution share all semantic
 arms; tests compare terminal/error behavior, ordered observations, artifacts,
 resource replay, and canonical oracle output.
 
-The native RELAX arm ends its scanner borrow while retaining the admitted
-context for its authoritative character-boundary flush. It reports scanner
-diagnostics in detection order before flushing, captures checked save and page
-facts from that same context, and then releases admission for the shared
-settlement tail. It constructs no resource or command-machine owner for a
-semantic routine that only needs mode, fuel, and diagnostic owners. Observed,
-tracked, and diagnostic execution use this same arm and settlement ordering.
+The native fetch/reswitch loop retains its admitted context across RELAX,
+ordinary group, integer/dimension register, and arithmetic commands. Each ends
+the actual scanner loan before applying its source-free typed semantics.
+Register and arithmetic operands are scanned in the already-live processor;
+they construct no unused full command machine. Group close uses the sole
+processor's native unsave and synchronous restoration callback, with
+`aftergroup` entering final input at that same point. Real diagnostic,
+recoverable, observer, tracked, pending output, page-owner succession,
+alignment delivery, synchronous World effects, `afterassignment`, and caller-budget demands release admission for the common
+ordered settlement tail. Continued commands settle actual scratch and update
+save-stack high-water accounting individually. Driver operation counts include
+every completed native command, including those before a later cold call or
+error; no command receives a new or separate fuel policy.
 
 The End/Dump arm alone reads the current page, contribution list, and dead-cycle
 termination condition. After delivering the stop command, it admits

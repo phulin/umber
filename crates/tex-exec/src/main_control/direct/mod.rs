@@ -56,6 +56,9 @@ struct DirectDispatch<'call, 'provider, G> {
     current_origin: Option<OriginId>,
     output_start: OperationOutputStart,
     suppress_left_boundary: bool,
+    remaining_operations: usize,
+    completed_operations: usize,
+    initial_effect_pos: tex_state::EffectPos,
 }
 
 impl<G> DirectDispatch<'_, '_, G> {
@@ -151,6 +154,23 @@ impl<G> MainControl<G> {
         tracked: bool,
         provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
+        self.execute_control_chunk(
+            stores, settled, cursor, effects, tracked, provider, 1, &mut 0,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)] // actual driver budget and completed native command count
+    pub(super) fn execute_control_chunk(
+        &mut self,
+        stores: &mut Universe<G>,
+        settled: Option<tex_command::CurrentCommand<G>>,
+        cursor: Option<tex_command::CommandDeliveryCursor>,
+        effects: &mut DiagnosticEffects,
+        tracked: bool,
+        provider: &mut Option<&mut dyn ResourceProvider<G>>,
+        remaining_operations: usize,
+        completed_operations: &mut usize,
+    ) -> Result<ReplayStep, ExecError> {
         self.ensure_primitive_handles(stores);
         let mode = self.modes.current_mode();
         let output_start = OperationOutputStart {
@@ -163,6 +183,7 @@ impl<G> MainControl<G> {
         if tracked {
             self.observe_control_projections(stores);
         }
+        let initial_effect_pos = stores.world().effect_pos();
         let mut direct = DirectDispatch {
             control: self,
             stores,
@@ -173,12 +194,16 @@ impl<G> MainControl<G> {
             current_origin: None,
             output_start,
             suppress_left_boundary: false,
+            remaining_operations,
+            completed_operations: 0,
+            initial_effect_pos,
         };
         let result = if let Some(command) = settled {
             direct.run_command(Some(command), None, true, None)
         } else {
             direct.deliver_control_command()
         };
+        *completed_operations = direct.completed_operations;
         if result.is_ok() {
             direct
                 .control
@@ -276,6 +301,9 @@ fn scan_error(error: impl Into<ExecError>, origin: Option<OriginId>) -> ExecErro
 
 impl<G> DirectDispatch<'_, '_, G> {
     fn schedule_assignment_token(&mut self) -> Result<(), ExecError> {
+        if !self.control.command.has_afterassignment() {
+            return Ok(());
+        }
         let mut context = self
             .stores
             .command_context()

@@ -2,6 +2,37 @@
 use super::*;
 
 impl<G> MainControl<G> {
+    /// Settles a completed native command while its real context remains live.
+    /// A publication or owner demand returns to the outer ordered boundary.
+    pub(super) fn settle_native_context_command(
+        &mut self,
+        context: &CommandContext<'_, G>,
+        effects: &DiagnosticEffects,
+        pending: PendingPageOutputFacts,
+        checked_save_stack: usize,
+        initial_effect_pos: tex_state::EffectPos,
+    ) -> bool {
+        if pending.is_pending()
+            || !effects.is_empty()
+            || effects.has_first_recoverable()
+            || self.command.has_afterassignment()
+            // The next cell delivery belongs to the alignment scanner's label.
+            || self.active_alignment.is_some()
+            || self.operation_observations.is_some()
+            || context.tracked_region_is_active()
+            || self.page_region_succession_pending
+            || self.paragraph_checkpoint_cut
+            || context.reported_error_count() > 0
+            || context.effect_pos() != initial_effect_pos
+        {
+            return false;
+        }
+        self.max_save_stack = self.max_save_stack.max(checked_save_stack);
+        self.command.settle_attempt();
+        self.assert_command_scratch_clear();
+        true
+    }
+
     #[allow(clippy::too_many_arguments)] // one borrowed application crosses all actual semantic owners
     pub(super) fn apply_direct_leaf(
         &mut self,

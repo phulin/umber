@@ -12,10 +12,19 @@ these same arms.
 Expanded fetching and raw horizontal lookahead retain their distinct TeX
 labels. Borrowed source spans enter the actual horizontal material consumer.
 Prefixes and replacement commands dispatch in place without redelivery. Each
-selected arm scans its concrete operands through the existing processor,
-ends that processor borrow, and calls its native semantic owner. The RELAX arm
-retains the same admitted context through its character-boundary flush; other
-consumers release admission before borrowing the owners their semantics demand.
+selected arm scans its concrete operands through the existing processor and
+ends that processor borrow before applying its native semantics. The bounded
+fetch/reswitch loop keeps its actual admitted context across completed native
+commands. Each command still settles its scanner scratch, consumes its real
+fuel, and counts toward the caller's remaining command budget. Native semantic
+arms examine the diagnostics, pending output, observation, tracked-region, alignment delivery and synchronous World-effect
+demands they actually produced; those demands end the loan before the existing
+publication, checkpoint, page-owner rotation or resource boundary runs. An
+error drops the real processor and context before aggregate failure settlement.
+There is no precomputed eligibility classification or parallel command loop.
+The same packed switch selects context-consuming semantics and genuine outer
+owner calls. A diagnostic program cannot cross the next input acquisition:
+nonempty diagnostics finish through their ordered publication boundary first.
 `scan_*` and `apply_*` files group concrete routines by responsibility;
 `semantic/` holds source-free semantics. The large authoritative switch stays
 in one file so its mode and prefix ordering is visible together.

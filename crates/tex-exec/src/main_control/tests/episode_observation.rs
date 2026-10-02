@@ -82,6 +82,51 @@ fn etex_unexpanded_input_survives_the_first_main_control_operation() {
     });
 }
 #[test]
+fn native_chunk_budget_stops_before_the_next_assignment_and_restores_local_values() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\relax\count0=11 \begingroup\advance\count0 by7\endgroup\count1=22 \end",
+        );
+        assert_eq!(
+            control.advance_chunk(stores, 3, None).expect("first chunk"),
+            StepResult::Progress(ReplayStep::Continue)
+        );
+        assert_eq!(stores.count(0).expect("count register"), 11);
+        assert_eq!(stores.count(1).expect("later register"), 0);
+        assert_eq!(
+            stores
+                .command_context()
+                .expect("live group")
+                .execution_group_depth(),
+            1
+        );
+        assert_eq!(
+            control
+                .advance_chunk(stores, 3, None)
+                .expect("second chunk"),
+            StepResult::Progress(ReplayStep::Continue)
+        );
+        assert_eq!(stores.count(0).expect("restored count register"), 11);
+        assert_eq!(stores.count(1).expect("committed later register"), 22);
+        assert_eq!(
+            stores
+                .command_context()
+                .expect("closed group")
+                .execution_group_depth(),
+            0
+        );
+        assert_eq!(
+            control
+                .advance_chunk(stores, 3, None)
+                .expect("terminal chunk"),
+            StepResult::Progress(ReplayStep::End)
+        );
+    });
+}
+
+#[test]
 fn production_batch_commits_assignments_and_terminal_command_once() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
