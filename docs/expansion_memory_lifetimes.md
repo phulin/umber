@@ -9,6 +9,13 @@ storage roles. This map does not revive the retired structural-definition
 regions, two mutable eqtb target, input inverse timeline, or per-command
 resource retry protocol.
 
+Continuing scalar scanners lend their synchronous callback to one shared
+scanner-call boundary. The callback allocates nothing and cannot enter retained
+state; the scanner boundary enters the same reader as single-command delivery,
+without copying that reader for each scanner closure. The single-command
+consumer still returns directly. Observation and protection modes remain
+static, and all input ownership and unwind rules below still apply.
+
 ## Current source and target differences
 
 | Area                  | Current owner/path                                                                                                                               | Required lifetime and remaining work                                                                                                                                                                                                                                                                      |

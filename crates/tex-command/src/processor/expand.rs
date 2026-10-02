@@ -21,6 +21,10 @@ use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
 };
 
+/// Borrowed terminal action of a continuing scalar scanner.
+type ExpandedCommandConsumer<'a, Processor, G> = dyn FnMut(&mut Processor, &CurrentCommand<G>) -> Result<std::ops::ControlFlow<()>, CommandError>
+    + 'a;
+
 /// Only the genuine terminal treatment differs between canonical reader roles.
 #[derive(Clone, Copy, PartialEq)]
 enum ExpandedReaderRole {
@@ -914,10 +918,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Replay completion and EOF leave only at their real input boundary.
     pub(crate) fn consume_expanded_commands(
         &mut self,
-        mut consume: impl FnMut(
-            &mut Self,
-            CurrentCommand<G>,
-        ) -> Result<std::ops::ControlFlow<()>, CommandError>,
+        consume: &mut ExpandedCommandConsumer<'_, Self, G>,
     ) -> Result<(), CommandError> {
         let mut destination = None;
         loop {
@@ -927,10 +928,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpandedReaderRole::Scanner,
                 &mut |processor, destination, status| {
                     let command = destination
-                        .take()
+                        .as_ref()
                         .ok_or_else(CommandError::input_invariant)?;
                     if status == DeliveryStatus::AlignmentEndTemplate {
-                        processor.begin_scalar_alignment_v_template(&command)?;
+                        processor.begin_scalar_alignment_v_template(command)?;
                         return Ok(std::ops::ControlFlow::Continue(()));
                     }
                     consume(processor, command)

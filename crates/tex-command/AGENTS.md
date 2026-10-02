@@ -49,7 +49,10 @@ Keyword, optional-equals and numeric-digit scanners keep their synchronous termi
 inside the same reader across accepted characters and leading spaces. They
 stop at the actual operand completion or a cold EOF/replay boundary, resetting
 expanded-delivery state for each accepted terminal. Single-command delivery is
-another static consumer of this same loop; there is no second scanner reader.
+another static consumer of this same loop. Continuing scanners lend their
+synchronous callback to one shared scanner-call boundary, which enters the same
+reader without copying it for each scanner closure. Single-command delivery
+returns directly; no heap callback or second reader exists.
 
 Resident input completes directly into its consumer or leaves the authoritative
 row/cursor at a real source, exhaustion or parameter boundary. There is no

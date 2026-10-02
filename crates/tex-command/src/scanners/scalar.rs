@@ -584,7 +584,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> ScalarCallStatus {
         let mut provenance = OriginId::UNKNOWN;
         let mut equals = false;
-        let result = self.consume_expanded_commands(|processor, command| {
+        let result = self.consume_expanded_commands(&mut |processor, command| {
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
@@ -596,7 +596,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     Ok(std::ops::ControlFlow::Break(()))
                 }
                 _ => {
-                    processor.back_input(command)?;
+                    processor.back_input(*command)?;
                     Ok(std::ops::ControlFlow::Break(()))
                 }
             }
@@ -686,7 +686,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let result = if keyword.is_empty() {
             Ok(())
         } else {
-            self.consume_expanded_commands(|processor, command| {
+            self.consume_expanded_commands(&mut |processor, command| {
                 if provenance == OriginId::UNKNOWN {
                     provenance = command.origin();
                 }
@@ -707,7 +707,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 } else if matched.is_empty() && matches!(character, Some((_, Catcode::Space))) {
                     // §407 drops leading spaces without advancing the prefix.
                 } else {
-                    processor.back_input(command)?;
+                    processor.back_input(*command)?;
                     return Ok(std::ops::ControlFlow::Break(()));
                 }
                 Ok(std::ops::ControlFlow::Continue(()))
@@ -1745,7 +1745,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut vacuous = first.is_none();
         let mut overflowed = false;
         let mut missing_site = None;
-        self.consume_expanded_commands(|processor, command| {
+        self.consume_expanded_commands(&mut |processor, command| {
             let character = command.character();
             match radix_digit(character) {
                 Some(digit) if digit < radix => {
@@ -1763,7 +1763,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             // `loc`. Later digits remain consumed, but do not
                             // repeat the report (`OK_so_far:=false`).
                             if !overflowed {
-                                let site = processor.capture_diagnostic_site(Some(&command));
+                                let site = processor.capture_diagnostic_site(Some(command));
                                 processor.number_too_big_error(Some(site))?;
                                 overflowed = true;
                             }
@@ -1775,9 +1775,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         // §446's `back_error`, which is `back_input; error`
                         // and so keeps even a spacer for the caller's report
                         // to pseudoprint.
-                        missing_site = Some(processor.capture_diagnostic_site(Some(&command)));
-                        processor.back_input(command)?;
-                    } else if processor.back_input_unless_spacer(command)? {
+                        missing_site = Some(processor.capture_diagnostic_site(Some(command)));
+                        processor.back_input(*command)?;
+                    } else if processor.back_input_unless_spacer(*command)? {
                         // A numeric constant absorbs one terminating space,
                         // so replay must not manufacture a backup transition
                         // before publishing it.
@@ -1837,7 +1837,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut fraction = [0_u8; 17];
         let mut fraction_len = 0;
         if decimal {
-            self.consume_expanded_commands(|processor, command| {
+            self.consume_expanded_commands(&mut |processor, command| {
                 match command.character() {
                     Some((ch, Catcode::Other)) if ch.is_ascii_digit() => {
                         if fraction_len < fraction.len() {
@@ -1851,7 +1851,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // unit scan with `i` still unread rather than with a
                     // backed-up space in front of it.
                     _ => {
-                        processor.back_input_unless_spacer(command)?;
+                        processor.back_input_unless_spacer(*command)?;
                         return Ok(std::ops::ControlFlow::Break(()));
                     }
                 }

@@ -79,7 +79,7 @@ fn nested_readers(
         let mut output = String::new();
         let mut destination = None;
         let exhausted = if fused {
-            let result = processor.consume_expanded_commands(|_, current| {
+            let result = processor.consume_expanded_commands(&mut |_, current| {
                 let Token::Char { ch, .. } = current.spelling().semantic_token() else {
                     panic!("expected expanded character");
                 };
