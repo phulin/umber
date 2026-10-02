@@ -260,73 +260,85 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let status = self.consume_input(
             self.create_source_control_sequences,
-            &mut |processor, word, origin, suppress, site, kind| {
-                let (meaning, resolution) = processor.resolve_token_word(word);
-                processor.record_consumed_word(kind, resolution.meaning_lookup());
-                if !OBSERVED
-                    && let MeaningWord::Macro { flags, definition } = meaning
-                    && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
-                    && !processor
-                        .command
-                        .delivery_mode
-                        .requires_semantic_settlement(suppress, flags.contains(MeaningFlags::OUTER))
-                {
-                    let name = resolution
-                        .control_sequence()
-                        .ok_or_else(CommandError::input_invariant)?;
-                    processor.activate_read_macro(word, origin, flags, definition, name)?;
-                    expanded = true;
-                    return Ok(ControlFlow::Continue(()));
-                }
-                let line = match site {
-                    ReadSite::Source(line) => line,
-                    _ => None,
-                };
-                let command = destination.insert(CurrentCommand::from_delivered_parts(
-                    word,
-                    origin,
-                    matches!(site, ReadSite::Source(_)),
-                    line,
-                    suppress,
-                    meaning,
-                    resolution.control_sequence(),
-                ));
-                processor
-                    .settle_hot_delivery_in::<OBSERVED>(command, resolution.literal_catcode())?;
-                let action = classify_hot_command(command);
-                if STOP_PROTECTED && Self::protected_terminal(command, action) {
-                    return Ok(ControlFlow::Break(DeliveryStatus::Command));
-                }
-                if PRESERVE_UNDEFINED
-                    && matches!(
-                        action,
-                        ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
-                    )
-                {
-                    return Ok(ControlFlow::Break(
-                        processor.finish_terminal_expansion::<OBSERVED>(command, action, expanded),
+            &mut {
+                // This is the actual reading/interpretation back edge. Keeping
+                // its invocation in the reader avoids a per-token result call;
+                // recursive primitive expansion and matching stay outlined.
+                #[inline(always)]
+                |processor, word, origin, suppress, site, kind| {
+                    let (meaning, resolution) = processor.resolve_token_word(word);
+                    processor.record_consumed_word(kind, resolution.meaning_lookup());
+                    if !OBSERVED
+                        && let MeaningWord::Macro { flags, definition } = meaning
+                        && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
+                        && !processor
+                            .command
+                            .delivery_mode
+                            .requires_semantic_settlement(
+                                suppress,
+                                flags.contains(MeaningFlags::OUTER),
+                            )
+                    {
+                        let name = resolution
+                            .control_sequence()
+                            .ok_or_else(CommandError::input_invariant)?;
+                        processor.activate_read_macro(word, origin, flags, definition, name)?;
+                        expanded = true;
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                    let line = match site {
+                        ReadSite::Source(line) => line,
+                        _ => None,
+                    };
+                    let command = destination.insert(CurrentCommand::from_delivered_parts(
+                        word,
+                        origin,
+                        matches!(site, ReadSite::Source(_)),
+                        line,
+                        suppress,
+                        meaning,
+                        resolution.control_sequence(),
                     ));
+                    processor.settle_hot_delivery_in::<OBSERVED>(
+                        command,
+                        resolution.literal_catcode(),
+                    )?;
+                    let action = classify_hot_command(command);
+                    if STOP_PROTECTED && Self::protected_terminal(command, action) {
+                        return Ok(ControlFlow::Break(DeliveryStatus::Command));
+                    }
+                    if PRESERVE_UNDEFINED
+                        && matches!(
+                            action,
+                            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
+                        )
+                    {
+                        return Ok(ControlFlow::Break(
+                            processor
+                                .finish_terminal_expansion::<OBSERVED>(command, action, expanded),
+                        ));
+                    }
+                    if let ExpandedCommandAction::Expand(dispatch) = action {
+                        processor.execute_expansion_action(command, dispatch)?;
+                        expanded = true;
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                    if role == ExpandedReaderRole::MainControl
+                        && !expanded
+                        && matches!(action, ExpandedCommandAction::EndTemplate)
+                        && !matches!(
+                            command.alignment_adjustment(),
+                            crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                        )
+                    {
+                        destination.take();
+                        processor.insert_frozen_endv()?;
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                    Ok(ControlFlow::Break(
+                        processor.finish_terminal_expansion::<OBSERVED>(command, action, expanded),
+                    ))
                 }
-                if let ExpandedCommandAction::Expand(dispatch) = action {
-                    processor.execute_expansion_action(command, dispatch)?;
-                    expanded = true;
-                    return Ok(ControlFlow::Continue(()));
-                }
-                if role == ExpandedReaderRole::MainControl
-                    && !expanded
-                    && matches!(action, ExpandedCommandAction::EndTemplate)
-                    && !matches!(
-                        command.alignment_adjustment(),
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                    )
-                {
-                    destination.take();
-                    processor.insert_frozen_endv()?;
-                    return Ok(ControlFlow::Continue(()));
-                }
-                Ok(ControlFlow::Break(
-                    processor.finish_terminal_expansion::<OBSERVED>(command, action, expanded),
-                ))
             },
             |status| Ok(ControlFlow::Break(status)),
         )?;

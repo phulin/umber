@@ -63,7 +63,9 @@ a primitive expands there, and a terminal command returns from there. There
 is no expansion-candidate result between reading and interpretation. Each
 new semantic token takes one fuel charge, while refill, retirement and
 parameter substitution retry under the current charge. Raw reads and spelling
-collectors stop that same reader at their actual consumer boundary.
+collectors stop that same reader at their actual consumer boundary. The
+reader invokes its actual expansion consumer inline; recursive primitive
+expansion and parameter matching retain their own exceptional call frames.
 
 Assignments share one mutation policy. A local first write at a new TeX level
 owns a native group preimage. A first touch in a retained host checkpoint
