@@ -34,7 +34,8 @@ expose substores or introduce another arena.
   store, heap indirection, or raw alias is involved. This includes name-free compact
   control-sequence dense-row access and the destination-directed packed-token
   command write implemented beside the token encoding, typed register mutation,
-  page-list/page-builder access, font metrics and detached artifact recipes,
+  page-list/page-builder access, the live reported-error count used before
+  executor diagnostic settlement, font metrics and detached artifact recipes,
   generated-font lookup, grouped box transfer, page marks, hyphenation,
   detached paragraph-shape and e-TeX penalty-array projections with journaled
   assignment, and bounded assignment-diagnostic rendering,

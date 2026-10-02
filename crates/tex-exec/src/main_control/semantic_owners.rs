@@ -228,6 +228,31 @@ impl<G> MainControl<G> {
             self.page_region_succession_pending = true;
             self.finish_pending_page_region_succession(stores);
         }
+        self.finish_direct_semantic_step(
+            stores,
+            diagnostic_effects,
+            output_start,
+            result,
+            pending_page_output,
+            checked_save_stack,
+            effect,
+            assignment_receipts,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)] // ordered facts from the completed native semantic call
+    pub(super) fn finish_direct_semantic_step(
+        &mut self,
+        stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+        output_start: OperationOutputStart,
+        mut result: Result<ReplayStep, ExecError>,
+        pending_page_output: PendingPageOutputFacts,
+        checked_save_stack: usize,
+        effect: Option<EffectRecord>,
+        assignment_receipts: Option<Vec<tex_command::MutationRecord>>,
+    ) -> Result<ReplayStep, ExecError> {
+        let observing = self.operation_observations.is_some();
         if matches!(result, Ok(ReplayStep::EndOfInput))
             && self.root_completion == RootCompletionPolicy::RequireTeXEnd
         {
@@ -269,10 +294,12 @@ impl<G> MainControl<G> {
             for shipout in committed_shipout_observations(output_start.artifact_count, stores) {
                 records.push(CommandObservation::Effect(shipout));
             }
-            self.page_output_observations.append_to(&mut records);
+            if let Some(mut observations) = self.page_output_observations.take() {
+                observations.append_to(&mut records);
+            }
             self.observe_committed(records);
         }
-        self.page_output_observations.clear();
+        self.page_output_observations = None;
         if result.is_ok() {
             self.finish_paragraph_boundary(output_start.outer_paragraph_was_active, stores);
         }

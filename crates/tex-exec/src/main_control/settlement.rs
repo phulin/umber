@@ -146,11 +146,41 @@ impl<G> MainControl<G> {
         }
     }
 
+    pub(super) fn report_scan_in_context(
+        &mut self,
+        context: &mut CommandContext<'_, G>,
+        effects: &mut DiagnosticEffects,
+        diagnostics: Vec<PendingDiagnostic<G>>,
+    ) -> Result<(), ExecError> {
+        if self.first_causal_context.is_none() {
+            let cause = if context.reported_error_count() > 0 {
+                Some("command-error")
+            } else {
+                diagnostics.iter().find_map(PendingDiagnostic::causal_kind)
+            };
+            if let Some(cause) = cause {
+                self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
+                    context,
+                    self.command.diagnostic_input_context(8),
+                    cause,
+                ));
+            }
+        }
+        if diagnostics.is_empty() {
+            return Ok(());
+        }
+        report_pending_diagnostics_in_context(context, effects, diagnostics)
+    }
+
     pub(super) fn operation_evidence_limit_error(&self) -> Option<ExecError> {
         self.operation_observations
             .as_ref()
             .and_then(ObservationBuffer::limit_error)
-            .or_else(|| self.page_output_observations.limit_error())
+            .or_else(|| {
+                self.page_output_observations
+                    .as_ref()
+                    .and_then(ObservationBuffer::limit_error)
+            })
     }
 
     /// Closes every live receipt category and performs the append-bound check
@@ -498,7 +528,7 @@ impl<G> MainControl<G> {
         let applied = match applied {
             Ok(applied) => applied,
             Err(error) => {
-                self.page_output_observations.clear();
+                self.page_output_observations = None;
                 return Err(error);
             }
         };
@@ -508,7 +538,10 @@ impl<G> MainControl<G> {
         // currently pending; otherwise its observations survive into the
         // next command step and that command's raw delivery overtakes them.
         let pending_page_output = PendingPageOutputFacts::capture_runtime(stores);
-        let opens_output_batch = !self.page_output_observations.is_empty()
+        let opens_output_batch = self
+            .page_output_observations
+            .as_ref()
+            .is_some_and(|buffer| !buffer.is_empty())
             || (pending_page_output.fire_up.is_some() && !self.boxes.output_routine_active);
         self.fire_pending_page_output(stores, diagnostic_effects, pending_page_output)?;
         {
@@ -554,10 +587,12 @@ impl<G> MainControl<G> {
                     .into_iter()
                     .map(CommandObservation::Effect),
                 );
-                self.page_output_observations.append_to(&mut records);
+                if let Some(mut observations) = self.page_output_observations.take() {
+                    observations.append_to(&mut records);
+                }
                 self.observe_committed(records);
             }
-            self.page_output_observations.clear();
+            self.page_output_observations = None;
         }
         self.finish_paragraph_boundary(output_start.outer_paragraph_was_active, stores);
         Ok(applied)
@@ -900,16 +935,6 @@ impl ObservationBuffer {
 
     pub(super) fn append_to(&mut self, records: &mut Vec<CommandObservation>) {
         records.append(&mut self.records);
-        let consumed = self.receipt.reset_for_next_operation();
-        debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
-        self.attempted = 0;
-        self.overflowed = false;
-        self.receipt_attempted = 1;
-        self.receipt_overflowed = false;
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.records.clear();
         let consumed = self.receipt.reset_for_next_operation();
         debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
         self.attempted = 0;

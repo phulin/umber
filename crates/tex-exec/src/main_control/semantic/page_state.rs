@@ -47,8 +47,17 @@ pub(in crate::main_control) fn execute_continue() -> Result<ReplayStep, ExecErro
 pub(in crate::main_control) fn execute_relax<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<ReplayStep, ExecError> {
+    #[cfg(feature = "profiling")]
+    tex_state::measurement::record_hot_core_phase(
+        tex_state::measurement::HotCorePhase::SemanticApply,
+    );
+    #[cfg(feature = "profiling")]
+    let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+        tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+    );
     let mut linear_stores = LinearCommandContext::new(stores);
     let stores = &mut linear_stores;
     {
@@ -59,8 +68,8 @@ pub(in crate::main_control) fn execute_relax<G>(
         crate::box_runtime::flush_pending_hchars_with_fuel(
             modes,
             stores,
-            command.diagnostic_effects,
-            command.fuel,
+            diagnostic_effects,
+            fuel,
         )?;
         Ok(ReplayStep::Continue)
     }

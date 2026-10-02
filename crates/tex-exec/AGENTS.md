@@ -39,8 +39,9 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
 - `src/main_control/direct/`: the single packed mode/command/prefix switch in
   `dispatch.rs`, with synchronous `scan_*` routines and concrete `apply_*`
   methods organized by native command responsibility. `scan_macros.rs` ends
-  the actual processor/context loan before applying completed operands; it
-  owns no operation value or continuation. `characters.rs` consumes borrowed
+  the actual processor loan before applying completed operands; RELAX retains
+  its context for the authoritative character-boundary flush and then uses the
+  shared settlement tail. It owns no operation value or continuation. `characters.rs` consumes borrowed
   source spans in the existing horizontal loop. `publication.rs` validates and
   reserves the complete scanner token root set before streaming final native
   token owners. `command_codes.rs` derives switch keys from packed meanings.
@@ -54,7 +55,9 @@ Group close calls `unsave_group`, which drives the same `CommandProcessor::end_g
   union, readiness phase, compatibility executor, or universal payload exists.
 - `src/main_control/semantic_owners.rs`: actual semantic-owner admission and
   ordered diagnostic, mutation, effect, artifact, and paragraph publication.
-  Observation allocates evidence only when requested. Provider loans return
+  Native context-consuming arms share its settlement tail without constructing
+  an unused command machine. Observation allocates evidence only when requested; deferred page-output
+  evidence has an optional owner created by observed output routines. Provider loans return
   before propagation of semantic failure.
 - `src/main_control/code_table.rs`: the shared TeX82 code-table value bounds,
   diagnostic, and zero-substitution rule. It returns a scanned value to the

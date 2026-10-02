@@ -365,7 +365,7 @@ pub struct MainControl<G> {
     /// direct step, then TeX82 §§1025/323's `output_text` push. Every step
     /// drains it before the following step can deliver the routine's
     /// scanner-owned opening brace.
-    page_output_observations: ObservationBuffer,
+    page_output_observations: Option<ObservationBuffer>,
     /// The commit buffer for the operation in flight, occupied exactly while
     /// an observed operation is running.
     ///
@@ -1219,7 +1219,7 @@ impl<G> Default for MainControl<G> {
             terminal_line_was_empty: None,
             root_completion: RootCompletionPolicy::default(),
             root_main_source: None,
-            page_output_observations: ObservationBuffer::default(),
+            page_output_observations: None,
             operation_observations: None,
             operation_receipt_start: None,
             error_operation_committed: false,
@@ -1859,7 +1859,7 @@ impl<G> MainControl<G> {
         self.startup_terminal_line.clear();
         self.terminal_line_was_empty = None;
         self.root_main_source = root_main_source;
-        self.page_output_observations = ObservationBuffer::default();
+        self.page_output_observations = None;
         self.operation_observations = None;
         self.operation_receipt_start = None;
         self.error_operation_committed = false;
@@ -3244,7 +3244,9 @@ impl<G> MainControl<G> {
                         let mut deferred =
                             std::mem::replace(&mut self.operation_observations, enclosing)
                                 .unwrap_or_default();
-                        self.page_output_observations.append(&mut deferred);
+                        self.page_output_observations
+                            .get_or_insert_with(ObservationBuffer::default)
+                            .append(&mut deferred);
                     }
                     opened?;
                     enter_group(

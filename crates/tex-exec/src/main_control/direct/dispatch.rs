@@ -16,7 +16,6 @@ impl<G> DirectDispatch<'_, '_, G> {
             .command_context()
             .expect("direct scanner admission");
         let innermost_group = admitted_context.innermost_group_kind();
-        let job_is_all_over = crate::page_output::job_is_all_over(&admitted_context);
         let mut source_command = None;
         if settled.is_none()
             && main_loop_active
@@ -908,7 +907,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                         }
                     }
-                    (_, codes::RELAX) => finish_scan!(self.execute_relax()),
+                    (_, codes::RELAX) => {
+                        direct_apply_relax!(self, owned_processor, admitted_context)
+                    }
                     (_, codes::CHAR_END_GROUP) => {
                         let (direct_arg0,) = (match innermost_group {
                             Some(GroupKind::SemiSimple) => Some(ForgottenGroupOpener::EndGroup),
@@ -967,26 +968,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     finish_scan!(self.execute_illegal_stop(direct_arg0))
                                 };
                             }
-                            if job_is_all_over {
-                                // §1335's `final_cleanup` unwinds the input stack that
-                                // `main_control`'s return has abandoned.
-                                let incomplete_conditions = processor.final_cleanup();
-                                return {
-                                    let (direct_arg0, direct_arg1) = (
-                                        matches!(
-                                            meaning,
-                                            Meaning::UnexpandablePrimitive(
-                                                UnexpandablePrimitive::Dump
-                                            )
-                                        ),
-                                        incomplete_conditions,
-                                    );
-                                    finish_scan!(self.execute_end(direct_arg0, direct_arg1))
-                                };
-                            }
-                            (processor.back_input(command).map_err(command_error))
-                                .map_err(|error| scan_error(error, scan_origin))?;
-                            return finish_scan!(self.execute_eject_residual_page());
+                            let dump = matches!(
+                                meaning,
+                                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dump,)
+                            );
+                            return finish_scan!(self.execute_stop(command, dump));
                         }
                     }
                     (_, codes::PRIMITIVE_COUNT) => {

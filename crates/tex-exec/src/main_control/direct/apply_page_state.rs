@@ -16,23 +16,6 @@ impl<G> DirectDispatch<'_, '_, G> {
         )
     }
 
-    pub(super) fn execute_relax(&mut self) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, modes, _, _, command, _, _, _, _, _, _, _| {
-                semantic::execute_relax(stores, modes, command)
-            },
-        )
-    }
-
     pub(super) fn execute_end_of_input(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
@@ -46,6 +29,56 @@ impl<G> DirectDispatch<'_, '_, G> {
             None,
             |_, _, _, _, _, _, _, _, _, _, _, _| semantic::execute_end_of_input(),
         )
+    }
+
+    pub(super) fn execute_stop(
+        &mut self,
+        command: tex_command::CurrentCommand<G>,
+        dump: bool,
+    ) -> Result<ReplayStep, ExecError> {
+        let mut context = self
+            .stores
+            .command_context()
+            .expect("stop command admission");
+        // §1054 reads page/contribution/dead-cycle state only for the actual
+        // outer-vertical stop; unrelated commands need none of these owners.
+        let all_over = crate::page_output::job_is_all_over(&context);
+        let mut facts = CommandMachineHostFacts::Forbidden;
+        let mut processor = command_processor(
+            &mut self.control.command,
+            self.control.fuel.fuel_mut(),
+            &mut self.control.capabilities,
+            &mut facts,
+            &mut self.control.operation_observations,
+            self.effects,
+            &mut context,
+        );
+        if let Some(cursor) = self.cursor {
+            processor.resume_delivery_cursor(cursor);
+        }
+        let incomplete_conditions = if all_over {
+            processor.final_cleanup()
+        } else {
+            processor
+                .back_input(command)
+                .map_err(command_error)
+                .map_err(|error| scan_error(error, self.current_origin))?;
+            Vec::new()
+        };
+        self.cursor = Some(processor.delivery_cursor());
+        self.diagnostics.extend(
+            processor
+                .take_semantic_diagnostics()
+                .into_iter()
+                .map(PendingDiagnostic::Command),
+        );
+        drop(processor);
+        drop(context);
+        if all_over {
+            self.execute_end(dump, incomplete_conditions)
+        } else {
+            self.execute_eject_residual_page()
+        }
     }
 
     pub(super) fn execute_end(
@@ -118,9 +151,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                 .into_iter()
                 .map(CommandObservation::Effect),
         );
-        self.control
-            .page_output_observations
-            .append_to(&mut records);
+        if let Some(mut observations) = self.control.page_output_observations.take() {
+            observations.append_to(&mut records);
+        }
         self.control.observe_committed(records);
         self.control
             .finish_paragraph_boundary(self.output_start.outer_paragraph_was_active, self.stores);

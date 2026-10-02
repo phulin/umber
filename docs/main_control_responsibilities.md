@@ -43,3 +43,22 @@ existing authority boundaries. Main control calls them with native typed
 operands after scanning. Observed and unobserved execution share all semantic
 arms; tests compare terminal/error behavior, ordered observations, artifacts,
 resource replay, and canonical oracle output.
+
+The native RELAX arm ends its scanner borrow while retaining the admitted
+context for its authoritative character-boundary flush. It reports scanner
+diagnostics in detection order before flushing, captures checked save and page
+facts from that same context, and then releases admission for the shared
+settlement tail. It constructs no resource or command-machine owner for a
+semantic routine that only needs mode, fuel, and diagnostic owners. Observed,
+tracked, and diagnostic execution use this same arm and settlement ordering.
+
+The End/Dump arm alone reads the current page, contribution list, and dead-cycle
+termination condition. After delivering the stop command, it admits
+the real input owners for final cleanup or backs up that same stop before
+ejecting residual material. No ordinary command constructs a contribution
+view to anticipate a stop that it did not receive.
+
+Deferred output observations have a demanded owner. Only an observed output
+routine creates its buffer; settlement consumes that buffer in the established
+shipout/effect order and checks the same evidence bounds. Unobserved ordinary
+commands own no empty page-output receipt and perform no reset of one.

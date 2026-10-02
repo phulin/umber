@@ -1567,25 +1567,28 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     diagnostics: Vec<PendingDiagnostic<G>>,
 ) -> Result<(), ExecError> {
+    if diagnostics.is_empty() {
+        return Ok(());
+    }
+    let mut context = universe
+        .command_context()
+        .expect("pending diagnostic admission");
+    report_pending_diagnostics_in_context(&mut context, diagnostic_effects, diagnostics)
+}
+
+pub(in crate::main_control) fn report_pending_diagnostics_in_context<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    diagnostics: Vec<PendingDiagnostic<G>>,
+) -> Result<(), ExecError> {
     for diagnostic in diagnostics {
         let detached = matches!(
             &diagnostic,
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::Trace { .. })
         );
         if !detached {
-            // A trace already rendered in this ordered diagnostic stream must
-            // reach World before a legacy recoverable-error reporter writes
-            // there directly. This is the outer publication boundary: the
-            // preceding CommandContext admission has ended, and no World or
-            // partial-line capability enters the newly admitted reporter.
-            universe
-                .world_mut()
-                .publish_diagnostic_effects_preserving(diagnostic_effects);
+            stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
         }
-        let mut context = universe
-            .command_context()
-            .expect("pending diagnostic admission");
-        let stores = &mut context;
         match diagnostic {
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::Trace {
                 text,

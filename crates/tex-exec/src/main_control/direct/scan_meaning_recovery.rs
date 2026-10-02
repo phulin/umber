@@ -62,7 +62,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             // the one meaning for which "consume nothing and proceed" is the
             // whole specified behavior.
             Meaning::Relax => {
-                finish_scan!(self.execute_relax())
+                direct_apply_relax!(self, owned_processor, admitted_context)
             }
             // TeX82 §1048's Forbidden case `any_mode(last_item)`:
             // `report_illegal_case`. `Meaning::InternalInteger` is tex.web's

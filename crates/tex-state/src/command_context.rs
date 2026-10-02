@@ -3326,6 +3326,11 @@ impl<'a, G> CommandContext<'a, G> {
         self.resident.interaction_mode = mode;
     }
 
+    /// Number of errors already reported by the live interaction owner.
+    pub fn reported_error_count(&self) -> i32 {
+        self.resident.world.error_channel().error_count()
+    }
+
     pub fn clear_error_count(&mut self) {
         self.resident.world.error_channel_mut().clear_error_count();
     }
