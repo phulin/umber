@@ -161,6 +161,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `check-pdf-external.sh`: opt-in qpdf structural validation plus same-tool Poppler render/text comparison of the committed reference and Umber PDF pairs; `--ci` makes missing tools fatal and the gate records tool versions as provenance.
 - `run-stepwise-arxiv-census.sh`: stable entry point for the serial guarded arXiv census.
 - `stepwise-arxiv-census.py`: single-pass, row-atomic, resumable arXiv census runner and offline evidence verifier.
+  Execution telemetry columns retain actual resource restarts and discarded
+  driver chunks; chunks are not token or command counts.
 - `test-stepwise-arxiv-census.sh`: hermetic single-pass, failure-attribution, resume, and verify-only census contract test.
 - `run-pinned-pdflatex-50m-authority-row.sh`: exact offline pdfLaTeX
   authority-row command with separately receipted 50,000,000 expansion-fuel

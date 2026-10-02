@@ -430,7 +430,6 @@ fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
                 .any(|(transition, nesting, _)| *transition == "resume" && *nesting == Some(1))
         );
         assert_eq!(control.current_mode(), Mode::Vertical);
-        assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
 
         // The direct-operation counters above cannot prove §785's ordering. Isolate an
         // ordinary row opener and project the command-owned reset, backup, and

@@ -20,8 +20,7 @@ fn reuse_metrics_dto(metrics: umber::ReuseMetrics) -> Result<wire::ReuseMetricsD
         pages_reused: to_u32(metrics.pages_reused, "pagesReused")?,
         pages_retyped: to_u32(metrics.pages_retyped, "pagesRetyped")?,
         reexecuted_bytes: safe(metrics.reexecuted_bytes, "reexecutedBytes")?,
-        reexecuted_tokens: safe(metrics.reexecuted_tokens, "reexecutedTokens")?,
-        reexecuted_commands: safe(metrics.reexecuted_commands, "reexecutedCommands")?,
+        reexecuted_driver_chunks: safe(metrics.reexecuted_driver_chunks, "reexecutedDriverChunks")?,
         reexecuted_paragraphs: safe(metrics.reexecuted_paragraphs, "reexecutedParagraphs")?,
         same_history_attempts: to_u32(metrics.same_history_attempts, "sameHistoryAttempts")?,
         same_history_hash_mismatches: to_u32(

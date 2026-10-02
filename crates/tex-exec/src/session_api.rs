@@ -10,21 +10,19 @@ pub struct ExecutionTelemetry {
     pub suspensions: u64,
     /// Full aggregate checkpoint rewinds caused by host resource misses.
     pub resource_restarts: u64,
-    pub local_step_retries: u64,
     /// Completed driver chunks discarded by full-root replay. A production
     /// chunk can contain several native commands; this is not raw-token fuel.
-    pub replayed_delivered_tokens: u64,
-    pub replayed_dispatches: u64,
+    pub discarded_driver_chunks: u64,
     /// Fuel spent by attempts whose semantic state was later rewound.
     pub discarded_fuel: u64,
     pub cumulative_fuel: u64,
     pub engine_time: Duration,
-    pub savepoint_capture_time: Duration,
-    pub savepoint_restore_time: Duration,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExecutionBudgets {
+    /// Completed bounded driver chunks; one chunk may execute up to 256
+    /// native operations. Command fuel owns the finer work limit.
     pub steps: u64,
     pub input_frames: u64,
     pub journal_bytes: u64,

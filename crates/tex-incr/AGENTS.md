@@ -41,7 +41,9 @@ long-lived editor-session strategy over executor-named checkpoints.
   external session reachability store owns the fixed prior/current physical
   slots across rejection, acceptance, and suspension; the admitted generation
   sidecar, not the revision runtime or retained checkpoint, owns the singular
-  output chunk pool.
+  output chunk pool. Work limits and reuse metrics count completed bounded
+  driver chunks; resource replay reports discarded chunks and actual restart
+  count, without legacy token/command or duplicate local-retry projections.
 - Candidate driving holds the current generation in an owned aggregate guard;
   an attached-control guard restores temporarily detached runtime/control
   owners before unwind rejection, and prepared settlement rejects mode,

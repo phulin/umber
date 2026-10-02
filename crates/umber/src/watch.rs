@@ -124,7 +124,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                     announced = true;
                 } else if let Some(reuse) = session.reuse_metrics() {
                     eprintln!(
-                        "revision={next_revision} total_us={} fork_us={} reexecute_us={} trace_validation_us={} trace_replay_us={} splice_us={} dvi_write_us={} pages_retained_prefix={} pages_reused={} pages_retyped={} reexecuted_bytes={} reexecuted_tokens={} reexecuted_commands={} reexecuted_macro_text_span_tokens={} reexecuted_source_text_span_tokens={} reexecuted_paragraphs={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} same_history_attempts={} same_history_hash_mismatches={} same_history_stop={:?}",
+                        "revision={next_revision} total_us={} fork_us={} reexecute_us={} trace_validation_us={} trace_replay_us={} splice_us={} dvi_write_us={} pages_retained_prefix={} pages_reused={} pages_retyped={} reexecuted_bytes={} reexecuted_driver_chunks={} reexecuted_macro_text_span_tokens={} reexecuted_source_text_span_tokens={} reexecuted_paragraphs={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} same_history_attempts={} same_history_hash_mismatches={} same_history_stop={:?}",
                         total_started.elapsed().as_micros(),
                         reuse.restart_fork_latency.as_micros(),
                         reuse.reexecution_latency.as_micros(),
@@ -136,8 +136,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                         reuse.pages_reused,
                         reuse.pages_retyped,
                         reuse.reexecuted_bytes,
-                        reuse.reexecuted_tokens,
-                        reuse.reexecuted_commands,
+                        reuse.reexecuted_driver_chunks,
                         reuse.reexecuted_macro_text_span_tokens,
                         reuse.reexecuted_source_text_span_tokens,
                         reuse.reexecuted_paragraphs,

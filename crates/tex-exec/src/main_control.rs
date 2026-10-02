@@ -733,19 +733,13 @@ pub enum AdvanceOutcome {
     Cancelled,
 }
 
-/// Non-semantic accounting for canonical operation and legacy-savepoint
-/// profiling fields.
+/// Non-semantic accounting for actual canonical command admission and stops.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AdvanceTelemetry {
     pub attempts: u64,
     pub commits: u64,
-    pub rollbacks: u64,
-    /// Main-control deliveries discarded by typed resource suspension.
-    pub resource_replayed_delivered_tokens: u64,
-    /// Main-control dispatches discarded by typed resource suspension.
-    pub resource_replayed_dispatches: u64,
-    pub live_savepoints: u64,
-    pub maximum_live_savepoints: u64,
+    /// Resource failures that halted the direct call; host replay owns undo.
+    pub resource_halts: u64,
 }
 
 /// One retained diagnostic-expansion operation. Assignments are executed by
@@ -2534,7 +2528,7 @@ impl<G> MainControl<G> {
                         );
                         if matches!(result, Ok(StepResult::Suspended(_))) {
                             self.halt_direct_operation();
-                            self.advance_telemetry.rollbacks += 1;
+                            self.advance_telemetry.resource_halts += 1;
                             #[cfg(feature = "profiling")]
                             self.episode_telemetry
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);

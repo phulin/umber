@@ -52,10 +52,11 @@ remains open.
 definition-owned matcher and collector integration, and direct operation path
 using the current full-book profile and explicit acceptance boundaries.
 
-`minimal_hot_loop.md` specifies direct immutable spans, packed meanings,
-frame-owned cursors, the TeX save stack, in-place errors with bounded polling,
-and the selected aggregate contract. Its instruction budgets are informative
-and its implementation sequence deletes each displaced representation.
+`minimal_hot_loop.md` maps implemented direct immutable spans, packed meanings,
+frame-owned cursors, counted real roots, the TeX save stack and full aggregate
+replay. It separates actual fuel/driver units from historical measurements and
+informative targets, and retires incompatible frame, allocator, fuel and PGO
+sketch requirements.
 
 `paired_measurement.md` documents the owner-maintained prebuilt-executable
 paired runner in `scripts/paired-measure.py`, its JSON/JSONL receipt contract,

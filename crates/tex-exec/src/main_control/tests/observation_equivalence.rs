@@ -170,7 +170,7 @@ fn lane_units_discard_through_a_resource_suspension() {
             ),
             "unexpected batch step: {step:?}"
         );
-        assert_eq!(control.advance_telemetry().rollbacks, 1);
+        assert_eq!(control.advance_telemetry().resource_halts, 1);
     });
 }
 

@@ -593,23 +593,17 @@ fn finalize_run(
             host.resolver.demand_bytes,
         );
         eprintln!(
-            "RESOURCE_TELEMETRY cold_starts={} suspensions={} resource_restarts={} local_step_retries={} replayed_delivered_tokens={} replayed_dispatches={} cumulative_fuel={} discarded_fuel={} resource_wait_ns={} engine_ns={}",
+            "RESOURCE_TELEMETRY cold_starts={} suspensions={} resource_restarts={} discarded_driver_chunks={} cumulative_fuel={} discarded_fuel={} resource_wait_ns={} engine_ns={}",
             telemetry.execution.cold_starts,
             telemetry.execution.suspensions,
             telemetry.execution.resource_restarts,
-            telemetry.execution.local_step_retries,
-            telemetry.execution.replayed_delivered_tokens,
-            telemetry.execution.replayed_dispatches,
+            telemetry.execution.discarded_driver_chunks,
             telemetry.execution.cumulative_fuel,
             telemetry.execution.discarded_fuel,
             telemetry.resource_wait_time.as_nanos(),
             telemetry.execution.engine_time.as_nanos(),
         );
-        let engine_core = telemetry
-            .execution
-            .engine_time
-            .saturating_sub(telemetry.execution.savepoint_capture_time)
-            .saturating_sub(telemetry.execution.savepoint_restore_time);
+        let engine_core = telemetry.execution.engine_time;
         let engine_entry_exit = host
             .compile_attempt_time
             .saturating_sub(telemetry.execution.engine_time)
@@ -632,11 +626,9 @@ fn finalize_run(
             .saturating_add(host.resolver.content_hash_time)
             .saturating_add(host.resolver.response_build_time);
         eprintln!(
-            "RESOURCE_HOST_TELEMETRY startup_ns={} engine_core_ns={} savepoint_capture_ns={} savepoint_restore_ns={} candidate_restore_ns={} resolver_index_ns={} vfs_stage_ns={} request_extraction_ns={} engine_entry_exit_ns={} resolver_ns={} local_lookup_ns={} manifest_lookup_ns={} object_load_ns={} content_hash_ns={} response_build_ns={} resolver_overhead_ns={} preload_ns={} provision_ns={} accepted_handoff_ns={} cli_overhead_ns={} accepted_phase_sum_ns={} local_lookups={} local_hits={} manifest_lookups={} manifest_cache_hits={} verified_manifest_hits={} manifest_reads={} manifest_read_bytes={} manifest_parses={} manifest_validations={} shard_loads={} packed_selection_calls={} packed_selection_keys={} packed_selection_bytes={} packed_validation_calls={} packed_validation_bytes={} manifest_parse_peak_bytes={} retained_manifest_shards={} retained_manifest_bytes={} object_requests={} object_cache_hits={} object_hashes={}",
+            "RESOURCE_HOST_TELEMETRY startup_ns={} engine_core_ns={} candidate_restore_ns={} resolver_index_ns={} vfs_stage_ns={} request_extraction_ns={} engine_entry_exit_ns={} resolver_ns={} local_lookup_ns={} manifest_lookup_ns={} object_load_ns={} content_hash_ns={} response_build_ns={} resolver_overhead_ns={} preload_ns={} provision_ns={} accepted_handoff_ns={} cli_overhead_ns={} accepted_phase_sum_ns={} local_lookups={} local_hits={} manifest_lookups={} manifest_cache_hits={} verified_manifest_hits={} manifest_reads={} manifest_read_bytes={} manifest_parses={} manifest_validations={} shard_loads={} packed_selection_calls={} packed_selection_keys={} packed_selection_bytes={} packed_validation_calls={} packed_validation_bytes={} manifest_parse_peak_bytes={} retained_manifest_shards={} retained_manifest_bytes={} object_requests={} object_cache_hits={} object_hashes={}",
             host.startup_time.as_nanos(),
             engine_core.as_nanos(),
-            telemetry.execution.savepoint_capture_time.as_nanos(),
-            telemetry.execution.savepoint_restore_time.as_nanos(),
             telemetry.candidate_restore_time.as_nanos(),
             telemetry.resolver_index_time.as_nanos(),
             telemetry.vfs_stage_time.as_nanos(),

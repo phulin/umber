@@ -47,7 +47,7 @@ case "$main" in
     ;;
 esac
 echo RESOURCE_ENGINE_ACCEPTED >&2
-echo 'RESOURCE_TELEMETRY cold_starts=1 suspensions=2 local_step_retries=2 replayed_delivered_tokens=3 replayed_dispatches=3 cumulative_fuel=4 resource_wait_ns=5 engine_ns=6' >&2
+echo 'RESOURCE_TELEMETRY cold_starts=1 suspensions=2 resource_restarts=2 discarded_driver_chunks=3 cumulative_fuel=4 resource_wait_ns=5 engine_ns=6' >&2
 case "$main" in
   *finalfail*) echo 'action type missing' >&2; exit 1 ;;
 esac

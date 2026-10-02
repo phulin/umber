@@ -1079,7 +1079,6 @@ fn ordinary_assignment_opens_no_aggregate_savepoint() {
         assert_eq!(stores.count(0).expect("count register"), 11);
         assert_eq!(control.advance_telemetry().attempts, 1);
         assert_eq!(control.advance_telemetry().commits, 1);
-        assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
     });
 }
 #[test]
@@ -1101,7 +1100,6 @@ fn group_entry_local_restore_and_exit_open_no_aggregate_savepoint() {
             0
         );
         assert_eq!(stores.count(0).expect("count register"), 0);
-        assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
     });
 }
 #[test]

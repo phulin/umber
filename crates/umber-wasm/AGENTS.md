@@ -35,11 +35,16 @@ deleted-status contract.
 - `src/wire.rs`: schema-versioned host-neutral DTO authority, safe JavaScript
   integers, binary serializer, and derived TypeScript shapes; its generated
   `src/wire_schema.d.ts` custom section is checked against the Rust authority.
+  Incremental reuse reports completed driver chunks in
+  `reexecutedDriverChunks`; it does not project those chunks as tokens or
+  commands. The owning `wasm-bindgen` tier checks the generated declaration.
 - `examples/wire_types.rs`: deterministic schema declaration generator used
   whenever schema-1 DTOs change.
 - `src/result/`: focused binary-safe resource-request, metrics, and incremental-render conversion modules.
 - `tests/it.rs`: wasm-bindgen boundary, lifecycle, and native fixed-point
   representation/failure parity tests over shared stabilization fixtures.
+  The format boundary checks the current schema-13 writer and Plain asset,
+  rejecting earlier schema versions without compatibility readers.
 - `tests/virtual_font_acquisition.rs`: focused host-neutral WASM coverage for
   typed virtual-font resource retries and their recursive PDF resource closure.
 - `assets/plain-source.lock`: exact TeX Live 2025 Plain, hyphenation, and TFM source identities.

@@ -36,7 +36,6 @@ fn ready_pdf_image_provider_stays_in_one_execution() {
             "ready image provider route exceeded the step bound"
         );
         assert_eq!(host.calls, 1);
-        assert_eq!(control.advance_telemetry().resource_replayed_dispatches, 0);
     });
 }
 #[test]
@@ -294,7 +293,6 @@ fn deferred_effect_and_ordinary_pdf_commands_open_no_aggregate_savepoint() {
             control.advance(stores).expect("deferred open commits"),
             StepResult::Progress(ReplayStep::Continue)
         );
-        assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
 
         crate::test_harness::with_nonstop_plain_universe(|pdf_stores| {
             let mut pdf_control = pdftex_graphics_control(pdf_stores);
@@ -313,7 +311,6 @@ fn deferred_effect_and_ordinary_pdf_commands_open_no_aggregate_savepoint() {
                     .expect("ordinary PDF node commits"),
                 StepResult::Progress(ReplayStep::Continue)
             );
-            assert_eq!(pdf_control.advance_telemetry().maximum_live_savepoints, 0);
         });
     });
 }

@@ -22,13 +22,12 @@ from arxiv_corpus import archive_file_bytes, materialize, source_identity
 ROOT = Path(__file__).resolve().parent.parent
 HEADER = [
     "id", "engine_status", "finalizer_status", "cold_starts", "suspensions",
-    "local_step_retries", "replayed_delivered_tokens", "replayed_dispatches",
+    "resource_restarts", "discarded_driver_chunks",
     "cumulative_fuel", "resource_wait_ns", "engine_ns", "error_cluster",
     "guard_status", "row_wall_ns", "guard_overhead_ns", "finalizer_ns",
     "source_read_ns", "format_read_ns", "format_restore_ns", "setup_ns",
     "accepted_wall_ns", "pdf_font_resources_ns", "map_resolve_ns",
-    "startup_ns", "engine_core_ns", "savepoint_capture_ns",
-    "savepoint_restore_ns", "candidate_restore_ns", "resolver_index_ns",
+    "startup_ns", "engine_core_ns", "candidate_restore_ns", "resolver_index_ns",
     "vfs_stage_ns", "request_extraction_ns", "engine_entry_exit_ns",
     "resolver_ns", "local_lookup_ns", "manifest_lookup_ns", "object_load_ns",
     "content_hash_ns", "response_build_ns", "resolver_overhead_ns", "preload_ns",

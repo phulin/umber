@@ -171,7 +171,7 @@ fn run_immediate_input_provider_route(observed: bool) -> (String, usize, u64) {
         (
             terminal_text(stores),
             host.calls,
-            control.advance_telemetry().resource_replayed_dispatches,
+            control.advance_telemetry().resource_halts,
         )
     })
 }

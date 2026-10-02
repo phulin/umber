@@ -101,7 +101,6 @@ fn ready_font_provider_stays_in_one_execution() {
             "ready font provider route exceeded the step bound"
         );
         assert_eq!(host.calls, 1);
-        assert_eq!(control.advance_telemetry().resource_replayed_dispatches, 0);
     });
 }
 #[test]
@@ -141,7 +140,6 @@ fn ready_input_probe_provider_stays_in_one_execution() {
             1,
             "active World probe is opened from its existing record"
         );
-        assert_eq!(control.advance_telemetry().resource_replayed_dispatches, 0);
     });
 }
 #[test]
@@ -370,9 +368,7 @@ fn production_batch_keeps_ordinary_prefix_and_rejects_direct_retry() {
             "the successful ordinary prefix commits"
         );
         let suspended = control.advance_telemetry();
-        assert_eq!(suspended.rollbacks, 1);
-        assert_eq!(suspended.resource_replayed_delivered_tokens, 0);
-        assert_eq!(suspended.resource_replayed_dispatches, 0);
+        assert_eq!(suspended.resource_halts, 1);
         let suspended_interpreter = control.command.lifecycle_stats();
         assert_eq!(
             suspended_interpreter.processor_entries, suspended_interpreter.processor_completions,
@@ -397,9 +393,7 @@ fn production_batch_keeps_ordinary_prefix_and_rejects_direct_retry() {
         );
         assert_eq!(after_rejection.live_processors, 0);
         assert_eq!(after_rejection.maximum_live_processors, 1);
-        assert_eq!(telemetry.rollbacks, 1);
-        assert_eq!(telemetry.resource_replayed_delivered_tokens, 0);
-        assert_eq!(telemetry.resource_replayed_dispatches, 0);
+        assert_eq!(telemetry.resource_halts, 1);
     });
 }
 #[test]
@@ -594,13 +588,6 @@ fn superscript_math_group_propagates_through_preloaded_input_probe() {
         assert_eq!(stores.count(1).expect("count register"), 23);
         assert!(control.active_math_fields.is_empty());
         assert!(control.pending_resource_site().is_none());
-        assert_eq!(
-            control
-                .advance_telemetry()
-                .resource_replayed_delivered_tokens,
-            0
-        );
-        assert_eq!(control.advance_telemetry().resource_replayed_dispatches, 0);
     });
 }
 #[test]
@@ -1119,7 +1106,6 @@ fn diagnostic_font_need_halts_and_refuses_checkpoint_capture() {
             None,
             "diagnostic resource discard leaves no scanner continuation"
         );
-        assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
     });
 }
 #[test]

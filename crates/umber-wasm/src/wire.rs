@@ -769,9 +769,7 @@ pub struct ReuseMetricsDto {
     #[ts(type = "number")]
     pub reexecuted_bytes: SafeInteger,
     #[ts(type = "number")]
-    pub reexecuted_tokens: SafeInteger,
-    #[ts(type = "number")]
-    pub reexecuted_commands: SafeInteger,
+    pub reexecuted_driver_chunks: SafeInteger,
     #[ts(type = "number")]
     pub reexecuted_paragraphs: SafeInteger,
     pub same_history_attempts: u32,

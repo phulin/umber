@@ -716,7 +716,7 @@ fn changed_prefix_convergence_rehomes_suffix_for_the_next_edit() {
     let mut first_cold = session(RevisionId::new(2), &first_source);
     let first_cold = first_cold.cold().expect("first cold output");
     assert!(
-        first.reuse.reexecuted_commands < first_cold.reuse.reexecuted_commands,
+        first.reuse.reexecuted_driver_chunks < first_cold.reuse.reexecuted_driver_chunks,
         "the candidate stops at convergence instead of running the retained suffix"
     );
     assert_detached_output_eq(&first, &first_cold);
@@ -1092,7 +1092,6 @@ fn resource_decline_rewinds_once_then_ready_continues_without_replay() {
     ));
     let suspended = candidate.execution_telemetry();
     assert_eq!(suspended.resource_restarts, 1);
-    assert_eq!(suspended.replayed_dispatches, 1);
     assert!(suspended.discarded_fuel > 0);
 
     assert!(matches!(
@@ -1103,7 +1102,6 @@ fn resource_decline_rewinds_once_then_ready_continues_without_replay() {
     ));
     let telemetry = candidate.execution_telemetry();
     assert_eq!(telemetry.resource_restarts, 1);
-    assert_eq!(telemetry.replayed_dispatches, 1);
     assert_eq!(telemetry.discarded_fuel, suspended.discarded_fuel);
     let replayed = incremental
         .accept_cold_candidate(candidate)
@@ -1168,7 +1166,6 @@ fn alignment_preamble_resource_replays_from_latest_paragraph_checkpoint() {
     ));
     let suspended = staged_candidate.execution_telemetry();
     assert_eq!(suspended.resource_restarts, 1);
-    assert_eq!(suspended.replayed_dispatches, 1);
     assert!(suspended.discarded_fuel > 0);
     assert!(matches!(
         staged_candidate
@@ -1178,7 +1175,6 @@ fn alignment_preamble_resource_replays_from_latest_paragraph_checkpoint() {
     ));
     let staged_telemetry = staged_candidate.execution_telemetry();
     assert_eq!(staged_telemetry.resource_restarts, 1);
-    assert_eq!(staged_telemetry.replayed_dispatches, 1);
     assert_eq!(staged_telemetry.discarded_fuel, suspended.discarded_fuel);
     let staged_output = staged
         .accept_cold_candidate(staged_candidate)
@@ -1198,7 +1194,6 @@ fn alignment_preamble_resource_replays_from_latest_paragraph_checkpoint() {
     ));
     let immediate_telemetry = immediate_candidate.execution_telemetry();
     assert_eq!(immediate_telemetry.resource_restarts, 0);
-    assert_eq!(immediate_telemetry.replayed_dispatches, 0);
     assert_eq!(immediate_telemetry.discarded_fuel, 0);
     let immediate_output = immediate
         .accept_cold_candidate(immediate_candidate)

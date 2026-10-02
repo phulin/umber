@@ -640,15 +640,14 @@ fn run_incremental_path(
     );
     print_isolated_stage_attribution(path_kind, &stages);
     println!(
-        "gentle-profile isolated incremental work: path={} last_pages_retained_prefix={} last_pages_retyped={} last_pages_reused={} last_paragraphs_reexecuted={} last_bytes_reexecuted={} last_tokens_reexecuted={} last_commands_reexecuted={} last_trace_nodes_walked={} last_trace_leaf_hits={} last_trace_subtree_hits={} last_suffixes_adopted={}",
+        "gentle-profile isolated incremental work: path={} last_pages_retained_prefix={} last_pages_retyped={} last_pages_reused={} last_paragraphs_reexecuted={} last_bytes_reexecuted={} last_driver_chunks_reexecuted={} last_trace_nodes_walked={} last_trace_leaf_hits={} last_trace_subtree_hits={} last_suffixes_adopted={}",
         path_kind.name(),
         last_reuse.pages_retained_prefix,
         last_reuse.pages_retyped,
         last_reuse.pages_reused,
         last_reuse.reexecuted_paragraphs,
         last_reuse.reexecuted_bytes,
-        last_reuse.reexecuted_tokens,
-        last_reuse.reexecuted_commands,
+        last_reuse.reexecuted_driver_chunks,
         last_reuse.trace_nodes_walked,
         last_reuse.trace_leaf_hits,
         last_reuse.trace_subtree_hits,
@@ -820,15 +819,14 @@ fn run_edit_restart_workload(
         after_cold_duration.as_secs_f64() * 1_000.0,
     );
     println!(
-        "gentle-profile edit workload reuse: name={} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} suffixes_adopted={}",
+        "gentle-profile edit workload reuse: name={} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} driver_chunks_reexecuted={} suffixes_adopted={}",
         workload.name(),
         last_reuse.pages_retained_prefix,
         last_reuse.pages_retyped,
         last_reuse.pages_reused,
         last_reuse.reexecuted_paragraphs,
         last_reuse.reexecuted_bytes,
-        last_reuse.reexecuted_tokens,
-        last_reuse.reexecuted_commands,
+        last_reuse.reexecuted_driver_chunks,
         last_reuse.suffixes_adopted,
     );
     let mean_stages = mean_incremental_stages(&stages);
@@ -1572,14 +1570,13 @@ fn print_incremental_work(
 ) {
     let reuse = sample.reuse;
     println!(
-        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} suffixes_adopted={} same_history_stop={:?} revision_setup_us={} fork_us={} executor_us={} reexecute_us={} snapshot_us={} trace_validation_us={} splice_us={} substrate_us={} acceptance_us={} dvi_us={}",
+        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} driver_chunks_reexecuted={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} suffixes_adopted={} same_history_stop={:?} revision_setup_us={} fork_us={} executor_us={} reexecute_us={} snapshot_us={} trace_validation_us={} splice_us={} substrate_us={} acceptance_us={} dvi_us={}",
         reuse.pages_retained_prefix,
         reuse.pages_retyped,
         reuse.pages_reused,
         reuse.reexecuted_paragraphs,
         reuse.reexecuted_bytes,
-        reuse.reexecuted_tokens,
-        reuse.reexecuted_commands,
+        reuse.reexecuted_driver_chunks,
         reuse.trace_nodes_walked,
         reuse.trace_leaf_hits,
         reuse.trace_subtree_hits,

@@ -257,8 +257,9 @@ pub struct ReuseMetrics {
     pub pages_reused: usize,
     pub pages_retyped: usize,
     pub reexecuted_bytes: usize,
-    pub reexecuted_tokens: usize,
-    pub reexecuted_commands: usize,
+    /// Completed bounded driver calls, each admitting up to 256 native
+    /// operations. This is scheduling work, not a token or TeX command count.
+    pub reexecuted_driver_chunks: usize,
     pub reexecuted_macro_text_span_tokens: usize,
     pub reexecuted_source_text_span_tokens: usize,
     pub reexecuted_paragraphs: usize,
@@ -618,7 +619,7 @@ struct CandidateCompletion {
     completion: DetachedEngineCompletion,
     history: Vec<BoundaryRecord>,
     dependencies: Vec<tex_state::InputDependency>,
-    delivered_commands: usize,
+    completed_driver_chunks: usize,
     format_dump: Option<DetachedFormatDump>,
     checkpoint_retained_bytes: usize,
     checkpoint_shared_owner_bytes: usize,
@@ -672,8 +673,7 @@ pub struct RevisionCandidate<'store> {
     advance_calls: u64,
     cumulative_fuel: u64,
     resource_restarts: u64,
-    replayed_delivered_tokens: u64,
-    replayed_dispatches: u64,
+    discarded_driver_chunks: u64,
     discarded_fuel: u64,
     resource_replay_region: Option<ResourceReplayRegionKey>,
     generation: Option<tex_exec::RetainedEngineGeneration<'store>>,
@@ -770,7 +770,6 @@ impl<'store> RevisionCandidate<'store> {
                 // rewinds this candidate. Ready and unavailable answers
                 // are installed during the same canonical operation.
                 self.resource_restarts = self.resource_restarts.saturating_add(1);
-                self.replayed_dispatches = self.replayed_dispatches.saturating_add(1);
                 self.suspension_serial = self.suspension_serial.saturating_add(1);
                 self.generation = Some(generation.into_generation());
                 Ok(RevisionCandidateResult::AwaitingResources(need))
@@ -778,7 +777,7 @@ impl<'store> RevisionCandidate<'store> {
             PlanExecution::Complete(completion, fuel) => {
                 self.advance_calls = self
                     .advance_calls
-                    .saturating_add(completion.delivered_commands as u64);
+                    .saturating_add(completion.completed_driver_chunks as u64);
                 // The command ledger is monotonic across host waits and
                 // full replay. Discarded attempts have already been
                 // charged above, so completion contributes only the
@@ -831,14 +830,10 @@ impl<'store> RevisionCandidate<'store> {
             advance_calls: self.advance_calls,
             suspensions: self.suspension_serial,
             resource_restarts: self.resource_restarts,
-            local_step_retries: self.suspension_serial,
-            replayed_delivered_tokens: self.replayed_delivered_tokens,
-            replayed_dispatches: self.replayed_dispatches,
+            discarded_driver_chunks: self.discarded_driver_chunks,
             cumulative_fuel: self.cumulative_fuel,
             discarded_fuel: self.discarded_fuel,
             engine_time: Duration::ZERO,
-            savepoint_capture_time: Duration::ZERO,
-            savepoint_restore_time: Duration::ZERO,
         }
     }
 
@@ -1052,9 +1047,9 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 panic!("candidate owner unwind test hook");
             }
         });
-        let delivered_before = {
+        let chunks_before = {
             let (_, _, _, _, runtime) = attached.parts::<CandidateRuntime>();
-            runtime.delivered_commands
+            runtime.completed_driver_chunks
         };
         let fuel_before = {
             let (_, _, _, control, _) = attached.parts::<CandidateRuntime>();
@@ -1078,14 +1073,14 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
         let should_rewind = matches!(&execution, Ok(PlanExecution::Suspended(_)));
         let mut discarded_fuel = 0;
         if should_rewind {
-            let delivered_after = {
+            let chunks_after = {
                 let (_, _, _, _, runtime) = attached.parts::<CandidateRuntime>();
-                runtime.delivered_commands
+                runtime.completed_driver_chunks
             };
-            self.candidate.replayed_delivered_tokens = self
+            self.candidate.discarded_driver_chunks = self
                 .candidate
-                .replayed_delivered_tokens
-                .saturating_add(delivered_after.saturating_sub(delivered_before) as u64);
+                .discarded_driver_chunks
+                .saturating_add(chunks_after.saturating_sub(chunks_before) as u64);
             let (anchor, attempt_fuel, replay_region) = {
                 let (_, _, _, control, runtime) = attached.parts::<CandidateRuntime>();
                 let anchor = runtime.take_latest_replay_anchor();
@@ -1362,7 +1357,7 @@ fn prepare_candidate_runtime<'store>(
 
 struct CandidateRuntime {
     history: LiveHistoryState,
-    delivered_commands: usize,
+    completed_driver_chunks: usize,
     job_start_anchor: Option<FrozenJobStartAnchor>,
 }
 
@@ -2062,7 +2057,7 @@ fn initialize_candidate_runtime<G: 'static>(
     }
     Ok(CandidateRuntime {
         history,
-        delivered_commands: 0,
+        completed_driver_chunks: 0,
         job_start_anchor: candidate.job_start_anchor.clone(),
     })
 }
@@ -2109,7 +2104,7 @@ fn execute_plan_inner<G>(
 ) -> Result<PlanExecution, SessionError> {
     let CandidateRuntime {
         history,
-        delivered_commands,
+        completed_driver_chunks,
         job_start_anchor,
     } = runtime;
     let mut sink = LiveHistorySink {
@@ -2127,7 +2122,7 @@ fn execute_plan_inner<G>(
             (
                 "steps",
                 candidate.execution_budgets.steps,
-                u64::try_from(*delivered_commands).unwrap_or(u64::MAX),
+                u64::try_from(*completed_driver_chunks).unwrap_or(u64::MAX),
             ),
             (
                 "live input frames",
@@ -2178,15 +2173,15 @@ fn execute_plan_inner<G>(
             CanonicalStepResult::Progress(step)
             | CanonicalStepResult::Committed(step)
             | CanonicalStepResult::Completed(step) => {
-                *delivered_commands = delivered_commands.saturating_add(1);
-                if u64::try_from(*delivered_commands).unwrap_or(u64::MAX)
+                *completed_driver_chunks = completed_driver_chunks.saturating_add(1);
+                if u64::try_from(*completed_driver_chunks).unwrap_or(u64::MAX)
                     > candidate.execution_budgets.steps
                 {
                     return Err(SessionError::Execute(
                         tex_exec::ExecError::ResourceBudgetExceeded {
                             resource: "steps",
                             limit: candidate.execution_budgets.steps,
-                            attempted: u64::try_from(*delivered_commands).unwrap_or(u64::MAX),
+                            attempted: u64::try_from(*completed_driver_chunks).unwrap_or(u64::MAX),
                         },
                     ));
                 }
@@ -2213,7 +2208,7 @@ fn execute_plan_inner<G>(
                             completion,
                             history: std::mem::take(&mut sink.state.records),
                             dependencies,
-                            delivered_commands: *delivered_commands,
+                            completed_driver_chunks: *completed_driver_chunks,
                             format_dump: None,
                             checkpoint_retained_bytes,
                             checkpoint_shared_owner_bytes,
@@ -2266,7 +2261,7 @@ fn execute_plan_inner<G>(
                             completion,
                             history: std::mem::take(&mut sink.state.records),
                             dependencies,
-                            delivered_commands: *delivered_commands,
+                            completed_driver_chunks: *completed_driver_chunks,
                             format_dump,
                             checkpoint_retained_bytes,
                             checkpoint_shared_owner_bytes,
@@ -3316,8 +3311,7 @@ impl<'store> Session<'store> {
             advance_calls: 0,
             cumulative_fuel: 0,
             resource_restarts: 0,
-            replayed_delivered_tokens: 0,
-            replayed_dispatches: 0,
+            discarded_driver_chunks: 0,
             discarded_fuel: 0,
             resource_replay_region: None,
             generation,
@@ -3366,7 +3360,7 @@ impl<'store> Session<'store> {
             new: &completion.history[new_history_start..],
             edit: candidate.plan.edit_map,
             source_len: candidate.plan.source.len(),
-            delivered_commands: completion.delivered_commands,
+            completed_driver_chunks: completion.completed_driver_chunks,
             revision_setup_latency: candidate.plan.revision_setup_latency,
             restart_fork_latency: candidate.plan.restart_fork_latency,
             pages_retyped: completion.completion.pages().len(),

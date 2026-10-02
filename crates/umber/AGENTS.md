@@ -95,6 +95,9 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/distribution_verify.rs`: explicit pinned local root/shard/object graph verifier, streaming object authentication, and complete-work report.
 - `src/distribution_verify/tests.rs`: exhaustive distribution verifier positive and corruption controls.
 - `src/watch.rs`: polling incremental watch driver, bounded distribution-owner reuse across replacement sessions, same-thread non-atomic engine ownership with a separate file monitor, supersession/Ctrl-C cancellation, DVI publication, and phase latency reporting.
+  Reuse reports completed driver chunks, and CLI execution telemetry reports
+  discarded driver chunks and actual resource restarts without duplicated
+  command counts or phantom savepoint costs.
 - `src/bin/distribution_startup_benchmark.rs`: hermetic cold-process versus same-process multi-session distribution benchmark with exact cache-inventory and DVI-loss assertions.
 - `src/bin/distribution_verify.rs`: separately invoked complete local distribution and native cache integrity audit.
 - `src/bin/gentle_profile.rs`: persistent optimized Gentle profiling runner with optional `profiling` counters that preloads the external corpus into a shared in-memory World, isolates fresh cold sessions under explicit memo policies, measures balanced unchanged-root generated-input stabilization replay and long-session retention, and separately enforces slow pagination-changing, cross-generation interaction, fast suffix-adoption, and shared-mount hlist-rebreak paths under memo disabled/enabled or explicit baseline/candidate policies with cold-DVI, named-boundary-schedule, and profiling-only state-hash journal-work verification. The retired expansion meaning-cache invalidation census is not part of its report.

@@ -3128,26 +3128,24 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
     let partitioned_telemetry = partitioned.compile_telemetry();
     assert_eq!(preloaded_telemetry.execution.cold_starts, 1);
     assert_eq!(preloaded_telemetry.execution.suspensions, 0);
-    assert_eq!(preloaded_telemetry.execution.local_step_retries, 0);
-    assert_eq!(preloaded_telemetry.execution.replayed_delivered_tokens, 0);
-    assert_eq!(preloaded_telemetry.execution.replayed_dispatches, 0);
+    assert_eq!(preloaded_telemetry.execution.discarded_driver_chunks, 0);
     assert_eq!(partitioned_telemetry.execution.cold_starts, 1);
     assert_eq!(partitioned_telemetry.execution.suspensions, 3);
     // Every response discards the attempt and restarts from its full checkpoint.
-    // `replayed_delivered_tokens` measures completed production-driver chunks;
+    // `discarded_driver_chunks` measures completed production-driver chunks;
     // a chunk can contain several native commands. Its partition changes when
     // direct dispatch removes cold handoffs, but discarded completed work must
     // still be visible alongside the three real replay restarts.
     assert_eq!(
         (
-            partitioned_telemetry.execution.local_step_retries,
-            partitioned_telemetry.execution.replayed_dispatches,
+            partitioned_telemetry.execution.resource_restarts,
+            partitioned_telemetry.execution.suspensions,
         ),
         (3, 3),
         "each partitioned response restarts from a full checkpoint"
     );
     assert!(
-        partitioned_telemetry.execution.replayed_delivered_tokens > 0,
+        partitioned_telemetry.execution.discarded_driver_chunks > 0,
         "full-checkpoint replay discards completed driver work"
     );
     assert_eq!(partitioned.attempts(), 4);
