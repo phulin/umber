@@ -20,14 +20,15 @@ struct ScalarWords<'a, 'callback, Processor, G> {
     consume: &'a mut ScalarConsumer<'callback, Processor, G>,
 }
 
-impl<'state, 'host, G> ExpandedReaderConsumer<CommandProcessor<'state, 'host, G>, G>
-    for ScalarWords<'_, '_, CommandProcessor<'state, 'host, G>, G>
+impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
+    ExpandedReaderConsumer<CommandProcessor<'state, 'host, G, Facts>, G>
+    for ScalarWords<'_, '_, CommandProcessor<'state, 'host, G, Facts>, G>
 {
     const NATIVE_TERMINAL: bool = true;
 
     fn native_terminal(
         &mut self,
-        processor: &mut CommandProcessor<'state, 'host, G>,
+        processor: &mut CommandProcessor<'state, 'host, G, Facts>,
         spelling: TracedTokenWord,
         meaning: &MeaningWord<G>,
         control_sequence: Option<Symbol>,
@@ -37,7 +38,7 @@ impl<'state, 'host, G> ExpandedReaderConsumer<CommandProcessor<'state, 'host, G>
 
     fn terminal(
         &mut self,
-        processor: &mut CommandProcessor<'state, 'host, G>,
+        processor: &mut CommandProcessor<'state, 'host, G, Facts>,
         destination: &mut Option<CurrentCommand<G>>,
         status: DeliveryStatus,
     ) -> Result<ControlFlow<()>, CommandError> {
@@ -58,7 +59,7 @@ impl<'state, 'host, G> ExpandedReaderConsumer<CommandProcessor<'state, 'host, G>
     }
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(crate) fn consume_expanded_words(
         &mut self,
         consume: &mut ScalarConsumer<'_, Self, G>,
@@ -80,6 +81,29 @@ impl<G> CommandProcessor<'_, '_, G> {
                 _ => unreachable!("expanded scanner has no character consumer"),
             }
         }
+    }
+
+    /// Runs main control's native consumer inside the canonical reader.
+    /// Accepted words never cross a command-product boundary. Real replay,
+    /// EOF and error boundaries return to the caller; observation and TeX
+    /// recovery lend their demanded record only during consumption.
+    pub fn consume_main_control(
+        &mut self,
+        consume: &mut ScalarConsumer<'_, Self, G>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let mut destination = None;
+        self.consume_expanded_with_mode::<false, false>(
+            &mut destination,
+            None,
+            ExpandedReaderRole::MainControl,
+            &mut ScalarWords { consume },
+        )
+        .map(|status| match status {
+            DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                DeliveryStatus::Command
+            }
+            status => status,
+        })
     }
 
     /// Ordinary synchronous consumers back up spelling; exceptional deliveries

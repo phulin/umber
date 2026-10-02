@@ -100,7 +100,8 @@ not allocate a vector merely to publish one already-complete node.
   owners under the sole main-control episode; operand scanning remains in
   `tex-command` and host boundaries remain in `host_boundaries.rs`.
 - `src/main_control/executor_facts.rs`: the borrow-scoped live mode and
-  effective-tail provider plus the stack-branded checked-save and delivery
+  effective-tail provider, retaining either the actual mutable execution loan or
+  a genuine immutable cold query loan, plus the stack-branded checked-save and delivery
   facts. A scanner or conditional invokes only the exact fact method it
   consumes; ordinary delivery writes no mode/tail cache and performs no
   effective-tail traversal. No live fact or provider survives a processor

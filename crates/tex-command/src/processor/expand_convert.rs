@@ -13,7 +13,7 @@ use super::expand_render::{
 };
 use super::{CommandProcessor, DeliveryStatus};
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// e-TeX 2.6 etex.ch §53a's `\detokenize`.
     ///
     /// `scan_general_text` collects without expansion, `token_show` renders

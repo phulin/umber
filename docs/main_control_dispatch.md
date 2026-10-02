@@ -25,14 +25,16 @@ Prefixes and replacement commands dispatch in place without redelivery. The resw
 selected arm scans its concrete operands through the existing processor. A
 source-free native arm reborrows that processor's actual context, command state,
 fuel, diagnostic and observer owners while the processor remains live. The callback owns
-no payload, phase, counter or separate dispatcher. An actual pending character
-flush ends the processor's immutable mode-fact loan before borrowing the mode
-owner mutably; other context-consuming commands retain both processor and
-context in the same fetch/reswitch loop. Each completed command settles its
-real scratch and tracing boundary before fetching again. Genuine diagnostic,
+no payload, phase, counter or separate dispatcher. The processor preserves its concrete execution provider, which lends the
+actual mode owner mutably. Native application can reborrow that same owner;
+subsequent expansion reads live mode facts. Ordinary groups, macro/let assignments and relax flush pending characters
+through that loan and retain the existing processor. Genuine outer semantic
+calls still end it where their owner requirements demand it. Context-consuming commands retain the processor and context in the same
+fetch/reswitch loop. Actual consumers reclaim their scratch at consumption,
+and demanded tracing records own their reporting boundary. Genuine diagnostic,
 observer, output, alignment or World demands end the appropriate owner loan.
-Each command still settles its scanner scratch, consumes its real
-fuel, and counts toward the caller's remaining command budget. Native semantic
+Each command consumes its real fuel and counts toward the caller's remaining
+command budget; successful continuation has no settlement or cleanup stage. Native semantic
 arms examine the diagnostics, pending output, observation, tracked-region, alignment delivery and synchronous World-effect
 demands they actually produced; those demands end the loan before the existing
 publication, checkpoint, page-owner rotation or resource boundary runs. An

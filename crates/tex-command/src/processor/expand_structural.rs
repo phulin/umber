@@ -19,7 +19,7 @@ use super::{CommandProcessor, DeliveryStatus};
 /// inserted` recovery. Rendering belongs to the diagnostic milestone.
 pub(crate) const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX.web's `\noexpand`: read normally, then replay exactly one target
     /// from a backed-up level carrying the non-sticky suppression treatment.
     pub(super) fn expand_noexpand(&mut self) -> Result<(), CommandError> {

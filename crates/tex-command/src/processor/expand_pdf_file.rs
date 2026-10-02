@@ -7,7 +7,7 @@ use crate::CommandError;
 use super::CommandProcessor;
 use super::expand_render::format_pdf_date;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// pdftex.web §1590's `pdf_file_dump_code` conversion.
     ///
     /// The filename is scanned before the immutable input capability is

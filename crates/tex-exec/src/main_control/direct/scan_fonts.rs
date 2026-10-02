@@ -19,7 +19,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 &mut self.control.command,
                 self.control.fuel.fuel_mut(),
                 &mut self.control.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 provider,
                 &mut self.control.declined_resource_attempt,
                 &mut self.control.operation_observations,
@@ -31,7 +31,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 &mut self.control.command,
                 self.control.fuel.fuel_mut(),
                 &mut self.control.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 &mut self.control.operation_observations,
                 self.effects,
                 &mut admitted_context,
@@ -41,7 +41,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         if let Some(cursor) = self.cursor {
             owned_processor.resume_delivery_cursor(cursor);
         }
-        let processor: &mut CommandProcessor<'_, '_, G> = &mut owned_processor;
+        let processor = &mut owned_processor;
         // Finish this actual processor/context loan before semantic application.
         macro_rules! finish_scan {
             ($call:expr) => {
@@ -90,7 +90,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 &mut self.control.command,
                 self.control.fuel.fuel_mut(),
                 &mut self.control.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 provider,
                 &mut self.control.declined_resource_attempt,
                 &mut self.control.operation_observations,
@@ -102,7 +102,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 &mut self.control.command,
                 self.control.fuel.fuel_mut(),
                 &mut self.control.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 &mut self.control.operation_observations,
                 self.effects,
                 &mut admitted_context,
@@ -112,7 +112,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         if let Some(cursor) = self.cursor {
             owned_processor.resume_delivery_cursor(cursor);
         }
-        let processor: &mut CommandProcessor<'_, '_, G> = &mut owned_processor;
+        let processor = &mut owned_processor;
         // Finish this actual processor/context loan before semantic application.
         macro_rules! finish_scan {
             ($call:expr) => {
@@ -153,7 +153,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 &mut self.control.command,
                 self.control.fuel.fuel_mut(),
                 &mut self.control.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 provider,
                 &mut self.control.declined_resource_attempt,
                 &mut self.control.operation_observations,
@@ -165,7 +165,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 &mut self.control.command,
                 self.control.fuel.fuel_mut(),
                 &mut self.control.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 &mut self.control.operation_observations,
                 self.effects,
                 &mut admitted_context,
@@ -175,7 +175,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         if let Some(cursor) = self.cursor {
             owned_processor.resume_delivery_cursor(cursor);
         }
-        let processor: &mut CommandProcessor<'_, '_, G> = &mut owned_processor;
+        let processor = &mut owned_processor;
         // Finish this actual processor/context loan before semantic application.
         macro_rules! finish_scan {
             ($call:expr) => {

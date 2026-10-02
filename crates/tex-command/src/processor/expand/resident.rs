@@ -6,7 +6,7 @@ use crate::{CommandError, CommandProcessor};
 use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Settles a drained frame or a replacement parameter after a bulk scan.
     pub(crate) fn settle_resident_run_boundary(&mut self) -> Result<bool, CommandError> {
         if self.depleted_input_top().is_some() {

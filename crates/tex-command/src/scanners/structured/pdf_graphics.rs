@@ -1,6 +1,6 @@
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Scans the unexpandable pdfTeX graphics whatsit family.
     ///
     /// This follows pdftex.web's `pdfliteral` through `pdfsnapycomp` scanners:

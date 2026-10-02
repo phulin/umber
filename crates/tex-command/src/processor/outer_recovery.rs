@@ -21,7 +21,7 @@ const INCOMPLETE_CONDITIONAL_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0336;
 /// scanning a definition, use, preamble or text.
 pub(crate) const RUNAWAY_SCAN_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0338;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn check_outer_validity_entry(
         &mut self,
         command: &mut CurrentCommand<G>,

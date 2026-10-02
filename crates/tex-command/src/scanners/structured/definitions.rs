@@ -1,6 +1,6 @@
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Scans TeX's balanced general text through the canonical `scan_toks`
     /// collector. `expanded` controls its TeX82 expanded-collection mode.
     pub fn scan_balanced_text(

@@ -351,3 +351,61 @@ fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
         },
     );
 }
+
+#[test]
+fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"H\ifhmode T\fi\ifvmode V\fi Q%");
+        let mut effects = DiagnosticEffects::new();
+        let mut context = stores.command_context().expect("context");
+        let mut facts = ExecutorHostFacts {
+            modes: &mut control.modes,
+            pdf_ignore_depth: control.pdf_ignore_depth,
+            telemetry: &mut control.episode_telemetry,
+        };
+        let mut processor = command_processor(
+            &mut control.command,
+            control.fuel.fuel_mut(),
+            &mut control.capabilities,
+            &mut facts,
+            &mut control.operation_observations,
+            &mut effects,
+            &mut context,
+        );
+        let mut consumed = String::new();
+        let result = processor
+            .consume_main_control(&mut |processor, word, _, _, exceptional| {
+                assert!(
+                    exceptional.is_none(),
+                    "ordinary execution needs no command record"
+                );
+                let Token::Char { ch, .. } = word.semantic_token() else {
+                    panic!("expected the selected native character");
+                };
+                consumed.push(ch);
+                processor.apply_completed_command(|_, _, _, _, _, execution| match ch {
+                    'H' => execution
+                        .modes
+                        .push(Mode::RestrictedHorizontal)
+                        .expect("enter mode"),
+                    'T' => {
+                        assert_eq!(execution.modes.current_mode(), Mode::RestrictedHorizontal);
+                        execution.modes.pop().expect("leave mode");
+                    }
+                    'V' | 'Q' => assert_eq!(execution.modes.current_mode(), Mode::Vertical),
+                    _ => panic!("conditional expansion consumed the wrong mode: {ch}"),
+                });
+                Ok(if ch == 'Q' {
+                    std::ops::ControlFlow::Break(())
+                } else {
+                    std::ops::ControlFlow::Continue(())
+                })
+            })
+            .expect("native main-control consumption");
+        assert_eq!(result, tex_command::DeliveryStatus::Command);
+        assert_eq!(consumed, "HTVQ");
+        drop(processor);
+        assert_eq!(facts.modes.current_mode(), Mode::Vertical);
+    });
+}

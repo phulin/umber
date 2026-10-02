@@ -5,8 +5,11 @@ use super::super::*;
 /// an inserted `\par` replay only while unrestricted horizontal mode is
 /// current. Context one covers vertical boxes; context two adds insertion,
 /// output, alignment-item, and no-align boundaries.
-pub(in crate::main_control) fn partoken_context_replays<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
+pub(in crate::main_control) fn partoken_context_replays<
+    G,
+    Facts: tex_command::CommandHostFacts<G>,
+>(
+    processor: &mut CommandProcessor<'_, '_, G, Facts>,
     mode: Mode,
     threshold: i32,
 ) -> bool {

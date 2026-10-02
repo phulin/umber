@@ -1,6 +1,6 @@
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX's `scan_file_name`, returning a typed boundary instead of an input
     /// cursor or a backed-up raw command.
     fn scan_file_name(&mut self) -> Result<ScannedFileName, CommandError> {

@@ -184,7 +184,7 @@ fn source_macro_main_control_materializes_only_when_observed() {
 // macro has expanded, or in a scanner, get_x_token converts it inline.
 #[test]
 fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
-    for main_control in [false, true] {
+    for (main_control, native) in [(false, false), (true, false), (true, true)] {
         for expanded in [false, true] {
             for observed in [false, true] {
                 for fuel_cut in [false, true] {
@@ -250,7 +250,18 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                                 .expect("consume available fuel");
                         }
                         let mut destination = None;
-                        let result = if main_control {
+                        let mut native_endv = false;
+                        let result = if native {
+                            processor.consume_main_control(&mut |_, spelling, meaning, _, _| {
+                                assert!(spelling.semantic_token().is_frozen_endv());
+                                assert_eq!(
+                                    meaning.resolve(),
+                                    tex_state::meaning::ResolvedMeaning::Static(Meaning::EndV)
+                                );
+                                native_endv = true;
+                                Ok(std::ops::ControlFlow::Break(()))
+                            })
+                        } else if main_control {
                             processor.main_control_expanded_into(&mut destination)
                         } else {
                             processor.get_x_token_into(&mut destination)
@@ -258,14 +269,20 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                         if fuel_cut {
                             assert!(matches!(result, Err(crate::CommandError::FuelExhausted(_))));
                             assert!(destination.is_none());
+                            assert!(!native_endv);
                         } else {
                             assert_eq!(
                                 result.expect("template delivery"),
                                 crate::DeliveryStatus::Command
                             );
-                            let delivered = destination.take().expect("endv");
-                            assert!(delivered.spelling().semantic_token().is_frozen_endv());
-                            assert_eq!(delivered.meaning(), Meaning::EndV);
+                            if native {
+                                assert!(native_endv);
+                                assert!(destination.is_none());
+                            } else {
+                                let delivered = destination.take().expect("endv");
+                                assert!(delivered.spelling().semantic_token().is_frozen_endv());
+                                assert_eq!(delivered.meaning(), Meaning::EndV);
+                            }
                             assert_eq!(processor.fuel.burned(), charges);
                             assert_eq!(
                                 processor

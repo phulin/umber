@@ -1,6 +1,6 @@
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Completes one TeX82 §1151 `scan_math` field.
     ///
     /// §1151 is a classification, not an absorption:

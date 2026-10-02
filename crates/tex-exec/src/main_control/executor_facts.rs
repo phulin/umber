@@ -1,6 +1,7 @@
 //! Borrow-scoped projection of authoritative executor facts.
 
 use super::*;
+use std::borrow::Borrow;
 
 pub(super) struct EffectiveTailFacts {
     pub(super) last_node: Option<tex_command::LastNodeItem>,
@@ -13,21 +14,23 @@ pub(super) struct EffectiveTailFacts {
 /// This provider owns no sampled values. Each trait call reads exactly one
 /// requested fact from the authoritative mode/page state, records the focused
 /// operational counter, and returns before the processor can suspend.
-pub(super) struct ExecutorHostFacts<'episode, G> {
-    pub(super) modes: &'episode ModeNest,
+pub(super) struct ExecutorHostFacts<'episode, G, Modes = &'episode ModeNest> {
+    pub(super) modes: Modes,
     pub(super) pdf_ignore_depth: Option<tex_state::PrimitiveHandle<G>>,
     pub(super) telemetry: &'episode mut crate::EpisodeTelemetry,
 }
 
-impl<G> tex_command::CommandHostFacts<G> for ExecutorHostFacts<'_, G> {
+impl<G, Modes: Borrow<ModeNest>> tex_command::CommandHostFacts<G>
+    for ExecutorHostFacts<'_, G, Modes>
+{
     fn conditional_state(&mut self) -> tex_command::ConditionalState {
         self.telemetry.record_host_fact_query();
-        self.modes.conditional_state()
+        self.modes.borrow().conditional_state()
     }
 
     fn diagnostic_mode_name(&mut self) -> &'static str {
         self.telemetry.record_host_fact_query();
-        match self.modes.current_mode() {
+        match self.modes.borrow().current_mode() {
             Mode::Vertical => "vertical mode",
             Mode::InternalVertical => "internal vertical mode",
             Mode::Horizontal => "horizontal mode",
@@ -40,21 +43,22 @@ impl<G> tex_command::CommandHostFacts<G> for ExecutorHostFacts<'_, G> {
     fn space_factor(&mut self) -> Option<i32> {
         self.telemetry.record_host_fact_query();
         matches!(
-            self.modes.current_mode(),
+            self.modes.borrow().current_mode(),
             Mode::Horizontal | Mode::RestrictedHorizontal
         )
-        .then(|| self.modes.current_list().space_factor())
+        .then(|| self.modes.borrow().current_list().space_factor())
     }
 
     fn prev_depth(&mut self, stores: &CommandContext<'_, G>) -> Option<Scaled> {
         self.telemetry.record_host_fact_query();
-        let mode = self.modes.current_mode();
+        let mode = self.modes.borrow().current_mode();
         let ignored_depth = crate::mode::ignored_depth_with_handle(stores, self.pdf_ignore_depth);
         // tex.web §418's `set_aux` twin of `space_factor`: `\prevdepth` is
         // readable only in vertical mode, where an unset `prev_depth` is
         // §215's `ignore_depth` initial value.
         matches!(mode, Mode::Vertical | Mode::InternalVertical).then(|| {
             self.modes
+                .borrow()
                 .current_list()
                 .prev_depth()
                 .unwrap_or(ignored_depth)
@@ -65,12 +69,12 @@ impl<G> tex_command::CommandHostFacts<G> for ExecutorHostFacts<'_, G> {
         self.telemetry.record_host_fact_query();
         // tex.web §422 walks to the nearest enclosing vertical level rather
         // than testing the current mode.
-        Some(self.modes.enclosing_vertical_prev_graf())
+        Some(self.modes.borrow().enclosing_vertical_prev_graf())
     }
 
     fn last_node(&mut self, stores: &CommandContext<'_, G>) -> Option<tex_command::LastNodeItem> {
         self.telemetry.record_host_fact_query();
-        let tail = effective_tail_facts(self.modes, stores);
+        let tail = effective_tail_facts(self.modes.borrow(), stores);
         self.telemetry
             .record_effective_tail_traversal(tail.traversed);
         tail.last_node
@@ -78,7 +82,7 @@ impl<G> tex_command::CommandHostFacts<G> for ExecutorHostFacts<'_, G> {
 
     fn last_node_type(&mut self, stores: &CommandContext<'_, G>) -> i32 {
         self.telemetry.record_host_fact_query();
-        let tail = effective_tail_facts(self.modes, stores);
+        let tail = effective_tail_facts(self.modes.borrow(), stores);
         self.telemetry
             .record_effective_tail_traversal(tail.traversed);
         tail.last_node_type

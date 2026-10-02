@@ -582,3 +582,36 @@ the spelling before rendering TeX's error context. Observed and exceptional
 inputs lend their demanded cold record without creating one for ordinary input.
 Cold meaning rendering accepts the already resolved meaning and identity;
 printing an invalid operand does not require a command object.
+
+## Native execution owner loan
+
+Main control’s consumer must execute from native spelling and meaning under
+its existing processor loan. That consumer needs the actual mutable mode owner
+at a mode change, and expansion or operand scanning may consult that same mode
+owner before the change. An immutable erased mode-fact loan cannot support
+both operations; a command object must not become a workaround for releasing
+that loan.
+
+The processor preserves the concrete type of its borrowed execution facts.
+Initial processors use the zero-sized initial TeX facts directly. Executor
+processors borrow their actual provider, which can own mutable mode access.
+Scalar scans and expansion read the provider’s live fact methods. Synchronous
+semantic application reborrows that provider alongside the actual state,
+command, fuel, diagnostic and observer owners. It creates no mode snapshot,
+parallel current-command cache or deferred operation. The execution switch
+remains the sole authority for opcode, prefix and mode ordering.
+
+Host-resource providers remain cold and erased. Query-only cold scanners and
+nested replay share the erased fact-provider specialization, without copying
+facts or creating another engine. The native execution consumer preserves its
+concrete owner type; cold helpers do not duplicate the reader and scanner code
+for an immutable provider they only query. All of these
+loans end on result unwinding. Full checkpoints retain the existing semantic
+owners, never a fact provider, native consumer or host capability.
+
+Ordinary group entry/unsave, macro and let assignment, and relax character
+flushes now reborrow the real mode owner through this loan. They keep the
+existing reader alive across the flush and subsequent native mutation. A
+preexisting diagnostic demand still releases the loan for ordered reporting.
+Group unsave inserts aftergroup words through that same processor; flushing a
+word creates neither a replacement processor nor a cached mode sample.

@@ -78,7 +78,7 @@ pub(super) struct HyphenationProgress {
     pending_pattern_paths: BTreeMap<Vec<char>, bool>,
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Reports whether TeX82 §960 may still add patterns to the uninitialized
     /// hyphenation trie.
     #[must_use]

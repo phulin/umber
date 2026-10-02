@@ -6,7 +6,7 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::TracedTokenWord;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(never)]
     pub(super) fn expand_primitive(
         &mut self,

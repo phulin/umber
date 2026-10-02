@@ -437,7 +437,7 @@ enum MacroParameterDiagnostic {
 
 const FILE_ENDED_WITHIN_READ_DIAGNOSTIC: u64 = 0x7265_6164_0000_0486;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Admits only the destination-specific storage needed by one collector.
     ///
     /// The collector itself is initialized by its caller before this fallible
@@ -1897,7 +1897,7 @@ fn token_char(token: Token) -> Option<char> {
 /// _lines_ rather than a brace-balanced group, disables alignment delimiters
 /// for its whole duration, and continues across a brace imbalance instead of
 /// ending at a closing brace. It shares only the frozen-list result.
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Collects TeX82 §482's `read_toks` list.
     ///
     /// `begin scanner_status:=defining; warning_index:=r; def_ref:=get_avail;

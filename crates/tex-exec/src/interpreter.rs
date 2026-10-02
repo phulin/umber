@@ -56,14 +56,14 @@ impl<G> PersistentInterpreter<G> {
     }
 
     /// Exclusively borrows the persistent command state and admitted owners.
-    pub(crate) fn processor<'episode, 'admission>(
+    pub(crate) fn processor<'episode, 'admission, Facts: tex_command::CommandHostFacts<G>>(
         &'episode mut self,
         state: &'episode mut CommandContext<'admission, G>,
-        host: CommandHostContext<'episode, G>,
+        host: CommandHostContext<'episode, G, Facts>,
         fuel: &'episode mut CommandFuel,
         observer: Option<&'episode mut dyn CommandObserver>,
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
-    ) -> CommandProcessor<'episode, 'admission, G> {
+    ) -> CommandProcessor<'episode, 'admission, G, Facts> {
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_interpreter_operation_entry();
         #[cfg(feature = "profiling")]

@@ -110,8 +110,8 @@ pub(super) fn alignment_preamble<G>(
 /// TeX82 §1230's shared `def_code` operand order for every code table.
 /// The hot `\catcode` path and the other cold table paths must consume the
 /// character selector, optional equals, and signed value identically.
-pub(super) fn scan_code_table_operands<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
+pub(super) fn scan_code_table_operands<G, Facts: tex_command::CommandHostFacts<G>>(
+    processor: &mut CommandProcessor<'_, '_, G, Facts>,
 ) -> Result<(char, i32), ExecError> {
     let character =
         match processor.scan_restricted_integer_retained(RestrictedIntegerClass::CharacterCode) {
@@ -231,8 +231,8 @@ pub(super) fn hot_core_meaning_family<G>(
 /// reached after `big_switch` and after cases such as §1045 `ignore_spaces`
 /// fetch a replacement command. §1211's prefix loop does not return to that
 /// label, so its internal fetches remain untraced.
-pub(super) fn report_command_trace<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
+pub(super) fn report_command_trace<G, Facts: tex_command::CommandHostFacts<G>>(
+    processor: &mut CommandProcessor<'_, '_, G, Facts>,
     mode: Mode,
     command: &tex_command::CurrentCommand<G>,
     shown_mode: &mut Option<Mode>,
@@ -262,8 +262,8 @@ pub(super) fn report_command_trace<G>(
 /// `scan_box` from the already-traced `leader_ship` case, so its `\hbox`,
 /// `\vbox`, or `\vtop` never returns to §1030's `reswitch`. Split replay
 /// retains `pending_shipout` across that internal fetch.
-pub(super) fn report_main_control_command_trace<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
+pub(super) fn report_main_control_command_trace<G, Facts: tex_command::CommandHostFacts<G>>(
+    processor: &mut CommandProcessor<'_, '_, G, Facts>,
     mode: Mode,
     command: &tex_command::CurrentCommand<G>,
     boxes: &ReplayBoxes<G>,
@@ -296,8 +296,8 @@ pub(super) fn report_main_control_command_trace<G>(
     }
 }
 
-pub(super) fn prepare_command_trace<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
+pub(super) fn prepare_command_trace<G, Facts: tex_command::CommandHostFacts<G>>(
+    processor: &mut CommandProcessor<'_, '_, G, Facts>,
     mode: Mode,
     shown_mode: Option<Mode>,
 ) {
@@ -313,8 +313,8 @@ pub(super) fn prepare_command_trace<G>(
     processor.set_command_trace_mode_prefix(mode_prefix);
 }
 
-pub(super) fn retain_operation_child<G, T>(
-    _processor: &mut CommandProcessor<'_, '_, G>,
+pub(super) fn retain_operation_child<G, T, Facts: tex_command::CommandHostFacts<G>>(
+    _processor: &mut CommandProcessor<'_, '_, G, Facts>,
     scan: tex_command::RetainedScalarScan<T>,
 ) -> Result<T, ExecError> {
     match scan {

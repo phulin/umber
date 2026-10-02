@@ -79,7 +79,7 @@ fn record_macro_activation_class(activation: MacroActivationClass) {
     });
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX82 §323's diagnostic for a named token-list parameter installed by
     /// `begin_token_list`. Unlike ordinary macro calls, these lists trace only
     /// when `\tracingmacros>1`.

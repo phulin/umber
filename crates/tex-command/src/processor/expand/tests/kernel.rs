@@ -79,13 +79,24 @@ fn nested_readers(
         let mut output = String::new();
         let mut destination = None;
         let exhausted = if fused {
-            let result = processor.consume_expanded_words(&mut |_, spelling, _, _, _| {
+            let mut consume = |_: &mut crate::CommandProcessor<'_, '_, _>,
+                               spelling: tex_state::token::TracedTokenWord,
+                               _: &tex_state::meaning::MeaningWord<_>,
+                               _,
+                               _: Option<&crate::CurrentCommand<_>>| {
                 let Token::Char { ch, .. } = spelling.semantic_token() else {
                     panic!("expected expanded character");
                 };
                 output.push(ch);
                 Ok(std::ops::ControlFlow::Continue(()))
-            });
+            };
+            let result = if main_control {
+                processor.consume_main_control(&mut consume).map(|status| {
+                    assert_eq!(status, crate::DeliveryStatus::End);
+                })
+            } else {
+                processor.consume_expanded_words(&mut consume)
+            };
             assert_eq!(processor.command.transient.active_expansion_depth, 0);
             assert_eq!(processor.expansion_depth, 0);
             match result {
@@ -166,11 +177,13 @@ fn synchronous_consumer_preserves_nested_readers_and_every_fuel_cut() {
     for limit in (1..=20).chain([100]) {
         let ordinary = nested_readers(false, false, false, limit);
         for observed in [false, true] {
-            assert_eq!(
-                nested_readers(observed, false, true, limit),
-                ordinary,
-                "fuel {limit}"
-            );
+            for main_control in [false, true] {
+                assert_eq!(
+                    nested_readers(observed, main_control, true, limit),
+                    ordinary,
+                    "fuel {limit}"
+                );
+            }
         }
     }
 }
@@ -336,7 +349,7 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
     impl CommandObserver for Observer {
         fn committed(&mut self, _: CommandObservation) {}
     }
-    for observed in [false, true] {
+    for (observed, main_control) in [(false, false), (true, false), (false, true), (true, true)] {
         for count in [1, 4096] {
             crate::test_harness::with_universe(|universe| {
                 let iftrue = install_static(
@@ -377,14 +390,29 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
                 };
                 let before = crate::command::command_ownership_counters();
                 let mut delivered = 0;
-                processor
-                    .consume_expanded_words(&mut |_, spelling, _, _, record| {
+                let mut consume =
+                    |_: &mut crate::CommandProcessor<'_, '_, _>,
+                     spelling: tex_state::token::TracedTokenWord,
+                     _: &tex_state::meaning::MeaningWord<_>,
+                     _,
+                     record: Option<&crate::CurrentCommand<_>>| {
                         assert_eq!(spelling.semantic_token(), letter);
                         assert_eq!(record.is_some(), observed);
                         delivered += 1;
                         Ok(std::ops::ControlFlow::Continue(()))
-                    })
-                    .expect("expanded native run");
+                    };
+                if main_control {
+                    assert_eq!(
+                        processor
+                            .consume_main_control(&mut consume)
+                            .expect("native main control"),
+                        crate::DeliveryStatus::End,
+                    );
+                } else {
+                    processor
+                        .consume_expanded_words(&mut consume)
+                        .expect("expanded native run");
+                }
                 assert_eq!(delivered, count);
                 assert!(processor.command.conditions.current().is_none());
                 let after = crate::command::command_ownership_counters();

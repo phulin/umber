@@ -13,7 +13,7 @@ use crate::observation::{CommandObservation, InputReason, InputRecord, InputTran
 
 use super::CommandProcessor;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Runs TeX82 §1335's `final_cleanup` input unwinding.
     ///
     /// `main_control` returns as soon as §1054's `its_all_over` is true, so

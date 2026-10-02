@@ -14,7 +14,7 @@ use crate::{CommandError, RegisteredSourceKind, SourceNameClass, SourceRegistrat
 
 use super::CommandProcessor;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// e-TeX 2.6 etex.ch §53a `pseudo_start`.
     pub(super) fn expand_scantokens(&mut self) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::GeneralText {

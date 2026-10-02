@@ -1321,6 +1321,30 @@ pub trait CommandHostFacts<G> {
     fn last_node_type(&mut self, state: &tex_state::CommandContext<'_, G>) -> i32;
 }
 
+impl<G, Facts: CommandHostFacts<G> + ?Sized> CommandHostFacts<G> for &mut Facts {
+    fn conditional_state(&mut self) -> ConditionalState {
+        (**self).conditional_state()
+    }
+    fn space_factor(&mut self) -> Option<i32> {
+        (**self).space_factor()
+    }
+    fn diagnostic_mode_name(&mut self) -> &'static str {
+        (**self).diagnostic_mode_name()
+    }
+    fn prev_depth(&mut self, state: &tex_state::CommandContext<'_, G>) -> Option<Scaled> {
+        (**self).prev_depth(state)
+    }
+    fn prev_graf(&mut self) -> Option<i32> {
+        (**self).prev_graf()
+    }
+    fn last_node(&mut self, state: &tex_state::CommandContext<'_, G>) -> Option<LastNodeItem> {
+        (**self).last_node(state)
+    }
+    fn last_node_type(&mut self, state: &tex_state::CommandContext<'_, G>) -> i32 {
+        (**self).last_node_type(state)
+    }
+}
+
 /// Cold-only provider for resources that are absent from command capabilities.
 /// Implementations receive a closure-scoped command-state world view and must
 /// return owned data before the borrow ends. Input reads and their dependency
@@ -1342,7 +1366,7 @@ pub trait ResourceProvider<G> {
 /// This zero-sized provider is not a cache: every method directly describes
 /// TeX's initial mode and empty list.
 #[derive(Debug, Default)]
-struct InitialCommandHostFacts;
+pub struct InitialCommandHostFacts;
 
 impl<G> CommandHostFacts<G> for InitialCommandHostFacts {
     fn conditional_state(&mut self) -> ConditionalState {
@@ -1422,85 +1446,54 @@ fn trim_current_directory_prefix(mut name: &str) -> &str {
 ///
 /// The mutable borrow makes the capability scope explicit and prevents the
 /// context from entering owned command state, snapshots, or formats.
-pub struct CommandHostContext<'a, G> {
+pub struct CommandHostContext<'a, G, Facts = InitialCommandHostFacts> {
     capabilities: &'a mut CommandHostCapabilities,
-    facts: CommandHostFactAccess<'a, G>,
+    pub(crate) facts: Facts,
     resource_provider: Option<&'a mut dyn ResourceProvider<G>>,
     attempted_resource: Option<&'a mut Option<ResourceNeed>>,
 }
 
-enum CommandHostFactAccess<'a, G> {
-    Initial(InitialCommandHostFacts),
-    Borrowed(&'a mut dyn CommandHostFacts<G>),
-}
-
 impl<'a, G> CommandHostContext<'a, G> {
-    pub(crate) fn reborrow(&mut self) -> CommandHostContext<'_, G> {
-        CommandHostContext {
-            capabilities: self.capabilities,
-            facts: match &mut self.facts {
-                CommandHostFactAccess::Initial(_) => {
-                    CommandHostFactAccess::Initial(InitialCommandHostFacts)
-                }
-                CommandHostFactAccess::Borrowed(facts) => {
-                    CommandHostFactAccess::Borrowed(&mut **facts)
-                }
-            },
-            resource_provider: self
-                .resource_provider
-                .as_mut()
-                .map(|provider| &mut **provider as &mut dyn ResourceProvider<G>),
-            attempted_resource: self.attempted_resource.as_deref_mut(),
-        }
-    }
-
-    /// Borrows resource capabilities for a processor outside an executor.
-    /// Such processors observe TeX's exact initial outer-vertical facts.
+    /// Uses TeX's exact initial outer-vertical facts outside an executor.
     #[must_use]
     pub fn new(capabilities: &'a mut CommandHostCapabilities) -> Self {
         Self {
             capabilities,
-            facts: CommandHostFactAccess::Initial(InitialCommandHostFacts),
+            facts: InitialCommandHostFacts,
             resource_provider: None,
             attempted_resource: None,
         }
     }
 
-    /// Borrows resource capabilities and the live executor fact provider for
-    /// one synchronous processor episode.
+    /// Borrows the actual live execution owner for one synchronous episode.
     #[must_use]
-    pub fn with_facts(
+    pub fn with_facts<Facts: CommandHostFacts<G> + ?Sized>(
         capabilities: &'a mut CommandHostCapabilities,
-        facts: &'a mut dyn CommandHostFacts<G>,
-    ) -> Self {
-        Self {
+        facts: &'a mut Facts,
+    ) -> CommandHostContext<'a, G, &'a mut Facts> {
+        CommandHostContext {
             capabilities,
-            facts: CommandHostFactAccess::Borrowed(facts),
+            facts,
             resource_provider: None,
             attempted_resource: None,
         }
     }
 
-    /// Borrows capabilities, live facts, and a cold-only provider for one
-    /// synchronous command episode. The optional attempt slot is a
-    /// call-scoped sideband consumed by the outer driver when a provider
-    /// declines after already making its one host call.
     #[must_use]
-    pub fn with_facts_and_resource_provider(
+    pub fn with_facts_and_resource_provider<Facts: CommandHostFacts<G> + ?Sized>(
         capabilities: &'a mut CommandHostCapabilities,
-        facts: &'a mut dyn CommandHostFacts<G>,
+        facts: &'a mut Facts,
         resource_provider: &'a mut dyn ResourceProvider<G>,
         attempted_resource: &'a mut Option<ResourceNeed>,
-    ) -> Self {
-        Self {
+    ) -> CommandHostContext<'a, G, &'a mut Facts> {
+        CommandHostContext {
             capabilities,
-            facts: CommandHostFactAccess::Borrowed(facts),
+            facts,
             resource_provider: Some(resource_provider),
             attempted_resource: Some(attempted_resource),
         }
     }
 
-    /// Borrows capabilities and a cold-only provider with initial facts.
     #[must_use]
     pub fn with_resource_provider(
         capabilities: &'a mut CommandHostCapabilities,
@@ -1509,9 +1502,25 @@ impl<'a, G> CommandHostContext<'a, G> {
     ) -> Self {
         Self {
             capabilities,
-            facts: CommandHostFactAccess::Initial(InitialCommandHostFacts),
+            facts: InitialCommandHostFacts,
             resource_provider: Some(resource_provider),
             attempted_resource: Some(attempted_resource),
+        }
+    }
+}
+
+impl<'a, G, Facts: CommandHostFacts<G>> CommandHostContext<'a, G, Facts> {
+    // Nested replay is a cold borrow boundary. Erasure here keeps repeated
+    // reborrows on the same implementation without nesting concrete loan types.
+    pub(crate) fn reborrow(&mut self) -> CommandHostContext<'_, G, &mut dyn CommandHostFacts<G>> {
+        CommandHostContext {
+            capabilities: self.capabilities,
+            facts: &mut self.facts,
+            resource_provider: self
+                .resource_provider
+                .as_mut()
+                .map(|provider| &mut **provider as &mut dyn ResourceProvider<G>),
+            attempted_resource: self.attempted_resource.as_deref_mut(),
         }
     }
 
@@ -1632,72 +1641,37 @@ impl<'a, G> CommandHostContext<'a, G> {
     }
 
     pub(crate) fn conditional_state(&mut self) -> ConditionalState {
-        match &mut self.facts {
-            CommandHostFactAccess::Initial(facts) => {
-                <InitialCommandHostFacts as CommandHostFacts<G>>::conditional_state(facts)
-            }
-            CommandHostFactAccess::Borrowed(facts) => facts.conditional_state(),
-        }
+        self.facts.conditional_state()
     }
-
     #[must_use]
     pub(crate) fn space_factor(&mut self) -> Option<i32> {
-        match &mut self.facts {
-            CommandHostFactAccess::Initial(facts) => {
-                <InitialCommandHostFacts as CommandHostFacts<G>>::space_factor(facts)
-            }
-            CommandHostFactAccess::Borrowed(facts) => facts.space_factor(),
-        }
+        self.facts.space_factor()
     }
-
     #[must_use]
     pub(crate) fn diagnostic_mode_name(&mut self) -> &'static str {
-        match &mut self.facts {
-            CommandHostFactAccess::Initial(facts) => {
-                <InitialCommandHostFacts as CommandHostFacts<G>>::diagnostic_mode_name(facts)
-            }
-            CommandHostFactAccess::Borrowed(facts) => facts.diagnostic_mode_name(),
-        }
+        self.facts.diagnostic_mode_name()
     }
-
     #[must_use]
     pub(crate) fn prev_depth(
         &mut self,
         state: &tex_state::CommandContext<'_, G>,
     ) -> Option<Scaled> {
-        match &mut self.facts {
-            CommandHostFactAccess::Initial(facts) => facts.prev_depth(state),
-            CommandHostFactAccess::Borrowed(facts) => facts.prev_depth(state),
-        }
+        self.facts.prev_depth(state)
     }
-
     #[must_use]
     pub(crate) fn prev_graf(&mut self) -> Option<i32> {
-        match &mut self.facts {
-            CommandHostFactAccess::Initial(facts) => {
-                <InitialCommandHostFacts as CommandHostFacts<G>>::prev_graf(facts)
-            }
-            CommandHostFactAccess::Borrowed(facts) => facts.prev_graf(),
-        }
+        self.facts.prev_graf()
     }
-
     #[must_use]
     pub(crate) fn last_node(
         &mut self,
         state: &tex_state::CommandContext<'_, G>,
     ) -> Option<LastNodeItem> {
-        match &mut self.facts {
-            CommandHostFactAccess::Initial(facts) => facts.last_node(state),
-            CommandHostFactAccess::Borrowed(facts) => facts.last_node(state),
-        }
+        self.facts.last_node(state)
     }
-
     #[must_use]
     pub(crate) fn last_node_type(&mut self, state: &tex_state::CommandContext<'_, G>) -> i32 {
-        match &mut self.facts {
-            CommandHostFactAccess::Initial(facts) => facts.last_node_type(state),
-            CommandHostFactAccess::Borrowed(facts) => facts.last_node_type(state),
-        }
+        self.facts.last_node_type(state)
     }
 }
 

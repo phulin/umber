@@ -9,7 +9,7 @@ use std::ops::ControlFlow;
 use tex_state::interner::Symbol;
 use tex_state::token::{Catcode, TracedTokenWord};
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Gives a raw-token consumer final spelling, borrowing a command only at a
     /// real semantic settlement or recovery boundary.
     pub(crate) fn consume_token_spelling<R>(

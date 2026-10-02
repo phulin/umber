@@ -17,7 +17,7 @@ use crate::observation::{
 use super::CommandProcessor;
 use super::alignment::AlignmentDeliveryState;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX82 §325's `back_input`: pushes the command's token back onto
     /// input and reverses its literal brace accounting.
     ///

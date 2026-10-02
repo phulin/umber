@@ -129,8 +129,8 @@ fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
 /// The command core owns every delivery and expansion transition. Main
 /// control owns only this reswitch/prefix classification and never returns a
 /// completed command through an intermediate convenience envelope.
-fn next_non_blank_non_relax_x_token_into<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
+fn next_non_blank_non_relax_x_token_into<G, Facts: tex_command::CommandHostFacts<G>>(
+    processor: &mut CommandProcessor<'_, '_, G, Facts>,
     destination: &mut Option<tex_command::CurrentCommand<G>>,
 ) -> Result<tex_command::DeliveryStatus, CommandError> {
     loop {
@@ -157,8 +157,8 @@ fn next_non_blank_non_relax_x_token_into<G>(
 
 /// Writes TeX82 §406's next nonblank expanded command into the reswitch
 /// destination while preserving `\relax`.
-fn next_non_blank_x_token_into<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
+fn next_non_blank_x_token_into<G, Facts: tex_command::CommandHostFacts<G>>(
+    processor: &mut CommandProcessor<'_, '_, G, Facts>,
     destination: &mut Option<tex_command::CurrentCommand<G>>,
 ) -> Result<tex_command::DeliveryStatus, CommandError> {
     loop {
@@ -882,7 +882,9 @@ impl<G> CommandMachine<'_, '_, G> {
         &mut self,
         context: &mut tex_state::CommandContext<'_, G>,
         modes: &ModeNest,
-        use_processor: impl FnOnce(&mut CommandProcessor<'_, '_, G>) -> R,
+        use_processor: impl FnOnce(
+            &mut CommandProcessor<'_, '_, G, &mut dyn tex_command::CommandHostFacts<G>>,
+        ) -> R,
     ) -> R {
         let Self {
             state,
@@ -904,11 +906,14 @@ impl<G> CommandMachine<'_, '_, G> {
                 let host = match resource_provider.as_deref_mut() {
                     Some(provider) => CommandHostContext::with_facts_and_resource_provider(
                         capabilities,
-                        facts,
+                        facts as &mut dyn tex_command::CommandHostFacts<G>,
                         provider,
                         declined_resource_attempt,
                     ),
-                    None => CommandHostContext::with_facts(capabilities, facts),
+                    None => CommandHostContext::with_facts(
+                        capabilities,
+                        facts as &mut dyn tex_command::CommandHostFacts<G>,
+                    ),
                 };
                 let mut processor =
                     state.processor(context, host, fuel, observer, diagnostic_effects);
@@ -930,11 +935,14 @@ impl<G> CommandMachine<'_, '_, G> {
                 let host = match resource_provider.as_deref_mut() {
                     Some(provider) => CommandHostContext::with_facts_and_resource_provider(
                         capabilities,
-                        &mut facts,
+                        &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
                         provider,
                         declined_resource_attempt,
                     ),
-                    None => CommandHostContext::with_facts(capabilities, &mut facts),
+                    None => CommandHostContext::with_facts(
+                        capabilities,
+                        &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
+                    ),
                 };
                 let mut processor =
                     state.processor(context, host, fuel, observer, diagnostic_effects);
@@ -952,7 +960,9 @@ impl<G> CommandMachine<'_, '_, G> {
         context: &mut tex_state::CommandContext<'_, G>,
         modes: &ModeNest,
         diagnostic_effects: &mut DiagnosticEffects,
-        use_processor: impl FnOnce(&mut CommandProcessor<'_, '_, G>) -> R,
+        use_processor: impl FnOnce(
+            &mut CommandProcessor<'_, '_, G, &mut dyn tex_command::CommandHostFacts<G>>,
+        ) -> R,
     ) -> R {
         let Self {
             state,
@@ -973,11 +983,14 @@ impl<G> CommandMachine<'_, '_, G> {
                 let host = match resource_provider.as_deref_mut() {
                     Some(provider) => CommandHostContext::with_facts_and_resource_provider(
                         capabilities,
-                        facts,
+                        facts as &mut dyn tex_command::CommandHostFacts<G>,
                         provider,
                         declined_resource_attempt,
                     ),
-                    None => CommandHostContext::with_facts(capabilities, facts),
+                    None => CommandHostContext::with_facts(
+                        capabilities,
+                        facts as &mut dyn tex_command::CommandHostFacts<G>,
+                    ),
                 };
                 let mut processor =
                     state.processor(context, host, fuel, observer, diagnostic_effects);
@@ -999,11 +1012,14 @@ impl<G> CommandMachine<'_, '_, G> {
                 let host = match resource_provider.as_deref_mut() {
                     Some(provider) => CommandHostContext::with_facts_and_resource_provider(
                         capabilities,
-                        &mut facts,
+                        &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
                         provider,
                         declined_resource_attempt,
                     ),
-                    None => CommandHostContext::with_facts(capabilities, &mut facts),
+                    None => CommandHostContext::with_facts(
+                        capabilities,
+                        &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
+                    ),
                 };
                 let mut processor =
                     state.processor(context, host, fuel, observer, diagnostic_effects);
@@ -1036,7 +1052,8 @@ impl<G> CommandMachine<'_, '_, G> {
     fn processor<'episode, 'admission>(
         &'episode mut self,
         context: &'episode mut tex_state::CommandContext<'admission, G>,
-    ) -> CommandProcessor<'episode, 'admission, G> {
+    ) -> CommandProcessor<'episode, 'admission, G, &'episode mut dyn tex_command::CommandHostFacts<G>>
+    {
         let observer = self
             .observations
             .as_mut()
@@ -1044,11 +1061,14 @@ impl<G> CommandMachine<'_, '_, G> {
         let host = match self.resource_provider.as_deref_mut() {
             Some(provider) => CommandHostContext::with_facts_and_resource_provider(
                 self.capabilities,
-                &mut self.host_facts,
+                &mut self.host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 provider,
                 self.declined_resource_attempt,
             ),
-            None => CommandHostContext::with_facts(self.capabilities, &mut self.host_facts),
+            None => CommandHostContext::with_facts(
+                self.capabilities,
+                &mut self.host_facts as &mut dyn tex_command::CommandHostFacts<G>,
+            ),
         };
         let mut processor =
             self.state
@@ -1092,15 +1112,15 @@ impl<G> CommandMachine<'_, '_, G> {
     }
 }
 
-fn command_processor<'episode, 'admission, G>(
+fn command_processor<'episode, 'admission, G, Facts: tex_command::CommandHostFacts<G> + ?Sized>(
     command: &'episode mut PersistentInterpreter<G>,
     fuel: &'episode mut tex_command::CommandFuel,
     capabilities: &'episode mut CommandHostCapabilities,
-    host_facts: &'episode mut dyn tex_command::CommandHostFacts<G>,
+    host_facts: &'episode mut Facts,
     observations: &'episode mut ObservationSlot,
     diagnostic_effects: &'episode mut DiagnosticEffects,
     stores: &'episode mut CommandContext<'admission, G>,
-) -> CommandProcessor<'episode, 'admission, G> {
+) -> CommandProcessor<'episode, 'admission, G, &'episode mut Facts> {
     let observer = observations
         .as_mut()
         .map(|buffer| buffer as &mut dyn CommandObserver);
@@ -1114,17 +1134,22 @@ fn command_processor<'episode, 'admission, G>(
 }
 
 #[allow(clippy::too_many_arguments)] // each argument is a distinct replay owner
-fn command_processor_with_resource_provider<'episode, 'admission, G>(
+fn command_processor_with_resource_provider<
+    'episode,
+    'admission,
+    G,
+    Facts: tex_command::CommandHostFacts<G> + ?Sized,
+>(
     command: &'episode mut PersistentInterpreter<G>,
     fuel: &'episode mut tex_command::CommandFuel,
     capabilities: &'episode mut CommandHostCapabilities,
-    host_facts: &'episode mut dyn tex_command::CommandHostFacts<G>,
+    host_facts: &'episode mut Facts,
     resource_provider: &'episode mut dyn ResourceProvider<G>,
     declined_resource_attempt: &'episode mut Option<ResourceNeed>,
     observations: &'episode mut ObservationSlot,
     diagnostic_effects: &'episode mut DiagnosticEffects,
     stores: &'episode mut CommandContext<'admission, G>,
-) -> CommandProcessor<'episode, 'admission, G> {
+) -> CommandProcessor<'episode, 'admission, G, &'episode mut Facts> {
     let observer = observations
         .as_mut()
         .map(|buffer| buffer as &mut dyn CommandObserver);
@@ -1442,7 +1467,7 @@ impl<G> MainControl<G> {
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
-            &mut host_facts,
+            &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
             &mut self.operation_observations,
             &mut diagnostic_effects,
             &mut command_context,
@@ -2727,7 +2752,7 @@ impl<G> MainControl<G> {
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
-                        &mut host_facts,
+                        &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                         provider,
                         &mut self.declined_resource_attempt,
                         &mut self.operation_observations,
@@ -2739,7 +2764,7 @@ impl<G> MainControl<G> {
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
-                        &mut host_facts,
+                        &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                         &mut self.operation_observations,
                         &mut diagnostic_effects,
                         &mut context,
@@ -3009,7 +3034,7 @@ impl<G> MainControl<G> {
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
-                        &mut host_facts,
+                        &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                         provider,
                         &mut self.declined_resource_attempt,
                         &mut self.operation_observations,
@@ -3021,7 +3046,7 @@ impl<G> MainControl<G> {
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
-                        &mut host_facts,
+                        &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                         &mut self.operation_observations,
                         diagnostic_effects,
                         &mut context,
@@ -3196,7 +3221,7 @@ impl<G> MainControl<G> {
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
-                        &mut host_facts,
+                        &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                         &mut self.operation_observations,
                         diagnostic_effects,
                         &mut context,
@@ -4727,7 +4752,7 @@ impl<G> MainControl<G> {
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 provider,
                 &mut self.declined_resource_attempt,
                 &mut self.operation_observations,
@@ -4739,7 +4764,7 @@ impl<G> MainControl<G> {
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 &mut self.operation_observations,
                 diagnostic_effects,
                 &mut context,
@@ -4768,7 +4793,7 @@ impl<G> MainControl<G> {
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 provider,
                 &mut self.declined_resource_attempt,
                 &mut self.operation_observations,
@@ -4780,7 +4805,7 @@ impl<G> MainControl<G> {
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 &mut self.operation_observations,
                 diagnostic_effects,
                 &mut context,
@@ -4809,7 +4834,7 @@ impl<G> MainControl<G> {
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 provider,
                 &mut self.declined_resource_attempt,
                 &mut self.operation_observations,
@@ -4821,7 +4846,7 @@ impl<G> MainControl<G> {
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 &mut self.operation_observations,
                 diagnostic_effects,
                 &mut context,
@@ -5031,7 +5056,7 @@ impl<G> MainControl<G> {
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
-            &mut host_facts,
+            &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
             &mut self.operation_observations,
             diagnostic_effects,
             &mut context,
@@ -5082,7 +5107,7 @@ impl<G> MainControl<G> {
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
-                &mut host_facts,
+                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 &mut self.operation_observations,
                 diagnostic_effects,
                 &mut context,
@@ -5147,7 +5172,7 @@ impl<G> MainControl<G> {
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
-            &mut host_facts,
+            &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
             &mut self.operation_observations,
             diagnostic_effects,
             &mut context,

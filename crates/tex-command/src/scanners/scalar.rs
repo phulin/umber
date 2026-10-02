@@ -438,7 +438,7 @@ struct ScannedUnits {
     attach_sign: bool,
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn scan_font_selector_child(&mut self) -> Result<FontId, CommandError> {
         match self.scan_font_selector_retained() {
             RetainedScalarScan::Complete(font) => Ok(font),

@@ -1,6 +1,6 @@
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Scans TeX82's `\\openin`, `\\closein`, `\\read`, and e-TeX's
     /// `\\readline` operands without exposing a raw delivery to replay.
     pub fn scan_input_stream_request(

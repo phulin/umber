@@ -109,7 +109,11 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   Long-lived immutable resources remain in `CommandHostCapabilities`; live
   executor mode, auxiliary, and effective-tail facts cross the synchronous
   `CommandHostFacts` provider only when their exact scanner or conditional
-  consumes them. No fact cache enters command state or a replay round.
+  consumes them. The processor retains the provider's concrete type, and initial
+  facts are zero-sized. A completed consumer can lend the real mutable execution
+  owner alongside its context; only genuine cold replay reborrows erase the
+  provider type. No runtime initial/borrowed enum or fact cache enters command
+  state or a replay round.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine
   semantics that survive loading an older format, capabilities, stable

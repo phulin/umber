@@ -93,7 +93,7 @@ impl<G> CommandState<G> {
     }
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Enters one processor-owned scanner episode.
     ///
     /// The returned value retains both the installed semantic status and the

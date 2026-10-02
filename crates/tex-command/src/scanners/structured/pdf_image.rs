@@ -1,6 +1,6 @@
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Scans pdfTeX's `scan_image` request prefix.
     ///
     /// The ordering follows pdfTeX 1.40.29's `scan_image`: a repeated rule

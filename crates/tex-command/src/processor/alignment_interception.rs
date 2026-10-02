@@ -11,7 +11,7 @@ use crate::observation::{AlignmentRecord, CommandObservation};
 use super::CommandProcessor;
 use super::alignment::CELL_ALIGN_STATE;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Delivers one expanded command, separating an intercepted alignment
     /// delimiter from ordinary main-control delivery.
     ///

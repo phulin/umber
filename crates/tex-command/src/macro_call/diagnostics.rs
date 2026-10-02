@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX82 §389's invocation trace, including `print_ln` before the macro
     /// name and §262's control-word separator before `->`.
     pub(super) fn trace_macro_invocation(

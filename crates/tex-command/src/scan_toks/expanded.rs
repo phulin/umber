@@ -14,13 +14,15 @@ pub(super) struct ReplacementConsumer<'a, G> {
     pub collector: &'a mut TokenCollector<G>,
 }
 
-impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for ReplacementConsumer<'_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>>
+    ExpandedReaderConsumer<CommandProcessor<'_, '_, G, Facts>, G> for ReplacementConsumer<'_, G>
+{
     const RAW_TOKEN: bool = true;
     const NATIVE_TERMINAL: bool = true;
 
     fn native_terminal(
         &mut self,
-        processor: &mut CommandProcessor<'_, '_, G>,
+        processor: &mut CommandProcessor<'_, '_, G, Facts>,
         spelling: TracedTokenWord,
         _meaning: &tex_state::meaning::MeaningWord<G>,
         _control_sequence: Option<Symbol>,
@@ -49,7 +51,7 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for ReplacementCo
 
     fn expand(
         &mut self,
-        processor: &mut CommandProcessor<'_, '_, G>,
+        processor: &mut CommandProcessor<'_, '_, G, Facts>,
         command: &mut CurrentCommand<G>,
         action: ExpandedCommandAction,
     ) -> Result<bool, CommandError> {
@@ -67,7 +69,7 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for ReplacementCo
 
     fn splice(
         &mut self,
-        processor: &mut CommandProcessor<'_, '_, G>,
+        processor: &mut CommandProcessor<'_, '_, G, Facts>,
         primitive: ExpandablePrimitive,
     ) -> Result<bool, CommandError> {
         match primitive {
@@ -86,7 +88,7 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for ReplacementCo
 
     fn recover(
         &mut self,
-        processor: &mut CommandProcessor<'_, '_, G>,
+        processor: &mut CommandProcessor<'_, '_, G, Facts>,
         failure: CommandError,
     ) -> Result<(), CommandError> {
         match failure {
@@ -101,7 +103,7 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for ReplacementCo
 
     fn terminal(
         &mut self,
-        processor: &mut CommandProcessor<'_, '_, G>,
+        processor: &mut CommandProcessor<'_, '_, G, Facts>,
         destination: &mut Option<CurrentCommand<G>>,
         _status: DeliveryStatus,
     ) -> Result<ControlFlow<()>, CommandError> {

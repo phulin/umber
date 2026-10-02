@@ -15,7 +15,7 @@ use tex_state::token::{OriginId, TokenWord};
 /// TeX82 §345's invalid source-character report.
 const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Reads a token from the live source frame; only refill, EOF and recovery
     /// leave through the cold input-transition handler.
     #[inline(always)]

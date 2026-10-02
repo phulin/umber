@@ -23,7 +23,7 @@ pub(crate) enum ReplayWordTransform {
     Lowercase,
 }
 
-impl<G> crate::CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> crate::CommandProcessor<'_, '_, G, Facts> {
     /// Classifies one compact delivery at the shared collector boundary. The
     /// collector only needs the packed spelling and paragraph fact, so this
     /// path avoids constructing a `CurrentCommand` per token in either raw or

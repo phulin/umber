@@ -19,7 +19,7 @@ use crate::observation::{
     CommandProvenance, observed_token,
 };
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Delivers one raw command directly into caller-provided final storage.
     pub fn get_next_into(
         &mut self,

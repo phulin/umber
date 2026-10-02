@@ -1,6 +1,6 @@
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn scan_pdf_navigation_text(&mut self) -> Result<ScannedBalancedText, CommandError> {
         self.scan_balanced_text(true)
     }

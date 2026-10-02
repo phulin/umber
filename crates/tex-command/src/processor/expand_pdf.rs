@@ -11,7 +11,7 @@ use super::expand_render::format_scaled;
 /// capacity recovery.
 pub(crate) const TOO_MANY_COLOR_STACKS_DIAGNOSTIC: u64 = 0x7064_6663_7300_0495;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// pdftex.web §495's `pdf_colorstack_init_code` conversion.
     pub(super) fn expand_pdf_color_stack_init(
         &mut self,

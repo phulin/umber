@@ -69,7 +69,7 @@ fn unescape_pdf_hex(bytes: &[u8]) -> String {
     unescaped
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Starts a balanced expanded-text collector for one of pdfTeX's string
     /// projections. The body is consumed by the canonical expanded-delivery
     /// loop; only the finished attempt buffer crosses into the byte renderer.

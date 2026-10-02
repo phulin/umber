@@ -173,7 +173,7 @@ fn classify_native_command<G>(
     }
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
     fn write_delivered_word(
@@ -1507,7 +1507,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Settles the persistent semantic conditions and token-local facts
     /// represented by one delivered command without widening the ordinary hot
     /// loops.

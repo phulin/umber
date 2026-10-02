@@ -29,7 +29,7 @@ enum SkippedWord {
     Boundary,
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX82 §494 admits skipped words directly from the selected native
     /// span. Its first exceptional word goes straight to raw settlement.
     pub(crate) fn get_next_skipping_into(

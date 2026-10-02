@@ -6,13 +6,15 @@ use std::ops::ControlFlow;
 
 struct OneExpansion;
 
-impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for OneExpansion {
+impl<G, Facts: crate::CommandHostFacts<G>>
+    ExpandedReaderConsumer<CommandProcessor<'_, '_, G, Facts>, G> for OneExpansion
+{
     const RAW_TOKEN: bool = true;
     const NATIVE_TERMINAL: bool = true;
 
     fn native_terminal(
         &mut self,
-        processor: &mut CommandProcessor<'_, '_, G>,
+        processor: &mut CommandProcessor<'_, '_, G, Facts>,
         spelling: tex_state::token::TracedTokenWord,
         _meaning: &tex_state::meaning::MeaningWord<G>,
         _control_sequence: Option<tex_state::interner::Symbol>,
@@ -21,7 +23,7 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for OneExpansion 
         Ok(ControlFlow::Break(()))
     }
 
-    fn before_action(&mut self, processor: &mut CommandProcessor<'_, '_, G>) {
+    fn before_action(&mut self, processor: &mut CommandProcessor<'_, '_, G, Facts>) {
         // get_token permits source-name creation while reading, then restores
         // normal delivery before its operand invokes any nested scanner.
         processor.create_source_control_sequences = false;
@@ -33,7 +35,7 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for OneExpansion 
 
     fn expand(
         &mut self,
-        processor: &mut CommandProcessor<'_, '_, G>,
+        processor: &mut CommandProcessor<'_, '_, G, Facts>,
         command: &mut CurrentCommand<G>,
         action: ExpandedCommandAction,
     ) -> Result<bool, CommandError> {
@@ -46,7 +48,7 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for OneExpansion 
 
     fn recover(
         &mut self,
-        _: &mut CommandProcessor<'_, '_, G>,
+        _: &mut CommandProcessor<'_, '_, G, Facts>,
         failure: CommandError,
     ) -> Result<(), CommandError> {
         // A failed second operand returns before the first token is replayed.
@@ -55,7 +57,7 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for OneExpansion 
 
     fn terminal(
         &mut self,
-        processor: &mut CommandProcessor<'_, '_, G>,
+        processor: &mut CommandProcessor<'_, '_, G, Facts>,
         destination: &mut Option<CurrentCommand<G>>,
         _: DeliveryStatus,
     ) -> Result<ControlFlow<()>, CommandError> {
@@ -64,7 +66,7 @@ impl<G> ExpandedReaderConsumer<CommandProcessor<'_, '_, G>, G> for OneExpansion 
     }
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(in crate::processor) fn expand_next_token(&mut self) -> Result<(), CommandError> {
         debug_assert!(!self.create_source_control_sequences);
         self.create_source_control_sequences = true;

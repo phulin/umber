@@ -312,7 +312,7 @@ impl<G> DirectDispatch<'_, '_, G> {
             &mut self.control.command,
             self.control.fuel.fuel_mut(),
             &mut self.control.capabilities,
-            &mut facts,
+            &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
             &mut self.control.operation_observations,
             self.effects,
             &mut context,

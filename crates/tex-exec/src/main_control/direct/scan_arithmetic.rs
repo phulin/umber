@@ -1,8 +1,8 @@
 //! Scan the actual typed arithmetic operand in the live processor loan.
 use super::*;
 
-pub(super) fn scan_arithmetic_operand<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
+pub(super) fn scan_arithmetic_operand<G, Facts: tex_command::CommandHostFacts<G>>(
+    processor: &mut CommandProcessor<'_, '_, G, Facts>,
     target: ArithmeticTarget,
     primitive: UnexpandablePrimitive,
     scan_origin: Option<OriginId>,

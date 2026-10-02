@@ -216,7 +216,7 @@ pub(crate) enum ExpressionPhase<G> {
     Operator { factor: ExpressionValue<G> },
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// e-TeX 2.6 `scan_expr`, from the already-delivered expression primitive
     /// through its committed typed result (etex.ch [53a.4945--5360]).
     pub(crate) fn scan_expression_primitive(

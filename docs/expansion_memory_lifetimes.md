@@ -262,3 +262,17 @@ value. Font selection likewise consumes the meaning directly. Their invalid
 operand backups belong to the input stack; the scanner callback and resolved
 meaning borrow end before replay. Meaning printing takes native resolved facts
 only at its demanded cold string consumer.
+
+## Execution provider loan
+
+`CommandProcessor` retains the concrete type of the live `CommandHostFacts`
+provider. Initial processors contain only the zero-sized initial facts. The
+executor lends its actual mode owner mutably; a native consumer can change it
+through `apply_completed_command`, and subsequent conditionals query the same
+live stack. Cold query helpers may borrow the stack immutably, and genuine
+query-only scanner and recursive resource reborrows erase the provider type to
+keep their loan shape finite and share the cold reader/scanner specialization. No provider, mode sample, callback or delivery product enters a
+checkpoint. `consume_main_control` uses the canonical expanded reader with its
+actual main-control role and returns only real stop, replay and EOF boundaries.
+The existing execution switch still uses command delivery while its individual
+semantic-owner borrows are migrated into native consumption.

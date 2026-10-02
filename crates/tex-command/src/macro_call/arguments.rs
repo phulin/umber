@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn back_macro_argument_word(
         &mut self,
         word: TracedTokenWord,

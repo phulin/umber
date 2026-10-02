@@ -11,7 +11,7 @@ use crate::observation::{
 
 use super::CommandProcessor;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn attempt_token_list_string_text(
         &mut self,
         tokens: crate::AttemptTokenListId,

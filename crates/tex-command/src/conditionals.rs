@@ -406,7 +406,7 @@ impl ConditionStack {
     }
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Begins an iterative `\if` or `\ifcat` comparison. The condition frame
     /// is installed before the first expanded operand so nested predicates
     /// inherit the same evaluating-limit semantics as TeX82 part 28.
@@ -492,7 +492,7 @@ impl IfRelation {
     }
 }
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Executes a classified conditional directly from its packed primitive.
     /// The expanded delivery loop has already performed the only meaning
     /// lookup, so this path does not manufacture a rich opener merely to
@@ -924,14 +924,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn evaluate_if(&mut self) -> Result<bool, CommandError> {
         let mut first = None;
         self.get_x_token_or_active_char_into(&mut first)?;
-        let first = Self::if_character_code(
+        let first = if_character_code(
             first
                 .as_ref()
                 .expect("conditional operand delivery initializes destination"),
         );
         let mut second = None;
         self.get_x_token_or_active_char_into(&mut second)?;
-        let second = Self::if_character_code(
+        let second = if_character_code(
             second
                 .as_ref()
                 .expect("conditional operand delivery initializes destination"),
@@ -942,14 +942,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn evaluate_ifcat(&mut self) -> Result<bool, CommandError> {
         let mut first = None;
         self.get_x_token_or_active_char_into(&mut first)?;
-        let first = Self::if_category_code(
+        let first = if_category_code(
             first
                 .as_ref()
                 .expect("conditional operand delivery initializes destination"),
         );
         let mut second = None;
         self.get_x_token_or_active_char_into(&mut second)?;
-        let second = Self::if_category_code(
+        let second = if_category_code(
             second
                 .as_ref()
                 .expect("conditional operand delivery initializes destination"),
@@ -974,36 +974,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::input_invariant());
         }
         Ok(())
-    }
-
-    /// TeX.web part 28 maps every non-character `\\if` operand to the
-    /// shared sentinel 256 before comparing character codes.
-    fn if_character_code(command: &crate::CurrentCommand<G>) -> u32 {
-        if let Some(ch) = command.no_expand_active_character()
-            && (ch as u32) <= u32::from(u8::MAX)
-        {
-            return ch as u32;
-        }
-        match &command.meaning() {
-            ResolvedMeaning::Static(Meaning::CharToken { ch, .. })
-                if (*ch as u32) <= u32::from(u8::MAX) =>
-            {
-                *ch as u32
-            }
-            _ => 256,
-        }
-    }
-
-    /// TeX.web part 28 maps every non-character `\\ifcat` operand to the
-    /// shared `relax` command sentinel before comparing category commands.
-    fn if_category_code(command: &crate::CurrentCommand<G>) -> Option<tex_state::token::Catcode> {
-        if command.no_expand_active_character().is_some() {
-            return Some(tex_state::token::Catcode::Active);
-        }
-        match &command.meaning() {
-            ResolvedMeaning::Static(Meaning::CharToken { cat, .. }) => Some(*cat),
-            _ => None,
-        }
     }
 
     /// TeX82 §507 reads both `\\ifx` operands with `get_next`, not
@@ -1771,3 +1741,33 @@ fn append_if_line(text: &mut String, source_line: u32) {
 
 #[cfg(test)]
 mod tests;
+
+/// TeX.web part 28 maps every non-character `\\if` operand to the
+/// shared sentinel 256 before comparing character codes.
+fn if_character_code<G>(command: &crate::CurrentCommand<G>) -> u32 {
+    if let Some(ch) = command.no_expand_active_character()
+        && (ch as u32) <= u32::from(u8::MAX)
+    {
+        return ch as u32;
+    }
+    match &command.meaning() {
+        ResolvedMeaning::Static(Meaning::CharToken { ch, .. })
+            if (*ch as u32) <= u32::from(u8::MAX) =>
+        {
+            *ch as u32
+        }
+        _ => 256,
+    }
+}
+
+/// TeX.web part 28 maps every non-character `\\ifcat` operand to the
+/// shared `relax` command sentinel before comparing category commands.
+fn if_category_code<G>(command: &crate::CurrentCommand<G>) -> Option<tex_state::token::Catcode> {
+    if command.no_expand_active_character().is_some() {
+        return Some(tex_state::token::Catcode::Active);
+    }
+    match &command.meaning() {
+        ResolvedMeaning::Static(Meaning::CharToken { cat, .. }) => Some(*cat),
+        _ => None,
+    }
+}

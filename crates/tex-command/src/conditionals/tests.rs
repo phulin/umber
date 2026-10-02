@@ -492,11 +492,8 @@ fn active_character_operand_stays_in_the_caller_slot_for_conditional_treatment()
         let delivered = destination.expect("caller destination");
         assert_eq!(delivered.spelling().semantic_token(), active);
         assert_eq!(delivered.meaning(), ResolvedMeaning::Static(Meaning::Relax));
-        assert_eq!(CommandProcessor::if_character_code(&delivered), '~' as u32);
-        assert_eq!(
-            CommandProcessor::if_category_code(&delivered),
-            Some(Catcode::Active)
-        );
+        assert_eq!(super::if_character_code(&delivered), '~' as u32);
+        assert_eq!(super::if_category_code(&delivered), Some(Catcode::Active));
     });
 }
 

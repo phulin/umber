@@ -212,10 +212,15 @@ pub(crate) use status::{ScannerState, ScannerStatus};
 /// scanners, conditionals, and primitives operate through this single
 /// aggregate facade.
 #[allow(dead_code)] // later canonical command operations consume every capability
-pub struct CommandProcessor<'episode, 'admission, G> {
+pub struct CommandProcessor<
+    'episode,
+    'admission,
+    G,
+    Facts: crate::CommandHostFacts<G> = crate::InitialCommandHostFacts,
+> {
     pub(crate) command: &'episode mut CommandState<G>,
     pub(crate) state: &'episode mut CommandContext<'admission, G>,
-    pub(crate) host: CommandHostContext<'episode, G>,
+    pub(crate) host: CommandHostContext<'episode, G, Facts>,
     observer: Option<&'episode mut dyn CommandObserver>,
     pub(crate) fuel: &'episode mut CommandFuel,
     pub(crate) diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
@@ -280,7 +285,7 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     create_source_control_sequences: bool,
 }
 
-impl<G> Drop for CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> Drop for CommandProcessor<'_, '_, G, Facts> {
     fn drop(&mut self) {
         // Resource misses unwind through the host checkpoint.  The processor
         // owns only call-local expansion/scanner scratch, so dropping the
@@ -301,7 +306,7 @@ impl<G> Drop for CommandProcessor<'_, '_, G> {
 #[derive(Clone, Copy, Debug)]
 pub struct CommandDeliveryCursor(u64);
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Captures the next observation delivery sequence for the next episode.
     #[must_use]
     pub const fn delivery_cursor(&self) -> CommandDeliveryCursor {
@@ -487,7 +492,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 }
 
-impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
+impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
+    CommandProcessor<'episode, 'admission, G, Facts>
+{
     pub(crate) fn begin_diagnostic(&mut self) -> tex_state::diagnostic::Diagnostic<'_> {
         self.state.begin_diagnostic(self.diagnostic_effects)
     }
@@ -497,7 +504,9 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     }
 }
 
-impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
+impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
+    CommandProcessor<'episode, 'admission, G, Facts>
+{
     pub(crate) fn copy_durable_token_list_into_attempt(
         &mut self,
         tokens: Option<tex_state::TokenListId<G>>,
@@ -631,6 +640,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             &mut tex_state::diagnostic::DiagnosticEffects,
             &mut CommandFuel,
             Option<&mut dyn CommandObserver>,
+            &mut Facts,
         ) -> R,
     ) -> R {
         apply(
@@ -641,6 +651,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             self.observer
                 .as_mut()
                 .map(|observer| &mut **observer as &mut dyn CommandObserver),
+            &mut self.host.facts,
         )
     }
 
@@ -670,7 +681,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     pub fn new(
         command: &'episode mut CommandState<G>,
         state: &'episode mut CommandContext<'admission, G>,
-        host: CommandHostContext<'episode, G>,
+        host: CommandHostContext<'episode, G, Facts>,
         fuel: &'episode mut CommandFuel,
         observer: Option<&'episode mut dyn CommandObserver>,
         diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,

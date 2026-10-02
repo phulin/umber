@@ -111,22 +111,6 @@ impl<G> DirectDispatch<'_, '_, G> {
 }
 
 impl<G> MainControl<G> {
-    pub(super) fn apply_native_group_enter(
-        &mut self,
-        context: &mut CommandContext<'_, G>,
-        effects: &mut DiagnosticEffects,
-        kind: GroupKind,
-    ) -> Result<ReplayStep, ExecError> {
-        crate::box_runtime::flush_pending_hchars_with_fuel(
-            &mut self.modes,
-            context,
-            effects,
-            self.fuel.fuel_mut(),
-        )?;
-        enter_group(context, &mut self.command, effects, kind);
-        Ok(ReplayStep::Continue)
-    }
-
     pub(super) fn apply_native_group_leave(
         &mut self,
         context: &mut CommandContext<'_, G>,
@@ -149,7 +133,7 @@ impl<G> MainControl<G> {
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
-            &mut facts,
+            &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
             &mut self.operation_observations,
             effects,
             context,
@@ -160,15 +144,16 @@ impl<G> MainControl<G> {
 }
 
 /// Unsave through the actual scanner that owns aftergroup input delivery.
-pub(super) fn finish_native_group_leave<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
+pub(super) fn finish_native_group_leave<G, Facts: tex_command::CommandHostFacts<G>>(
+    processor: &mut CommandProcessor<'_, '_, G, Facts>,
     kind: GroupKind,
     error_context: &'static str,
 ) -> Result<ReplayStep, ExecError> {
-    let (level, frame) = processor.apply_completed_command(|context, _, _, _, _observer| {
-        let frames = context.group_frames();
-        (frames.len(), frames.last().copied())
-    });
+    let (level, frame) =
+        processor.apply_completed_command(|context, _, _, _, _observer, _execution| {
+            let frames = context.group_frames();
+            (frames.len(), frames.last().copied())
+        });
     if let Some(frame) = frame {
         processor.warn_cross_file_group_close(
             level,
@@ -180,7 +165,7 @@ pub(super) fn finish_native_group_leave<G>(
     let frame = result.map_err(|_| ExecError::MissingToken {
         context: error_context,
     })?;
-    processor.apply_completed_command(|context, _, effects, _, _observer| {
+    processor.apply_completed_command(|context, _, effects, _, _observer, _execution| {
         context.trace_group_leave(
             effects,
             frame.kind(),

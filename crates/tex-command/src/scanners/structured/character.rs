@@ -1,6 +1,6 @@
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Scans TeX82 §1123's `make_accent` accent code.
     ///
     /// §1123 is `scan_char_num; f:=cur_font; p:=new_character(f,cur_val)` and

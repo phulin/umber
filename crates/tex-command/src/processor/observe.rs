@@ -24,7 +24,7 @@ use crate::observation::{
     RecoveryKind, RecoveryRecord,
 };
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Records a recovery level that replays one inserted token.
     ///
     /// TeX's trace names the input push and the recovery insertion separately,

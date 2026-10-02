@@ -1,6 +1,6 @@
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Scans TeX82 §1241's complete `\setbox` assignment operand.
     ///
     /// TeX.web's `prefixed_command` dispatches `set_box` to §433's

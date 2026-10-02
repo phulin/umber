@@ -11,7 +11,7 @@ use crate::input::SourceOpenDepths;
 use crate::input::{FileWarningBoundary, InputLevelId};
 use crate::processor::CommandProcessor;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Captures e-TeX 2.6 [23.328]'s source-opening ancestry before the new
     /// input frame becomes visible.
     pub(crate) fn capture_source_open_depths(&self) -> SourceOpenDepths {

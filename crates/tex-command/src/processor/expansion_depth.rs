@@ -5,7 +5,7 @@ use crate::{CommandError, CommandObservation, FatalError};
 
 pub(crate) const EXPANSION_DEPTH_LIMIT: u32 = 10_000;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Count semantic expansion calls, never the scalar delivery back edge.
     /// The saved depth is restored on every ordinary Rust return, including
     /// a fatal child or the resource error that triggers checkpoint replay.

@@ -89,7 +89,7 @@ pub use pdf_values::{
     ScannedPdfFontAction,
 };
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     // Structured scans run synchronously through the sole command processor.
     // Their typed results cross to the executor only after scanning completes;
     // no scanner continuation survives a resource boundary.

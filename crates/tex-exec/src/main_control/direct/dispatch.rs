@@ -76,10 +76,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                     ),
                 }
             }
-            // Mode owners cannot change while this processor borrows their facts.
-            let pending_hchars = self.control.modes.current_list().pending_hchars().is_some();
+            // Native consumers reborrow the actual mode owner through this loan.
             let mut host_facts = ExecutorHostFacts {
-                modes: &self.control.modes,
+                modes: &mut self.control.modes,
                 pdf_ignore_depth: self.control.pdf_ignore_depth,
                 telemetry: &mut self.control.episode_telemetry,
             };
@@ -119,7 +118,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 && !self.control.paragraph_checkpoint_cut;
             'processor: loop {
                 let main_loop_active = self.control.main_loop_active;
-                let processor: &mut CommandProcessor<'_, '_, G> = &mut owned_processor;
+                let processor = &mut owned_processor;
                 // Finish this actual processor/context loan before semantic application.
                 macro_rules! finish_scan {
                     ($call:expr) => {
@@ -153,7 +152,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                     ($($args:tt)*) => { retained_apply!(true, $($args)*) };
                 }
                 macro_rules! retained_apply {
-                    ($assignment:expr, $receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident, $observer:ident| $apply:expr) => {{
+                    ($assignment:expr, $receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident, $observer:ident, $modes:ident| $apply:expr) => {{
                         // Reports from scanning precede semantic application. Their
                         // actual demand releases the scanner before publication.
                         if owned_processor.has_pending_reports() {
@@ -167,13 +166,17 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     .operation_observations
                                     .as_mut()
                                     .map(|buffer| buffer as &mut dyn CommandObserver);
+                                let $modes = &mut self.control.modes;
                                 $apply
                             })
                         } else {
                             self.control.main_loop_active = false;
                             let $receipts = &mut observation_receipts;
                             let mut completed = owned_processor.apply_completed_command(
-                                |$context, $state, $effects, $fuel, $observer| $apply,
+                                |$context, $state, $effects, $fuel, $observer, execution| {
+                                    let $modes = &mut *execution.modes;
+                                    $apply
+                                },
                             );
                             if $assignment && retain_commands && completed.is_ok() {
                                 if let Err(error) = owned_processor.complete_assignment() {
@@ -793,53 +796,57 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     };
                                 }
                                 return {
-                                    let (direct_arg0,) = (GroupKind::Simple,);
-                                    if pending_hchars {
-                                        native_semantic!(
-                                            receipts,
-                                            self.control.apply_native_group_enter(
-                                                &mut admitted_context,
-                                                self.effects,
-                                                direct_arg0,
-                                            )
-                                        )
-                                    } else {
-                                        retained_semantic!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
-        enter_group(native_context, native_state, native_effects, direct_arg0);
-        Ok(ReplayStep::Continue)
-    })
-                                    }
+                                    retained_semantic!(
+                                        receipts,
+                                        |context, command, effects, fuel, _observer, modes| {
+                                            if modes.current_list().pending_hchars().is_some() {
+                                                crate::box_runtime::flush_pending_hchars_with_fuel(
+                                                    modes, context, effects, fuel,
+                                                )?;
+                                            }
+                                            enter_group(
+                                                context,
+                                                command,
+                                                effects,
+                                                GroupKind::Simple,
+                                            );
+                                            Ok(ReplayStep::Continue)
+                                        }
+                                    )
                                 };
                             }
                             (_, codes::PRIMITIVE_BEGIN_GROUP) => {
                                 return {
-                                    let (direct_arg0,) = (GroupKind::SemiSimple,);
-                                    if pending_hchars {
-                                        native_semantic!(
-                                            receipts,
-                                            self.control.apply_native_group_enter(
-                                                &mut admitted_context,
-                                                self.effects,
-                                                direct_arg0,
-                                            )
-                                        )
-                                    } else {
-                                        retained_semantic!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
-        enter_group(native_context, native_state, native_effects, direct_arg0);
-        Ok(ReplayStep::Continue)
-    })
-                                    }
+                                    retained_semantic!(
+                                        receipts,
+                                        |context, command, effects, fuel, _observer, modes| {
+                                            if modes.current_list().pending_hchars().is_some() {
+                                                crate::box_runtime::flush_pending_hchars_with_fuel(
+                                                    modes, context, effects, fuel,
+                                                )?;
+                                            }
+                                            enter_group(
+                                                context,
+                                                command,
+                                                effects,
+                                                GroupKind::SemiSimple,
+                                            );
+                                            Ok(ReplayStep::Continue)
+                                        }
+                                    )
                                 };
                             }
                             (_, codes::PRIMITIVE_END_GROUP)
                                 if processor.apply_completed_command(
-                                    |context, _, _, _, _observer| context.innermost_group_kind(),
+                                    |context, _, _, _, _observer, _execution| {
+                                        context.innermost_group_kind()
+                                    },
                                 ) == Some(GroupKind::SemiSimple) =>
                             {
                                 return {
                                     let (direct_arg0, direct_arg1) =
                                         (GroupKind::SemiSimple, "semi simple group");
-                                    if pending_hchars || processor.has_pending_reports() {
+                                    if processor.has_pending_reports() {
                                         native_semantic!(
                                             receipts,
                                             self.control.apply_native_group_leave(
@@ -850,12 +857,23 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             )
                                         )
                                     } else {
+                                        processor.apply_completed_command(
+                                            |context, _, effects, fuel, _, execution| {
+                                                if execution.modes.current_list().pending_hchars().is_some() {
+                                                    crate::box_runtime::flush_pending_hchars_with_fuel(
+                                                        execution.modes, context, effects, fuel,
+                                                    )
+                                                } else {
+                                                    Ok(())
+                                                }
+                                            },
+                                        ).map_err(|error| scan_error(error, scan_origin))?;
                                         let group_result = apply_groups::finish_native_group_leave(
                                             processor,
                                             direct_arg0,
                                             direct_arg1,
                                         );
-                                        retained_semantic!(receipts, |_native_context, _native_state, _native_effects, _native_fuel, _native_observer| group_result)
+                                        retained_semantic!(receipts, |_native_context, _native_state, _native_effects, _native_fuel, _native_observer, _native_modes| group_result)
                                     }
                                 };
                             }
@@ -898,56 +916,26 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     ))
                                     .map_err(command_error)
                                     .map_err(|error| scan_error(error, scan_origin))?;
-                                let step = if self
-                                    .control
-                                    .modes
-                                    .current_list()
-                                    .pending_hchars()
-                                    .is_some()
-                                {
-                                    native_semantic!(receipts, {
-                                        crate::box_runtime::flush_pending_hchars_with_fuel(
-                                            &mut self.control.modes,
-                                            &mut admitted_context,
-                                            self.effects,
-                                            self.control.fuel.fuel_mut(),
-                                        )
-                                        .and_then(|()| {
-                                            definition_assignments::apply_macro_definition(
-                                                definition.target,
-                                                definition.definition,
-                                                flags,
-                                                global,
-                                                &mut admitted_context,
-                                                self.effects,
-                                                self.control.operation_observations.as_mut().map(
-                                                    |buffer| buffer as &mut dyn CommandObserver,
-                                                ),
-                                                receipts,
-                                            )
-                                        })
-                                    })
-                                } else {
-                                    retained_assignment!(
-                                        receipts,
-                                        |native_context,
-                                         _native_state,
-                                         native_effects,
-                                         _native_fuel,
-                                         native_observer| {
-                                            definition_assignments::apply_macro_definition(
-                                                definition.target,
-                                                definition.definition,
-                                                flags,
-                                                global,
-                                                native_context,
-                                                native_effects,
-                                                native_observer,
-                                                receipts,
-                                            )
+                                let step = retained_assignment!(
+                                    receipts,
+                                    |context, _state, effects, fuel, observer, modes| {
+                                        if modes.current_list().pending_hchars().is_some() {
+                                            crate::box_runtime::flush_pending_hchars_with_fuel(
+                                                modes, context, effects, fuel,
+                                            )?;
                                         }
-                                    )
-                                }?;
+                                        definition_assignments::apply_macro_definition(
+                                            definition.target,
+                                            definition.definition,
+                                            flags,
+                                            global,
+                                            context,
+                                            effects,
+                                            observer,
+                                            receipts,
+                                        )
+                                    }
+                                )?;
                                 self.schedule_assignment_token()?;
                                 Ok(step)
                             }
@@ -962,88 +950,51 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     )
                                     .map_err(command_error)
                                     .map_err(|error| scan_error(error, scan_origin))?;
-                                let step = if pending_hchars {
-                                    native_semantic!(receipts, {
-                                        crate::box_runtime::flush_pending_hchars_with_fuel(
-                                            &mut self.control.modes,
-                                            &mut admitted_context,
-                                            self.effects,
-                                            self.control.fuel.fuel_mut(),
-                                        )
-                                        .and_then(|()| {
-                                            definition_assignments::apply_let(
-                                                target,
-                                                meaning,
-                                                global,
-                                                &mut admitted_context,
-                                                self.effects,
-                                                receipts,
-                                            )
-                                        })
-                                    })
-                                } else {
-                                    retained_assignment!(
-                                        receipts,
-                                        |native_context,
-                                         _native_state,
-                                         native_effects,
-                                         _native_fuel,
-                                         _native_observer| {
-                                            definition_assignments::apply_let(
-                                                target,
-                                                meaning,
-                                                global,
-                                                native_context,
-                                                native_effects,
-                                                receipts,
-                                            )
+                                let step = retained_assignment!(
+                                    receipts,
+                                    |context, _state, effects, fuel, _observer, modes| {
+                                        if modes.current_list().pending_hchars().is_some() {
+                                            crate::box_runtime::flush_pending_hchars_with_fuel(
+                                                modes, context, effects, fuel,
+                                            )?;
                                         }
-                                    )
-                                }?;
+                                        definition_assignments::apply_let(
+                                            target, meaning, global, context, effects, receipts,
+                                        )
+                                    }
+                                )?;
                                 self.schedule_assignment_token()?;
                                 Ok(step)
                             }
                             (_, codes::RELAX) => {
-                                if pending_hchars {
-                                    native_semantic!(
-                                        receipts,
-                                        semantic::execute_relax(
-                                            &mut admitted_context,
-                                            Some(&mut self.control.modes),
-                                            self.effects,
-                                            self.control.fuel.fuel_mut()
-                                        )
-                                    )
-                                } else {
-                                    // §1045 has no semantic action. With no live word to flush,
-                                    // the real switch arm goes straight to its next fetch.
-                                    if retain_commands
-                                        && !processor.has_pending_reports()
-                                        && self.completed_operations + 1 < self.remaining_operations
-                                    {
-                                        self.control.main_loop_active = false;
-                                        self.completed_operations += 1;
-                                        self.current_origin = None;
-                                        command_slot = None;
-                                        continue 'processor;
-                                    }
-
-                                    retained_semantic!(
-                                        receipts,
-                                        |native_context,
-                                         _native_state,
-                                         native_effects,
-                                         native_fuel,
-                                         _native_observer| {
-                                            semantic::execute_relax(
-                                                native_context,
-                                                None,
-                                                native_effects,
-                                                native_fuel,
-                                            )
-                                        }
-                                    )
+                                let pending_hchars = processor.apply_completed_command(
+                                    |_, _, _, _, _, execution| {
+                                        execution.modes.current_list().pending_hchars().is_some()
+                                    },
+                                );
+                                // §1045 needs only a demanded character flush.
+                                if !pending_hchars
+                                    && retain_commands
+                                    && !processor.has_pending_reports()
+                                    && self.completed_operations + 1 < self.remaining_operations
+                                {
+                                    self.control.main_loop_active = false;
+                                    self.completed_operations += 1;
+                                    self.current_origin = None;
+                                    command_slot = None;
+                                    continue 'processor;
                                 }
+                                retained_semantic!(
+                                    receipts,
+                                    |context, _state, effects, fuel, _observer, modes| {
+                                        semantic::execute_relax(
+                                            context,
+                                            pending_hchars.then_some(modes),
+                                            effects,
+                                            fuel,
+                                        )
+                                    }
+                                )
                             }
                             (_, codes::CHAR_END_GROUP) => {
                                 if boxes.recovery_simple_group_open {
@@ -1053,20 +1004,15 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // An ancestor simple group must not make a nested box's body closer look
                                 // like an ordinary group closer.
                                 if processor.apply_completed_command(
-                                    |context, _, _, _, _observer| context.innermost_group_kind(),
+                                    |context, _, _, _, _observer, _execution| {
+                                        context.innermost_group_kind()
+                                    },
                                 ) == Some(GroupKind::Simple)
                                 {
                                     return {
                                         let (direct_arg0, direct_arg1) =
                                             (GroupKind::Simple, "ordinary simple group");
-                                        if self
-                                            .control
-                                            .modes
-                                            .current_list()
-                                            .pending_hchars()
-                                            .is_some()
-                                            || processor.has_pending_reports()
-                                        {
+                                        if processor.has_pending_reports() {
                                             native_semantic!(
                                                 receipts,
                                                 self.control.apply_native_group_leave(
@@ -1077,22 +1023,26 @@ impl<G> DirectDispatch<'_, '_, G> {
                                                 )
                                             )
                                         } else {
+                                            processor.apply_completed_command(
+                                                |context, _, effects, fuel, _, execution| {
+                                                    if execution.modes.current_list().pending_hchars().is_some() {
+                                                    crate::box_runtime::flush_pending_hchars_with_fuel(
+                                                        execution.modes, context, effects, fuel,
+                                                    )
+                                                } else {
+                                                    Ok(())
+                                                }
+                                                },
+                                            ).map_err(|error| scan_error(error, scan_origin))?;
                                             let group_result =
                                                 apply_groups::finish_native_group_leave(
                                                     processor,
                                                     direct_arg0,
                                                     direct_arg1,
                                                 );
-                                            retained_semantic!(
-                                    receipts,
-                                    |_native_context,
-                                     _native_state,
-                                     _native_effects,
-                                     _native_fuel,
-                                     _native_observer| {
-                                        group_result
-                                    }
-                                )
+                                            retained_semantic!(receipts,
+                                                |_context, _state, _effects, _fuel, _observer, _modes| group_result
+                                            )
                                         }
                                     };
                                 }
@@ -1104,7 +1054,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // not fall through to the ordinary or box brace arms below.
                                 if let Some(kind @ (GroupKind::Math | GroupKind::MathChoice)) =
                                     processor.apply_completed_command(
-                                        |context, _, _, _, _observer| {
+                                        |context, _, _, _, _observer, _execution| {
                                             context.innermost_group_kind()
                                         },
                                     )
@@ -1115,7 +1065,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     };
                                 }
                                 if processor.apply_completed_command(
-                                    |context, _, _, _, _observer| context.innermost_group_kind(),
+                                    |context, _, _, _, _observer, _execution| {
+                                        context.innermost_group_kind()
+                                    },
                                 ) == Some(GroupKind::Disc)
                                 {
                                     return finish_scan!(self.execute_discretionary_part_end());
@@ -1132,7 +1084,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // `\aftergroup` tokens §282 backs up when it pops.
                                 if let Some(box_state) = boxes.active_boxes.last()
                                     && processor.apply_completed_command(
-                                        |context, _, _, _, _observer| {
+                                        |context, _, _, _, _observer, _execution| {
                                             context.innermost_group_kind()
                                         },
                                     ) == Some(box_state.group_kind)
@@ -1169,7 +1121,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // only the live output group can close the enclosing output routine.
                                 if boxes.output_routine_active
                                     && processor.apply_completed_command(
-                                        |context, _, _, _, _observer| {
+                                        |context, _, _, _, _observer, _execution| {
                                             context.innermost_group_kind()
                                         },
                                     ) == Some(GroupKind::Output)
@@ -1185,7 +1137,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                                 let (direct_arg0,) = (
                                     match processor.apply_completed_command(
-                                        |context, _, _, _, _observer| {
+                                        |context, _, _, _, _observer, _execution| {
                                             context.innermost_group_kind()
                                         },
                                     ) {
@@ -1291,7 +1243,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                      _native_state,
                                      native_effects,
                                      _native_fuel,
-                                     _native_observer| {
+                                     _native_observer,
+                                     _native_modes| {
                                         semantic::execute_count(
                                             native_context,
                                             native_effects,
@@ -1336,7 +1289,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                      _native_state,
                                      native_effects,
                                      _native_fuel,
-                                     _native_observer| {
+                                     _native_observer,
+                                     _native_modes| {
                                         semantic::execute_dimen(
                                             native_context,
                                             native_effects,
@@ -1430,7 +1384,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                      _native_state,
                                      native_effects,
                                      _native_fuel,
-                                     _native_observer| {
+                                     _native_observer,
+                                     _native_modes| {
                                         let reassigning =
                                             MainControl::direct_glue_pointer_reassigned(
                                                 native_context,
@@ -1854,7 +1809,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                          native_state,
                                          native_effects,
                                          _native_fuel,
-                                         _native_observer| {
+                                         _native_observer,
+                                         _native_modes| {
                                             let tokens = match assignment.source {
                                                 Some(source) => Some(source),
                                                 None => publication::publish_tokens(
@@ -1903,7 +1859,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         .map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     return {
-                                        let step = retained_assignment!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
+                                        let step = retained_assignment!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer, _native_modes| {
     let tokens = match source { Some(source) => Some(source), None => publication::publish_tokens(native_state, native_context, tokens)? };
     semantic::execute_toks(native_context, native_effects, native_state, receipts, index, tokens, global, false)
 })?;
@@ -1937,7 +1893,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                      native_state,
                                      native_effects,
                                      _native_fuel,
-                                     _native_observer| {
+                                     _native_observer,
+                                     _native_modes| {
                                         semantic::execute_int_param(
                                             native_context,
                                             native_effects,
@@ -1977,7 +1934,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                      native_state,
                                      native_effects,
                                      _native_fuel,
-                                     _native_observer| {
+                                     _native_observer,
+                                     _native_modes| {
                                         semantic::execute_dimen_param(
                                             native_context,
                                             native_effects,
@@ -2061,7 +2019,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         .map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     return {
-                                        let step = retained_assignment!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer| {
+                                        let step = retained_assignment!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer, _native_modes| {
     let tokens = match tokens.source { Some(source) => Some(source), None => publication::publish_tokens(native_state, native_context, tokens.tokens)? };
     semantic::execute_toks(native_context, native_effects, native_state, receipts, index, tokens, global, true)
 })?;
@@ -2094,7 +2052,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                      native_state,
                                      native_effects,
                                      _native_fuel,
-                                     _native_observer| {
+                                     _native_observer,
+                                     _native_modes| {
                                         semantic::execute_glue_param(
                                             native_context,
                                             native_effects,
@@ -2971,7 +2930,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                      native_state,
                                      native_effects,
                                      _native_fuel,
-                                     _native_observer| {
+                                     _native_observer,
+                                     _native_modes| {
                                         semantic::execute_arithmetic(
                                             native_context,
                                             native_effects,
@@ -3658,7 +3618,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     };
                                 } else if mode == Mode::DisplayMath {
                                     if processor.apply_completed_command(
-                                        |context, _, _, _, _observer| {
+                                        |context, _, _, _, _observer, _execution| {
                                             context.innermost_group_kind()
                                         },
                                     ) != Some(GroupKind::MathShift)
@@ -3696,7 +3656,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             (_, codes::PRIMITIVE_V_ALIGN) => {
                                 if matches!(mode, Mode::Math | Mode::DisplayMath)
                                     && processor.apply_completed_command(
-                                        |context, _, _, _, _observer| {
+                                        |context, _, _, _, _observer, _execution| {
                                             context.innermost_group_kind()
                                         },
                                     ) != Some(GroupKind::MathShift)
@@ -3746,7 +3706,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             (_, codes::CHAR_MATH_SHIFT)
                                 if matches!(mode, Mode::Math | Mode::DisplayMath)
                                     && processor.apply_completed_command(
-                                        |context, _, _, _, _observer| {
+                                        |context, _, _, _, _observer, _execution| {
                                             context.innermost_group_kind()
                                         },
                                     ) != Some(GroupKind::MathShift) =>
@@ -3788,12 +3748,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     finish_scan!(self.execute_math_shift(direct_arg0))
                                 }
                                 Mode::Math
-                                    if self
-                                        .control
-                                        .modes
-                                        .current_list()
-                                        .display_eq_no()
-                                        .is_some() =>
+                                    if processor.apply_completed_command(
+                                        |_, _, _, _, _, execution| {
+                                            execution.modes.current_list().display_eq_no().is_some()
+                                        },
+                                    ) =>
                                 {
                                     let (direct_arg0,) = (MathShiftPairing::ProbeDisplayEnd,);
                                     finish_scan!(self.execute_math_shift(direct_arg0))
@@ -3923,9 +3882,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             .map_err(command_error))
                                         .map_err(|error| scan_error(error, scan_origin))?;
                                         processor
-                                            .apply_completed_command(|_, state, _, _, _| {
-                                                state.discard_attempt_tokens(discarded.tokens)
-                                            })
+                                            .apply_completed_command(
+                                                |_, state, _, _, _, _execution| {
+                                                    state.discard_attempt_tokens(discarded.tokens)
+                                                },
+                                            )
                                             .map_err(|_| ExecError::MissingToken {
                                                 context: "discarded late patterns",
                                             })?;

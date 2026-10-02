@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn scan_integer_operand(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
         let mut negative = false;
         let mut provenance = OriginId::UNKNOWN;

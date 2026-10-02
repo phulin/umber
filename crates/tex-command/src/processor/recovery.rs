@@ -14,7 +14,7 @@ use crate::observation::{
 
 use super::CommandProcessor;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Captures a complete command-neutral site for an error that is being
     /// queued by the executor while the delivered command is still live.
     /// Scanner callers use the two lower-level steps separately when TeX

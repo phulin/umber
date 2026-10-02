@@ -1,6 +1,6 @@
 use super::*;
 
-impl<G> CommandProcessor<'_, '_, G> {
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Scans pdfTeX's raw-object, form, and document-fragment extensions.
     ///
     /// This is the command boundary corresponding to pdftex.web's extension
