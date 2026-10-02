@@ -7,10 +7,8 @@ pub(in crate::main_control) fn execute_illegal_eq_no<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
             stores,
             command.diagnostic_effects,
@@ -26,13 +24,11 @@ pub(in crate::main_control) fn execute_missing_math_shift<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1047's `insert_dollar_sign` diagnostic; the matching
         // input recovery (backing up the offending command behind an
         // inserted `$`) already ran in `recover_missing_math_shift`.
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::error_report::report_error(
             stores,
             command.diagnostic_effects,
@@ -54,8 +50,6 @@ pub(in crate::main_control) fn execute_math_family<G>(
     font: &mut FontId,
     global: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         AssignmentCommitter::new(stores, command.diagnostic_effects).try_unscoped(|stores| {
             assign_math_family_font(
@@ -77,8 +71,6 @@ pub(in crate::main_control) fn execute_end_math_group<G>(
     active_math_fields: &mut Vec<ActiveMathFieldTarget>,
     kind: &mut GroupKind,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1186 and §1174's `build_choices` both open with
         // `unsave`. Everything after it -- popping `saved`, `fin_mlist`,

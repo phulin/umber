@@ -7,8 +7,6 @@ pub(in crate::main_control) fn execute_page_dimension<G>(
     dimension: &mut PageDimension,
     value: &mut Scaled,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1245's `alter_page_so_far`: a direct
         // `page_so_far[c]:=cur_val` store with no mode check, no
@@ -26,8 +24,6 @@ pub(in crate::main_control) fn execute_page_integer<G>(
     integer: &mut PageInteger,
     value: &mut i32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1246's `alter_integer`, scoped exactly like
         // `alter_page_so_far` above. `\deadcycles` in particular is what
@@ -58,8 +54,6 @@ pub(in crate::main_control) fn execute_relax<G>(
     let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
         tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
     );
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1030 reaches §1045's do-nothing arm only after leaving
         // the ligature loop. The command itself has no list effect, but
@@ -86,8 +80,6 @@ pub(in crate::main_control) fn execute_end<G>(
     command: &mut CommandMachine<'_, '_, G>,
     dump: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1054 has accepted `its_all_over`; the page-builder-owned
         // replay fence must not enter terminal or INITEX format state.
@@ -143,8 +135,6 @@ pub(in crate::main_control) fn execute_eject_residual_page<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1054's `its_all_over` false branch. The stop is already
         // backed up; appending the end-job trio and running §994's
@@ -179,8 +169,6 @@ pub(in crate::main_control) fn execute_prev_depth<G>(
     command: &mut CommandMachine<'_, '_, G>,
     value: &mut Scaled,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         debug_assert!(matches!(
             modes.current_mode(),
@@ -198,8 +186,6 @@ pub(in crate::main_control) fn execute_space_factor<G>(
     command: &mut CommandMachine<'_, '_, G>,
     value: &mut i32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         debug_assert!(matches!(
             modes.current_mode(),
@@ -217,7 +203,7 @@ pub(in crate::main_control) fn execute_space_factor<G>(
             // §91's `int_error` appends ` (value)` to the message before
             // §82 completes the report, so the value is not part of the
             // `print_err` text.
-            let context = command.state.output_open_context(&**stores);
+            let context = command.state.output_open_context(&*stores);
             let mut report = stores.print_err("Bad space factor");
             report
                 .help(&["I allow only values in the range 1..32767 here."])
@@ -236,15 +222,13 @@ pub(in crate::main_control) fn execute_prev_graf<G>(
     command: &mut CommandMachine<'_, '_, G>,
     value: &mut i32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1244's `alter_prev_graf`: `\prevgraf` is `any_mode` (it
         // walks the mode nest up to its nearest enclosing vertical level
         // rather than checking the current mode), unlike `\spacefactor`/
         // `\prevdepth`'s §1243 `report_illegal_case`.
         if *value < 0 {
-            let context = command.state.output_open_context(&**stores);
+            let context = command.state.output_open_context(&*stores);
             let mut report = stores.print_err("Bad ");
             report
                 .print_esc("prevgraf")

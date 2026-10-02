@@ -9,9 +9,9 @@
 
 use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
-use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::attempt::{AttemptDefinitionId, AttemptError, AttemptMark, AttemptTokenListId};
+use crate::attempt::{AttemptError, AttemptMark, AttemptTokenListId};
 use crate::command::{CommandClass, CurrentCommand};
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
 use crate::processor::status::{
@@ -189,7 +189,6 @@ enum ScannedToksStorage<G> {
         replacement: AttemptTokenListId,
     },
     Definition(tex_state::PublishedDefinition<G>),
-    AttemptDefinition(AttemptDefinitionId),
     /// An escaping list collected at `start` of the pending-insertion words.
     PendingInsertion {
         start: u32,
@@ -199,7 +198,6 @@ enum ScannedToksStorage<G> {
 
 enum ScannedWords<'a, G> {
     Traced(crate::attempt::AttemptTokenListView<'a>),
-    Semantic(&'a [TokenWord]),
     DefinitionParameter(tex_state::DefinitionView<G>),
     DefinitionReplacement(tex_state::DefinitionView<G>),
     Pending(&'a [TracedTokenWord]),
@@ -209,7 +207,6 @@ impl<G> ScannedWords<'_, G> {
     fn len(&self) -> usize {
         match self {
             Self::Traced(words) => words.len(),
-            Self::Semantic(words) => words.len(),
             Self::DefinitionParameter(definition) => definition.parameter_text().len(),
             Self::DefinitionReplacement(definition) => definition.replacement_text().len(),
             Self::Pending(words) => words.len(),
@@ -219,7 +216,6 @@ impl<G> ScannedWords<'_, G> {
     fn token(&self, index: usize) -> Option<Token> {
         match self {
             Self::Traced(words) => words.get(index).map(|word| word.semantic_token()),
-            Self::Semantic(words) => words.get(index).map(|word| word.semantic_token()),
             Self::DefinitionParameter(definition) => definition
                 .parameter_text()
                 .get(index)
@@ -422,18 +418,14 @@ impl<G> ScannedToksBuffers<G> {
     pub(crate) fn definition(self) -> Option<tex_state::PublishedDefinition<G>> {
         match self.storage {
             ScannedToksStorage::Definition(definition) => Some(definition),
-            ScannedToksStorage::Tokens { .. }
-            | ScannedToksStorage::AttemptDefinition(_)
-            | ScannedToksStorage::PendingInsertion { .. } => None,
+            ScannedToksStorage::Tokens { .. } | ScannedToksStorage::PendingInsertion { .. } => None,
         }
     }
 
     pub(crate) fn replay_input(self) -> Option<PendingInsertion> {
         match self.storage {
             ScannedToksStorage::PendingInsertion { start, .. } => Some(PendingInsertion { start }),
-            ScannedToksStorage::Tokens { .. }
-            | ScannedToksStorage::Definition(_)
-            | ScannedToksStorage::AttemptDefinition(_) => None,
+            ScannedToksStorage::Tokens { .. } | ScannedToksStorage::Definition(_) => None,
         }
     }
 }
@@ -506,16 +498,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .prepare_token_buffers(parameter, replacement)
                     .map_err(|()| CommandError::input_invariant())?;
             }
-            (ScanToksGrammar::MacroDefinition, ScanToksDestination::Attempt) => {
-                let definition = self
-                    .command
-                    .attempt
-                    .allocate_definition_builder()
-                    .map_err(attempt_command_error)?;
-                collector
-                    .prepare_attempt_definition(definition)
-                    .map_err(|()| CommandError::input_invariant())?;
-            }
             (ScanToksGrammar::General, ScanToksDestination::ReplayInput { transform }) => {
                 let start = u32::try_from(self.command.roots.input.pending_insertions.len())
                     .map_err(|_| CommandError::input_invariant())?;
@@ -532,7 +514,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .prepare_definition(definition)
                     .map_err(|()| CommandError::input_invariant())?;
             }
-            (ScanToksGrammar::MacroDefinition, ScanToksDestination::ReplayInput { .. })
+            (
+                ScanToksGrammar::MacroDefinition,
+                ScanToksDestination::Attempt | ScanToksDestination::ReplayInput { .. },
+            )
             | (ScanToksGrammar::General, ScanToksDestination::Definition) => {
                 return Err(CommandError::input_invariant());
             }
@@ -546,19 +531,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    /// Cold compatibility path used by `read_toks`. Production
-    /// `scan_toks_buffers` prepares its caller-owned collector directly.
-    fn begin_scan_toks_collector(
-        &mut self,
-        grammar: ScanToksGrammar,
-        destination: ScanToksDestination,
-        observed: bool,
-    ) -> Result<TokenCollector<G>, CommandError> {
-        let mut collector = TokenCollector::default();
-        self.prepare_scan_toks_collector(&mut collector, grammar, destination, observed)?;
-        Ok(collector)
-    }
-
     /// Admits the direct definition tail for this synchronous scanner call.
     /// The writer remains call-local; replay after a resource miss creates a
     /// fresh scanner and repeats this ordinary admission from the checkpoint.
@@ -569,7 +541,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let definition = match collector.destination() {
             TokenCollectorDestination::Definition { definition } => *definition,
             TokenCollectorDestination::TokenBuffers { .. }
-            | TokenCollectorDestination::AttemptDefinition { .. }
             | TokenCollectorDestination::ReplayInput { .. } => return Ok(()),
         };
         let phase = match collector.phase() {
@@ -606,14 +577,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         collector: &mut TokenCollector<G>,
     ) -> Result<(), CommandError> {
         self.release_scan_toks_definition_writer(collector)?;
-        if let TokenCollectorDestination::ReplayInput { start, .. } = collector.destination() {
+        let Some(destination) = collector.prepared_destination() else {
+            return Ok(());
+        };
+        if let TokenCollectorDestination::ReplayInput { start, .. } = destination {
             self.command
                 .roots
                 .input
                 .pending_insertions
                 .truncate(*start as usize);
         }
-        if let TokenCollectorDestination::Definition { definition, .. } = collector.destination() {
+        if let TokenCollectorDestination::Definition { definition, .. } = destination {
             self.state.abort_definition_build(*definition);
         }
         Ok(())
@@ -645,19 +619,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .ok_or_else(CommandError::input_invariant)?
                     .push_replacement(word.token_word())
                     .map_err(definition_build_command_error),
-                TokenCollectorPhase::Complete => unreachable!(),
-            },
-            TokenCollectorDestination::AttemptDefinition { definition } => match phase {
-                TokenCollectorPhase::Parameter => self
-                    .command
-                    .attempt
-                    .push_definition_parameter(*definition, word.token_word())
-                    .map_err(attempt_command_error),
-                TokenCollectorPhase::Replacement => self
-                    .command
-                    .attempt
-                    .push_definition_replacement(*definition, word.token_word())
-                    .map_err(attempt_command_error),
                 TokenCollectorPhase::Complete => unreachable!(),
             },
             TokenCollectorDestination::ReplayInput {
@@ -739,12 +700,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .ok_or_else(CommandError::input_invariant)?
                 .finish_parameters()
                 .map_err(definition_build_command_error)?,
-            TokenCollectorDestination::AttemptDefinition { definition } => {
-                self.command
-                    .attempt
-                    .finish_definition_parameters(*definition)
-                    .map_err(attempt_command_error)?;
-            }
             TokenCollectorDestination::ReplayInput { .. } => {}
         }
         collector
@@ -768,7 +723,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let expected_definition = match collector.destination() {
             TokenCollectorDestination::Definition { definition } => Some(*definition),
             TokenCollectorDestination::TokenBuffers { .. }
-            | TokenCollectorDestination::AttemptDefinition { .. }
             | TokenCollectorDestination::ReplayInput { .. } => None,
         };
         let storage = match collector.destination() {
@@ -803,13 +757,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .map_err(definition_build_command_error)?;
                 ScannedToksStorage::Definition(definition)
             }
-            TokenCollectorDestination::AttemptDefinition { definition } => {
-                self.command
-                    .attempt
-                    .finish_definition(*definition)
-                    .map_err(attempt_command_error)?;
-                ScannedToksStorage::AttemptDefinition(*definition)
-            }
             TokenCollectorDestination::ReplayInput { start, .. } => {
                 let len = self.command.roots.input.pending_insertions.len() - *start as usize;
                 ScannedToksStorage::PendingInsertion {
@@ -842,10 +789,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             ScannedToksStorage::Definition(definition) => Ok(ScannedWords::DefinitionParameter(
                 self.state.definition(definition.reference()),
             )),
-            ScannedToksStorage::AttemptDefinition(definition) => arena
-                .definition_parameter_words(*definition)
-                .map(ScannedWords::Semantic)
-                .map_err(attempt_command_error),
             ScannedToksStorage::PendingInsertion { .. } => Err(CommandError::input_invariant()),
         }
     }
@@ -863,10 +806,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             ScannedToksStorage::Definition(definition) => Ok(ScannedWords::DefinitionReplacement(
                 self.state.definition(definition.reference()),
             )),
-            ScannedToksStorage::AttemptDefinition(definition) => arena
-                .definition_replacement_words(*definition)
-                .map(ScannedWords::Semantic)
-                .map_err(attempt_command_error),
             ScannedToksStorage::PendingInsertion { start, len } => {
                 let start = *start as usize;
                 self.command
@@ -1799,23 +1738,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.push_scan_toks_word(collector, word)?;
             }
             crate::InternalValue::Tokens { tokens, .. } => {
-                let len = self
-                    .command
-                    .attempt_token_words(tokens)
-                    .map_err(crate::scan_toks::attempt_command_error)?
-                    .len();
-                for index in 0..len {
-                    let source = self
-                        .command
-                        .attempt
-                        .token_word(tokens, index)
-                        .map_err(attempt_command_error)?;
-                    let word = TracedTokenWord::pack(source.semantic_token(), OriginId::UNKNOWN);
-                    if self.is_observed() {
-                        observed.push(self.observed_token(word));
-                    }
-                    self.push_scan_toks_word(collector, word)?;
-                }
+                self.splice_scan_toks_tokens(collector, tokens, &mut observed)?;
             }
             value => {
                 let text = crate::processor::render_the_value(&value)
@@ -1855,6 +1778,72 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(true)
     }
 
+    /// Streams one collected source once into its actual semantic destination.
+    /// Token parents adopt whole chunks; definitions borrow the immutable words
+    /// and validate each semantic word without rewalking chunk prefixes.
+    fn splice_scan_toks_tokens(
+        &mut self,
+        collector: &mut TokenCollector<G>,
+        tokens: AttemptTokenListId,
+        observed: &mut Vec<crate::observation::ObservedToken>,
+    ) -> Result<(), CommandError> {
+        let words = self
+            .command
+            .attempt
+            .token_words(tokens)
+            .map_err(attempt_command_error)?;
+        let len = words.len();
+        if self.is_observed() {
+            observed.extend(words.iter().map(|&word| self.observed_token(word)));
+        }
+        match collector.destination_mut() {
+            TokenCollectorDestination::TokenBuffers { writer, .. } => {
+                self.command
+                    .attempt
+                    .consume_token_list_into_buffer(tokens, *writer)
+                    .map_err(attempt_command_error)?;
+            }
+            TokenCollectorDestination::Definition { .. } => {
+                let writer = collector
+                    .definition_writer_mut()
+                    .ok_or_else(CommandError::input_invariant)?;
+                for word in words.iter() {
+                    writer
+                        .push_replacement(word.token_word())
+                        .map_err(definition_build_command_error)?;
+                }
+                #[cfg(test)]
+                {
+                    self.command.token_collector_path_counters.collector_appends += len as u64;
+                }
+            }
+            TokenCollectorDestination::ReplayInput {
+                transform,
+                observed_source,
+                ..
+            } => {
+                if *transform != ReplayWordTransform::Identity {
+                    return Err(CommandError::input_invariant());
+                }
+                if let Some(observed_source) = observed_source {
+                    observed_source.extend(words.iter().map(|&word| self.observed_token(word)));
+                }
+                self.command
+                    .roots
+                    .input
+                    .pending_insertions
+                    .extend(words.iter().copied());
+                #[cfg(test)]
+                {
+                    self.command.token_collector_path_counters.collector_appends += len as u64;
+                }
+            }
+        }
+        #[cfg(not(test))]
+        let _ = len;
+        Ok(())
+    }
+
     /// e-TeX `\unexpanded` uses the same direct-splice rule.  Its balanced
     /// text is scanned raw and attached without parameter conversion or
     /// recursive expansion.
@@ -1862,43 +1851,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "unexpanded",
         })?;
-        let direct_destination = match collector.destination() {
-            TokenCollectorDestination::TokenBuffers { writer, .. } => Some(*writer),
-            TokenCollectorDestination::Definition { .. }
-            | TokenCollectorDestination::AttemptDefinition { .. } => None,
-            TokenCollectorDestination::ReplayInput { .. } => {
-                return Err(CommandError::input_invariant());
-            }
-        };
-        let len = self.attempt_words(scanned.replacement_text)?.len();
+        if matches!(
+            collector.destination(),
+            TokenCollectorDestination::ReplayInput { .. }
+        ) {
+            return Err(CommandError::input_invariant());
+        }
         let mut observed = Vec::new();
-        for index in 0..len {
-            let word = self
-                .command
-                .attempt
-                .token_word(scanned.replacement_text, index)
-                .map_err(attempt_command_error)?;
-            if self.is_observed() {
-                observed.push(self.observed_token(word));
-            }
-            if direct_destination.is_none() {
-                // A definition must shed attempt-local provenance and publish
-                // durable semantic words. That lifetime conversion is the one
-                // intentional per-word boundary; token-buffer parents instead
-                // adopt the completed child sink below without copying.
-                self.push_scan_toks_word(collector, word)?;
-            }
-        }
-        if let Some(destination) = direct_destination {
-            let moved = self
-                .command
-                .attempt
-                .consume_token_list_into_buffer(scanned.replacement_text, destination)
-                .map_err(attempt_command_error)?;
-            if moved as usize != len {
-                return Err(CommandError::input_invariant());
-            }
-        }
+        self.splice_scan_toks_tokens(collector, scanned.replacement_text, &mut observed)?;
         // TeX82 §478 attaches `the_toks` only when `link(temp_head)<>null`.
         if !observed.is_empty() {
             observe!(
@@ -2050,19 +2010,12 @@ fn reset_runaway_render_count() {
 
 pub(crate) fn attempt_command_error(error: AttemptError) -> CommandError {
     match error {
-        AttemptError::CapacityOverflow
-        | AttemptError::AllocationFailed
-        | AttemptError::Definition(
-            tex_state::DefinitionBuildError::AllocationFailed
-            | tex_state::DefinitionBuildError::CapacityOverflow,
-        ) => CommandError::Fatal(crate::FatalError::overflow(
-            "scanner token storage",
-            i32::MAX,
-        )),
-        AttemptError::ForeignAttempt
-        | AttemptError::InvalidCoordinate
-        | AttemptError::Definition(_)
-        | AttemptError::Promotion(_) => CommandError::input_invariant(),
+        AttemptError::CapacityOverflow | AttemptError::AllocationFailed => CommandError::Fatal(
+            crate::FatalError::overflow("scanner token storage", i32::MAX),
+        ),
+        AttemptError::ForeignAttempt | AttemptError::InvalidCoordinate => {
+            CommandError::input_invariant()
+        }
     }
 }
 
@@ -2141,7 +2094,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         stream: i32,
         target: tex_state::interner::Symbol,
         raw_catcodes: bool,
-    ) -> Result<AttemptDefinitionId, CommandError> {
+    ) -> Result<tex_state::PublishedDefinition<G>, CommandError> {
         let scope = self.command.attempt.mark();
         let builder = TokenBuilderId(self.command.transient.next_builder_identity);
         self.command.transient.next_builder_identity =
@@ -2157,32 +2110,32 @@ impl<G> CommandProcessor<'_, '_, G> {
         // `\cr` for the whole collection, and is restored whatever happens.
         let saved_align_state = self.command.alignment.align_state;
         self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
+        let mut collector = TokenCollector::default();
         let result = (|| {
-            let mut collector = self.begin_scan_toks_collector(
+            self.prepare_scan_toks_collector(
+                &mut collector,
                 ScanToksGrammar::MacroDefinition,
-                ScanToksDestination::Attempt,
+                ScanToksDestination::Definition,
                 self.is_observed(),
             )?;
-            let definition = match collector.destination() {
-                TokenCollectorDestination::AttemptDefinition { definition } => *definition,
-                _ => unreachable!(),
-            };
+            self.admit_scan_toks_definition_writer(&mut collector)?;
             self.finish_scan_toks_parameters(&mut collector)?;
             self.read_toks_lines(stream, target, raw_catcodes, &mut collector)?;
-            // §482 leaves the collected list in `cur_val`; §1225 immediately
-            // installs it with `define(p,call,cur_val)`. Unlike §473's
-            // `scan_toks`, this is not an independently observable completed
-            // token-list assignment. The committed observation is §1225's
-            // meaning mutation, whose macro body includes §482's leading
-            // `end_match_token`.
+            // TeX82 §§482/1225 installs this final immutable definition directly;
+            // the sole publication owner keeps it live until assignment.
             match self.finish_scan_toks_collector(&mut collector, OriginId::UNKNOWN)? {
-                ScannedToksStorage::AttemptDefinition(completed) if completed == definition => {}
-                _ => return Err(CommandError::input_invariant()),
+                ScannedToksStorage::Definition(definition) => Ok(definition),
+                _ => Err(CommandError::input_invariant()),
             }
-            Ok(definition)
         })();
+        let cleanup = if result.is_err() {
+            self.discard_scan_toks_collector(&mut collector)
+        } else {
+            Ok(())
+        };
         self.command.alignment.align_state = saved_align_state;
         self.finish_scanner_episode(episode);
+        cleanup?;
         match result {
             Ok(definition) => Ok(definition),
             Err(error) => {
@@ -2422,18 +2375,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         &self,
         collector: &TokenCollector<G>,
     ) -> Result<Vec<TracedTokenWord>, CommandError> {
-        let definition = match (collector.destination(), collector.phase()) {
-            (
-                TokenCollectorDestination::AttemptDefinition { definition },
-                TokenCollectorPhase::Replacement,
-            ) => *definition,
-            _ => return Err(CommandError::input_invariant()),
-        };
-        Ok(self
-            .command
-            .attempt
-            .definition_replacement_words(definition)
-            .map_err(attempt_command_error)?
+        if collector.phase() != TokenCollectorPhase::Replacement {
+            return Err(CommandError::input_invariant());
+        }
+        let writer = collector
+            .definition_writer()
+            .ok_or_else(CommandError::input_invariant)?;
+        Ok(writer
+            .replacement_words()
             .iter()
             .copied()
             .map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN))

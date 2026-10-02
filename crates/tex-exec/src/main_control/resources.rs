@@ -104,7 +104,7 @@ impl<G> MainControl<G> {
 
     pub(super) fn resolve_input_stream_request(
         &mut self,
-        request: &mut tex_command::InputStreamRequest<tex_command::AttemptDefinitionId>,
+        request: &mut tex_command::InputStreamRequest<G>,
         resource: &mut Option<SourceRegistration>,
         stores: &mut Universe<G>,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,

@@ -6,8 +6,6 @@ pub(in crate::main_control) fn execute_after_group<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut tex_state::token::TracedTokenWord,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         match command.state.state_mut().save_aftergroup(stores, *token) {
             // TeX82 §280's `save_for_after` consumes the operand at every
@@ -29,13 +27,11 @@ pub(in crate::main_control) fn execute_after_assignment<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut tex_state::token::TracedTokenWord,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         command
             .state
             .state_mut()
-            .set_afterassignment(&**stores, *token)
+            .set_afterassignment(&*stores, *token)
             .expect("afterassignment uses the synchronized command generation");
         Ok(ReplayStep::Continue)
     }
@@ -46,8 +42,6 @@ pub(in crate::main_control) fn execute_begin_simple_group<G>(
     command: &mut CommandMachine<'_, '_, G>,
     boxes: &mut ReplayBoxes<G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         enter_group(
             stores,
@@ -66,8 +60,6 @@ pub(in crate::main_control) fn execute_end_simple_group<G>(
     command: &mut CommandMachine<'_, '_, G>,
     boxes: &mut ReplayBoxes<G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         unsave_group(stores, command, GroupKind::Simple).map_err(|_| ExecError::MissingToken {
             context: "simple recovery group",
@@ -83,8 +75,6 @@ pub(in crate::main_control) fn execute_output_routine_opening_brace<G>(
     command: &mut CommandMachine<'_, '_, G>,
     boxes: &mut ReplayBoxes<G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1026 runs `normal_paragraph` after the output token list
         // and output save level have both been opened, as part of
@@ -103,10 +93,8 @@ pub(in crate::main_control) fn execute_end_output_routine<G>(
     command: &mut CommandMachine<'_, '_, G>,
     boxes: &mut ReplayBoxes<G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let output_context = command.state.output_open_context(&**stores);
+        let output_context = command.state.output_open_context(&*stores);
         let unbalanced = {
             let mut processor = command_processor(
                 command.state,
@@ -138,7 +126,7 @@ pub(in crate::main_control) fn execute_end_output_routine<G>(
         // TeX82 §1026 has now semantically ended the output token list.
         // Section 1028's subsequent error therefore sees the source
         // level below every retained depleted `<output>` replay.
-        let context = command.state.output_close_context(&**stores);
+        let context = command.state.output_close_context(&*stores);
         // TeX82 §1026 retires the output token list, then runs §1096's
         // `end_graf` before it unsaves the output group. A non-null
         // paragraph left open by \output must be line-broken into this

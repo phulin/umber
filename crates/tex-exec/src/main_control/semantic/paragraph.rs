@@ -7,8 +7,6 @@ pub(in crate::main_control) fn execute_paragraph_indent<G>(
     command: &mut CommandMachine<'_, '_, G>,
     indent: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1090 routes only `vmode+start_par` to §1091 `new_graf`,
         // the single site that pushes `\everypar`. §1092 routes both
@@ -47,8 +45,6 @@ pub(in crate::main_control) fn execute_set_language<G>(
     command: &mut CommandMachine<'_, '_, G>,
     language: &mut i32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1377, verbatim:
         //
@@ -96,8 +92,6 @@ pub(in crate::main_control) fn execute_mark<G>(
     class: &mut u16,
     tokens: &mut tex_state::TokenListId<G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // No `build_page` call afterward (unlike `\penalty`/`\insert`):
         // TeX82 §1101 and e-TeX 2.6 [26.424]'s `make_mark` append the
@@ -143,8 +137,6 @@ pub(in crate::main_control) fn execute_paragraph<G>(
     command: &mut CommandMachine<'_, '_, G>,
     current_line: &mut i32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if matches!(
             modes.current_mode(),
@@ -180,8 +172,6 @@ pub(in crate::main_control) fn execute_paragraph_start<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         start_paragraph(
             command.state,

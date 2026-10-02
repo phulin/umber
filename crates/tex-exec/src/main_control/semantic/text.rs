@@ -7,8 +7,6 @@ pub(in crate::main_control) fn execute_fixed_horizontal_glue<G>(
     command: &mut CommandMachine<'_, '_, G>,
     primitive: &mut UnexpandablePrimitive,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if matches!(
             modes.current_mode(),
@@ -47,8 +45,6 @@ pub(in crate::main_control) fn execute_fixed_vertical_glue<G>(
     command: &mut CommandMachine<'_, '_, G>,
     primitive: &mut UnexpandablePrimitive,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // See the vertical-skip handler: same §1054/§1057
         // `append_glue`, no paragraph start, no page build.
@@ -78,8 +74,6 @@ pub(in crate::main_control) fn execute_rule<G>(
     depth: &mut Option<Scaled>,
     horizontal: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     apply_scanned_rule(command, modes, stores, *width, *height, *depth, *horizontal)
 }
 
@@ -92,8 +86,6 @@ pub(in crate::main_control) fn execute_character<G>(
     origin: &mut tex_state::token::OriginId,
     suppress_left_boundary: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if matches!(modes.current_mode(), Mode::Math | Mode::DisplayMath) {
             if !matches!(cat, Catcode::Space) {
@@ -163,8 +155,6 @@ pub(in crate::main_control) fn execute_text_direction<G>(
     direction: &mut tex_state::node::Direction,
     enabled: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if *enabled {
             crate::box_runtime::flush_pending_hchars_with_fuel(
@@ -190,7 +180,7 @@ pub(in crate::main_control) fn execute_text_direction<G>(
             // etex.ch's `eTeX_enabled`: one report for every optional
             // feature, so the help names the disabled feature generally
             // rather than the primitive the message already named.
-            let context = command.state.output_open_context(&**stores);
+            let context = command.state.output_open_context(&*stores);
             report_escaped_error(
                 stores,
                 command.diagnostic_effects,
@@ -212,8 +202,6 @@ pub(in crate::main_control) fn execute_horizontal_skip<G>(
     value: &mut GlueSpec,
     shared_zero_glue: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if matches!(
             modes.current_mode(),
@@ -257,8 +245,6 @@ pub(in crate::main_control) fn execute_vertical_skip<G>(
     value: &mut GlueSpec,
     shared_zero_glue: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1054's `vmode+vskip: append_glue` (§1057): unlike
         // `\hskip` in vertical mode, `\vskip` never starts a paragraph --
@@ -294,8 +280,6 @@ pub(in crate::main_control) fn execute_kern<G>(
     command: &mut CommandMachine<'_, '_, G>,
     amount: &mut Scaled,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1057's `any_mode(kern),mmode+mkern: append_kern`
         // (§1061: `tail_append(new_kern(cur_val)); subtype(tail):=s`).
@@ -330,8 +314,6 @@ pub(in crate::main_control) fn execute_penalty<G>(
     command: &mut CommandMachine<'_, '_, G>,
     amount: &mut i32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1103's `append_penalty`: `tail_append(new_penalty(cur_val))`
         // in whichever list is current, then `if mode=vmode then
@@ -364,8 +346,6 @@ pub(in crate::main_control) fn execute_character_code<G>(
     origin: &mut tex_state::token::OriginId,
     suppress_left_boundary: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let ch =
             u32::try_from(*value)
@@ -420,8 +400,6 @@ pub(in crate::main_control) fn execute_delete_last<G>(
     primitive: &mut UnexpandablePrimitive,
     context: &mut tex_command::DiagnosticContextCoordinate,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let state = &*command.state;
         crate::box_runtime::execute_delete_last(
@@ -447,8 +425,6 @@ pub(in crate::main_control) fn execute_italic_correction<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         match modes.current_mode() {
             Mode::Horizontal | Mode::RestrictedHorizontal => {
@@ -487,8 +463,6 @@ pub(in crate::main_control) fn execute_no_boundary<G>(
     command: &mut CommandMachine<'_, '_, G>,
     suppress_right: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if *suppress_right {
             crate::box_runtime::flush_pending_hchars_without_right_boundary(
@@ -506,8 +480,6 @@ pub(in crate::main_control) fn execute_non_script<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1171: a zero glue with the `cond_math_glue` subtype.
         modes.current_list_mutation().push(
@@ -528,8 +500,6 @@ pub(in crate::main_control) fn execute_control_space<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         match modes.current_mode() {
             Mode::Math | Mode::DisplayMath => {

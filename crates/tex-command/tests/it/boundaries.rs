@@ -332,51 +332,6 @@ fn macro_stack_conservation_reads_only_admitted_cursor_bounds() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn attempt_promotion_preflights_then_writes_the_resident_destination_once() {
-    let repository = test_support::repository_root();
-    let attempt = fs::read_to_string(repository.join("crates/tex-command/src/attempt.rs"))
-        .expect("read attempt promotion implementation");
-    let stores = fs::read_to_string(repository.join("crates/tex-state/src/stores.rs"))
-        .expect("read destination promotion implementation");
-    let promotion = attempt
-        .split("pub(crate) fn promote_into<D>(")
-        .nth(1)
-        .and_then(|tail| tail.split("pub(crate) fn promote_definition(").next())
-        .expect("locate generic attempt promotion");
-    let destination = stores
-        .split("pub(crate) fn promote_resident_batch<B>(")
-        .nth(1)
-        .and_then(|tail| tail.split("fn promote_value_streams_from<").next())
-        .expect("locate resident destination promotion");
-    assert!(promotion.contains("universe.promote_resident_batch(&mut batch)?"));
-    assert!(promotion.contains("AttemptResidentPromotion"));
-    assert!(!promotion.contains("SmallVec"));
-    assert!(!promotion.contains("AttemptPromotionReceipt"));
-    assert!(!promotion.contains("AttemptPromotionRoots"));
-    assert!(!promotion.contains("promote_value_streams"));
-    assert!(!promotion.contains("definitions.into_iter()"));
-    assert!(!promotion.contains("DefinitionPromotion::new("));
-    assert!(!promotion.contains("Vec<DefinitionBuilder>"));
-    assert!(!promotion.contains("Vec<TokenWord>"));
-    assert!(!promotion.contains("parameter_text().to_vec()"));
-    assert!(!promotion.contains("replacement_text().to_vec()"));
-    assert!(!destination.contains("DefinitionBuilder::from_slices"));
-    let validation = destination
-        .find("definitions_arena.validate_builder(batch.definition(index))")
-        .expect("destination-policy preflight");
-    let publication = destination
-        .find(".publish_prevalidated(batch.next_definition_mut())")
-        .expect("infallible checked builder transfer");
-    assert!(validation < publication);
-    assert!(destination.contains("reserve_batch(definition_count)?"));
-    assert!(destination.contains(".allocate_from_iter(batch.next_token_list_words())"));
-    assert!(destination.contains("batch.settle_next_definition(definition)"));
-    assert!(destination.contains("batch.settle_next_token_list(tokens)"));
-    assert!(!destination.contains("PromotionReceipt"));
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn resource_capable_scalar_scans_expose_typed_products_and_keep_raw_entries_private() {
     let repository = test_support::repository_root();
     let manifest_dir = repository.join("crates/tex-command");

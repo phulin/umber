@@ -832,17 +832,17 @@ remain crate-private.
 ### 5.3 Executor structured-scanner contract
 
 `CommandProcessor` also owns the non-scalar main-control operands whose TeX
-semantics cross token, macro, and source boundaries. `scan_balanced_text` and
-`scan_macro_definition` reuse the one canonical `scan_toks` collector and
-return frozen `TracedTokenList` values plus deterministic first-token
-provenance. Ordinary macro-definition scanning selects its local-group or
-revision-global region before collection and returns one opaque
-`DefinitionRef`; the checked build key advances through the parameter and
-replacement phases inside that final region. It does not return two
-independently staged lists or mutate provenance after publication. `read_toks`
-retains its independently required attempt-staged definition builder. Expanded
-balanced scans continue to use the canonical macro matcher, so macro arguments
-never become executor-owned input.
+semantics cross token, macro, and source boundaries. Balanced text is collected
+in the command's one fixed-chunk token lane and exposed by a checked scratch
+coordinate; its actual consumer publishes the final token owner once. Ordinary
+macro definitions and `read_toks` use the same generation definition writer.
+The checked build key advances through parameter and replacement phases, then
+seals one immutable words/matcher/origin payload. The scanner returns its
+move-only publication owner directly for assignment. Local/global scope belongs
+to the eqtb commit, never to allocation. No independently staged definition
+builder, second word copy, or post-publication provenance edit remains.
+Expanded balanced scans continue to use the canonical macro matcher, so macro
+arguments never become executor-owned input.
 
 The collector applies TeX82 §479's parameter-character rule -- `#<digit>`
 becomes an out-parameter token and `##` becomes one parameter character --

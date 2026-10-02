@@ -461,33 +461,6 @@ impl<G> CommandState<G> {
         self.attempt.token_words(id)
     }
 
-    /// Atomically promotes every attempt-local root exposed by one resident
-    /// destination into this generation's durable stores.
-    ///
-    /// The command attempt validates the complete request before reserving or
-    /// publishing destination rows. Successful publication writes final
-    /// owners into that same destination without an aggregate receipt.
-    pub fn promote_attempt_roots_into<D>(
-        &mut self,
-        universe: &mut tex_state::Universe<G>,
-        destination: &mut D,
-    ) -> Result<(), crate::AttemptError>
-    where
-        D: crate::AttemptPromotionDestination<G>,
-    {
-        self.attempt.promote_into(universe, destination)
-    }
-
-    /// Promotes one declared macro-definition root and its schema-owned text
-    /// into the current generation's definition arena.
-    pub fn promote_attempt_definition(
-        &mut self,
-        universe: &mut tex_state::Universe<G>,
-        id: crate::AttemptDefinitionId,
-    ) -> Result<tex_state::PublishedDefinition<G>, crate::AttemptError> {
-        self.attempt.promote_definition(universe, id)
-    }
-
     /// Returns the number of live TeX input levels retained by this command state.
     #[must_use]
     pub fn input_level_count(&self) -> usize {

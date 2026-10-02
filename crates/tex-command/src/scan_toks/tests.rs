@@ -1,6 +1,6 @@
 use tex_state::env::AssignmentScope;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord};
-use tex_state::token::{Catcode, Token, TokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 
 use super::{ScanToksMode, reset_runaway_render_count, runaway_render_count};
 use crate::{CommandHostCapabilities, CommandSemanticDiagnostic, CommandState, DeliveryStatus};
@@ -178,7 +178,7 @@ fn case_shift_empty_and_nested_groups_replay_the_final_span_directly() {
     });
 }
 
-fn assert_read_failure_is_fully_cleaned(finalize: bool) {
+fn assert_read_failure_is_fully_cleaned(raw_catcodes: bool) {
     crate::test_harness::with_universe(|universe| {
         universe
             .world_mut()
@@ -188,15 +188,8 @@ fn assert_read_failure_is_fully_cleaned(finalize: bool) {
         let mut command = CommandState::default();
         let before = command.attempt.mark();
         command.alignment.align_state = 37;
-        if finalize {
-            command.attempt.inject_definition_finalization_failure();
-        } else {
-            command
-                .attempt
-                .inject_definition_builder_allocation_failure();
-        }
         let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
+        let mut fuel = crate::CommandFuelLedger::new(1).expect("bounded read fuel");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let before_meaning = context.meaning(target);
@@ -208,24 +201,28 @@ fn assert_read_failure_is_fully_cleaned(finalize: bool) {
             &mut diagnostic_effects,
         );
 
-        assert!(processor.read_toks(16, target, finalize).is_err());
+        assert!(processor.read_toks(16, target, raw_catcodes).is_err());
         assert_eq!(processor.command.alignment.align_state, 37);
         assert!(processor.command.scanner.is_quiescent());
         assert_eq!(processor.command.attempt.mark(), before);
         assert_eq!(processor.state.meaning(target), before_meaning);
         drop(processor);
+        let build = context
+            .begin_definition_build(OriginId::UNKNOWN)
+            .expect("failed read returned its native writer");
+        context.abort_definition_build(build);
         command.settle_attempt();
         assert!(command.attempt.is_clear());
     });
 }
 
 #[test]
-fn read_builder_setup_failure_restores_scanner_alignment_and_attempt_scope() {
+fn tokenized_read_fuel_failure_restores_scanner_alignment_and_native_writer() {
     assert_read_failure_is_fully_cleaned(false);
 }
 
 #[test]
-fn read_builder_finalize_failure_restores_scanner_alignment_and_attempt_scope() {
+fn verbatim_read_fuel_failure_restores_scanner_alignment_and_native_writer() {
     assert_read_failure_is_fully_cleaned(true);
 }
 
@@ -1209,4 +1206,36 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
             );
         }
     }
+}
+
+#[test]
+fn read_setup_failure_preserves_an_existing_native_build_and_restores_scanner() {
+    crate::test_harness::with_universe(|universe| {
+        let target = universe.intern("readtarget").expect("target").symbol();
+        let mut command = CommandState::default();
+        command.alignment.align_state = 37;
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("context");
+        let existing = context
+            .begin_definition_build(OriginId::UNKNOWN)
+            .expect("existing build");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        assert!(processor.read_toks(16, target, false).is_err());
+        assert_eq!(processor.command.alignment.align_state, 37);
+        assert!(processor.command.scanner.is_quiescent());
+        drop(processor);
+        // Setup never owned this build, so failed-read cleanup must preserve it.
+        context
+            .push_definition_parameter(existing, TokenWord::pack(Token::param(1)))
+            .expect("existing build remains live");
+        context.abort_definition_build(existing);
+    });
 }

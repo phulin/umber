@@ -9,8 +9,6 @@ pub(in crate::main_control) fn execute_v_split<G>(
     prepared_dvi_pages: &mut PreparedDviPages,
     split: &mut ScannedVSplit,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if let Some(context) = &split.missing_to_context {
             report_missing_vsplit_to(context, command.diagnostic_effects, stores)?;
@@ -78,8 +76,6 @@ pub(in crate::main_control) fn execute_box_dimension_assignment<G>(
     value: &mut Scaled,
     global: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // `Universe::set_box_dimension{,_global}` share one body: TeX82
         // §1055's `alter_box_dimen` mutates the visible box node
@@ -97,10 +93,8 @@ pub(in crate::main_control) fn execute_show_box<G>(
     command: &mut CommandMachine<'_, '_, G>,
     index: &mut u16,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::execute_showbox(
             stores,
             command.diagnostic_effects,
@@ -123,8 +117,6 @@ pub(in crate::main_control) fn execute_box_register<G>(
     copy: &mut bool,
     ships_out: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let isolated_append = !*ships_out
             && boxes.pending_setbox.is_none()
@@ -188,8 +180,6 @@ pub(in crate::main_control) fn execute_unbox<G>(
     index: &mut u16,
     error_context: &mut tex_command::DiagnosticContextCoordinate,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let state = &*command.state;
         crate::box_runtime::execute_scanned_unbox_with_error_context(
@@ -217,8 +207,6 @@ pub(in crate::main_control) fn execute_saved_vertical_discards<G>(
     command: &mut CommandMachine<'_, '_, G>,
     primitive: &mut UnexpandablePrimitive,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         crate::box_runtime::execute_scanned_saved_vertical_discards(
             *primitive,
@@ -239,8 +227,6 @@ pub(in crate::main_control) fn execute_last_box<G>(
     prepared_dvi_pages: &mut PreparedDviPages,
     error_context: &mut tex_command::DiagnosticContextCoordinate,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let state = &*command.state;
         let node = crate::box_runtime::take_last_box(

@@ -69,8 +69,8 @@ pub(crate) const FILE_NAME_POOL_CAPACITY: usize = 32_000;
 /// Completed input-stream operation.  The command core owns every operand;
 /// replay only acquires an already-registered immutable resource and mutates
 /// World stream state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InputStreamRequest<D = AttemptDefinitionId> {
+#[derive(Debug)]
+pub enum InputStreamRequest<G> {
     Open {
         stream: i32,
         /// The unrecovered §435 `scan_int` result for `int_error`.
@@ -98,10 +98,8 @@ pub enum InputStreamRequest<D = AttemptDefinitionId> {
         /// Effective TeX82 §1214 scope selected by `prefixed_command`
         /// before §1225 enters `read_toks`.
         global: bool,
-        /// The parameterless macro definition is the sole mutable attempt
-        /// root. Its replacement slice supplies read observation after
-        /// publication; no duplicate durable token list is created.
-        definition: D,
+        /// Move-only final definition owner, retained until native assignment.
+        definition: tex_state::PublishedDefinition<G>,
     },
 }
 

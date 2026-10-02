@@ -7,13 +7,11 @@ pub(in crate::main_control) fn execute_illegal_stop<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1051's `privileged`: `\end`/`\dump` below outer
         // vertical mode reports and is discarded, exactly like the other
         // Forbidden cases.
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
             stores,
             command.diagnostic_effects,
@@ -31,10 +29,8 @@ pub(in crate::main_control) fn execute_illegal_macro_parameter<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
             stores,
             command.diagnostic_effects,
@@ -50,11 +46,9 @@ pub(in crate::main_control) fn execute_extra_end_cs_name<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1135's `cs_error`.
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         report_escaped_error(
             stores,
             command.diagnostic_effects,
@@ -74,10 +68,8 @@ pub(in crate::main_control) fn execute_illegal_italic_correction<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
             stores,
             command.diagnostic_effects,
@@ -95,10 +87,8 @@ pub(in crate::main_control) fn execute_illegal_prev_depth<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
             stores,
             command.diagnostic_effects,
@@ -116,10 +106,8 @@ pub(in crate::main_control) fn execute_illegal_space_factor<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
             stores,
             command.diagnostic_effects,
@@ -137,10 +125,8 @@ pub(in crate::main_control) fn execute_illegal_set_language<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
             stores,
             command.diagnostic_effects,
@@ -157,12 +143,10 @@ pub(in crate::main_control) fn execute_extra_right_brace<G>(
     command: &mut CommandMachine<'_, '_, G>,
     forgotten: &mut Option<ForgottenGroupOpener>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     match forgotten {
         None => {
             // TeX82 §1068's `bottom_level` arm of `handle_right_brace`.
-            let context = command.state.output_open_context(&**stores);
+            let context = command.state.output_open_context(&*stores);
             crate::error_report::report_error(
                 stores,
                 command.diagnostic_effects,
@@ -178,7 +162,7 @@ pub(in crate::main_control) fn execute_extra_right_brace<G>(
         Some(forgotten) => {
             // TeX82 §1069's `extra_right_brace` reports and discards the
             // mismatched brace. It does not `unsave` the group it names.
-            let context = command.state.output_open_context(&**stores);
+            let context = command.state.output_open_context(&*stores);
             let mut report = stores.print_err("Extra }, or forgotten ");
             forgotten.print(&mut report);
             report.help(&[
@@ -200,13 +184,11 @@ pub(in crate::main_control) fn execute_off_save<G>(
     command: &mut CommandMachine<'_, '_, G>,
     closer: &mut OffSaveCloser,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // `scan_off_save` already ran the input recovery (backing up the
         // command behind its chosen closer); this only prints TeX82
         // §1064's report naming what §1065 inserted.
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         let mut report = stores.print_err("Missing ");
         closer.print(&mut report);
         report
@@ -223,14 +205,12 @@ pub(in crate::main_control) fn execute_off_save_bottom_drop<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1066: "print_err("Extra "); print_cmd_chr(cur_cmd,
         // cur_chr)". `scan_off_save` already dropped the command itself
         // (no backup, nothing to replay); this only names it.
-        let name = tex_command::command_token_text(&mut **stores, *token);
-        let context = command.state.output_open_context(&**stores);
+        let name = tex_command::command_token_text(stores, *token);
+        let context = command.state.output_open_context(&*stores);
         crate::error_report::report_error(
             stores,
             command.diagnostic_effects,
@@ -250,8 +230,6 @@ pub(in crate::main_control) fn execute_illegal_last_item<G>(
     context: &mut String,
     site: &mut tex_state::diagnostic::DiagnosticSite,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         crate::diagnostics::report_illegal_case_with_site(
             stores,

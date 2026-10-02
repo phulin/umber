@@ -11,7 +11,7 @@
 use tex_state::interner::Symbol;
 use tex_state::token::{Catcode, TokenWord, TracedTokenWord};
 
-use crate::attempt::{AttemptDefinitionId, AttemptTokenBufferId, AttemptTokenListId};
+use crate::attempt::{AttemptTokenBufferId, AttemptTokenListId};
 use crate::command::CurrentCommand;
 
 /// Per-word rewrite applied only while an escaping general-text collector
@@ -127,9 +127,6 @@ pub(crate) enum TokenCollectorDestination<G> {
     Definition {
         definition: tex_state::DefinitionBuildKey<G>,
     },
-    AttemptDefinition {
-        definition: AttemptDefinitionId,
-    },
     /// A standalone escaping inserted list, written into the pending-insertion
     /// words that its input level later adopts.
     ReplayInput {
@@ -208,13 +205,6 @@ impl<G> TokenCollector<G> {
         self.prepare_destination(TokenCollectorDestination::Definition { definition })
     }
 
-    pub(crate) fn prepare_attempt_definition(
-        &mut self,
-        definition: AttemptDefinitionId,
-    ) -> Result<(), ()> {
-        self.prepare_destination(TokenCollectorDestination::AttemptDefinition { definition })
-    }
-
     pub(crate) fn prepare_replay_input(
         &mut self,
         start: u32,
@@ -250,6 +240,10 @@ impl<G> TokenCollector<G> {
         Ok(())
     }
 
+    pub(crate) const fn prepared_destination(&self) -> Option<&TokenCollectorDestination<G>> {
+        self.destination.as_ref()
+    }
+
     pub(crate) const fn destination(&self) -> &TokenCollectorDestination<G> {
         match &self.destination {
             Some(destination) => destination,
@@ -276,6 +270,10 @@ impl<G> TokenCollector<G> {
             return Err(());
         }
         Ok(())
+    }
+
+    pub(crate) fn definition_writer(&self) -> Option<&tex_state::DefinitionBuildWriter<G>> {
+        self.definition_writer.as_ref()
     }
 
     pub(crate) fn definition_writer_mut(
@@ -311,8 +309,7 @@ impl<G> TokenCollector<G> {
                 observed_source, ..
             } => observed_source.take(),
             TokenCollectorDestination::TokenBuffers { .. }
-            | TokenCollectorDestination::Definition { .. }
-            | TokenCollectorDestination::AttemptDefinition { .. } => None,
+            | TokenCollectorDestination::Definition { .. } => None,
         }
     }
 

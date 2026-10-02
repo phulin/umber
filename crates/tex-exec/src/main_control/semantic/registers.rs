@@ -9,8 +9,7 @@ pub(in crate::main_control) fn execute_count<G>(
     value: i32,
     global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let receipt = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
-        .count(index, value, global);
+    let receipt = AssignmentCommitter::new(stores, effects).count(index, value, global);
     if let Some(receipts) = receipts
         && receipt
     {
@@ -32,8 +31,7 @@ pub(in crate::main_control) fn execute_dimen<G>(
     value: Scaled,
     global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let receipt = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
-        .dimension(index, value, global);
+    let receipt = AssignmentCommitter::new(stores, effects).dimension(index, value, global);
     if let Some(receipts) = receipts
         && receipt
     {
@@ -59,7 +57,7 @@ pub(in crate::main_control) fn execute_skip<G>(
     redundant: bool,
     reassigning: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let committed = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects).skip(
+    let committed = AssignmentCommitter::new(stores, effects).skip(
         index,
         value,
         global,
@@ -90,8 +88,7 @@ pub(in crate::main_control) fn execute_int_param<G>(
     value: i32,
     global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let committed = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
-        .int_parameter(index, value, global);
+    let committed = AssignmentCommitter::new(stores, effects).int_parameter(index, value, global);
     if let Some(receipts) = receipts
         && committed
     {
@@ -119,8 +116,8 @@ pub(in crate::main_control) fn execute_dimen_param<G>(
     value: Scaled,
     global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let committed = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
-        .dimension_parameter(index, value, global);
+    let committed =
+        AssignmentCommitter::new(stores, effects).dimension_parameter(index, value, global);
     if let Some(receipts) = receipts
         && committed
     {
@@ -148,8 +145,7 @@ pub(in crate::main_control) fn execute_glue_param<G>(
     value: GlueSpec,
     global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let committed = AssignmentCommitter::new(&mut LinearCommandContext::new(stores), effects)
-        .glue_parameter(index, value, global);
+    let committed = AssignmentCommitter::new(stores, effects).glue_parameter(index, value, global);
     if let Some(receipts) = receipts
         && committed
     {
@@ -178,8 +174,6 @@ pub(in crate::main_control) fn execute_arithmetic<G>(
     operand: ArithmeticOperand,
     global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1236 sets `arith_error` and, when it is set, reports
         // "Arithmetic overflow" and `return`s *before* `word_define`, so
@@ -197,7 +191,7 @@ pub(in crate::main_control) fn execute_arithmetic<G>(
             receipts.as_mut(),
         ) {
             Err(ExecError::ArithmeticOverflow) => {
-                let context = state.output_open_context(&**stores);
+                let context = state.output_open_context(&*stores);
                 let mut report = stores.print_err("Arithmetic overflow");
                 report.help(&[
                     "I can't carry out that multiplication or division,",
@@ -219,18 +213,16 @@ pub(in crate::main_control) fn execute_invalid_arithmetic_target<G>(
     primitive: &mut UnexpandablePrimitive,
     target: &mut tex_command::PrintCommand<G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1236 prints this error and returns from
         // `do_register_command`; §1269's common `done` path still gets
         // to replay a pending `\afterassignment` token.
-        let target = tex_command::print_cmd_chr_text(&**stores, target.clone());
+        let target = tex_command::print_cmd_chr_text(&*stores, target.clone());
         let primitive = stores
             .primitive_name(Meaning::UnexpandablePrimitive(*primitive))
             .expect("installed arithmetic primitive has a canonical name")
             .to_owned();
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         let mut report = stores.print_err("You can't use `");
         report
             .print(&target)

@@ -51,10 +51,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.
 - `src/lib.rs`: intentionally small public facade and private module tree.
 - `src/attempt.rs`, `src/attempt/token_lane.rs`, and `src/attempt/tests.rs`:
-  command-lifetime scanner scratch, including one attempt-owned fixed-chunk
-  token lane and promotion. Each scanner carries only a typed branch
-  coordinate into that lane; finalization publishes the same words and
-  truncation returns whole chunks. Macro invocation storage does not use this
+  command-lifetime token scratch in one fixed-chunk lane and one row table. An open collector and its sealed list use the same row; sealing changes only its phase. Coordinates reject foreign arenas, consumed or stale reused rows, and writes through a sealed buffer alias. Row serials advance locally without rollback; only arena creation allocates a global identity. There are no attempt definition/glue/provenance/name lanes, parallel origin arrays, contiguous word copies, or mixed promotion protocol. Truncation returns whole chunks. Macro invocation storage does not use this
   arena. The arena is clear at every command boundary: settling a command
   releases its rows, and a failed synchronous scanner or child scope
   truncates its own suffix to a mark. A resource miss halts the command and
@@ -522,10 +519,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   Raw definition scanning is entirely call-local.
   `\edef`/`\xdef` retain only the build key while their ordinary local scanner
   runs; a resource miss unwinds the builder and expansion call tree. `read_toks`
-  keeps its independent cold/import staging lifetime. Read setup and
-  finalization share one cleanup transaction which
-  restores `align_state` and scanner status and truncates its exact attempt
-  suffix on every error. General token-list scans append directly to independent
+  uses that same direct native writer and moves the sealed publication owner straight to assignment. Runaway reporting borrows the incomplete replacement. Read setup and finalization share one cleanup transaction which returns and aborts the actual writer, restores `align_state` and scanner status, and truncates its exact token scratch suffix on every error. General token-list scans append directly to independent
   branches in the attempt's shared fixed-chunk lane; they never own or recycle
   a per-scan word vector, and sealing is a metadata-only publication. Nested macros
   use separate macro frame/argument lanes, so push/pop never interleaves their

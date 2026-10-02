@@ -9,8 +9,6 @@ pub(in crate::main_control) fn execute_code_table<G>(
     value: &mut i32,
     global: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §§1230--1234's `def_code` reports an invalid table
         // value after scanning it, substitutes zero, and commits the

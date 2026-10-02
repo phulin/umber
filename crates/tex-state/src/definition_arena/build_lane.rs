@@ -134,6 +134,11 @@ impl<G> DefinitionBuildWriter<G> {
         self.build.push_replacement(&mut self.words, word)
     }
 
+    /// Borrows the incomplete replacement for a scanner runaway diagnostic.
+    pub fn replacement_words(&self) -> &[TokenWord] {
+        &self.words[self.build.parameter_len as usize..]
+    }
+
     #[inline(always)]
     pub fn set_origin(&mut self, origin: crate::token::OriginId) {
         self.build.origin = origin;

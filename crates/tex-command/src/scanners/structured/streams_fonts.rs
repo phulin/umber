@@ -7,7 +7,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         primitive: tex_state::meaning::UnexpandablePrimitive,
         read_global: bool,
-    ) -> Result<InputStreamRequest, CommandError> {
+    ) -> Result<InputStreamRequest<G>, CommandError> {
         use tex_state::meaning::UnexpandablePrimitive;
         match primitive {
             // §§1272--1275's `in_stream` command scans §435's

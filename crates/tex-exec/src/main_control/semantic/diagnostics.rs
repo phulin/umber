@@ -6,8 +6,6 @@ pub(in crate::main_control) fn execute_set_interaction_mode<G>(
     command: &mut CommandMachine<'_, '_, G>,
     primitive: &mut UnexpandablePrimitive,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let mode = match primitive {
             UnexpandablePrimitive::BatchMode => tex_state::InteractionMode::Batch,
@@ -40,8 +38,6 @@ pub(in crate::main_control) fn execute_set_interaction_mode_value<G>(
     value: &mut i32,
     context: &mut tex_command::DiagnosticContextCoordinate,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let mode = match value {
             0 => tex_state::InteractionMode::Batch,
@@ -74,15 +70,13 @@ pub(in crate::main_control) fn execute_message<G>(
     tokens: &mut tex_state::TokenListId<G>,
     error: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1279's `issue_message` renders the scanned list through
         // `token_show` into one string and then hands it to §1280 or
         // §1283; neither branch formats or routes its own output.
         let text = message_tokens_text(stores, tokens.clone());
         if *error {
-            let context = command.state.output_open_context(&**stores);
+            let context = command.state.output_open_context(&*stores);
             issue_error_message(stores, command.diagnostic_effects, &text, context)?;
         } else {
             issue_terminal_message(stores, &text);
@@ -96,8 +90,6 @@ pub(in crate::main_control) fn execute_display_diagnostic<G>(
     command: &mut CommandMachine<'_, '_, G>,
     diagnostic: &mut ScannedDisplayDiagnostic,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §§62/1294/1297 begin the display with `print_nl(">␣")`,
         // which closes a partial selected line but does not add a blank
@@ -105,7 +97,7 @@ pub(in crate::main_control) fn execute_display_diagnostic<G>(
         // The scanned value carries exactly that line's content; replay
         // owns the selector-sensitive transition and decodes no textual
         // envelope.
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         print_display_content(stores, command.diagnostic_effects, &diagnostic.content);
         command.defer_show_completion(false, context);
         Ok(ReplayStep::Continue)
@@ -117,8 +109,6 @@ pub(in crate::main_control) fn execute_show_lists<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §218 observes the synchronous linked list built by
         // main_control. Materialize Umber's batched character tail before
@@ -129,7 +119,7 @@ pub(in crate::main_control) fn execute_show_lists<G>(
             command.diagnostic_effects,
             command.fuel,
         )?;
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::execute_showlists(
             stores,
             command.diagnostic_effects,
@@ -146,13 +136,11 @@ pub(in crate::main_control) fn execute_show_tokens<G>(
     command: &mut CommandMachine<'_, '_, G>,
     tokens: &mut tex_state::TokenListId<G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // e-TeX's odd xray modifier reaches `the_toks`, then TeX82
         // §1297 prints `token_show(temp_head)` and takes the common
         // `\show` completion path.
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         let text = show_tokens_tokens_text(stores, tokens.clone());
         // §1297 opens with §62's `print_nl(">␣")`, whose break is
         // conditional on a selected sink already having an open column.
@@ -171,15 +159,13 @@ pub(in crate::main_control) fn execute_show_ifs<G>(
     command: &mut CommandMachine<'_, '_, G>,
     conditions: &mut [tex_command::ActiveCondition],
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // etex.ch [17.3720]'s `show_ifs` is a `begin_diagnostic` form
         // like `\showbox`/`\showlists`/`\showgroups`, not a direct
         // print: see `tex-exec::diagnostics`'s module doc for why the
         // dump must be routed through §245's redirection rather than
         // written straight to both channels.
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         let mut diagnostic = stores.begin_diagnostic(command.diagnostic_effects);
         diagnostic.print_nl("").print_ln();
         diagnostic.print_rendered(&render_showifs(conditions));
@@ -201,11 +187,9 @@ pub(in crate::main_control) fn execute_show_groups<G>(
     active_math_shifts: &[MathShiftContext],
     diagnostic: &mut Option<crate::diagnostics::ShowGroupsDiagnostic>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     match diagnostic {
         Some(diagnostic) => {
-            let context = command.state.output_open_context(&**stores);
+            let context = command.state.output_open_context(&*stores);
             crate::diagnostics::execute_showgroups(stores, command.diagnostic_effects, diagnostic);
             command.defer_show_completion(true, context);
             Ok(ReplayStep::Continue)
@@ -220,7 +204,7 @@ pub(in crate::main_control) fn execute_show_groups<G>(
                 active_math_left_boundaries,
                 active_math_shifts,
             );
-            let context = command.state.output_open_context(&**stores);
+            let context = command.state.output_open_context(&*stores);
             crate::diagnostics::execute_showgroups(stores, command.diagnostic_effects, &diagnostic);
             command.defer_show_completion(true, context);
             Ok(ReplayStep::Continue)

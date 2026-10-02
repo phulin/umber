@@ -348,3 +348,28 @@ execution-machine setup, receipt construction/transport and unused observer
 serialization across an entire assignment family. Completed-document counters
 and exact output comparisons establish the aggregate effect; isolated helper
 size or a new numerical threshold does not establish completion.
+
+## Token scratch and final definition ownership
+
+Command scratch contains one token row table and one fixed-chunk lane. An open collector and its final list use the same row, with a phase change at sealing; there is no separate result table or word copy. Empty scratch settlement reads one row count. Glue and
+provenance already have actual native owners, and a reserved name lane has no
+consumer. Their attempt coordinates, parallel origin arrays, mixed promotion
+trait and batch transport are deleted. A traced token already carries its
+actual origin; scratch must not store a second optional origin beside it.
+
+Both ordinary definitions and `\read`/`\readline` build in the same generation
+definition writer and seal once into the final immutable definition bank. The
+scanner returns the move-only publication owner directly for assignment.
+Runaway diagnostics borrow the incomplete writer; error cleanup returns and
+aborts that actual build before checkpoint replay. There is no attempt
+definition builder, second word copy, or promotion seam.
+
+An arena has one unique identity allocated when the arena is created. Row
+serials advance locally and monotonically within that arena, including across
+suffix rollback and command settlement. This rejects stale reused row indices
+without a global atomic operation for each scratch row. Token splicing streams a borrowed source once or transfers its entire chunk chain into the parent; it never indexes each word by rewalking chunk prefixes. Serial exhaustion is a
+checked allocation failure. Full checkpoint replay installs a fresh arena
+identity; it cannot revive coordinates from the halted command.
+
+Semantic routines borrow `CommandContext` directly. A state-free dereference
+facade adds no authority and is deleted.

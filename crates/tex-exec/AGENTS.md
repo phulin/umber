@@ -65,7 +65,7 @@ Group close drives the same `CommandProcessor::end_group` native stack walk in t
   grouped by assignments, registers, fonts, text, paragraph/page state, groups,
   boxes/builders/leaders, alignment/recovery, math, diagnostics, streams, and
   PDF. Each routine borrows the actual admitted native owners; no operation
-  union, readiness phase, compatibility executor, or universal payload exists.
+  union, readiness phase, context dereference facade, compatibility executor, or universal payload exists. Input stream scanners return a move-only final definition owner for read assignment; no attempt-definition promotion remains.
 - `src/main_control/semantic_owners.rs`: actual semantic-owner admission and
   ordered diagnostic, mutation, effect, artifact, and paragraph publication.
   Native context-consuming arms share its settlement tail without constructing

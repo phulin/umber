@@ -3,7 +3,7 @@ use super::*;
 impl<G> DirectDispatch<'_, '_, G> {
     pub(super) fn execute_input_stream(
         &mut self,
-        mut request: tex_command::InputStreamRequest<tex_command::AttemptDefinitionId>,
+        mut request: tex_command::InputStreamRequest<G>,
         mut resource: Option<SourceRegistration>,
     ) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
@@ -45,27 +45,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                 .close_in(replay_stream_slot(*stream));
             return self.finish_host(Ok(ReplayStep::Continue));
         }
-        let request = match request {
-            tex_command::InputStreamRequest::Read {
-                stream,
-                target,
-                global,
-                definition,
-            } => tex_command::InputStreamRequest::Read {
-                stream,
-                target,
-                global,
-                definition: self
-                    .control
-                    .command
-                    .state_mut()
-                    .promote_attempt_definition(self.stores, definition)
-                    .map_err(|_| ExecError::MissingToken {
-                        context: "read definition publication",
-                    })?,
-            },
-            _ => unreachable!("open and close completed at their actual World owner"),
-        };
         self.control.main_loop_active = false;
 
         let step = self.control.apply_direct_leaf(

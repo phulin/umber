@@ -36,8 +36,7 @@ macro_rules! observe {
 
 mod attempt;
 pub use attempt::{
-    AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptNameId, AttemptPromotionDestination,
-    AttemptProvenanceId, AttemptTokenListId, AttemptTokenListIter, AttemptTokenListView,
+    AttemptError, AttemptTokenListId, AttemptTokenListIter, AttemptTokenListView,
     CommandAttemptChildScope,
 };
 mod command;

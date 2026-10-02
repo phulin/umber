@@ -17,7 +17,7 @@ use tex_state::{
     env::banks::{GlueParam, IntParam},
 };
 
-use crate::attempt::{AttemptDefinitionId, AttemptTokenBufferId, AttemptTokenListId};
+use crate::attempt::{AttemptTokenBufferId, AttemptTokenListId};
 
 use crate::input::{
     BackupTreatment, InputLevelId, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,

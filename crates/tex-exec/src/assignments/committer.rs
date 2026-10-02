@@ -1,4 +1,4 @@
-//! Authoritative scoped assignment commits and typed mutation receipts.
+//! Authoritative scoped assignment commits and demanded tracing.
 //!
 //! Scanners deliver typed values; this boundary alone decides whether an
 //! e-TeX local write is redundant, selects the local/global state barrier,

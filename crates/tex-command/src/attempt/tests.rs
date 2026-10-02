@@ -1,14 +1,6 @@
-use tex_state::glue::{GlueSpec, Order};
+use super::{AttemptArena, AttemptError};
 use tex_state::interner::InternerBudget;
-use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{DefinitionBuildError, DefinitionRef, GlueId, ProvenanceId, TokenListId};
-
-use super::{
-    AttemptArena, AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptPromotionDestination,
-    AttemptProvenanceId, AttemptTokenListId, AttemptTokenStorage,
-};
-
 fn word(ch: char) -> TracedTokenWord {
     TracedTokenWord::pack(
         Token::Char {
@@ -18,443 +10,8 @@ fn word(ch: char) -> TracedTokenWord {
         OriginId::UNKNOWN,
     )
 }
-
-fn glue(width: i32) -> GlueSpec {
-    GlueSpec {
-        width: Scaled::from_raw(width),
-        stretch: Scaled::from_raw(0),
-        stretch_order: Order::Normal,
-        shrink: Scaled::from_raw(0),
-        shrink_order: Order::Normal,
-    }
-}
-
 fn budget() -> InternerBudget {
     InternerBudget::new(64, 64, 4096).expect("test budget")
-}
-
-enum TestRoot<Attempt, Durable> {
-    Attempt(Attempt),
-    Durable(Durable),
-}
-
-struct TestPromotionDestination<G> {
-    token_lists: Vec<TestRoot<AttemptTokenListId, TokenListId<G>>>,
-    glue: Vec<TestRoot<AttemptGlueId, GlueId<G>>>,
-    definitions: Vec<TestRoot<AttemptDefinitionId, tex_state::PublishedDefinition<G>>>,
-    provenance: Vec<TestRoot<AttemptProvenanceId, ProvenanceId<G>>>,
-}
-
-impl<G> TestPromotionDestination<G> {
-    fn new(
-        token_lists: &[AttemptTokenListId],
-        glue: &[AttemptGlueId],
-        definitions: &[AttemptDefinitionId],
-        provenance: &[AttemptProvenanceId],
-    ) -> Self {
-        Self {
-            token_lists: token_lists.iter().copied().map(TestRoot::Attempt).collect(),
-            glue: glue.iter().copied().map(TestRoot::Attempt).collect(),
-            definitions: definitions.iter().copied().map(TestRoot::Attempt).collect(),
-            provenance: provenance.iter().copied().map(TestRoot::Attempt).collect(),
-        }
-    }
-
-    fn token_list(&self, index: usize) -> &TokenListId<G> {
-        match &self.token_lists[index] {
-            TestRoot::Durable(tokens) => tokens,
-            TestRoot::Attempt(_) => panic!("token root was not settled"),
-        }
-    }
-
-    fn glue(&self, index: usize) -> GlueId<G> {
-        match self.glue[index] {
-            TestRoot::Durable(glue) => glue,
-            TestRoot::Attempt(_) => panic!("glue root was not settled"),
-        }
-    }
-
-    fn definition(&self, index: usize) -> DefinitionRef<G> {
-        match &self.definitions[index] {
-            TestRoot::Durable(definition) => definition.reference(),
-            TestRoot::Attempt(_) => panic!("definition root was not settled"),
-        }
-    }
-
-    fn provenance(&self, index: usize) -> ProvenanceId<G> {
-        match self.provenance[index] {
-            TestRoot::Durable(provenance) => provenance,
-            TestRoot::Attempt(_) => panic!("provenance root was not settled"),
-        }
-    }
-}
-
-impl<G> AttemptPromotionDestination<G> for TestPromotionDestination<G> {
-    fn token_root_count(&self) -> usize {
-        self.token_lists.len()
-    }
-
-    fn token_root(&self, index: usize) -> AttemptTokenListId {
-        match self.token_lists[index] {
-            TestRoot::Attempt(root) => root,
-            TestRoot::Durable(_) => panic!("token root settled before preflight ended"),
-        }
-    }
-
-    fn next_token_root(&self) -> AttemptTokenListId {
-        self.token_lists
-            .iter()
-            .find_map(|root| match root {
-                TestRoot::Attempt(root) => Some(*root),
-                TestRoot::Durable(_) => None,
-            })
-            .expect("token root remains")
-    }
-
-    fn settle_token_root(&mut self, source: AttemptTokenListId, tokens: TokenListId<G>) {
-        let mut matched = 0;
-        for root in &mut self.token_lists {
-            if matches!(root, TestRoot::Attempt(candidate) if *candidate == source) {
-                *root = TestRoot::Durable(tokens.clone());
-                matched += 1;
-            }
-        }
-        assert_ne!(matched, 0);
-    }
-
-    fn glue_root_count(&self) -> usize {
-        self.glue.len()
-    }
-
-    fn glue_root(&self, index: usize) -> AttemptGlueId {
-        match self.glue[index] {
-            TestRoot::Attempt(root) => root,
-            TestRoot::Durable(_) => panic!("glue root settled before preflight ended"),
-        }
-    }
-
-    fn next_glue_root(&self) -> AttemptGlueId {
-        self.glue
-            .iter()
-            .find_map(|root| match root {
-                TestRoot::Attempt(root) => Some(*root),
-                TestRoot::Durable(_) => None,
-            })
-            .expect("glue root remains")
-    }
-
-    fn settle_glue_root(&mut self, source: AttemptGlueId, glue: GlueId<G>) {
-        let mut matched = 0;
-        for root in &mut self.glue {
-            if matches!(root, TestRoot::Attempt(candidate) if *candidate == source) {
-                *root = TestRoot::Durable(glue);
-                matched += 1;
-            }
-        }
-        assert_ne!(matched, 0);
-    }
-
-    fn definition_root_count(&self) -> usize {
-        self.definitions.len()
-    }
-
-    fn definition_root(&self, index: usize) -> AttemptDefinitionId {
-        match self.definitions[index] {
-            TestRoot::Attempt(root) => root,
-            TestRoot::Durable(_) => panic!("definition root settled before preflight ended"),
-        }
-    }
-
-    fn next_definition_root(&self) -> AttemptDefinitionId {
-        self.definitions
-            .iter()
-            .find_map(|root| match root {
-                TestRoot::Attempt(root) => Some(*root),
-                TestRoot::Durable(_) => None,
-            })
-            .expect("definition root remains")
-    }
-
-    fn settle_definition_root(
-        &mut self,
-        source: AttemptDefinitionId,
-        definition: tex_state::PublishedDefinition<G>,
-    ) {
-        let mut destinations = self
-            .definitions
-            .iter_mut()
-            .filter(|root| matches!(root, TestRoot::Attempt(candidate) if *candidate == source));
-        let first = destinations.next().expect("actual definition destination");
-        *first = TestRoot::Durable(definition);
-        let TestRoot::Durable(owner) = first else {
-            unreachable!()
-        };
-        for root in destinations {
-            *root = TestRoot::Durable(owner.retain());
-        }
-    }
-
-    fn provenance_root_count(&self) -> usize {
-        self.provenance.len()
-    }
-
-    fn provenance_root(&self, index: usize) -> AttemptProvenanceId {
-        match self.provenance[index] {
-            TestRoot::Attempt(root) => root,
-            TestRoot::Durable(_) => panic!("provenance root settled before preflight ended"),
-        }
-    }
-
-    fn next_provenance_root(&self) -> AttemptProvenanceId {
-        self.provenance
-            .iter()
-            .find_map(|root| match root {
-                TestRoot::Attempt(root) => Some(*root),
-                TestRoot::Durable(_) => None,
-            })
-            .expect("provenance root remains")
-    }
-
-    fn settle_provenance_root(&mut self, source: AttemptProvenanceId, provenance: ProvenanceId<G>) {
-        let mut matched = 0;
-        for root in &mut self.provenance {
-            if matches!(root, TestRoot::Attempt(candidate) if *candidate == source) {
-                *root = TestRoot::Durable(provenance);
-                matched += 1;
-            }
-        }
-        assert_ne!(matched, 0);
-    }
-}
-
-fn definition<G>(
-    attempt: &mut AttemptArena<G>,
-    parameters: &[TracedTokenWord],
-    replacement: &[TracedTokenWord],
-) -> super::AttemptDefinitionId {
-    let definition = attempt
-        .allocate_definition_builder()
-        .expect("definition builder");
-    for word in parameters {
-        attempt
-            .push_definition_parameter(definition, word.token_word())
-            .expect("parameter word");
-    }
-    attempt
-        .finish_definition_parameters(definition)
-        .expect("parameter boundary");
-    for word in replacement {
-        attempt
-            .push_definition_replacement(definition, word.token_word())
-            .expect("replacement word");
-    }
-    attempt.finish_definition(definition).expect("definition");
-    definition
-}
-
-#[test]
-fn mark_truncates_every_suffix_without_inspecting_values() {
-    tex_state::with_universe(budget(), |universe| {
-        let mut attempt = AttemptArena::default();
-        let retained = attempt
-            .allocate_token_list([word('a')])
-            .expect("test fixture is valid");
-        let mark = attempt.mark();
-        let rejected = attempt
-            .allocate_token_list([word('b'), word('c')])
-            .expect("test fixture is valid");
-        let rejected_glue = attempt
-            .allocate_glue(glue(17))
-            .expect("test fixture is valid");
-        let rejected_name = attempt
-            .allocate_name("discarded")
-            .expect("test fixture is valid");
-
-        attempt.truncate(mark).expect("test fixture is valid");
-
-        assert_eq!(
-            attempt
-                .token_words(retained)
-                .expect("test fixture is valid"),
-            &[word('a')]
-        );
-        assert_eq!(
-            attempt.token_words(rejected),
-            Err(AttemptError::InvalidCoordinate)
-        );
-        assert_eq!(
-            attempt.glue(rejected_glue),
-            Err(AttemptError::InvalidCoordinate)
-        );
-        assert_eq!(
-            attempt.name(rejected_name),
-            Err(AttemptError::InvalidCoordinate)
-        );
-        let mut destination = TestPromotionDestination::new(&[retained], &[], &[], &[]);
-        attempt
-            .promote_into(universe, &mut destination)
-            .expect("test fixture is valid");
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("test fixture is valid")
-                .token_list(destination.token_list(0).clone())
-                .iter()
-                .collect::<Vec<_>>(),
-            &[word('a').token_word()]
-        );
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
-fn foreign_marks_and_offsets_are_rejected() {
-    tex_state::with_universe(budget(), |_universe| {
-        let first = AttemptArena::<()>::default();
-        let mark = first.mark();
-        let mut second = AttemptArena::<()>::default();
-        assert_eq!(second.truncate(mark), Err(AttemptError::ForeignAttempt));
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
-fn promotion_follows_only_declared_roots_and_owned_definition_builders() {
-    tex_state::with_universe(budget(), |universe| {
-        let mut attempt = AttemptArena::default();
-        let replacement = attempt
-            .allocate_token_list([word('x')])
-            .expect("test fixture is valid");
-        let unrelated = attempt
-            .allocate_token_list([word('z')])
-            .expect("test fixture is valid");
-        let definition = definition(&mut attempt, &[word('#')], &[word('x')]);
-        let promoted_glue = attempt
-            .allocate_glue(glue(42))
-            .expect("test fixture is valid");
-        let unrelated_glue = attempt
-            .allocate_glue(glue(99))
-            .expect("test fixture is valid");
-
-        let mut destination =
-            TestPromotionDestination::new(&[replacement], &[promoted_glue], &[definition], &[]);
-        attempt
-            .promote_into(universe, &mut destination)
-            .expect("test fixture is valid");
-
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("test fixture is valid")
-                .glue(destination.glue(0)),
-            glue(42)
-        );
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("test fixture is valid")
-                .definition(destination.definition(0))
-                .replacement_text(),
-            &[word('x').token_word()]
-        );
-        assert_eq!(
-            universe
-                .retire()
-                .expect("test fixture is valid")
-                .token_list_rows(),
-            1,
-            "the unrelated list and builder words were not independently promoted"
-        );
-        let _ = (unrelated, unrelated_glue);
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
-fn generic_cold_promotion_preserves_checked_definition_content() {
-    tex_state::with_universe(budget(), |universe| {
-        let mut attempt = AttemptArena::default();
-        let definition = definition(&mut attempt, &[], &[word('x'); 32]);
-        let mut destination = TestPromotionDestination::new(&[], &[], &[definition], &[]);
-        attempt
-            .promote_into(universe, &mut destination)
-            .expect("definition promotion");
-        let context = universe.command_context().expect("admission");
-        let promoted_view = context.definition(destination.definition(0));
-        assert_eq!(promoted_view.replacement_text().len(), 32);
-        assert!(attempt.definition_builder(definition).is_err());
-        let recycled = attempt
-            .allocate_definition_builder()
-            .expect("recycled builder");
-        let recycled = attempt
-            .definition_builder(recycled)
-            .expect("recycled builder");
-        assert!(recycled.words().is_empty());
-        assert!(recycled.capacity() >= 32);
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
-fn promotion_copies_only_declared_provenance_roots() {
-    tex_state::with_universe(budget(), |universe| {
-        let mut attempt = AttemptArena::default();
-        let retained = attempt
-            .allocate_provenance(tex_state::provenance::OriginRecord::UnknownBootstrap)
-            .expect("test fixture is valid");
-        let discarded = attempt
-            .allocate_provenance(tex_state::provenance::OriginRecord::UnknownBootstrap)
-            .expect("test fixture is valid");
-
-        let mut destination = TestPromotionDestination::new(&[], &[], &[], &[retained]);
-        attempt
-            .promote_into(universe, &mut destination)
-            .expect("test fixture is valid");
-
-        assert_eq!(
-            universe
-                .command_context()
-                .expect("test fixture is valid")
-                .provenance(destination.provenance(0)),
-            tex_state::provenance::OriginRecord::UnknownBootstrap
-        );
-        let _ = discarded;
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
-fn nested_builders_keep_outer_and_inner_scratch_disjoint() {
-    tex_state::with_universe(budget(), |_universe| {
-        let mut attempt = AttemptArena::<()>::default();
-        let outer = attempt.begin_token_list().expect("test fixture is valid");
-        attempt
-            .push_token(outer, word('a'))
-            .expect("test fixture is valid");
-        let inner = attempt.begin_token_list().expect("test fixture is valid");
-        attempt
-            .push_token(inner, word('x'))
-            .expect("test fixture is valid");
-        let inner = attempt
-            .finish_token_list(inner)
-            .expect("test fixture is valid");
-        attempt
-            .push_token(outer, word('b'))
-            .expect("test fixture is valid");
-        let outer = attempt
-            .finish_token_list(outer)
-            .expect("test fixture is valid");
-
-        assert_eq!(
-            attempt.token_words(inner).expect("test fixture is valid"),
-            &[word('x')]
-        );
-        assert_eq!(
-            attempt.token_words(outer).expect("test fixture is valid"),
-            &[word('a'), word('b')]
-        );
-    })
-    .expect("test fixture is valid");
 }
 
 #[test]
@@ -483,11 +40,6 @@ fn scanner_destinations_share_fixed_chunks_and_are_mark_bounded() {
             attempt.token_words(frozen).expect("test fixture is valid"),
             &[word('a'), word('b')]
         );
-        let AttemptTokenStorage::Buffer(frozen_buffer) = attempt.token_lists[frozen.index()].value
-        else {
-            panic!("finished scanner result addresses its parent sink")
-        };
-        assert_eq!(frozen_buffer, buffer);
         assert_eq!(attempt.token_lane.retained_chunks(), retained_chunks);
 
         attempt.truncate(mark).expect("test fixture is valid");
@@ -693,177 +245,6 @@ fn one_and_4096_parent_owned_scans_reuse_chunks_without_allocation_or_transfer()
 }
 
 #[test]
-fn retired_definition_builder_reuses_its_word_allocation() {
-    let mut attempt = AttemptArena::<()>::default();
-    let mark = attempt.mark();
-    let definition = attempt
-        .allocate_definition_builder()
-        .expect("definition builder");
-    attempt
-        .finish_definition_parameters(definition)
-        .expect("parameter boundary");
-    for _ in 0..32 {
-        attempt
-            .push_definition_replacement(definition, word('x').token_word())
-            .expect("replacement word");
-    }
-    attempt
-        .finish_definition(definition)
-        .expect("complete definition");
-    let storage = attempt
-        .definition_builder(definition)
-        .expect("live builder")
-        .words()
-        .as_ptr();
-
-    attempt.truncate(mark).expect("retire definition");
-    let recycled = attempt
-        .allocate_definition_builder()
-        .expect("recycled builder");
-    assert_eq!(
-        attempt
-            .definition_builder(recycled)
-            .expect("live recycled builder")
-            .words()
-            .as_ptr(),
-        storage
-    );
-    assert_eq!(
-        attempt
-            .definition_builder(recycled)
-            .expect("live recycled builder")
-            .capacity(),
-        32
-    );
-}
-
-#[test]
-fn definition_builder_ids_reject_foreign_stale_and_double_finish_without_mutation() {
-    let mut first = AttemptArena::<()>::default();
-    let definition = first
-        .allocate_definition_builder()
-        .expect("definition builder");
-    let mut foreign = AttemptArena::<()>::default();
-    let foreign_mark = foreign.mark();
-    assert_eq!(
-        foreign.push_definition_parameter(definition, word('x').token_word()),
-        Err(AttemptError::ForeignAttempt)
-    );
-    assert_eq!(foreign.mark(), foreign_mark);
-
-    first
-        .finish_definition_parameters(definition)
-        .expect("parameter boundary");
-    first
-        .push_definition_replacement(definition, word('x').token_word())
-        .expect("replacement word");
-    first.finish_definition(definition).expect("first finish");
-    let words = first
-        .definition_builder(definition)
-        .expect("sealed builder")
-        .words()
-        .to_vec();
-    let capacity = first
-        .definition_builder(definition)
-        .expect("sealed builder")
-        .capacity();
-    assert_eq!(
-        first.finish_definition(definition),
-        Err(AttemptError::Definition(DefinitionBuildError::InvalidPhase))
-    );
-    let unchanged = first
-        .definition_builder(definition)
-        .expect("failed double finish retains builder");
-    assert_eq!(unchanged.words(), words);
-    assert_eq!(unchanged.capacity(), capacity);
-
-    let stale_mark = first.mark();
-    let stale = first
-        .allocate_definition_builder()
-        .expect("stale candidate");
-    first.truncate(stale_mark).expect("retire candidate");
-    let after_retirement = first.mark();
-    assert_eq!(
-        first.push_definition_parameter(stale, word('y').token_word()),
-        Err(AttemptError::InvalidCoordinate)
-    );
-    assert_eq!(first.mark(), after_retirement);
-}
-
-#[cfg(feature = "profiling")]
-#[test]
-fn warmed_definition_builder_attempts_allocate_zero_heap() {
-    let mut attempt = AttemptArena::<()>::default();
-    let run = |attempt: &mut AttemptArena<()>| {
-        let mark = attempt.mark();
-        let definition = attempt
-            .allocate_definition_builder()
-            .expect("definition builder");
-        attempt
-            .finish_definition_parameters(definition)
-            .expect("parameter boundary");
-        for _ in 0..32 {
-            attempt
-                .push_definition_replacement(definition, word('x').token_word())
-                .expect("replacement word");
-        }
-        attempt
-            .finish_definition(definition)
-            .expect("complete definition");
-        attempt.truncate(mark).expect("retire definition");
-    };
-    for _ in 0..64 {
-        run(&mut attempt);
-    }
-    let owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
-    let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    for _ in 0..8_192 {
-        run(&mut attempt);
-    }
-    let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    assert_eq!(after.calls - before.calls, 0);
-    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-}
-
-#[test]
-fn attempt_local_provenance_stays_aligned_through_nested_builders() {
-    tex_state::with_universe(budget(), |_universe| {
-        let mut attempt = AttemptArena::<()>::default();
-        let origin = attempt
-            .allocate_provenance(tex_state::provenance::OriginRecord::UnknownBootstrap)
-            .expect("test fixture is valid");
-        let outer = attempt.begin_token_list().expect("test fixture is valid");
-        attempt
-            .push_token_with_local_origin(outer, word('a').token_word(), origin)
-            .expect("test fixture is valid");
-        let inner = attempt.begin_token_list().expect("test fixture is valid");
-        attempt
-            .push_token(inner, word('x'))
-            .expect("test fixture is valid");
-        let inner = attempt
-            .finish_token_list(inner)
-            .expect("test fixture is valid");
-        let outer = attempt
-            .finish_token_list(outer)
-            .expect("test fixture is valid");
-
-        assert_eq!(
-            attempt
-                .token_origin(outer, 0)
-                .expect("test fixture is valid"),
-            super::AttemptOrigin::Local(origin)
-        );
-        assert_eq!(
-            attempt
-                .token_origin(inner, 0)
-                .expect("test fixture is valid"),
-            super::AttemptOrigin::Admitted(OriginId::UNKNOWN)
-        );
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
 fn truncated_row_cannot_alias_a_reallocated_coordinate() {
     tex_state::with_universe(budget(), |_universe| {
         let mut attempt = AttemptArena::<()>::default();
@@ -886,26 +267,6 @@ fn truncated_row_cannot_alias_a_reallocated_coordinate() {
                 .expect("test fixture is valid"),
             &[word('b')]
         );
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
-fn pending_owner_rejects_retirement_without_partially_retiring_universe() {
-    tex_state::with_universe(budget(), |universe| {
-        let owner = universe.generation_owner().expect("test fixture is valid");
-        assert_eq!(
-            universe.retire(),
-            Err(tex_state::UniverseError::State(
-                tex_state::StateError::GenerationInUse
-            ))
-        );
-        assert!(!universe.is_retired());
-        universe
-            .intern("still-live")
-            .expect("test fixture is valid");
-        drop(owner);
-        universe.retire().expect("test fixture is valid");
     })
     .expect("test fixture is valid");
 }
@@ -946,66 +307,75 @@ fn child_scopes_close_exact_lifo_suffixes() {
 }
 
 #[test]
-fn settle_releases_every_root_table() {
-    let mut attempt = AttemptArena::<()>::default();
-    assert!(attempt.is_clear());
-    attempt.settle();
-    assert!(attempt.mark().is_empty());
-
-    let list = attempt
-        .allocate_token_list([word('a')])
-        .expect("finished list");
-    let buffer = attempt.allocate_token_buffer().expect("scanner buffer");
-    attempt
-        .push_buffer_token(buffer, word('b'))
-        .expect("buffer word");
-    let builder = attempt.begin_token_list().expect("open builder");
-    attempt.push_token(builder, word('c')).expect("open word");
-    attempt
-        .allocate_definition_builder()
-        .expect("definition builder");
-    attempt.allocate_glue(GlueSpec::ZERO).expect("glue");
-    attempt.allocate_name("name").expect("name");
-    assert!(!attempt.is_clear());
-
-    attempt.settle();
-    assert!(attempt.is_clear());
-    assert!(attempt.mark().is_empty());
+fn sealed_or_consumed_rows_cannot_be_written_through_the_old_buffer_alias() {
+    let mut arena = AttemptArena::<()>::default();
+    let child = arena.allocate_token_buffer().expect("child");
+    arena
+        .push_buffer_token(child, word('x'))
+        .expect("child word");
+    let list = arena.finish_token_buffer(child).expect("seal child");
     assert_eq!(
-        attempt.token_words(list),
+        arena.push_buffer_token(child, word('y')),
         Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(
+        arena.finish_token_buffer(child),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    let parent = arena.allocate_token_buffer().expect("parent");
+    arena
+        .consume_token_list_into_buffer(list, parent)
+        .expect("transfer child");
+    assert_eq!(
+        arena.token_words(list),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(
+        arena.token_buffer(child),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(
+        arena.consume_token_list_into_buffer(list, parent),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(
+        arena.token_buffer(parent).expect("parent words"),
+        &[word('x')]
     );
 }
 
 #[test]
-fn every_root_table_alone_makes_the_arena_live() {
-    let roots: [fn(&mut AttemptArena<()>); 6] = [
-        |attempt| {
-            attempt.begin_token_list().expect("open builder");
-        },
-        |attempt| {
-            attempt.allocate_token_list([]).expect("finished list");
-        },
-        |attempt| {
-            attempt.allocate_token_buffer().expect("scanner buffer");
-        },
-        |attempt| {
-            attempt
-                .allocate_definition_builder()
-                .expect("definition builder");
-        },
-        |attempt| {
-            attempt.allocate_glue(GlueSpec::ZERO).expect("glue");
-        },
-        |attempt| {
-            attempt.allocate_name("name").expect("name");
-        },
-    ];
-    for root in roots {
-        let mut attempt = AttemptArena::<()>::default();
-        root(&mut attempt);
-        assert!(!attempt.is_clear());
-        attempt.settle();
-        assert!(attempt.mark().is_empty());
-    }
+fn serial_exhaustion_and_foreign_marks_do_not_publish_rows() {
+    let mut arena = AttemptArena::<()>::default();
+    let other = AttemptArena::<()>::default();
+    let before = arena.mark();
+    assert_eq!(
+        arena.truncate(other.mark()),
+        Err(AttemptError::ForeignAttempt)
+    );
+    arena.next_serial = u64::MAX;
+    assert_eq!(
+        arena.allocate_token_buffer(),
+        Err(AttemptError::CapacityOverflow)
+    );
+    assert_eq!(arena.mark(), before);
+    assert!(arena.is_clear());
+}
+
+#[test]
+fn settlement_reclaims_sealed_and_unfinished_sinks_and_invalidates_old_coordinates() {
+    let mut arena = AttemptArena::<()>::default();
+    let old = arena.allocate_token_list([word('a')]).expect("list");
+    let open = arena.allocate_token_buffer().expect("open sink");
+    arena.push_buffer_token(open, word('b')).expect("open word");
+    arena.settle();
+    assert!(arena.is_clear());
+    assert!(arena.mark().is_empty());
+    let new = arena.allocate_token_list([word('c')]).expect("new list");
+    assert_eq!(arena.token_words(old), Err(AttemptError::InvalidCoordinate));
+    assert_eq!(
+        arena.push_buffer_token(open, word('d')),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(arena.token_words(new).expect("new words"), &[word('c')]);
 }

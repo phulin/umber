@@ -75,6 +75,7 @@ expose substores or introduce another arena.
   Stable slot capacity is charged separately in retained-byte reporting.
 - `src/definition_arena/build_lane.rs`: The one live definition build and its
   direct scan-episode writer, sealing a move-only `PublishedDefinition` root.
+  Both macro and read scanners use this writer; runaway diagnostics borrow its incomplete replacement words.
 - `src/definition_arena/builder.rs`: Build phases, validation/errors, and the
   detached cold builder used directly by memo/import publication batches.
 - `src/definition_arena/tests.rs`: Builder, parameter validation, content,

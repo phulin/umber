@@ -9,8 +9,6 @@ pub(in crate::main_control) fn execute_character_definition<G>(
     value: &mut i32,
     global: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let meaning = match primitive {
             UnexpandablePrimitive::CharDef => Meaning::CharGiven(
@@ -60,8 +58,6 @@ pub(in crate::main_control) fn execute_register_definition<G>(
     index: &mut u16,
     global: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let meaning = match primitive {
             UnexpandablePrimitive::CountDef => Meaning::CountRegister(*index),
@@ -121,8 +117,6 @@ pub(in crate::main_control) fn execute_paragraph_shape<G>(
     lines: &mut [ParagraphShapeLine],
     global: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1214's "Adjust for the setting of `\globaldefs`" runs
         // unconditionally before `prefixed_command`'s `case cur_cmd of
@@ -152,8 +146,6 @@ pub(in crate::main_control) fn execute_penalty_array<G>(
     values: &mut [i32],
     global: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // e-TeX 2.6 change [49.1248] commits every selector through
         // `define(q, shape_ref, p)`, so this uses the same save-stack and
@@ -206,8 +198,6 @@ pub(in crate::main_control) fn execute_toks<G>(
     global: bool,
     parameter: bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     let mut committer = AssignmentCommitter::new(stores, effects);
     let committed = if parameter {
         committer.token_parameter(index, tokens, global)

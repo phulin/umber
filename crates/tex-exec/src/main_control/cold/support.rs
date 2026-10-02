@@ -4,37 +4,6 @@ use super::super::*;
 use super::groups::enter_group;
 use super::operand_values::*;
 
-/// Borrow-only facade for one admitted command context used by semantic apply.
-///
-/// Short command-processor episodes borrow this value in place. The facade
-/// adds no state API or ownership; the caller's admission remains resident
-/// across the large dispatcher instead of moving into another carrier.
-pub(in crate::main_control) struct LinearCommandContext<'borrow, 'stores, G> {
-    context: &'borrow mut tex_state::CommandContext<'stores, G>,
-}
-
-impl<'borrow, 'stores, G> LinearCommandContext<'borrow, 'stores, G> {
-    pub(in crate::main_control) const fn new(
-        context: &'borrow mut tex_state::CommandContext<'stores, G>,
-    ) -> Self {
-        Self { context }
-    }
-}
-
-impl<'borrow, 'stores, G> core::ops::Deref for LinearCommandContext<'borrow, 'stores, G> {
-    type Target = tex_state::CommandContext<'stores, G>;
-
-    fn deref(&self) -> &Self::Target {
-        self.context
-    }
-}
-
-impl<G> core::ops::DerefMut for LinearCommandContext<'_, '_, G> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.context
-    }
-}
-
 pub(in crate::main_control) const fn assignment_scope(
     global: bool,
 ) -> tex_state::env::AssignmentScope {

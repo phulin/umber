@@ -8,8 +8,6 @@ pub(in crate::main_control) fn execute_begin_insert<G>(
     boxes: &mut ReplayBoxes<G>,
     construction: &mut ScannedInsertConstruction,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1099's `begin_insert_or_adjust`: `scan_eight_bit_int`
         // has already applied its range clamp and queued the canonical
@@ -88,10 +86,8 @@ pub(in crate::main_control) fn execute_illegal_insert_or_adjust<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
             stores,
             command.diagnostic_effects,

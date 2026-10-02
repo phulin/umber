@@ -46,8 +46,6 @@ pub(in crate::main_control) fn execute_begin_alignment<G>(
     vertical: &mut bool,
     owner: &mut Option<tex_state::interner::Symbol>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §774's display-math entry accepts an alignment only when
         // the current formula is empty. `flush_math` owns both the
@@ -59,7 +57,7 @@ pub(in crate::main_control) fn execute_begin_alignment<G>(
                 || modes.current_list().incomplete_fraction().is_some();
             if has_formula {
                 let primitive = if *vertical { "\\valign" } else { "\\halign" };
-                let context = command.state.output_open_context(&**stores);
+                let context = command.state.output_open_context(&*stores);
                 let mut report = stores.print_err(&format!("Improper {primitive} inside $$'s"));
                 report.help(&[
                     "Displays can use special alignments (like \\eqalignno)",
@@ -76,7 +74,7 @@ pub(in crate::main_control) fn execute_begin_alignment<G>(
         if let Some(outer) = active_alignment.take() {
             command
                 .state
-                .apply_alignment_request(&**stores, AlignmentRequest::Suspend(outer.identity))
+                .apply_alignment_request(&*stores, AlignmentRequest::Suspend(outer.identity))
                 .map_err(|_| ExecError::MissingToken {
                     context: "nested alignment suspension",
                 })?;
@@ -86,7 +84,7 @@ pub(in crate::main_control) fn execute_begin_alignment<G>(
         *next_alignment_identity = next_alignment_identity.wrapping_add(1);
         command
             .state
-            .apply_alignment_request(&**stores, AlignmentRequest::Begin(identity))
+            .apply_alignment_request(&*stores, AlignmentRequest::Begin(identity))
             .map_err(|_| ExecError::MissingToken {
                 context: "alignment lifecycle",
             })?;
@@ -162,12 +160,10 @@ pub(in crate::main_control) fn execute_alignment_preamble_opening<G>(
     alignment: &mut AlignmentIdentity,
     packing: &mut ScannedPackingSpec,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         command
             .state
-            .apply_alignment_request(&**stores, AlignmentRequest::Preamble(*alignment))
+            .apply_alignment_request(&*stores, AlignmentRequest::Preamble(*alignment))
             .map_err(|_| ExecError::MissingToken {
                 context: "alignment preamble lifecycle",
             })?;
@@ -198,8 +194,6 @@ pub(in crate::main_control) fn execute_alignment_preamble_start<G>(
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // `init_row` reaches `align_peek` before `init_col` selects the
         // first cell. Keep the first pair validated here, but defer
@@ -241,13 +235,11 @@ pub(in crate::main_control) fn execute_alignment_cell_opening<G>(
     alignment: &mut AlignmentIdentity,
     opening: &mut AlignmentCellOpening,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         command
             .state
             .apply_alignment_request(
-                &**stores,
+                &*stores,
                 match opening {
                     AlignmentCellOpening::Template => {
                         AlignmentRequest::InstallCellTemplate(*alignment)
@@ -277,8 +269,6 @@ pub(in crate::main_control) fn execute_alignment_cell_finish<G>(
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if matches!(
             modes.current_mode(),
@@ -319,8 +309,6 @@ pub(in crate::main_control) fn execute_alignment_finish<G>(
     alignment: &mut AlignmentIdentity,
     current_line: &mut u32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if active_alignment.as_ref().map(|active| active.identity) != Some(*alignment) {
             return Err(ExecError::MissingToken {
@@ -336,7 +324,7 @@ pub(in crate::main_control) fn execute_alignment_finish<G>(
         let active = active_alignment
             .as_mut()
             .expect("active replay alignment was checked");
-        let error_context = command.state.output_open_context(&**stores);
+        let error_context = command.state.output_open_context(&*stores);
         let mut geometry = pack_geometry_sink(command.state, command.observations);
         finish_replay_alignment(
             active,
@@ -349,7 +337,7 @@ pub(in crate::main_control) fn execute_alignment_finish<G>(
         )?;
         command
             .state
-            .apply_alignment_request(&**stores, AlignmentRequest::Finish(*alignment))
+            .apply_alignment_request(&*stores, AlignmentRequest::Finish(*alignment))
             .map_err(|_| ExecError::MissingToken {
                 context: "alignment finish lifecycle",
             })?;
@@ -357,7 +345,7 @@ pub(in crate::main_control) fn execute_alignment_finish<G>(
         if let Some(outer) = boxes.suspended_alignments.pop() {
             command
                 .state
-                .apply_alignment_request(&**stores, AlignmentRequest::Resume(outer.identity))
+                .apply_alignment_request(&*stores, AlignmentRequest::Resume(outer.identity))
                 .map_err(|_| ExecError::MissingToken {
                     context: "nested alignment resumption",
                 })?;
@@ -374,8 +362,6 @@ pub(in crate::main_control) fn execute_begin_no_align<G>(
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let active = active_alignment
             .as_mut()
@@ -411,8 +397,6 @@ pub(in crate::main_control) fn execute_alignment_peek_cell<G>(
     alignment: &mut AlignmentIdentity,
     omit: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let active = active_alignment
             .as_mut()
@@ -440,7 +424,7 @@ pub(in crate::main_control) fn execute_alignment_peek_cell<G>(
             command
                 .state
                 .apply_alignment_request(
-                    &**stores,
+                    &*stores,
                     AlignmentRequest::PrepareCellLookahead(*alignment),
                 )
                 .map_err(|_| ExecError::MissingToken {
@@ -449,7 +433,7 @@ pub(in crate::main_control) fn execute_alignment_peek_cell<G>(
             command
                 .state
                 .apply_alignment_request(
-                    &**stores,
+                    &*stores,
                     AlignmentRequest::InstallOmitCellTemplate(*alignment),
                 )
                 .map_err(|_| ExecError::MissingToken {
@@ -463,7 +447,7 @@ pub(in crate::main_control) fn execute_alignment_peek_cell<G>(
             command
                 .state
                 .apply_alignment_request(
-                    &**stores,
+                    &*stores,
                     AlignmentRequest::InstallCellTemplate(*alignment),
                 )
                 .map_err(|_| ExecError::MissingToken {
@@ -481,8 +465,6 @@ pub(in crate::main_control) fn execute_no_align_end_group<G>(
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let active = active_alignment
             .as_mut()

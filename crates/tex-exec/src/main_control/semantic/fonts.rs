@@ -9,8 +9,6 @@ pub(in crate::main_control) fn execute_font_dimen<G>(
     value: &mut Scaled,
     recovery_context: &mut Option<String>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // tex.web §578's `find_font_dimen` resolves an unusable parameter
         // number to the scratch location `fmem_ptr`; §579 then reports
@@ -57,8 +55,6 @@ pub(in crate::main_control) fn execute_font_integer<G>(
     skew: &mut bool,
     value: &mut i32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
             if *skew {
@@ -80,8 +76,6 @@ pub(in crate::main_control) fn execute_hyphenation_data<G>(
     rejection_context: &mut String,
     trie_built: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1252 rejects `\patterns` for two different reasons, and
         // the two do not share a message. The `init`/`tini` split comes
@@ -133,8 +127,6 @@ pub(in crate::main_control) fn execute_font_select<G>(
     font: &mut FontId,
     global: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
             stores
@@ -152,8 +144,6 @@ pub(in crate::main_control) fn execute_font_definition<G>(
     request: &mut FontLoadRequest,
     global: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1257 records `font_id_text(f):=t` at `common_ending`,
         // including the `f=null_font` recovery path. Active targets use
@@ -297,8 +287,6 @@ pub(in crate::main_control) fn execute_generated_font_definition<G>(
     definition: &mut ScannedGeneratedFontDefinition,
     global: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if definition.kind == GeneratedFontKind::Copy
             && matches!(

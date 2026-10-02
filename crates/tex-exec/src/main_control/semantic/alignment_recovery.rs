@@ -7,8 +7,6 @@ pub(in crate::main_control) fn execute_misplaced_alignment_delimiter<G>(
     token: &mut Token,
     context: &mut tex_command::DiagnosticContextCoordinate,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let context = render_diagnostic_coordinate(command, stores, *context)?;
         crate::diagnostics::report_misplaced_alignment_delimiter(
@@ -26,10 +24,8 @@ pub(in crate::main_control) fn execute_misplaced_alignment_command<G>(
     command: &mut CommandMachine<'_, '_, G>,
     omit: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         let (name, help) = if *omit {
             (
                 "omit",
@@ -62,14 +58,12 @@ pub(in crate::main_control) fn execute_missing_alignment_cr<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // TeX82 §1132 reaches §82's `ins_error` only after §325 has
         // backed up the brace and frozen `\cr` has been inserted. The
         // open context therefore labels the repair `<inserted text>` and
         // leaves the original brace below it as `<to be read again>`.
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::error_report::report_error(
             stores,
             command.diagnostic_effects,
@@ -87,8 +81,6 @@ pub(in crate::main_control) fn execute_alignment_recovery<G>(
     boxes: &mut ReplayBoxes<G>,
     brace: &mut Catcode,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let (message, opens_simple_group) = match brace {
             Catcode::BeginGroup => ("Missing { inserted", true),
@@ -99,7 +91,7 @@ pub(in crate::main_control) fn execute_alignment_recovery<G>(
                 });
             }
         };
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::error_report::report_error(
             stores,
             command.diagnostic_effects,
@@ -122,10 +114,8 @@ pub(in crate::main_control) fn execute_illegal_h_align<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
             stores,
             command.diagnostic_effects,

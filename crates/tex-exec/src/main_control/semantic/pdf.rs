@@ -9,8 +9,6 @@ pub(in crate::main_control) fn execute_pdf_font_code<G>(
     character: &mut u8,
     value: &mut i32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         AssignmentCommitter::new(stores, command.diagnostic_effects)
             .unscoped(|stores| stores.set_pdf_font_code(*table, *font, *character, *value));
@@ -31,8 +29,6 @@ pub(in crate::main_control) fn execute_pdf_no_ligatures<G>(
     command: &mut CommandMachine<'_, '_, G>,
     font: &mut FontId,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         AssignmentCommitter::new(stores, command.diagnostic_effects)
             .unscoped(|stores| stores.disable_pdf_font_ligatures(*font));
@@ -53,8 +49,6 @@ pub(in crate::main_control) fn execute_pdf_x_image<G>(
     request: &mut tex_command::PdfImageRequest<tex_state::TokenListId<G>>,
     resource: &mut PdfImageResource,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode("pdfximage"));
@@ -96,8 +90,6 @@ pub(in crate::main_control) fn execute_pdf_ref_x_image<G>(
     command: &mut CommandMachine<'_, '_, G>,
     object: &mut i32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode("pdfrefximage"));
@@ -130,8 +122,6 @@ pub(in crate::main_control) fn execute_pdf_interword_space<G>(
     command: &mut CommandMachine<'_, '_, G>,
     control: &mut tex_state::node::PdfAccessibilityControl,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             let name = match control {
@@ -160,8 +150,6 @@ pub(in crate::main_control) fn execute_pdf_running_link<G>(
     command: &mut CommandMachine<'_, '_, G>,
     enabled: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode(if *enabled {
@@ -185,8 +173,6 @@ pub(in crate::main_control) fn execute_pdf_space_font<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     tokens: &mut tex_state::TokenListId<G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode("pdfspacefont"));
@@ -203,8 +189,6 @@ pub(in crate::main_control) fn execute_pdf_graphics<G>(
     command: &mut CommandMachine<'_, '_, G>,
     request: &mut tex_command::PdfGraphicsRequest<tex_state::TokenListId<G>>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     apply_pdf_graphics_request(
         request,
         stores,
@@ -219,8 +203,6 @@ pub(in crate::main_control) fn execute_pdf_object<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     request: &mut tex_command::PdfObjectRequest<tex_state::TokenListId<G>>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     apply_pdf_object_request(request, stores, false)
 }
 
@@ -230,8 +212,6 @@ pub(in crate::main_control) fn execute_pdf_reference_object<G>(
     command: &mut CommandMachine<'_, '_, G>,
     request: &mut PdfReferenceObjectRequest,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode("pdfrefobj"));
@@ -257,8 +237,6 @@ pub(in crate::main_control) fn execute_pdf_form<G>(
     command: &mut CommandMachine<'_, '_, G>,
     request: &mut tex_command::PdfFormRequest<tex_state::TokenListId<G>>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         apply_pdf_form_request(request, stores, modes, command, false).map(|pending| {
             debug_assert!(pending.is_none());
@@ -271,8 +249,6 @@ pub(in crate::main_control) fn execute_pdf_document_fragment<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     request: &mut tex_command::PdfDocumentFragmentRequest<tex_state::TokenListId<G>>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let dvi_only_error = matches!(request.kind, tex_state::PdfDocumentFragmentKind::Names);
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -314,8 +290,6 @@ pub(in crate::main_control) fn execute_pdf_navigation<G>(
     command: &mut CommandMachine<'_, '_, G>,
     request: &mut tex_command::PdfNavigationRequest<tex_state::TokenListId<G>>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     apply_pdf_navigation_request(
         request,
         stores,
@@ -330,8 +304,6 @@ pub(in crate::main_control) fn execute_pdf_font_expand<G>(
     font: &mut FontId,
     spec: &mut tex_typeset::expansion::FontExpansionSpec,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         stores.configure_font_expansion(
             *font,
@@ -353,8 +325,6 @@ pub(in crate::main_control) fn execute_pdf_font_action<G>(
     first: &mut Option<tex_state::TokenListId<G>>,
     second: &mut Option<tex_state::TokenListId<G>>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let first = first
             .as_ref()
@@ -433,8 +403,6 @@ pub(in crate::main_control) fn execute_immediate_extension<G>(
     command: &mut CommandMachine<'_, '_, G>,
     extension: &mut tex_command::ImmediateExtension<tex_state::TokenListId<G>>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         match extension {
             tex_command::ImmediateExtension::Continue => {}

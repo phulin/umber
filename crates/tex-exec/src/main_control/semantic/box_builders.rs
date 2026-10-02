@@ -7,10 +7,8 @@ pub(in crate::main_control) fn execute_illegal_box_shift<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
-        let context = command.state.output_open_context(&**stores);
+        let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
             stores,
             command.diagnostic_effects,
@@ -30,8 +28,6 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
     ships_out: &mut bool,
     current_line: &mut i32,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // `active_boxes` is the move-only counterpart of TeX82 §1086's
         // saved box context. Keep it resident until every fallible part of
@@ -316,8 +312,6 @@ pub(in crate::main_control) fn execute_begin_shipout<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     boxes: &mut ReplayBoxes<G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         boxes.pending_shipout = Some(stores.begin_page_node_region());
         Ok(ReplayStep::Continue)
@@ -338,8 +332,6 @@ pub(in crate::main_control) fn execute_set_box<G>(
     target: &mut SetBoxTarget,
     path: &mut ScannedSetBoxPath,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         // §1214's `<Adjust for the setting of \globaldefs>` runs inside
         // `prefixed_command`, before §1241 scans the box, so `global` in
@@ -418,7 +410,7 @@ pub(in crate::main_control) fn execute_set_box<G>(
                             .release_page_node_region(pending.region)
                             .expect("missing setbox payload releases its page region");
                     }
-                    let context = command.state.output_open_context(&**stores);
+                    let context = command.state.output_open_context(&*stores);
                     report_improper_setbox(context, stores, command.diagnostic_effects)?;
                 }
                 ScannedBoxShiftPayload::BoxRegister { index, copy } => {
@@ -549,8 +541,6 @@ pub(in crate::main_control) fn execute_begin_box<G>(
     boxes: &mut ReplayBoxes<G>,
     construction: &mut ScannedBoxConstruction,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     {
         let target = boxes.pending_setbox.take();
         let shipout_region = boxes.pending_shipout.take();
@@ -574,7 +564,5 @@ pub(in crate::main_control) fn execute_box_shift<G>(
     boxes: &mut ReplayBoxes<G>,
     shift: &mut ScannedBoxShift,
 ) -> Result<ReplayStep, ExecError> {
-    let mut linear_stores = LinearCommandContext::new(stores);
-    let stores = &mut linear_stores;
     apply_box_shift(shift, command, modes, stores, boxes)
 }
