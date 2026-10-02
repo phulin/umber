@@ -320,6 +320,11 @@ collector (see `src/conditionals.rs`).
   end-template handling, macro activation, undefined recovery, or one exact
   primitive dispatch. That borrowed decision directly drives expansion;
   expansion does not match the resident meaning or primitive opcode again.
+  Scalar consumers return their own native completion directly. Only true
+  EOF/replay transitions construct their terminal result; ordinary words have
+  no second completion wrapper. Exceptional word settlement owns diagnostic
+  rollback snapshots and error payloads; ordinary settlement updates only
+  actual source position and literal brace state.
   Main control enters the same canonical expanded word loop and one actual
   expansion episode. Only a directly fetched raw `end_template` uses its
   frozen `endv` insertion/reread; a template reached after expansion uses

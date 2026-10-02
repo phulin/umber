@@ -174,52 +174,36 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: &mut CurrentCommand<G>,
         literal_catcode: Option<Catcode>,
     ) -> Result<(), CommandError> {
-        // These are token-local facts from the already-decoded compact
-        // command. Keep them at the same point where the old token bits were
-        // installed; exceptional settlement may rewrite the command.
-        let suppresses_expandable_control_sequence =
-            command.suppresses_expandable_control_sequence();
+        let suppress = command.suppresses_expandable_control_sequence();
         let outer = command.is_outer();
-        // The diagnostic observer in tex.web §342 remembers a source position
-        // only at `get_next` exit. §789 can consume a delimiter and restart
-        // before that exit; any diagnostic during settlement still sees the
-        // selected token, but the restarted v-template must retain the last
-        // command that actually exited.
-        let previous_diagnostic_location = self.command.last_diagnostic_location;
+        if OBSERVED
+            || self
+                .command
+                .delivery_mode
+                .requires_semantic_settlement(suppress, outer)
+        {
+            return self.settle_exceptional_delivery::<OBSERVED>(
+                command,
+                literal_catcode,
+                suppress,
+                outer,
+            );
+        }
+        self.update_delivered_source_location(command);
+        self.command
+            .roots
+            .alignment
+            .account_literal_brace(command, literal_catcode);
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn update_delivered_source_location(&mut self, command: &CurrentCommand<G>) {
         if command.is_direct_source_delivery()
             && let Some(location) = self.pending_diagnostic_location.take()
         {
             self.command.set_last_diagnostic_location(Some(location));
         }
-        self.command
-            .roots
-            .alignment
-            .account_literal_brace(command, literal_catcode);
-        if OBSERVED {
-            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-        }
-        let settlement = if OBSERVED
-            || self
-                .command
-                .delivery_mode
-                .requires_semantic_settlement(suppresses_expandable_control_sequence, outer)
-        {
-            self.settle_exceptional_delivery::<OBSERVED>(
-                command,
-                suppresses_expandable_control_sequence,
-                outer,
-            )
-        } else {
-            Ok(())
-        };
-        if matches!(
-            command.alignment_adjustment(),
-            super::AlignmentDeliveryAdjustment::Delimiter(_)
-        ) {
-            self.command
-                .set_last_diagnostic_location(previous_diagnostic_location);
-        }
-        settlement
     }
 
     /// The concrete TeX82 §341 raw-token loop. It owns one fuel charge for
@@ -262,7 +246,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        match self.consume_input(
+        let status = self.consume_input(
             self.create_source_control_sequences,
             &mut |processor, word, origin, suppress, site, kind| {
                 processor.finish_delivered_word::<OBSERVED>(
@@ -274,13 +258,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     destination,
                 )
             },
-        )? {
-            std::ops::ControlFlow::Continue(status) => Ok(status),
-            std::ops::ControlFlow::Break(status) => {
-                destination.take();
-                Ok(status)
-            }
+            std::convert::identity,
+        )?;
+        if matches!(
+            status,
+            DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)
+        ) {
+            destination.take();
         }
+        Ok(status)
     }
 
     #[inline(always)]
@@ -318,7 +304,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             ReadSite,
             crate::fuel::RawDeliveryKind,
         ) -> Result<R, CommandError>,
-    ) -> Result<std::ops::ControlFlow<DeliveryStatus, R>, CommandError> {
+        finished: impl Fn(DeliveryStatus) -> R,
+    ) -> Result<R, CommandError> {
         self.pending_diagnostic_location = None;
         self.charge_command_action()?;
         loop {
@@ -327,13 +314,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 finish,
             )? {
                 std::ops::ControlFlow::Break(result) => {
-                    return Ok(std::ops::ControlFlow::Continue(result));
+                    return Ok(result);
                 }
                 std::ops::ControlFlow::Continue(transition) => {
                     if let Some(result) =
                         self.transition_input_frame(transition, create_control_sequences, finish)?
                     {
-                        return Ok(result);
+                        return Ok(match result {
+                            std::ops::ControlFlow::Continue(value) => value,
+                            std::ops::ControlFlow::Break(status) => finished(status),
+                        });
                     }
                 }
             }
@@ -1471,31 +1461,50 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn settle_exceptional_delivery<const OBSERVED: bool>(
         &mut self,
         command: &mut CurrentCommand<G>,
+        literal_catcode: Option<Catcode>,
         suppresses_expandable_control_sequence: bool,
         outer: bool,
     ) -> Result<(), CommandError> {
+        // TeX82 §§342/789 publishes a source position at get_next exit;
+        // intercepted delimiters keep the prior exited command's position.
+        let previous_location = self.command.last_diagnostic_location;
+        self.update_delivered_source_location(command);
+        self.command
+            .roots
+            .alignment
+            .account_literal_brace(command, literal_catcode);
+        if OBSERVED {
+            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+        }
         let mode = self.command.delivery_mode;
         if suppresses_expandable_control_sequence {
             command.suppress_expandable();
         }
-        if mode.scanner_active() && outer {
-            self.check_outer_validity_entry(command)?;
-        } else if mode.alignment_active()
-            && matches!(
-                command.alignment_adjustment(),
-                crate::processor::AlignmentDeliveryAdjustment::None
-            )
-        {
-            self.command.roots.alignment.classify_delimiter(command);
-        }
-        if OBSERVED {
+        let settlement = if mode.scanner_active() && outer {
+            self.check_outer_validity_entry(command)
+        } else {
+            if mode.alignment_active()
+                && matches!(
+                    command.alignment_adjustment(),
+                    super::AlignmentDeliveryAdjustment::None
+                )
+            {
+                self.command.roots.alignment.classify_delimiter(command);
+            }
+            Ok(())
+        };
+        if settlement.is_ok() && OBSERVED {
             self.observe_resident_hot_command(command);
         }
-        Ok(())
+        if matches!(
+            command.alignment_adjustment(),
+            super::AlignmentDeliveryAdjustment::Delimiter(_)
+        ) {
+            self.command.set_last_diagnostic_location(previous_location);
+        }
+        settlement
     }
-}
 
-impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn finish_expanded_command<const OBSERVED: bool>(
         &mut self,

@@ -225,7 +225,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<ExpansionCandidate, CommandError> {
-        match self.consume_input(
+        self.consume_input(
             self.create_source_control_sequences,
             &mut |processor, word, origin, suppress, site, kind| {
                 let (meaning, resolution) = processor.resolve_token_word(word);
@@ -261,10 +261,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .settle_hot_delivery_in::<OBSERVED>(command, resolution.literal_catcode())?;
                 Ok(ExpansionCandidate::Command)
             },
-        )? {
-            ControlFlow::Continue(candidate) => Ok(candidate),
-            ControlFlow::Break(status) => Ok(ExpansionCandidate::Finished(status)),
-        }
+            ExpansionCandidate::Finished,
+        )
     }
 
     #[inline(always)]

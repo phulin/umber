@@ -111,6 +111,22 @@ Source tokenization and exceptional deliveries keep the scalar path. A run
 stops after the last available fuel charge so the next rejected token remains
 unread, as it would under scalar delivery.
 
+## Native completion and exceptional ownership
+
+Each scalar consumer returns its own native completion: a raw delivery status,
+an expanded candidate, or the collector's brace result. The shared input loop
+maps EOF and replay completion into that consuming type only at a true cold
+transition; it does not wrap every delivered word in a second completion enum.
+
+Ordinary word settlement updates the actual source diagnostic position and
+literal brace state. Observation, suppression, outer validity and alignment
+interception demand the exceptional word owner. That owner captures and
+restores the prior diagnostic position for an intercepted delimiter and owns
+any semantic error or resource return. Successful ordinary settlement neither
+captures the rollback snapshot nor creates a cold error payload before deciding
+that no exceptional work is needed. The semantic order remains source-position
+update, brace accounting, exceptional handling, and delimiter rollback.
+
 ## Observation and settlement
 
 The presence of an external command observer is selected at a delivery entry.

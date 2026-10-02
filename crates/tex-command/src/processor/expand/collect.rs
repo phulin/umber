@@ -113,10 +113,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                             super::super::AlignmentDeliveryAdjustment::Delimiter(_)
                         ) {
                             processor.begin_scalar_alignment_v_template(&command)?;
-                            return Ok(false);
+                            return Ok(ControlFlow::Continue(false));
                         }
                         if command.is_outer_recovery_space() {
-                            return Ok(false);
+                            return Ok(ControlFlow::Continue(false));
                         }
                         let token = processor.classify_collector_hot_token(&command, None);
                         if processor.accept_replacement_word(
@@ -125,9 +125,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                             token,
                             |processor| processor.back_input(command),
                         )? {
-                            return Ok(true);
+                            return Ok(ControlFlow::Continue(true));
                         }
-                        return Ok(false);
+                        return Ok(ControlFlow::Continue(false));
                     }
                     let adjustment = processor
                         .command
@@ -170,10 +170,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                             processor.back_input(command)
                         },
                     )? {
-                        return Ok(true);
+                        return Ok(ControlFlow::Continue(true));
                     }
-                    Ok(false)
+                    Ok(ControlFlow::Continue(false))
                 },
+                ControlFlow::Break,
             )?;
             match selected {
                 ControlFlow::Continue(true) => return Ok(()),
