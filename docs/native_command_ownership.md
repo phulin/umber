@@ -69,6 +69,23 @@ boundary. Those host units are not command transactions. Full checkpoint
 admission and restore retain the inventory and root-before-payload rules in
 [Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md).
 
+## Scalar scanners use ordinary calls
+
+Integer, dimension, glue and expression scans share one synchronous scalar
+grammar. A dimension keeps its coefficient and bounded decimal digits in its
+actual call, reads its unit, converts it and returns. It needs no progress enum,
+numeric stage cursor, resumable product or duplicate unit implementation.
+Ordinary dimensions, glue coefficients and expression shortcuts use that same
+decimal and unit grammar. Resource needs unwind those local values before
+full-checkpoint replay.
+
+This consolidation preserves TeX82 §§443–460's read and backup chronology:
+fractional terminators absorb one spacer; failed keyword prefixes and their
+offending token retain separate input levels; internal units skip the trailing
+optional-space scan; font-relative units consume their own optional space;
+and magnification errors report before the physical unit is read. Removing
+stages does not replace those semantic transitions with speculative lookahead.
+
 ## Verification
 
 Owner tests cover consumption, nested scopes, stale coordinates, failed

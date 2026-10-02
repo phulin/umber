@@ -436,7 +436,10 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   optional-equals, fixed-inline keyword prefixes, integers, dimensions, glue,
   filenames, internal values, expressions, and font selectors. Scalar state is
   call-local; it is never copied into an executor phase or retained across a
-  resource boundary. Success and error cleanup close local scopes deepest-first,
+  resource boundary. Ordinary dimensions, glue coefficients and expression
+  shortcuts share one synchronous decimal/unit grammar; no dimension progress
+  enum, stage cursor or duplicated staged unit scanner remains.
+  Success and error cleanup close local scopes deepest-first,
   while a resource miss unwinds the whole call tree and the host replays from a
   full checkpoint. Do not add a root mailbox, caller-order result tape,
   destination inference/search, or command redispatch fallback.
