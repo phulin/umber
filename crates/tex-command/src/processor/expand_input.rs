@@ -5,8 +5,8 @@ use tex_state::token::{Token, TracedTokenWord};
 
 use crate::command::CurrentCommand;
 use crate::input::{
-    BackedUpToken, BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
-    TokenBehavior,
+    BackedUpToken, BackupTreatment, ReplayTrace, RetirementBehavior, TokenBehavior,
+    backed_up_replay,
 };
 use crate::observation::{
     CommandObservation, EffectRecord, InputReason, InputRecord, InputTransition,
@@ -101,7 +101,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.back_input(*opener)?;
             let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), opener_origin);
             let level = self.command.push_token_level(
-                PackedTokenSpanHandle::backed_up([BackedUpToken {
+                backed_up_replay([BackedUpToken {
                     spelling: frozen_relax,
                 }]),
                 TokenBehavior::BackedUp(BackupTreatment::Ordinary),

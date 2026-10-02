@@ -9,7 +9,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::command::CurrentCommand;
-use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
+use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, transient_replay};
 use crate::processor::CommandProcessor;
 use crate::processor::status::{
     ConditionId, ScannerStatus, ScannerStatusVisibility, ScannerWarning, SkippingContext,
@@ -1403,7 +1403,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // token without backing it into the caller's input.
         let relax = Token::frozen_relax();
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient([TracedTokenWord::pack(relax, OriginId::UNKNOWN)]),
+            transient_replay([TracedTokenWord::pack(relax, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,

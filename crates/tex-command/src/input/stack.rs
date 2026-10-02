@@ -6,9 +6,9 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 use super::MatchedArguments;
 
 use super::{
-    CompactSourceStepQueries, InputLevel, InputLevelId, PackedTokenSpanHandle, ReplayTrace,
-    ResidentTokenRow, ResidentTokenStorage, RetirementBehavior, SourceControlSequenceKind,
-    SourceNameClass, SourceToken, StoredReplayReason, TokenBehavior, TokenRowHeader,
+    CompactSourceStepQueries, InputLevel, InputLevelId, ReplayTrace, ResidentTokenRow,
+    ResidentTokenStorage, RetirementBehavior, SourceControlSequenceKind, SourceNameClass,
+    SourceToken, StoredReplayReason, TokenBehavior, TokenRowHeader,
 };
 
 /// Completed command-state outcome of one resident input transition.
@@ -412,6 +412,7 @@ impl<G> CommandState<G> {
         self.stack_usage.record_parameter_push(parameter_ptr);
     }
 
+    #[inline]
     pub(crate) fn push_token_level<P: super::PackedTokenSpanSource<G>>(
         &mut self,
         source: P,
@@ -463,12 +464,7 @@ impl<G> CommandState<G> {
         if admitted.len() != len as usize {
             return Err(crate::AttemptError::InvalidCoordinate);
         }
-        Ok(self.push_token_level(
-            PackedTokenSpanHandle::AttemptList { list, len },
-            behavior,
-            retirement,
-            trace,
-        ))
+        Ok(self.push_token_level(list, behavior, retirement, trace))
     }
 
     /// Commits the end-of-level action selected by the exhausted top level.

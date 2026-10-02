@@ -561,7 +561,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // backed-up forbidden command can open a second runaway episode.
             self.conserve_input_stack_for_descendant()?;
             self.command.push_token_level(
-                PackedTokenSpanHandle::transient([
+                crate::input::transient_replay([
                     cr,
                     TracedTokenWord::pack(
                         Token::Char {

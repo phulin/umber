@@ -4,7 +4,7 @@ use tex_state::interner::InternerBudget;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 use tex_state::{CommandContext, GenerationBrand, Universe};
 
-use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
+use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, transient_replay};
 use crate::{
     CommandFuelLedger, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
     CurrentCommand, DeliveryStatus,
@@ -74,7 +74,7 @@ pub(crate) fn traced(token: Token) -> TracedTokenWord {
 
 pub(crate) fn push<G>(command: &mut CommandState<G>, tokens: impl IntoIterator<Item = Token>) {
     command.push_token_level(
-        PackedTokenSpanHandle::transient(tokens.into_iter().map(traced)),
+        transient_replay(tokens.into_iter().map(traced)),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::BackedUp,

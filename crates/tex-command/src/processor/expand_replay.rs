@@ -4,7 +4,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::CommandError;
-use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
+use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, transient_replay};
 use crate::observation::{
     CommandObservation, InputReason, InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
 };
@@ -76,7 +76,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) {
         let mut tokens = tokens.into_iter();
         let first = tokens.next();
-        let payload = PackedTokenSpanHandle::transient(
+        let payload = transient_replay(
             first
                 .into_iter()
                 .chain(tokens)

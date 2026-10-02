@@ -500,20 +500,6 @@ pub(crate) enum PackedTokenOwnership {
     BackedUp,
 }
 
-/// One immutable list a token-list level admits onto the input stack.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) enum PackedTokenSpanHandle<G> {
-    /// One generation-durable immutable token list.
-    DurableList {
-        list: tex_state::TokenListId<G>,
-        len: u32,
-    },
-    /// One attempt-local token list.
-    AttemptList { list: AttemptTokenListId, len: u32 },
-    /// One backed-up word.
-    Word(TracedTokenWord),
-}
-
 /// Appends an immutable semantic replay span when a copied transient sink is required.
 #[inline]
 pub(crate) fn push_untraced_words(words: &mut Vec<TracedTokenWord>, list: &[TokenWord]) {
@@ -559,34 +545,48 @@ impl<G> PackedTokenSpanSource<G> for PendingInsertion {
     }
 }
 
-impl<G> PackedTokenSpanSource<G> for PackedTokenSpanHandle<G> {
+impl<G> PackedTokenSpanSource<G> for tex_state::TokenListView<G> {
+    #[inline]
+    fn admit(
+        self,
+        _: &mut Vec<TracedTokenWord>,
+        _: TokenSources<'_, G>,
+    ) -> ResidentTokenStorage<G> {
+        ResidentTokenStorage::StoredList(self.into_id())
+    }
+}
+
+impl<G> PackedTokenSpanSource<G> for AttemptTokenListId {
     fn admit(
         self,
         words: &mut Vec<TracedTokenWord>,
         sources: TokenSources<'_, G>,
     ) -> ResidentTokenStorage<G> {
-        match self {
-            Self::DurableList { list, .. } => ResidentTokenStorage::StoredList(list),
-            Self::AttemptList { list, .. } => {
-                words.extend(
-                    sources
-                        .attempt
-                        .token_words(&list)
-                        .expect("admitted attempt list")
-                        .iter()
-                        .copied(),
-                );
-                sources
-                    .attempt
-                    .discard_token_list(list)
-                    .expect("admitted attempt list consumed");
-                ResidentTokenStorage::List(PackedTokenOwnership::Stored)
-            }
-            Self::Word(word) => {
-                words.push(word);
-                ResidentTokenStorage::List(PackedTokenOwnership::BackedUp)
-            }
-        }
+        words.extend(
+            sources
+                .attempt
+                .token_words(&self)
+                .expect("admitted attempt list")
+                .iter()
+                .copied(),
+        );
+        sources
+            .attempt
+            .discard_token_list(self)
+            .expect("admitted attempt list consumed");
+        ResidentTokenStorage::List(PackedTokenOwnership::Stored)
+    }
+}
+
+impl<G> PackedTokenSpanSource<G> for TracedTokenWord {
+    #[inline]
+    fn admit(
+        self,
+        words: &mut Vec<TracedTokenWord>,
+        _: TokenSources<'_, G>,
+    ) -> ResidentTokenStorage<G> {
+        words.push(self);
+        ResidentTokenStorage::List(PackedTokenOwnership::BackedUp)
     }
 }
 
@@ -652,49 +652,37 @@ impl<G, I: Iterator<Item = OriginId>> PackedTokenSpanSource<G> for StoredReplayS
     }
 }
 
-impl PackedTokenSpanHandle<()> {
-    #[cfg(test)]
-    pub(crate) fn stored(
-        tokens: &[Token],
-        origins: impl IntoIterator<Item = OriginId>,
-    ) -> StoredReplaySeed<'_, impl Iterator<Item = OriginId>> {
-        StoredReplaySeed {
-            tokens,
-            origins: origins.into_iter(),
-        }
-    }
-
-    pub(crate) fn stored_semantic(words: &[TokenWord]) -> SemanticReplaySeed<'_> {
-        SemanticReplaySeed { words }
-    }
-
-    /// One bounded insertion or scanner result.
-    pub(crate) fn transient(
-        tokens: impl IntoIterator<Item = TracedTokenWord>,
-    ) -> TracedReplaySeed<impl Iterator<Item = TracedTokenWord>> {
-        TracedReplaySeed {
-            tokens: tokens.into_iter(),
-            ownership: PackedTokenOwnership::Transient,
-        }
-    }
-
-    /// Commands restored by `back_input`.
-    pub(crate) fn backed_up(
-        tokens: impl IntoIterator<Item = BackedUpToken>,
-    ) -> BackedReplaySeed<impl Iterator<Item = BackedUpToken>> {
-        BackedReplaySeed {
-            tokens: tokens.into_iter(),
-        }
+#[cfg(test)]
+pub(crate) fn stored_replay(
+    tokens: &[Token],
+    origins: impl IntoIterator<Item = OriginId>,
+) -> StoredReplaySeed<'_, impl Iterator<Item = OriginId>> {
+    StoredReplaySeed {
+        tokens,
+        origins: origins.into_iter(),
     }
 }
 
-impl<G> PackedTokenSpanHandle<G> {
-    pub(crate) fn durable(words: tex_state::TokenListView<G>) -> Self {
-        let len = u32::try_from(words.len()).expect("durable token-list length exceeds u32");
-        Self::DurableList {
-            list: words.into_id(),
-            len,
-        }
+pub(crate) fn semantic_replay(words: &[TokenWord]) -> SemanticReplaySeed<'_> {
+    SemanticReplaySeed { words }
+}
+
+/// One bounded insertion or scanner result.
+pub(crate) fn transient_replay(
+    tokens: impl IntoIterator<Item = TracedTokenWord>,
+) -> TracedReplaySeed<impl Iterator<Item = TracedTokenWord>> {
+    TracedReplaySeed {
+        tokens: tokens.into_iter(),
+        ownership: PackedTokenOwnership::Transient,
+    }
+}
+
+/// Commands restored by `back_input` or a matched keyword prefix.
+pub(crate) fn backed_up_replay(
+    tokens: impl IntoIterator<Item = BackedUpToken>,
+) -> BackedReplaySeed<impl Iterator<Item = BackedUpToken>> {
+    BackedReplaySeed {
+        tokens: tokens.into_iter(),
     }
 }
 

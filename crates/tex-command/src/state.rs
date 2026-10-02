@@ -16,7 +16,7 @@ use crate::input::{
     SourceTokenizationStep,
 };
 use crate::input::{
-    PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
+    ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, transient_replay,
 };
 use crate::processor::delivery_mode::DeliveryMode;
 use crate::processor::{
@@ -625,7 +625,7 @@ impl<G> CommandState<G> {
         words: impl IntoIterator<Item = tex_state::token::TracedTokenWord>,
     ) {
         self.push_token_level(
-            crate::input::PackedTokenSpanHandle::transient(words),
+            crate::input::transient_replay(words),
             crate::input::TokenBehavior::Ordinary,
             crate::input::RetirementBehavior::Pop,
             crate::input::ReplayTrace::Inserted,
@@ -820,7 +820,7 @@ impl<G> CommandState<G> {
     ) -> CommandReplayEpisode {
         let words = stores.token_list(tokens.clone());
         let identity = self.push_token_level(
-            PackedTokenSpanHandle::durable(words),
+            words,
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -970,7 +970,7 @@ impl<G> CommandState<G> {
     ) {
         let words = stores.token_list(tokens.clone());
         let level = self.push_token_level(
-            PackedTokenSpanHandle::durable(words),
+            words,
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -1163,7 +1163,7 @@ impl<G> CommandState<G> {
         // that is what names the level in the pinned observer's trace.
         let level = match template {
             None => self.push_token_level(
-                PackedTokenSpanHandle::transient([]),
+                transient_replay([]),
                 TokenBehavior::VTemplate,
                 RetirementBehavior::RetainExhaustedVTemplate,
                 ReplayTrace::OmitTemplate,
@@ -1609,7 +1609,7 @@ impl<G> CommandState<G> {
         }
         let words = stores.token_list(every_eof);
         Some(self.push_token_level(
-            PackedTokenSpanHandle::durable(words),
+            words,
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::EveryEof),
@@ -1714,12 +1714,7 @@ impl<G> CommandState<G> {
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> InputLevelId {
-        self.push_token_level(
-            PackedTokenSpanHandle::durable(stores.token_list(template)),
-            behavior,
-            retirement,
-            trace,
-        )
+        self.push_token_level(stores.token_list(template), behavior, retirement, trace)
     }
 
     /// Lends the reusable `\csname` name buffer. A nested name scan finds

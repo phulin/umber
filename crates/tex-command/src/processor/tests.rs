@@ -2,7 +2,7 @@ use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::input::{
-    PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
+    ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, transient_replay,
 };
 use crate::{
     AlignmentIdentity, CommandDeliveryBoundary, CommandHostCapabilities, CommandObservation,
@@ -39,7 +39,7 @@ fn retirement_handoff_evidence(empty_levels: usize) -> RetirementHandoffEvidence
         crate::test_harness::push(&mut command, [token]);
         for _ in 0..empty_levels {
             command.push_token_level(
-                PackedTokenSpanHandle::transient([]),
+                transient_replay([]),
                 TokenBehavior::Ordinary,
                 RetirementBehavior::Pop,
                 ReplayTrace::Inserted,
@@ -230,7 +230,7 @@ fn stack_conservation_remains_an_explicit_counted_retirement_branch() {
         let mut command = CommandState::default();
         for _ in 0..2 {
             command.push_token_level(
-                PackedTokenSpanHandle::transient([]),
+                transient_replay([]),
                 TokenBehavior::Ordinary,
                 RetirementBehavior::Pop,
                 ReplayTrace::Inserted,
@@ -266,19 +266,19 @@ fn in_place_retirement_preserves_semantic_transition_order() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [token]);
         command.push_token_level(
-            PackedTokenSpanHandle::transient([]),
+            transient_replay([]),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::EveryPar),
         );
         command.push_token_level(
-            PackedTokenSpanHandle::transient([]),
+            transient_replay([]),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
         command.push_token_level(
-            PackedTokenSpanHandle::transient([]),
+            transient_replay([]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -346,7 +346,7 @@ fn awaiting_v_template_retires_in_resident_delivery_before_parent_token() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [token]);
         command.push_token_level(
-            PackedTokenSpanHandle::transient([]),
+            transient_replay([]),
             TokenBehavior::VTemplate,
             RetirementBehavior::AwaitingVTemplateRetirement,
             ReplayTrace::VTemplate,
@@ -1834,7 +1834,7 @@ fn warmed_stored_raw_delivery_allocates_zero_heap() {
         {
             let context = universe.command_context().expect("command context");
             command.push_token_level(
-                PackedTokenSpanHandle::durable(context.token_list(list)),
+                context.token_list(list),
                 TokenBehavior::Ordinary,
                 RetirementBehavior::Pop,
                 ReplayTrace::Stored(StoredReplayReason::EveryPar),

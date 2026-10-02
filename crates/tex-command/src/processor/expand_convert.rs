@@ -4,7 +4,7 @@ use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::{OriginId, Token};
 
 use crate::CommandError;
-use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
+use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, semantic_replay};
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 
 use super::expand_render::{
@@ -44,14 +44,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .token_words(&replacement)
             .map_err(crate::scan_toks::attempt_command_error)?;
         let first = words.first().map(|word| word.semantic_token());
-        let len = u32::try_from(words.len()).map_err(|_| CommandError::input_invariant())?;
-        self.insert_expansion_list(
-            PackedTokenSpanHandle::AttemptList {
-                list: replacement,
-                len,
-            },
-            first,
-        );
+        self.insert_expansion_list(replacement, first);
         Ok(())
     }
 
@@ -131,12 +124,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .token_words(&tokens)
                         .map_err(crate::scan_toks::attempt_command_error)?;
                     let first = words.first().map(|word| word.semantic_token());
-                    let len =
-                        u32::try_from(words.len()).map_err(|_| CommandError::input_invariant())?;
-                    self.insert_expansion_list(
-                        PackedTokenSpanHandle::AttemptList { list: tokens, len },
-                        first,
-                    );
+                    self.insert_expansion_list(tokens, first);
                 }
                 crate::InternalValue::Font(symbol) => {
                     self.push_rendered_tokens([Token::Cs(symbol)], opener);
@@ -260,7 +248,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .node_token_words(*tokens)
             .expect("page mark token key belongs to the admitted generation");
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::stored_semantic(words),
+            semantic_replay(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::Mark),

@@ -1,8 +1,8 @@
 use super::{InputRetirementAction, InputRetirementError, InputRetirementReason};
 use crate::CommandState;
 use crate::input::{
-    PackedTokenSpanHandle, RegisteredSourceKind, ReplayTrace, RetirementBehavior, SourceOpenDepths,
-    SourceRegistration, StoredReplayReason, TokenBehavior,
+    RegisteredSourceKind, ReplayTrace, RetirementBehavior, SourceOpenDepths, SourceRegistration,
+    StoredReplayReason, TokenBehavior, transient_replay,
 };
 
 fn load_top_source_line<G>(state: &mut CommandState<G>) {
@@ -28,7 +28,7 @@ fn one_exhausted_token_level_retires_once_with_its_semantic_reason() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();
         let identity = state.push_token_level(
-            PackedTokenSpanHandle::transient([]),
+            transient_replay([]),
             TokenBehavior::Ordinary,
             RetirementBehavior::StopAtEnd,
             ReplayTrace::Stored(StoredReplayReason::EveryJob),
@@ -79,13 +79,13 @@ fn retirement_rejects_a_stale_level_identity_before_mutation() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();
         let older = state.push_token_level(
-            PackedTokenSpanHandle::transient([]),
+            transient_replay([]),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
         let current = state.push_token_level(
-            PackedTokenSpanHandle::transient([]),
+            transient_replay([]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -115,13 +115,13 @@ fn canonical_push_keeps_runtime_maximum_across_checkpoint_restore() {
         state.open_registered_source(source).expect("source opens");
         let checkpoint = state.publish_summary(universe).expect("command checkpoint");
         state.push_token_level(
-            PackedTokenSpanHandle::transient([]),
+            transient_replay([]),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
         state.push_token_level(
-            PackedTokenSpanHandle::transient([]),
+            transient_replay([]),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,

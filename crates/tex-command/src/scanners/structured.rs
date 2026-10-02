@@ -20,8 +20,8 @@ use tex_state::{
 use crate::attempt::{AttemptTokenBufferId, AttemptTokenListId};
 
 use crate::input::{
-    BackupTreatment, InputLevelId, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
-    StoredReplayReason, TokenBehavior,
+    BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, StoredReplayReason,
+    TokenBehavior,
 };
 use crate::processor::alignment::{PREAMBLE_ALIGN_STATE, is_character_command};
 use crate::processor::status::{

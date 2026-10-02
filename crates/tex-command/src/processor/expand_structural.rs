@@ -6,9 +6,7 @@ use tex_state::token::{OriginId, Token, TracedTokenWord};
 use crate::CommandError;
 use crate::command::{CommandClass, CurrentCommand};
 use crate::execution_scratch::{ArgumentRunAdmission, CsnameNameSink};
-use crate::input::{
-    BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior,
-};
+use crate::input::{BackupTreatment, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::observation::{
     CommandObservation, InputReason, InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
 };
@@ -189,7 +187,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .alignment
             .undo_delivery(command.alignment_adjustment());
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::Word(command.spelling()),
+            command.spelling(),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

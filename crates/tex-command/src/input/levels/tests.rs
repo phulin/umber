@@ -1,10 +1,10 @@
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
-    BackedUpToken, BackupTreatment, InputLevelId, PackedTokenOwnership, PackedTokenSpanHandle,
-    PackedTokenSpanSource, PendingInsertion, ReplayTrace, ResidentTokenRow, ResidentTokenStorage,
-    RetirementBehavior, StoredReplayReason, TokenBehavior, TokenRowHeader, TokenSources,
-    packed_token_frame,
+    BackedUpToken, BackupTreatment, InputLevelId, PackedTokenOwnership, PackedTokenSpanSource,
+    PendingInsertion, ReplayTrace, ResidentTokenRow, ResidentTokenStorage, RetirementBehavior,
+    StoredReplayReason, TokenBehavior, TokenRowHeader, TokenSources, backed_up_replay,
+    packed_token_frame, stored_replay, transient_replay,
 };
 use crate::attempt::AttemptArena;
 
@@ -39,7 +39,7 @@ fn every_seed_appends_its_words_to_the_token_stack() {
     let mut pending = Vec::new();
     assert_eq!(
         admit(
-            PackedTokenSpanHandle::transient([traced('a'), traced('b')]),
+            transient_replay([traced('a'), traced('b')]),
             &mut words,
             &mut pending,
         ),
@@ -47,7 +47,7 @@ fn every_seed_appends_its_words_to_the_token_stack() {
     );
     assert_eq!(
         admit(
-            PackedTokenSpanHandle::backed_up([BackedUpToken {
+            backed_up_replay([BackedUpToken {
                 spelling: traced('c'),
             }]),
             &mut words,
@@ -58,7 +58,7 @@ fn every_seed_appends_its_words_to_the_token_stack() {
     let token = traced('d').semantic_token();
     assert_eq!(
         admit(
-            PackedTokenSpanHandle::stored(&[token], [OriginId::UNKNOWN]),
+            stored_replay(&[token], [OriginId::UNKNOWN]),
             &mut words,
             &mut pending,
         ),

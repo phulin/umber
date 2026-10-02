@@ -6,7 +6,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::AlignmentDeliveryEvent;
 use crate::command::CurrentCommand;
 use crate::error::CommandError;
-use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
+use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, transient_replay};
 use crate::observation::{
     CommandObservation, DiagnosticArgument, InputReason, InputRecord, InputTransition,
     RecoveryKind, RecoveryRecord,
@@ -227,7 +227,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.observe_unbalanced_delimiter_correction(recovery_name, previous);
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient([TracedTokenWord::pack(recovery, OriginId::UNKNOWN)]),
+            transient_replay([TracedTokenWord::pack(recovery, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -272,7 +272,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .primitive_token("cr")
             .ok_or_else(|| CommandError::input_invariant())?;
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient([TracedTokenWord::pack(frozen_cr, OriginId::UNKNOWN)]),
+            transient_replay([TracedTokenWord::pack(frozen_cr, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -388,7 +388,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             OriginId::UNKNOWN,
         );
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient([par]),
+            transient_replay([par]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -426,7 +426,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .ok_or_else(|| CommandError::input_invariant())?,
         );
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient([TracedTokenWord::pack(par, OriginId::UNKNOWN)]),
+            transient_replay([TracedTokenWord::pack(par, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -453,7 +453,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let dollar = TracedTokenWord::pack(dollar_token, OriginId::UNKNOWN);
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient([dollar]),
+            transient_replay([dollar]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -474,7 +474,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// enclosing §325 backup remains `<to be read again>`.
     pub(crate) fn push_inserted_error_token(&mut self, token: Token) {
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient([TracedTokenWord::pack(token, OriginId::UNKNOWN)]),
+            transient_replay([TracedTokenWord::pack(token, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -508,7 +508,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         );
         self.back_input(command)?;
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient(
+            transient_replay(
                 closing
                     .iter()
                     .map(|&token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),

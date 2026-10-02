@@ -6,8 +6,8 @@ use tex_state::token::{Catcode, TracedTokenWord};
 use crate::command::CurrentCommand;
 use crate::error::CommandError;
 use crate::input::{
-    BackedUpToken, BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
-    TokenBehavior,
+    BackedUpToken, BackupTreatment, ReplayTrace, RetirementBehavior, TokenBehavior,
+    backed_up_replay,
 };
 use crate::observation::{
     AlignmentRecord, CommandObservation, InputReason, InputRecord, InputTransition, RecoveryKind,
@@ -112,7 +112,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// without ever delivering a token.
     pub(crate) fn back_list(&mut self, tokens: impl IntoIterator<Item = BackedUpToken>) {
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::backed_up(tokens),
+            backed_up_replay(tokens),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -151,7 +151,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// that is available must have its own adjustment reversed, not one
     /// recomputed from the token.
     pub fn back_input_token(&mut self, spelling: TracedTokenWord) -> Result<(), CommandError> {
-        self.push_backed_up_token(spelling, PackedTokenSpanHandle::Word(spelling))
+        self.push_backed_up_token(spelling, spelling)
     }
 
     /// Shared §326 insertion for [`Self::back_input_token`]. The level's
@@ -236,7 +236,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         let result = if etex {
                             processor.push_backed_up_token(
                                 word,
-                                PackedTokenSpanHandle::backed_up(core::iter::once(BackedUpToken {
+                                backed_up_replay(core::iter::once(BackedUpToken {
                                     spelling: word,
                                 })),
                             )
@@ -285,7 +285,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.undo_alignment_delivery(&command);
 
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::Word(command.spelling()),
+            command.spelling(),
             TokenBehavior::BackedUp(treatment),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

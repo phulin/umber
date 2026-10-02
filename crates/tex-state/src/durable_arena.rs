@@ -427,8 +427,7 @@ impl<G> TokenListView<G> {
     }
 
     /// Transfers this immutable span's owner without another shared-owner
-    /// clone. Input uses this once while adapting a durable list to its
-    /// uniform packed span handle.
+    /// clone. Input uses this once to move the stored list into its final row.
     #[must_use]
     pub fn into_id(self) -> TokenListId<G> {
         self.list

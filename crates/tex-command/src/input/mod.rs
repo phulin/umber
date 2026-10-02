@@ -24,10 +24,10 @@ pub(crate) use history::{
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
     ArgumentSpan, BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroBodyCursor,
-    PackedInputFrame, PackedTokenOwnership, PackedTokenSpanHandle, PackedTokenSpanSource,
-    PendingInsertion, ReplayTrace, ResidentTokenRow, ResidentTokenStorage, RetirementBehavior,
-    SourceLevel, SourceOpenDepths, SourceRetirement, SourceSlot, StoredReplayReason, TokenBehavior,
-    TokenRowHeader, TokenSources, packed_token_frame,
+    PackedInputFrame, PackedTokenOwnership, PackedTokenSpanSource, PendingInsertion, ReplayTrace,
+    ResidentTokenRow, ResidentTokenStorage, RetirementBehavior, SourceLevel, SourceOpenDepths,
+    SourceRetirement, SourceSlot, StoredReplayReason, TokenBehavior, TokenRowHeader, TokenSources,
+    backed_up_replay, packed_token_frame, semantic_replay, transient_replay,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor, SourceOffsetMap};
 #[cfg(test)]

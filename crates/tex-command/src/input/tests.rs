@@ -115,7 +115,7 @@ fn durable_token_list_reads_its_retained_span_without_stack_copy() {
         {
             let stores = universe.command_context().expect("command context");
             command.push_token_level(
-                super::PackedTokenSpanHandle::durable(stores.token_list(list)),
+                stores.token_list(list),
                 super::TokenBehavior::Ordinary,
                 super::RetirementBehavior::Pop,
                 super::ReplayTrace::Stored(super::StoredReplayReason::EveryPar),

@@ -93,6 +93,14 @@ temporary spellings. Character tests project character and category directly
 from the resolved native word; character aliases still use their resolved
 meaning, and control sequences remain ineligible as keyword letters.
 
+Input admission accepts its actual source owner: one traced word, an immutable
+stored list, or a move-only scratch list. A one-word backup does not construct
+a general source enum, carry a duplicate length, or dispatch the other source
+families. Static source admission writes the same final input row and word
+suffix. Genuine transient iterators and keyword-prefix lists retain only their
+actual replay iterator and ownership policy. Source context, level identity,
+stack maxima, brace reversal and retirement remain the input stack's authority.
+
 ## Verification
 
 Owner tests cover consumption, nested scopes, stale coordinates, failed

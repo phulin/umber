@@ -345,7 +345,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         observed: Token,
     ) -> InputLevelId {
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient(
+            crate::input::transient_replay(
                 tokens
                     .into_iter()
                     .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),

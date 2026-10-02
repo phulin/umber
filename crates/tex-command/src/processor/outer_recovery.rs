@@ -5,9 +5,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::command::CurrentCommand;
 use crate::error::CommandError;
 use crate::input::SourceNameClass;
-use crate::input::{
-    InputLevel, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior,
-};
+use crate::input::{InputLevel, ReplayTrace, RetirementBehavior, TokenBehavior, transient_replay};
 use crate::observation::{
     AlignmentRecord, CommandObservation, DiagnosticArgument, DiagnosticRecord, InputReason,
     InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
@@ -154,7 +152,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             })
             .collect();
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::transient(std::iter::once(first_token).chain(second_token)),
+            transient_replay(std::iter::once(first_token).chain(second_token)),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,

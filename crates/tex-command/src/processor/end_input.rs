@@ -6,8 +6,8 @@ use tex_state::token::{Catcode, Token};
 use crate::error::CommandError;
 use crate::input::SourceNameClass;
 use crate::input::{
-    InputLevel, InputLevelId, InputRetirementAction, PackedTokenSpanHandle, ReplayTrace,
-    RetirementBehavior, StoredReplayReason, TokenBehavior, observed_retirement_reason,
+    InputLevel, InputLevelId, InputRetirementAction, ReplayTrace, RetirementBehavior,
+    StoredReplayReason, TokenBehavior, observed_retirement_reason,
 };
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 
@@ -174,7 +174,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.report_named_token_list("output", output.clone());
         let words = self.state.token_list(output.clone());
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::durable(words),
+            words,
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),

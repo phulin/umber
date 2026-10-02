@@ -284,7 +284,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   belongs to the singular input-top owner and never receives a backing registry
   through the ordinary token path.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: input rows and admission
-  seeds. The common packed frame owns identity, source context, start, position,
+  from actual traced words, stored-list owners and scratch-list owners, plus
+  genuine replay iterators. No general source enum or duplicate admitted extent
+  is constructed. The common packed frame owns identity, source context, start, position,
   limit, kind, and delivery/retirement flags. `StoredList` owns its immutable
   `TokenListId`; `MacroBody` owns its `ResidentMacroBody`, invocation facts, and
   transient argument coordinates. Both read retained spans without activation
