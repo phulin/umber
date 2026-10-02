@@ -72,7 +72,11 @@ new semantic token takes one fuel charge, while refill, retirement and
 parameter substitution retry under the current charge. Raw reads and spelling
 collectors stop that same reader at their actual consumer boundary. The
 reader invokes its actual expansion consumer inline; recursive primitive
-expansion and parameter matching retain their own exceptional call frames.
+expansion and parameter matching retain their own exceptional call frames. Each reader
+clears its actual destination at its own completion or failure boundary; no
+generic result-settlement adapter repeats that cleanup after the reader
+returns. Main control folds its real fetch label into its retained command
+consumer.
 
 Assignments share one mutation policy. A local first write at a new TeX level
 owns a native group preimage. A first touch in a retained host checkpoint

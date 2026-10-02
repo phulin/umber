@@ -197,8 +197,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         destination.take();
-        let result = self.raw_next_hot(destination);
-        Self::finish_delivery(destination, result)
+        self.raw_next_hot(destination)
     }
 
     #[inline(always)]
@@ -330,33 +329,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let result = self.expanded_next_hot(destination, initial_action);
-        Self::finish_delivery(destination, result)
+        self.expanded_next_hot(destination, initial_action)
     }
 
     fn expanded_next_with_preserved_undefined(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let result = self.expanded_next_hot_preserving_undefined(destination);
-        Self::finish_delivery(destination, result)
-    }
-
-    #[inline]
-    fn finish_delivery(
-        destination: &mut Option<CurrentCommand<G>>,
-        result: Result<DeliveryStatus, CommandError>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        if matches!(
-            &result,
-            Err(_)
-                | Ok(DeliveryStatus::End
-                    | DeliveryStatus::ReplayCompleted(_)
-                    | DeliveryStatus::CharacterRun)
-        ) {
-            destination.take();
-        }
-        result
+        self.expanded_next_hot_preserving_undefined(destination)
     }
 
     /// TeX82 §380's synchronous expanded delivery. Observation is fixed for
@@ -397,12 +377,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let result = self.expanded_next_hot_with_mode::<false, true>(
+        self.expanded_next_hot_with_mode::<false, true>(
             destination,
             None,
             ExpandedReaderRole::Scanner,
-        );
-        Self::finish_delivery(destination, result)
+        )
     }
 
     fn expanded_next_hot_with_mode<const PRESERVE_UNDEFINED: bool, const STOP_PROTECTED: bool>(
@@ -810,8 +789,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             destination.take();
             self.insert_frozen_endv()?;
-            let result = self.expanded_next_hot(destination, None);
-            return Self::finish_delivery(destination, result);
+            return self.expanded_next_hot(destination, None);
         }
         if is_character || matches!(action, ExpandedCommandAction::Return) {
             if self.is_observed() {
@@ -819,8 +797,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             return Ok(DeliveryStatus::Command);
         }
-        let result = self.expanded_next_hot(destination, Some(action));
-        Self::finish_delivery(destination, result)
+        self.expanded_next_hot(destination, Some(action))
     }
 
     #[cold]
@@ -1344,6 +1321,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Main control's expanded fetch uses the canonical word loop and one
     /// expansion episode. Its only role-specific cut is a raw end-template.
+    #[inline(always)]
     pub fn main_control_expanded_into(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
@@ -1355,7 +1333,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 None,
                 ExpandedReaderRole::MainControl,
             );
-            match Self::finish_delivery(destination, expanded)? {
+            match expanded? {
                 DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
                     return Ok(DeliveryStatus::Command);
                 }

@@ -1484,7 +1484,7 @@ impl<G> InputStack<G> {
             super::ResidentTokenStorage::StoredList(_) => {}
             super::ResidentTokenStorage::MacroBody(body) => {
                 if let Some(region) = body.argument_region {
-                    *parameter_count -= arguments.spans(region).len();
+                    *parameter_count -= arguments.argument_count(region);
                     arguments.release(region);
                 }
             }

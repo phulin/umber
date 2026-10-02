@@ -363,7 +363,7 @@ impl<G> CommandState<G> {
         let levels = &mut self.roots.input.levels;
         let argument_region = if let Some(matching) = matching {
             let region = levels.arguments.publish(matching);
-            levels.parameter_count += levels.arguments.spans(region).len();
+            levels.parameter_count += levels.arguments.argument_count(region);
             self.stack_usage
                 .record_parameter_push(levels.parameter_count);
             Some(region)

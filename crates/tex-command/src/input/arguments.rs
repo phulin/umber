@@ -125,6 +125,12 @@ impl ArgumentArena {
         matching.region
     }
 
+    /// Native capacity bookkeeping reads the count, without constructing a span view.
+    #[inline(always)]
+    pub(crate) fn argument_count(&self, id: ArgumentRegionId) -> usize {
+        usize::from(self.regions[id.index()].count)
+    }
+
     #[inline(always)]
     pub(crate) fn spans(&self, id: ArgumentRegionId) -> &[ArgumentSpan] {
         let region = &self.regions[id.index()];
