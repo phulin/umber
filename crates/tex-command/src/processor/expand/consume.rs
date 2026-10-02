@@ -381,7 +381,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// recursively suspended primitive-expansion frame. Only spelling and
     /// invocation facts survive matching; diagnostics need no delivery geometry
     /// or command record, even on prefix failure.
-    #[inline(never)]
+    #[inline(always)]
     fn activate_read_macro(
         &mut self,
         word: tex_state::token::TokenWord,

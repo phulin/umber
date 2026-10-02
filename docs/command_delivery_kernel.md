@@ -394,7 +394,8 @@ caller budget after every completed command. No fact survives an owner return.
 ## Macro activation call frames
 
 A parameterless macro admits its actual replacement owner and activates it
-without entering the parameter matcher's call frame. Only an actual parameter
+inside the input consumer, without a separate activation return or the parameter
+matcher's call frame. Only an actual parameter
 pattern or exceptional observed/traced invocation calls the matcher helper.
 That helper owns scanner status, bounded argument ranges, mismatch reporting,
 and their error cleanup. Definition admission, simple activation, and matching
