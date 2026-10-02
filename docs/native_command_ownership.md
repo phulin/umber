@@ -42,7 +42,8 @@ accounting and does not traverse stack owners.
 The processor's observation loan and persistent scanner/alignment regimes have
 their own begin/end transitions. Tracing demand is read where a trace or a bulk
 read needs it. It is not recomputed by a post-command reset. The actual main
-trace entry initializes its prefix, printed flag and count; an untraced command
+trace entry initializes its prefix and printed flag. The count advances only
+at a real trace and is monotone throughout its processor loan; an untraced command
 does not reset absent trace state.
 
 ## Semantic events own their continuation

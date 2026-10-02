@@ -589,7 +589,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     /// the resulting unexpandable command.
     pub fn set_command_trace_mode_prefix(&mut self, mode_prefix: Option<String>) {
         self.command_trace_printed = false;
-        self.command_trace_count = 0;
         self.command_trace_mode_prefix = mode_prefix;
     }
 
