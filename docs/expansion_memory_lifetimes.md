@@ -409,4 +409,7 @@ boolean records whether the next word is already charged. Frame exhaustion
 and parameter substitution retry under that reservation, so neither transition
 adds a charge. Admission may fail before cursor advancement. Call-local
 reservation and nesting facts unwind on failure and never enter checkpoints.
+Continuing reservation bookkeeping is selected statically for this consumer.
+Ordinary single-word consumers compile the reservation and its callback
+wrappers away; both use the same canonical input loop and cold transitions.
 No completed-command cleanup or settlement stage is introduced.

@@ -75,7 +75,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
     ) -> Result<ConditionalDelimiter, CommandError> {
         let nested = Cell::new(0_u32);
-        self.consume_input(
+        self.consume_input::<true, _>(
             self.create_source_control_sequences,
             &mut |state, fuel, alignment, word, suppress, kind, mode| {
                 if OBSERVED || mode.requires_persistent_settlement() || suppress {

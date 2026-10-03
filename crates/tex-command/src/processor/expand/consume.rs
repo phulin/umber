@@ -72,7 +72,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         } else {
             expanded = supplied;
         }
-        let status = self.consume_input(
+        let status = self.consume_input::<false, _>(
             self.create_source_control_sequences,
             &mut |_, _, _, _, _, _, _| Ok(ControlFlow::Continue(false)),
             &mut {

@@ -46,7 +46,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         ) -> Result<R, CommandError>,
     ) -> Result<Option<R>, CommandError> {
         self.create_source_control_sequences = true;
-        self.consume_input(
+        self.consume_input::<false, _>(
             true,
             &mut |_, _, _, _, _, _, _| Ok(ControlFlow::Continue(false)),
             &mut |processor, word, origin, suppress, site, kind| {
@@ -187,7 +187,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     && self.settle_resident_run_boundary()?
                 {}
             }
-            let selected = self.consume_input(
+            let selected = self.consume_input::<false, _>(
                 true,
                 &mut |_, _, _, _, _, _, _| Ok(ControlFlow::Continue(false)),
                 &mut |processor, word, origin, suppress, site, kind| {
