@@ -1,5 +1,5 @@
 use smallvec::SmallVec;
-use tex_fonts::{CharMetrics, LigKernChar, LigKernCommand};
+use tex_fonts::{LigKernChar, LigKernCommand};
 use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{GlueParam, IntParam};
@@ -130,7 +130,6 @@ pub(crate) fn append_character_run_with_fuel<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     run: tex_command::BorrowedSourceCharacterRun<'_>,
-    _etex_extended: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<CharacterRunAppend, ExecError> {
     debug_assert!(matches!(
@@ -1359,7 +1358,6 @@ pub(crate) struct LigatureGlyphCell {
     pub(crate) font: FontId,
     pub(crate) ch: char,
     code: Option<u8>,
-    _metric: Option<CharMetrics>,
     lig_kern_start: Option<u16>,
     leading_auto_kern: Scaled,
     trailing_auto_kern: Scaled,
@@ -1381,20 +1379,13 @@ impl LigatureGlyphCell {
         right_hit: bool,
     ) -> Self {
         let code = font_code(ch).ok();
-        let metric = code.and_then(|code| stores.font_char_metrics(font, code));
-        let lig_kern_start = code
-            .filter(|&code| stores.pdf_font_code(tex_state::PdfFontCode::Tag, font, code) & 1 != 0)
-            .and(metric)
-            .and_then(|metric| match metric.tag {
-                tex_fonts::MetricCharTag::LigKern { start_index, .. } => Some(start_index),
-                _ => None,
-            });
+        let lig_kern_start =
+            code.and_then(|code| stores.font_lig_kern_start(font, LigKernChar::Char(code)));
         let (leading_auto_kern, trailing_auto_kern) = auto_kern_values(stores, font, code);
         Self {
             font,
             ch,
             code,
-            _metric: metric,
             lig_kern_start,
             leading_auto_kern,
             trailing_auto_kern,

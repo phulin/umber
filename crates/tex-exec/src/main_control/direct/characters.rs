@@ -27,7 +27,6 @@ impl<G> tex_command::MainCharacterConsumer<G, &mut ExecutionState<G>> for MainSo
                     context,
                     &mut *diagnostic_effects,
                     run,
-                    self.etex_extended,
                     fuel,
                 );
                 match result {
