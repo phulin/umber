@@ -535,3 +535,33 @@ the same retained processor and context before reading another word. This
 prevents a stale character-lookahead role without constructing a delivered
 command, opening another processor or adding a successful settlement stage.
 Native terminals outside text retain their existing in-reader continuation.
+
+Bulk text boundaries feed their actual word directly to the native terminal
+consumer before any command record is constructed. This call site uses a
+consumer specialized for the known text boundary; the ordinary reader retains
+its existing admission check outside text. No native word repeatedly probes
+the mode-list owner to rediscover which reader admitted it. Both consumers
+share the same substantive semantics, with the actual text completion
+refreshing the reader role through the retained processor.
+
+Ordinary spaces also enter this native consumer. Horizontal spaces append
+through the existing space/glue builder; vertical and math spaces keep TeX82
+section 1045's no-op semantics. A space ends character lookahead at that real
+semantic boundary without constructing a command record.
+
+## Direct binding and math-font grammars
+
+Ordinary let and futurelet have separate scanner entry points for their actual
+TeX82 section 1221 grammars. Let scans its target, optional equals and meaning;
+futurelet scans its target and retains only the first token's real backup facts
+across the second read. The boolean-selected scanner and futurelet forwarding
+helper are removed. Each grammar returns only its final target and meaning.
+
+Math-font family assignments scan the section 435 four-bit index, optional
+equals and section 577 font selector in the selected native assignment arm.
+They use the existing central font-support validation and scoped state write
+from section 1234, with demanded reports before mutation and section 1269
+afterassignment delivery. No second processor or semantic application wrapper
+is built. The obsolete family request, its unused math-request variant and the
+math-family scanner/application modules are deleted. Font identifiers referring
+to a math-size bank also scan the actual restricted integer directly.

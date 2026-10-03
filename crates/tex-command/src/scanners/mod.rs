@@ -27,8 +27,7 @@ pub use structured::{
     ScannedCharacterDefinition, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
     ScannedEquationNumber, ScannedFileName, ScannedGeneratedFontDefinition,
     ScannedInsertConstruction, ScannedLeaderPayload, ScannedMacroDefinition, ScannedMathCharacter,
-    ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial,
-    ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec,
-    ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, TokenRequest,
-    WriteStreamSelector,
+    ScannedMathDelimiter, ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
+    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment,
+    ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, TokenRequest, WriteStreamSelector,
 };

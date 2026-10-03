@@ -59,16 +59,6 @@ impl From<MathFamilySize> for tex_state::math::MathFontSize {
     }
 }
 
-/// The completed family index prefix of `\\textfont`, `\\scriptfont`, or
-/// `\\scriptscriptfont`.  Resolving the following font meaning is deliberately
-/// a separate typed operation, so source delivery cannot leak into replay.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ScannedMathFamily {
-    pub size: MathFamilySize,
-    pub family: u8,
-    pub provenance: StructuredProvenance,
-}
-
 /// Placement selected by TeX82's math script controls.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MathScriptKind {
@@ -208,7 +198,6 @@ pub enum MathTextFieldKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MathRequest {
     Character(ScannedMathCharacter),
-    Family(ScannedMathFamily),
     TextField(MathTextFieldKind),
     Script(ScannedMathScript),
     Limits(MathLimitKind),

@@ -438,25 +438,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         Ok(())
     }
 
-    /// Scans TeX82 §435's `scan_four_bit_int` family index, the prefix common
-    /// to the three math-font assignment primitives (§1234's `def_family`).
-    /// The later font-meaning scan is intentionally not part of this request.
-    pub fn scan_math_family(
-        &mut self,
-        size: MathFamilySize,
-    ) -> Result<ScannedMathFamily, CommandError> {
-        let result = self.scan_restricted_integer(RestrictedIntegerClass::FourBit);
-        let scanned = result?;
-        Ok(ScannedMathFamily {
-            size,
-            family: scanned.value as u8,
-
-            provenance: StructuredProvenance {
-                primary: scanned.provenance.primary,
-            },
-        })
-    }
-
     /// Collects the command-owned scalar prefix of TeX82's generalized
     /// fraction forms. Numerator/denominator mlist construction stays in the
     /// executor and is deliberately absent from this scanner boundary.

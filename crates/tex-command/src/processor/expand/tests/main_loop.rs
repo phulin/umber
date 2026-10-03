@@ -39,7 +39,7 @@ fn main_loop_character_run_resolves_only_its_non_character_tail() {
         let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("borrowed character run"),
             crate::DeliveryStatus::CharacterRunBoundary
         );
@@ -107,7 +107,7 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
         let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("source character run"),
             crate::DeliveryStatus::CharacterRun
         );
@@ -132,7 +132,7 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
 
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("scalar source boundary"),
             crate::DeliveryStatus::CharacterRunBoundary
         );
@@ -187,7 +187,7 @@ fn main_loop_source_step_settles_zero_prefix_without_reopening_source() {
         let mut destination = None;
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("source metric boundary"),
             crate::DeliveryStatus::CharacterRun
         );
@@ -241,7 +241,7 @@ fn main_loop_source_step_sends_utf8_boundary_to_scalar_tokenizer() {
         let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("UTF-8 scalar boundary"),
             crate::DeliveryStatus::CharacterRunBoundary
         );
@@ -306,7 +306,7 @@ fn main_loop_source_step_sends_superscript_boundary_to_scalar_tokenizer() {
         let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("superscript scalar boundary"),
             crate::DeliveryStatus::CharacterRunBoundary
         );
@@ -371,7 +371,7 @@ fn main_loop_source_step_uses_live_catcode_at_run_boundary() {
         let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("catcode scalar boundary"),
             crate::DeliveryStatus::CharacterRunBoundary
         );
@@ -441,7 +441,7 @@ fn main_loop_character_run_charges_resident_macro_body_once_per_character() {
         let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("macro body character run"),
             crate::DeliveryStatus::CharacterRunBoundary
         );
@@ -529,7 +529,7 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
         let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("macro argument character run"),
             crate::DeliveryStatus::CharacterRun
         );
@@ -575,7 +575,7 @@ fn main_loop_character_run_restore_keeps_fuel_monotonic() {
             let mut consumer = RecordingCharacterConsumer::default();
             assert_eq!(
                 processor
-                    .main_loop_source_step_into(&mut destination, &mut consumer)
+                    .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                     .expect("character run retry"),
                 crate::DeliveryStatus::CharacterRun
             );
@@ -645,5 +645,98 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
             replacement
         );
         assert_eq!(processor.command.delivery_mode, persistent_mode);
+    });
+}
+
+#[test]
+fn main_loop_native_boundary_consumes_the_word_without_a_command_record() {
+    struct NativeBoundary(Option<TokenWord>);
+    impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
+        crate::MainControlConsumer<crate::CommandProcessor<'state, 'host, G, Facts>, G>
+        for NativeBoundary
+    {
+        fn accepts_native_terminal(
+            &mut self,
+            _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
+            meaning: &tex_state::MeaningWord<G>,
+        ) -> bool {
+            matches!(meaning, tex_state::MeaningWord::Static(word)
+                if *word == Meaning::RELAX_WORD || matches!(Meaning::runtime_word_character(*word), Some((_, Catcode::Space))))
+        }
+
+        fn consume_native_terminal(
+            &mut self,
+            _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
+            spelling: tex_state::token::TracedTokenWord,
+            _: &tex_state::MeaningWord<G>,
+            _: Option<tex_state::interner::Symbol>,
+        ) -> std::ops::ControlFlow<()> {
+            assert!(self.0.replace(spelling.token_word()).is_none());
+            std::ops::ControlFlow::Break(())
+        }
+    }
+
+    crate::test_harness::with_universe(|universe| {
+        let relax = universe.intern("relax").expect("relax symbol");
+        universe
+            .assign_meaning(
+                relax,
+                tex_state::MeaningWord::Static(Meaning::RELAX_WORD),
+                AssignmentScope::Global,
+            )
+            .expect("relax meaning");
+        for boundary in [
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(relax.symbol()),
+        ] {
+            let mut command = CommandState::default();
+            crate::test_harness::push(
+                &mut command,
+                [
+                    Token::Char {
+                        ch: 'A',
+                        cat: Catcode::Letter,
+                    },
+                    Token::Char {
+                        ch: 'b',
+                        cat: Catcode::Other,
+                    },
+                    boundary,
+                ],
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(3).expect("text and terminal fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let before = crate::command::command_ownership_counters();
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut destination = None;
+            let mut characters = RecordingCharacterConsumer::default();
+            let mut native = NativeBoundary(None);
+            assert_eq!(
+                processor
+                    .main_loop_source_step_into(&mut destination, &mut characters, &mut native)
+                    .expect("native boundary consumes directly"),
+                crate::DeliveryStatus::CharacterRunBoundary,
+            );
+            assert_eq!(characters.characters, "Ab");
+            assert_eq!(native.0, Some(TokenWord::pack(boundary)));
+            assert!(destination.is_none());
+            drop(processor);
+            assert_eq!(fuel.burned(), 3);
+            assert_eq!(
+                crate::command::command_ownership_counters().resolved_writes,
+                before.resolved_writes
+            );
+        }
     });
 }

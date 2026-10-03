@@ -105,62 +105,52 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         Ok(ScannedMacroDefinition { target, definition })
     }
 
-    /// Scans TeX82 §1221's raw `\let` operand sequence.
-    ///
-    /// `future` selects `future_let`, whose §1221 body is `get_token;
-    /// q:=cur_tok; get_token; back_input; cur_tok:=q; back_input`. Both halves
-    /// are ordinary §325 `back_input` calls, so the two tokens are restored on
-    /// two separate backup levels -- the second token's level pushed first and
-    /// the saved first token's on top of it, which rereads them in their
-    /// original order. The meaning defined afterwards is the second token's,
-    /// because §325 "doesn't affect `cur_cmd`, `cur_chr`".
+    /// Scans TeX82 §1221's ordinary raw `\let` operand sequence.
     pub fn scan_let_assignment(
         &mut self,
-        future: bool,
     ) -> Result<(Symbol, tex_state::MeaningWord<G>), CommandError> {
         use std::ops::ControlFlow;
-
         let target = self.scan_definition_target()?;
-        let meaning = if future {
-            self.scan_futurelet_meaning()?
-        } else {
-            // §1221: any leading spaces, optional literal equals, then at
-            // most one space. Space uses cur_cmd, equals uses cur_tok.
-            let mut after_equals = 0;
-            self.consume_raw_words::<true, _>(&mut |_, spelling, meaning, _| {
-                let meaning = *meaning.expect("raw meaning requested");
-                let space = matches!(
-                    meaning,
-                    tex_state::MeaningWord::Static(word) if matches!(Meaning::runtime_word_character(word), Some((_, Catcode::Space)))
-                );
-                if after_equals == 0 {
-                    if space {
-                        return Ok(ControlFlow::Continue(()));
-                    }
-                    if matches!(
-                        spelling.semantic_token(),
-                        Token::Char {
-                            ch: '=',
-                            cat: Catcode::Other
-                        }
-                    ) {
-                        after_equals = 1;
-                        return Ok(ControlFlow::Continue(()));
-                    }
-                } else if after_equals == 1 && space {
-                    after_equals = 2;
+        // §1221: any leading spaces, optional literal equals, then at
+        // most one space. Space uses cur_cmd, equals uses cur_tok.
+        let mut after_equals = 0;
+        let meaning = self.consume_raw_words::<true, _>(&mut |_, spelling, meaning, _| {
+            let meaning = *meaning.expect("raw meaning requested");
+            let space = matches!(
+                meaning,
+                tex_state::MeaningWord::Static(word) if matches!(Meaning::runtime_word_character(word), Some((_, Catcode::Space)))
+            );
+            if after_equals == 0 {
+                if space {
                     return Ok(ControlFlow::Continue(()));
                 }
-                Ok(ControlFlow::Break(meaning))
-            })?
-            .ok_or_else(CommandError::input_invariant)?
-        };
+                if matches!(
+                    spelling.semantic_token(),
+                    Token::Char {
+                        ch: '=',
+                        cat: Catcode::Other
+                    }
+                ) {
+                    after_equals = 1;
+                    return Ok(ControlFlow::Continue(()));
+                }
+            } else if after_equals == 1 && space {
+                after_equals = 2;
+                return Ok(ControlFlow::Continue(()));
+            }
+            Ok(ControlFlow::Break(meaning))
+        })?
+        .ok_or_else(CommandError::input_invariant)?;
         Ok((target, meaning))
     }
-    // Futurelet owns retained backup facts and a second reader; ordinary let
-    // does not pay for that larger call frame.
-    #[inline(never)]
-    fn scan_futurelet_meaning(&mut self) -> Result<tex_state::MeaningWord<G>, CommandError> {
+
+    /// Scans §1221's `future_let`: retain the first token, read the second
+    /// meaning and restore both via §325 in their original input order.
+    /// Its retained backup facts belong only to this grammar's call frame.
+    pub fn scan_futurelet_assignment(
+        &mut self,
+    ) -> Result<(Symbol, tex_state::MeaningWord<G>), CommandError> {
+        let target = self.scan_definition_target()?;
         let mut adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
         let mut observed_spelling = None;
         let first = self.read_backup_operand(&mut adjustment, &mut observed_spelling)?;
@@ -177,6 +167,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             observed_spelling,
             BackupTreatment::Ordinary,
         )?;
-        Ok(meaning)
+        Ok((target, meaning))
     }
 }

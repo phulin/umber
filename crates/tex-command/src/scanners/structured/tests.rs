@@ -355,7 +355,7 @@ fn malformed_definition_target_follows_get_r_token_backup_and_diagnostic() {
         );
 
         let (target, meaning) = processor
-            .scan_let_assignment(false)
+            .scan_let_assignment()
             .expect("inaccessible target recovery");
         assert_eq!(processor.state.resolve(target), "inaccessible");
         assert_eq!(
@@ -439,16 +439,14 @@ fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
             &mut diagnostic_effects,
         );
 
-        let (_, warm) = processor.scan_let_assignment(false).expect("warm let scan");
+        let (_, warm) = processor.scan_let_assignment().expect("warm let scan");
         assert!(matches!(warm, tex_state::MeaningWord::Macro { .. }));
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
 
         let (_, measured) = {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-            processor
-                .scan_let_assignment(false)
-                .expect("measured let scan")
+            processor.scan_let_assignment().expect("measured let scan")
         };
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
 
@@ -525,8 +523,7 @@ fn let_uses_meaning_for_spaces_but_spelling_for_equals() {
                 &mut fuel,
                 &mut diagnostics,
             );
-            let (actual_target, meaning) =
-                processor.scan_let_assignment(false).expect("let operands");
+            let (actual_target, meaning) = processor.scan_let_assignment().expect("let operands");
             assert_eq!(actual_target, target);
             let Token::Char { ch, cat } = expected else {
                 unreachable!()

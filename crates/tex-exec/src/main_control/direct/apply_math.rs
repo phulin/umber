@@ -44,30 +44,6 @@ impl<G> DirectDispatch<'_, '_, G> {
         self.finish_host(applied)
     }
 
-    pub(super) fn execute_math_family(
-        &mut self,
-        mut family: tex_command::ScannedMathFamily,
-        mut font: FontId,
-        mut global: bool,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        let step = self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, _, _, _, command, _, _, _, _, _, _, _| {
-                semantic::execute_math_family(stores, command, &mut family, &mut font, &mut global)
-            },
-        )?;
-        self.schedule_assignment_token()?;
-        Ok(step)
-    }
-
     pub(super) fn execute_end_math_group(
         &mut self,
         mut operand0: GroupKind,

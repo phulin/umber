@@ -169,6 +169,20 @@ impl<G> DirectDispatch<'_, '_, G> {
                 let diagnostics = &mut self.diagnostics;
                 let mut scan_origin = self.current_origin;
                 if command_slot.is_none() {
+                    let tracing_commands = processor.int_param(IntParam::TRACING_COMMANDS);
+                    let tracing_ifs = processor.int_param(IntParam::TRACING_IFS);
+                    let continue_native = retain_commands
+                        && self.completed_operations < self.remaining_operations
+                        && initial_prefix.is_none()
+                        && tracing_commands <= 0
+                        && tracing_ifs <= 0
+                        && !processor.command_trace_printed()
+                        && processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                            execution.boxes.pending_leader.is_none()
+                        });
+                    if continue_native {
+                        self.current_origin = None;
+                    }
                     let source_admission = processor.with_execution_owners(
                         |context, _, _, _, _, execution, _, _, _| {
                             execution.main_loop_active
@@ -188,8 +202,21 @@ impl<G> DirectDispatch<'_, '_, G> {
                             error: None,
                             applied: false,
                         };
-                        let status =
-                            processor.main_loop_source_step_into(&mut command_slot, &mut consume);
+                        let (status, native_completion) = {
+                            let mut native = NativeMainControl::<true> {
+                                continue_native,
+                                remaining_operations: self.remaining_operations,
+                                completed_operations: &mut self.completed_operations,
+                                scan_origin: &mut scan_origin,
+                                completion: None,
+                            };
+                            let status = processor.main_loop_source_step_into(
+                                &mut command_slot,
+                                &mut consume,
+                                &mut native,
+                            );
+                            (status, native.completion)
+                        };
                         if consume.error.is_some() || status.is_err() {
                             self.cursor = Some(processor.delivery_cursor());
                             self.diagnostics.extend(
@@ -201,6 +228,14 @@ impl<G> DirectDispatch<'_, '_, G> {
                             return Err(consume.error.unwrap_or_else(|| {
                                 command_error(status.expect_err("source admission failed"))
                             }));
+                        }
+                        if let Some(completed) = native_completion {
+                            return retained_semantic!(
+                                receipts,
+                                |_context, _state, _effects, _fuel, _observer, _execution| {
+                                    completed.map_err(|error| scan_error(error, scan_origin))
+                                }
+                            );
                         }
                         match status.expect("source admission succeeded") {
                             tex_command::DeliveryStatus::CharacterRun if consume.applied => {
@@ -227,8 +262,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // `get_x_token`; §1034's inner character loop instead re-enters at
                     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
                     // run of adjacent characters from being delivered through expansion.
-                    let tracing_commands = processor.int_param(IntParam::TRACING_COMMANDS);
-                    let tracing_ifs = processor.int_param(IntParam::TRACING_IFS);
                     if tracing_commands > 0 || tracing_ifs > 0 {
                         let shown_mode =
                             processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
@@ -239,21 +272,15 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // Admit untraced native continuation at the actual reader boundary.
                     // Groups recheck tracing after unsave; reports and exceptional
                     // group kinds remain live. Consumption returns the real budget cut.
-                    let continue_native = retain_commands
-                        && self.completed_operations < self.remaining_operations
-                        && initial_prefix.is_none()
-                        && tracing_commands <= 0
-                        && tracing_ifs <= 0
-                        && !processor.command_trace_printed()
-                        && processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                            execution.boxes.pending_leader.is_none()
-                        });
-                    if continue_native {
-                        self.current_origin = None;
-                    }
                     let (delivery, native_completion) = {
-                        let mut native = NativeMainControl {
-                            continue_native,
+                        let mut native = NativeMainControl::<false> {
+                            continue_native: continue_native
+                                && !main_loop_active
+                                && processor.with_execution_owners(
+                                    |_, _, _, _, _, execution, _, _, _| {
+                                        execution.modes.current_list().pending_hchars().is_none()
+                                    },
+                                ),
                             remaining_operations: self.remaining_operations,
                             completed_operations: &mut self.completed_operations,
                             scan_origin: &mut scan_origin,
@@ -759,25 +786,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                             command_code
                                 .expect("expanded delivery selected a static or font command"),
                         ) {
-                            (
-                                _,
-                                code @ (codes::PRIMITIVE_TEXT_FONT
-                                | codes::PRIMITIVE_SCRIPT_FONT
-                                | codes::PRIMITIVE_SCRIPT_SCRIPT_FONT),
-                            ) => {
-                                let size = match code {
-                                    codes::PRIMITIVE_TEXT_FONT => tex_command::MathFamilySize::Text,
-                                    codes::PRIMITIVE_SCRIPT_FONT => {
-                                        tex_command::MathFamilySize::Script
-                                    }
-                                    _ => tex_command::MathFamilySize::ScriptScript,
-                                };
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                finish_scan!(self.scan_math_family_assignment(size, global))
-                            }
                             // §1090 backs up the selected command before everypar or operand scanning.
                             (
                                 Mode::Vertical | Mode::InternalVertical,
@@ -1227,7 +1235,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (
                                 _,
-                                code @ (codes::PRIMITIVE_COUNT
+                                code @ (codes::PRIMITIVE_TEXT_FONT
+                                | codes::PRIMITIVE_SCRIPT_FONT
+                                | codes::PRIMITIVE_SCRIPT_SCRIPT_FONT
+                                | codes::PRIMITIVE_COUNT
                                 | codes::COUNT_REGISTER
                                 | codes::PRIMITIVE_DIMEN
                                 | codes::DIMEN_REGISTER

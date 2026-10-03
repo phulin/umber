@@ -4,7 +4,7 @@ use super::*;
 
 // The consumer borrows actual driver counters. Its optional completion owns
 // only a real semantic result at a reporting or failure boundary, never a word.
-pub(super) struct NativeMainControl<'a> {
+pub(super) struct NativeMainControl<'a, const TEXT_BOUNDARY: bool> {
     pub(super) continue_native: bool,
     pub(super) remaining_operations: usize,
     pub(super) completed_operations: &'a mut usize,
@@ -12,7 +12,7 @@ pub(super) struct NativeMainControl<'a> {
     pub(super) completion: Option<Result<ReplayStep, ExecError>>,
 }
 
-impl NativeMainControl<'_> {
+impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
     // Keep actual command semantics out of the per-word expansion back edge.
     // The no-op arm stays inline; this is its sibling substantive dispatcher.
     #[inline(never)]
@@ -24,9 +24,6 @@ impl NativeMainControl<'_> {
         control_sequence: Option<tex_state::interner::Symbol>,
     ) -> std::ops::ControlFlow<()> {
         *self.scan_origin = Some(spelling.origin());
-        let leaving_text = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-            execution.main_loop_active || execution.modes.current_list().pending_hchars().is_some()
-        });
         let code = match meaning {
             tex_state::meaning::MeaningWord::Font(_) => codes::FONT,
             tex_state::meaning::MeaningWord::Static(word) => {
@@ -37,6 +34,23 @@ impl NativeMainControl<'_> {
             }
         };
         let result = match code {
+            codes::CHAR_SPACE => processor.with_execution_owners(
+                |context, _, effects, fuel, _, execution, _, _, _| {
+                    execution.main_loop_active = false;
+                    if matches!(
+                        execution.modes.current_mode(),
+                        Mode::Horizontal | Mode::RestrictedHorizontal
+                    ) {
+                        crate::box_runtime::append_space_with_fuel(
+                            &mut execution.modes,
+                            context,
+                            effects,
+                            fuel,
+                        )?;
+                    }
+                    Ok(ReplayStep::Continue)
+                },
+            ),
             codes::RELAX => processor.with_execution_owners(
                 |context, _, effects, fuel, _, execution, _, _, _| {
                     execution.main_loop_active = false;
@@ -90,21 +104,26 @@ impl NativeMainControl<'_> {
                 } else {
                     (GroupKind::SemiSimple, "semi simple group")
                 };
-                processor
-                    .with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
-                        if execution.modes.current_list().pending_hchars().is_some() {
-                            crate::box_runtime::flush_pending_hchars_with_fuel(
-                                &mut execution.modes,
-                                context,
-                                effects,
-                                fuel,
-                            )?;
-                        }
-                        Ok(())
-                    })
-                    .and_then(|()| {
-                        apply_groups::finish_native_group_leave(processor, kind, error_context)
-                    })
+                (if TEXT_BOUNDARY {
+                    processor.with_execution_owners(
+                        |context, _, effects, fuel, _, execution, _, _, _| {
+                            if execution.modes.current_list().pending_hchars().is_some() {
+                                crate::box_runtime::flush_pending_hchars_with_fuel(
+                                    &mut execution.modes,
+                                    context,
+                                    effects,
+                                    fuel,
+                                )?;
+                            }
+                            Ok(())
+                        },
+                    )
+                } else {
+                    Ok(())
+                })
+                .and_then(|()| {
+                    apply_groups::finish_native_group_leave(processor, kind, error_context)
+                })
             }
             code => {
                 let tex_state::meaning::MeaningWord::Static(word) = meaning else {
@@ -131,7 +150,7 @@ impl NativeMainControl<'_> {
         };
         // Unsave can restore tracing parameters and can deliver aftergroup
         // diagnostics. Re-enter main control before another word in either case.
-        if leaving_text
+        if TEXT_BOUNDARY
             || *self.completed_operations + 1 >= self.remaining_operations
             || result.is_err()
             || processor.has_pending_reports()
@@ -156,11 +175,11 @@ impl NativeMainControl<'_> {
     }
 }
 
-impl<'state, 'host, G>
+impl<'state, 'host, G, const TEXT_BOUNDARY: bool>
     tex_command::MainControlConsumer<
         CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
         G,
-    > for NativeMainControl<'_>
+    > for NativeMainControl<'_, TEXT_BOUNDARY>
 {
     #[inline(always)]
     fn accepts_native_terminal(
@@ -183,7 +202,7 @@ impl<'state, 'host, G>
             tex_state::meaning::MeaningWord::Macro { .. } => return false,
         };
         match Meaning::runtime_word_control_code(word) {
-            codes::PRIMITIVE_BEGIN_GROUP => true,
+            codes::CHAR_SPACE | codes::PRIMITIVE_BEGIN_GROUP => true,
             codes::CHAR_BEGIN_GROUP => {
                 processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
                     !matches!(
@@ -220,10 +239,7 @@ impl<'state, 'host, G>
             meaning,
             tex_state::meaning::MeaningWord::Static(Meaning::RELAX_WORD)
         ) {
-            if processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                execution.main_loop_active
-                    || execution.modes.current_list().pending_hchars().is_some()
-            }) {
+            if TEXT_BOUNDARY {
                 return self.consume_substantive_terminal(
                     processor,
                     spelling,

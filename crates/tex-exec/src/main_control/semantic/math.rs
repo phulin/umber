@@ -43,27 +43,6 @@ pub(in crate::main_control) fn execute_missing_math_shift<G>(
     }
 }
 
-pub(in crate::main_control) fn execute_math_family<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    family: &mut tex_command::ScannedMathFamily,
-    font: &mut FontId,
-    global: &mut bool,
-) -> Result<ReplayStep, ExecError> {
-    {
-        AssignmentCommitter::new(stores, command.diagnostic_effects).try_unscoped(|stores| {
-            assign_math_family_font(
-                stores,
-                MathFontSize::from(family.size),
-                family.family,
-                *font,
-                *global,
-            )
-        })?;
-        Ok(ReplayStep::Continue)
-    }
-}
-
 pub(in crate::main_control) fn execute_end_math_group<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,

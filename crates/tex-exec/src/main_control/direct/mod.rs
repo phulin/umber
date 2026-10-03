@@ -31,7 +31,6 @@ mod scan_box_dimension;
 mod scan_character_recovery;
 mod scan_group_recovery;
 mod scan_leaders;
-mod scan_math;
 mod scan_meaning_recovery;
 mod scan_primitive_recovery;
 mod scan_replay;

@@ -4,7 +4,10 @@ use super::*;
 pub(super) fn accepts_assignment(code: u64) -> bool {
     matches!(
         code,
-        codes::PRIMITIVE_COUNT
+        codes::PRIMITIVE_TEXT_FONT
+            | codes::PRIMITIVE_SCRIPT_FONT
+            | codes::PRIMITIVE_SCRIPT_SCRIPT_FONT
+            | codes::PRIMITIVE_COUNT
             | codes::COUNT_REGISTER
             | codes::PRIMITIVE_DIMEN
             | codes::DIMEN_REGISTER
@@ -48,6 +51,31 @@ pub(super) fn execute_assignment<'state, 'host, G>(
         global || matches!(code, codes::PRIMITIVE_GDEF | codes::PRIMITIVE_XDEF),
     );
     match code {
+        codes::PRIMITIVE_TEXT_FONT
+        | codes::PRIMITIVE_SCRIPT_FONT
+        | codes::PRIMITIVE_SCRIPT_SCRIPT_FONT => {
+            let size = match code {
+                codes::PRIMITIVE_TEXT_FONT => MathFontSize::Text,
+                codes::PRIMITIVE_SCRIPT_FONT => MathFontSize::Script,
+                _ => MathFontSize::ScriptScript,
+            };
+            let family = take_native_scalar!(
+                processor.scan_restricted_integer(tex_command::RestrictedIntegerClass::FourBit),
+                scan_origin
+            )
+            .value as u8;
+            let _ = take_native_scalar!(processor.scan_optional_equals(), scan_origin);
+            let font = take_native_scalar!(processor.scan_font_selector(), scan_origin);
+            with_native_assignment!(processor, observation_receipts, pending_diagnostics;
+                _receipts,
+                |context, _state, effects, _fuel, _observer, _execution| {
+                    AssignmentCommitter::new(context, effects).try_unscoped(|context| {
+                        assign_math_family_font(context, size, family, font, global)
+                    })?;
+                    Ok(ReplayStep::Continue)
+                }
+            )
+        }
         codes::PRIMITIVE_COUNT | codes::COUNT_REGISTER => {
             let index = if code == codes::COUNT_REGISTER {
                 Meaning::runtime_word_operand(word) as u16
@@ -298,10 +326,13 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             Ok(step)
         }
         codes::PRIMITIVE_LET | codes::PRIMITIVE_FUTURE_LET => {
-            let (target, meaning) = processor
-                .scan_let_assignment(code == codes::PRIMITIVE_FUTURE_LET)
-                .map_err(command_error)
-                .map_err(|error| scan_error(error, scan_origin))?;
+            let (target, meaning) = (if code == codes::PRIMITIVE_FUTURE_LET {
+                processor.scan_futurelet_assignment()
+            } else {
+                processor.scan_let_assignment()
+            })
+            .map_err(command_error)
+            .map_err(|error| scan_error(error, scan_origin))?;
             let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |context, _state, effects, fuel, _observer, native_execution| {

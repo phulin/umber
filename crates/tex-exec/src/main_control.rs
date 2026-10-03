@@ -3601,7 +3601,6 @@ impl<G> MainControl<G> {
                         .set_display_eq_no(&context, crate::mode::DisplayEqNo { side, display });
                 }
             }
-            MathRequest::Family(_) => {}
         }
         Ok(ReplayStep::Continue)
     }

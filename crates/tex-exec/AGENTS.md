@@ -323,3 +323,13 @@ exit use their real pending-character flush; assignments keep their own scan
 and flush ordering. Actual text transitions return a semantic completion so
 the retained processor refreshes its fetch role and mode without a command
 record or a second delivery loop.
+
+Math-font family assignments run in the native assignment arm on the retained
+processor. The second math-family scanner module, application wrappers and
+unused family request are deleted. The central font-support validation and
+scoped math-font state write remain authoritative.
+
+The native consumer is specialized at its actual entry: bulk text boundaries
+flush and return their real completion; ordinary admitted terminals continue
+without per-word text-owner queries. The existing reader admission guards
+remain with their actual call sites; no cached eligibility state is added.

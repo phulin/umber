@@ -516,6 +516,9 @@ fn native_terminals_after_text_refresh_delivery_and_preserve_group_restoration()
     for (operation, tail) in [
         (r"\relax ", "xyz"),
         (r"\f ", "xyz"),
+        (r"\textfont0=\f ", "xyz"),
+        (r"\scriptfont0=\f ", "xyz"),
+        (r"\scriptscriptfont0=\f ", "xyz"),
         (r"{\count2=7}", "xyz"),
         (r"\begingroup\count2=7\endgroup ", "xyz"),
         (r"\let\alias=\probe ", "xyz"),

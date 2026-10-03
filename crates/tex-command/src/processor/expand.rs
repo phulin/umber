@@ -679,13 +679,53 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         site: ReadSite,
         kind: crate::fuel::RawDeliveryKind,
         destination: &mut Option<CurrentCommand<G>>,
+        native: &mut impl MainControlConsumer<Self, G>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.fuel.charge()?;
-        let mut command = None;
-        let literal = self.write_delivered_word(word, origin, suppress, site, kind, &mut command);
-        let mut command = command.take().expect("boundary word initializes command");
-        self.settle_hot_delivery(&mut command, literal)?;
-        *destination = Some(command);
+        let (meaning, resolution) = self.resolve_token_word(word);
+        self.record_consumed_word(kind, resolution.meaning_lookup());
+        if !self.is_observed()
+            && !self
+                .command
+                .delivery_mode
+                .requires_semantic_settlement(suppress, meaning.is_outer())
+            && matches!(
+                classify_native_command(word, &meaning),
+                ExpandedCommandAction::Return
+            )
+            && native.accepts_native_terminal(self, &meaning)
+        {
+            if matches!(site, ReadSite::Source(_))
+                && let Some(location) = self.pending_diagnostic_location.take()
+            {
+                self.command.set_last_diagnostic_location(Some(location));
+            }
+            self.command
+                .roots
+                .alignment
+                .account_literal_catcode(resolution.literal_catcode());
+            let _ = native.consume_native_terminal(
+                self,
+                TracedTokenWord::from_parts(word, origin),
+                &meaning,
+                resolution.control_sequence(),
+            );
+        } else {
+            let line = match site {
+                ReadSite::Source(line) => line,
+                _ => None,
+            };
+            let command = destination.insert(CurrentCommand::from_delivered_parts(
+                word,
+                origin,
+                matches!(site, ReadSite::Source(_)),
+                line,
+                suppress,
+                meaning,
+                resolution.control_sequence(),
+            ));
+            self.settle_hot_delivery(command, resolution.literal_catcode())?;
+        }
         Ok(DeliveryStatus::CharacterRunBoundary)
     }
 
@@ -696,6 +736,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         consume: &mut impl MainCharacterConsumer<G, Facts>,
+        native: &mut impl MainControlConsumer<Self, G>,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         let mut consumed_characters = false;
@@ -754,6 +795,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         site,
                         kind,
                         destination,
+                        native,
                     )
                 },
             )?;
@@ -798,6 +840,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         site,
                         kind,
                         destination,
+                        native,
                     )
                 },
             )? {
@@ -1482,10 +1525,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         consume: &mut C,
+        native: &mut impl MainControlConsumer<Self, G>,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         debug_assert!(!self.is_observed());
-        self.main_character_run(destination, consume)
+        self.main_character_run(destination, consume, native)
     }
 
     #[cold]

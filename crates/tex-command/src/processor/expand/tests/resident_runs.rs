@@ -213,7 +213,7 @@ fn resident_character_stop_resumes_without_reselecting_each_word() {
         );
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("resident admission"),
             crate::DeliveryStatus::CharacterRun
         );
@@ -221,7 +221,7 @@ fn resident_character_stop_resumes_without_reselecting_each_word() {
         assert_eq!(consumer.characters.len(), 17);
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                 .expect("resident admission"),
             crate::DeliveryStatus::CharacterRunBoundary
         );
@@ -265,7 +265,7 @@ fn resident_character_fuel_failure_preserves_exact_consumed_prefix() {
             );
             assert!(
                 processor
-                    .main_loop_source_step_into(&mut destination, &mut consumer)
+                    .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
                     .is_err()
             );
             assert_eq!(consumer.characters, &"abcdefg"[..limit as usize]);

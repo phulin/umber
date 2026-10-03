@@ -47,8 +47,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 {
                     let size =
                         MathFamilySize::of_primitive(primitive).expect("guard proves def_family");
-                    let family = processor.scan_math_family(size)?;
-                    processor.state.math_family_font(size.into(), family.family)
+                    let family = processor
+                        .scan_restricted_integer(crate::RestrictedIntegerClass::FourBit)?
+                        .value as u8;
+                    processor.state.math_family_font(size.into(), family)
                 }
                 _ => {
                     // TeX82 §577 reports before §327's back_error restores
