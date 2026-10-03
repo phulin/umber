@@ -1226,13 +1226,13 @@ impl<G> CommandState<G> {
         }
         let exhausted_backed_up_endv = matches!(
             top,
-            InputLevel::Resident(crate::input::ResidentTokenRow {
-                header,
+            InputLevel::Resident(row @ crate::input::ResidentTokenRow {
                 storage: crate::input::ResidentTokenStorage::List(
                     crate::input::PackedTokenOwnership::BackedUp
                 ),
-            }) if matches!(header.behavior(), TokenBehavior::BackedUp(_))
-                && header.frame.position() >= header.frame.limit()
+                ..
+            }) if matches!(row.behavior(), TokenBehavior::BackedUp(_))
+                && row.frame.position() >= row.frame.limit()
         );
         if exhausted_backed_up_endv
             && self

@@ -107,7 +107,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // preamble fatal path, not an internal Rust invariant failure.
             match level {
                 level @ InputLevel::Resident(row) => {
-                    let cursor = &row.header;
+                    let cursor = row;
                     if level.stored_is_exhausted() != Some(true) {
                         break;
                     }

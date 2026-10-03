@@ -374,7 +374,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .map_or(source.slot.cursor.next_physical_offset, |line| {
                     line.cursor.byte_cursor
                 }),
-            InputLevel::Resident(row) => u64::from(row.header.frame.position()),
+            InputLevel::Resident(row) => u64::from(row.frame.position()),
         };
         (input_level_identity(level).0, position)
     }

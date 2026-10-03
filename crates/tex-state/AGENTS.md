@@ -632,3 +632,5 @@ refresh bookkeeping on append, unsave or checkpoint transitions.
   their boundary directly; cursor and sparse-chain state exist only in the
   sole saved-record restoration walk. Validation, the unsave guard and
   dependency poisoning apply to every group close.
+
+The checked packed-token frame leaf constructor is inlined across crate boundaries so token-frame owners initialize their final row directly. Its native identity, source context, positions, bounds, kind and flags retain their canonical meanings; no alternate frame encoding is added.

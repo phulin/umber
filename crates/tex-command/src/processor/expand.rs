@@ -861,9 +861,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .rows
                     .last()
                     .is_none_or(|row| match row {
-                        InputLevel::Resident(row) => {
-                            row.header.frame.position() >= row.header.frame.limit()
-                        }
+                        InputLevel::Resident(row) => row.frame.position() >= row.frame.limit(),
                         InputLevel::Source(_) => false,
                     })
             {

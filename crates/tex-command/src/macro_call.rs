@@ -363,7 +363,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .rev()
             .take_while(|level| {
                 matches!(level, crate::input::InputLevel::Resident(row)
-                    if !matches!(row.header.behavior(), crate::input::TokenBehavior::VTemplate)
+                    if !matches!(row.behavior(), crate::input::TokenBehavior::VTemplate)
                         && level.stored_is_exhausted() == Some(true))
             })
             .any(|level| crate::input::input_level_identity(level) == owner)

@@ -620,3 +620,9 @@ Horizontal glyphs return their actual completion from the glyph arm because they
 TeX82 section 1152's synthetic active spelling is already the current token: it must not be charged or delivered again. Ordinary treatment resolves that spelling once, expands its native macro or primitive operands within the shared expanded invocation, and backs the actual terminal spelling through the existing word consumer. A nonexpandable active meaning backs its spelling directly. This avoids both the synthetic `CurrentCommand` and a delivered result created solely for backup.
 
 Observed treatment and genuine undefined, end-template or alignment demands keep their existing delivered facts and ordering. Empty replacement, replay completion, prefix failure and paragraph/outer recovery use the same canonical macro matcher and input owners. Expansion capacity and checkpoint quiescence stay at their actual invocation boundaries; no synthetic input row or token carrier replaces either command.
+
+## Resident frame construction
+
+Every resident input row stores its actual packed frame directly beside its token storage. The one-field TokenRowHeader wrapper and its constructor are deleted. Behavior and retirement projections belong to the resident row; checkpoints copy the native frame, and source/input cursors access it directly. There is no replacement header type or compatibility accessor.
+
+The public packed-token frame constructor is a small checked field initializer and is inlined across crate boundaries. A macro's constant frame kind, flags and zero position can then be written into its final row, rather than calling a generic constructor and copying its temporary return through additional stack locations. Frame bounds, source context, identities, retirement and peak-use accounting remain authoritative.

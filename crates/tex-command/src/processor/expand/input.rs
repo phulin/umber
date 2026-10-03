@@ -262,7 +262,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let InputLevel::Resident(row) = &mut levels.rows[index] else {
             return Err(CommandError::input_invariant());
         };
-        let frame = &mut row.header.frame;
+        let frame = &mut row.frame;
         if frame.position() < frame.limit() {
             let position = frame.start() as usize + frame.position() as usize;
             let word = match &row.storage {

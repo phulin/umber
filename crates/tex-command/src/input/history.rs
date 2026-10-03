@@ -685,7 +685,7 @@ impl<G> InputStack<G> {
     + ExactSizeIterator
     + Clone
     + 'a {
-        let frame = row.header.frame;
+        let frame = row.frame;
         (0..frame.limit()).map(|index| {
             self.row_word_at(row, index)
                 .expect("resident row span is valid")
@@ -700,7 +700,7 @@ impl<G> InputStack<G> {
         row: &super::ResidentTokenRow<G>,
         index: u32,
     ) -> Option<tex_state::token::TracedTokenWord> {
-        if index >= row.header.frame.limit() {
+        if index >= row.frame.limit() {
             return None;
         }
         match &row.storage {
@@ -721,7 +721,7 @@ impl<G> InputStack<G> {
             }
             super::ResidentTokenStorage::List(_) => self
                 .words
-                .get(row.header.frame.start() as usize + index as usize)
+                .get(row.frame.start() as usize + index as usize)
                 .copied(),
         }
     }
@@ -736,10 +736,10 @@ impl<G> InputStack<G> {
         else {
             unreachable!("aftergroup backup is token input")
         };
-        assert_eq!(row.header.identity(), identity);
-        assert_eq!(row.header.frame.absolute_limit(), self.words.len());
+        assert_eq!(row.identity(), identity);
+        assert_eq!(row.frame.absolute_limit(), self.words.len());
         self.words.push(word);
-        row.header.frame.extend_undelivered_tokens(1);
+        row.frame.extend_undelivered_tokens(1);
     }
 
     pub(crate) fn finish_aftergroup_links(&mut self, identity: super::InputLevelId) {
@@ -747,8 +747,8 @@ impl<G> InputStack<G> {
         else {
             unreachable!("aftergroup backup is token input")
         };
-        assert_eq!(row.header.identity(), identity);
-        self.words[row.header.frame.start() as usize..row.header.frame.absolute_limit()].reverse();
+        assert_eq!(row.identity(), identity);
+        self.words[row.frame.start() as usize..row.frame.absolute_limit()].reverse();
     }
 
     pub(crate) fn append_macro_argument_word(
@@ -801,7 +801,7 @@ impl<G> InputStack<G> {
         let super::InputLevel::Resident(row) = self.rows.get(index)? else {
             return None;
         };
-        self.row_word_at(row, row.header.frame.position())
+        self.row_word_at(row, row.frame.position())
     }
 
     /// The parameter text stored below a macro activation's replacement.
@@ -845,19 +845,19 @@ impl<G> InputStack<G> {
             },
             Some(InputLevel::Resident(row)) => match &row.storage {
                 super::ResidentTokenStorage::MacroBody(_) => DiagnosticInputTop::MacroBody {
-                    identity: row.header.identity(),
-                    position: row.header.frame.position(),
+                    identity: row.identity(),
+                    position: row.frame.position(),
                 },
                 super::ResidentTokenStorage::MacroArgument { .. } => {
                     DiagnosticInputTop::MacroArgument {
-                        identity: row.header.identity(),
-                        position: row.header.frame.position(),
+                        identity: row.identity(),
+                        position: row.frame.position(),
                     }
                 }
                 _ => DiagnosticInputTop::Stored {
-                    frame: row.header.frame,
-                    retirement: row.header.retirement(),
-                    position: row.header.frame.position(),
+                    frame: row.frame,
+                    retirement: row.retirement(),
+                    position: row.frame.position(),
                 },
             },
         };
@@ -1051,7 +1051,7 @@ impl<G> crate::CommandState<G> {
         let Some(InputLevel::Resident(row)) = rows.last_mut() else {
             return Ok(ResidentRun::default());
         };
-        let frame = row.header.frame;
+        let frame = row.frame;
         if frame.position() >= frame.limit() {
             return Ok(ResidentRun {
                 consumed: 0,
@@ -1119,11 +1119,10 @@ impl<G> crate::CommandState<G> {
         let consumed = count as u32;
         // The span append above succeeded in full, so the authoritative cursor
         // and fuel settle as one atomic scalar run.
-        row.header
-            .frame
+        row.frame
             .advance_resident_run(consumed)
             .ok_or_else(crate::CommandError::input_invariant)?;
-        let exhausted = row.header.frame.position() >= row.header.frame.limit();
+        let exhausted = row.frame.position() >= row.frame.limit();
         // TeX82 §347 counts the run's interior braces in `align_state`; no
         // alignment is active when the admission accepts braces.
         if admission.brace_delta() != 0 {
@@ -1178,7 +1177,7 @@ impl<G> crate::CommandState<G> {
             .input
             .levels
             .push(InputLevel::Resident(super::ResidentTokenRow {
-                header: super::TokenRowHeader::new(frame),
+                frame,
                 storage: super::ResidentTokenStorage::MacroArgument { slot, region },
             }));
         if let Some(sink) = observer.as_deref_mut() {
@@ -1464,7 +1463,7 @@ impl<G> InputStack<G> {
     ) {
         match &row.storage {
             super::ResidentTokenStorage::List(_) => {
-                words.truncate(row.header.frame.start() as usize);
+                words.truncate(row.frame.start() as usize);
             }
             super::ResidentTokenStorage::StoredList(_) => {}
             super::ResidentTokenStorage::MacroBody(body) => {

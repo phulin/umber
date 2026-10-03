@@ -350,9 +350,9 @@ impl<G> ArgumentArena<G> {
         }
         let mut retained = false;
         if let Some(super::super::InputLevel::Resident(row)) = rows.last()
-            && row.header.frame.position() != 0
+            && row.frame.position() != 0
         {
-            let at = row.header.frame.position() - 1;
+            let at = row.frame.position() - 1;
             match &row.storage {
                 super::super::ResidentTokenStorage::MacroBody(source)
                     if word.origin() == tex_state::token::OriginId::UNKNOWN

@@ -3,8 +3,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use super::{
     BackedUpToken, BackupTreatment, InputLevelId, PackedTokenOwnership, PackedTokenSpanSource,
     PendingInsertion, ReplayTrace, ResidentTokenRow, ResidentTokenStorage, RetirementBehavior,
-    StoredReplayReason, TokenBehavior, TokenRowHeader, TokenSources, backed_up_replay,
-    packed_token_frame, stored_replay, transient_replay,
+    StoredReplayReason, TokenBehavior, TokenSources, backed_up_replay, packed_token_frame,
+    stored_replay, transient_replay,
 };
 use crate::attempt::AttemptArena;
 
@@ -99,16 +99,16 @@ fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
     assert_eq!(frame.start(), 3);
     let _ = frame.advance();
     let row = ResidentTokenRow::<()> {
-        header: TokenRowHeader::new(frame),
+        frame,
         storage: ResidentTokenStorage::List(PackedTokenOwnership::BackedUp),
     };
 
-    assert_eq!(row.header.position(), 1);
-    assert_eq!(row.header.frame.absolute_position(), 4);
-    assert_eq!(row.header.identity(), InputLevelId(5));
-    assert_eq!(row.header.retirement(), RetirementBehavior::StopAtEnd);
+    assert_eq!(row.position(), 1);
+    assert_eq!(row.frame.absolute_position(), 4);
+    assert_eq!(row.identity(), InputLevelId(5));
+    assert_eq!(row.retirement(), RetirementBehavior::StopAtEnd);
     assert_eq!(
-        row.header.behavior(),
+        row.behavior(),
         TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
     );
 }
@@ -120,10 +120,10 @@ fn packed_omit_template_retains_its_trace_through_v_template_behavior() {
     let trace = ReplayTrace::OmitTemplate;
     let frame = packed_token_frame(InputLevelId(5), 0, 1, &behavior, retirement, &trace);
     let row = ResidentTokenRow::<()> {
-        header: TokenRowHeader::new(frame),
+        frame,
         storage: ResidentTokenStorage::List(PackedTokenOwnership::Transient),
     };
 
-    assert_eq!(row.header.behavior(), TokenBehavior::VTemplate);
+    assert_eq!(row.behavior(), TokenBehavior::VTemplate);
     assert_eq!(row.trace(), ReplayTrace::OmitTemplate);
 }

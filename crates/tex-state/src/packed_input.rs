@@ -131,6 +131,7 @@ impl InputFrame {
     }
 
     #[must_use]
+    #[inline] // inline the checked leaf initializer into the final input row
     pub fn tokens(
         identity: u64,
         start: u32,

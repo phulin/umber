@@ -138,7 +138,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .last()
                 .and_then(|level| match level {
                     level @ InputLevel::Resident(row) => {
-                        let cursor = &row.header;
+                        let cursor = row;
                         (!matches!(cursor.behavior(), TokenBehavior::VTemplate)
                             && level.stored_is_exhausted() == Some(true))
                         .then(|| cursor.identity())
@@ -275,7 +275,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             row.storage,
             crate::input::ResidentTokenStorage::List(_)
                 | crate::input::ResidentTokenStorage::StoredList(_)
-        ) || !matches!(row.header.behavior(), TokenBehavior::BackedUp(_))
+        ) || !matches!(row.behavior(), TokenBehavior::BackedUp(_))
             || levels.pending_token_word(levels.len() - 1).is_some()
             || !matches!(
                 levels
@@ -290,7 +290,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         {
             return Ok(());
         }
-        match self.retire_input_top(row.header.identity())? {
+        match self.retire_input_top(row.identity())? {
             RetirementHandoff::Continue => Ok(()),
             RetirementHandoff::Stop | RetirementHandoff::EndV | RetirementHandoff::Completed(_) => {
                 Err(CommandError::input_invariant())
@@ -497,12 +497,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         match self.command.input.levels.last() {
             Some(level @ InputLevel::Resident(row))
                 if !matches!(
-                    row.header.frame.kind(),
+                    row.frame.kind(),
                     tex_state::packed_input::InputFrameKind::AlignmentVTemplate
                         | tex_state::packed_input::InputFrameKind::OmitTemplate
                 ) && level.stored_is_exhausted() == Some(true) =>
             {
-                Some((row.header.identity(), row.header.retirement()))
+                Some((row.identity(), row.retirement()))
             }
             Some(InputLevel::Resident(_)) | Some(InputLevel::Source(_)) | None => None,
         }

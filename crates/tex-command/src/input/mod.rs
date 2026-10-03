@@ -28,7 +28,7 @@ pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroBodyCursor, PackedInputFrame,
     PackedTokenOwnership, PackedTokenSpanSource, PendingInsertion, ReplayTrace, ResidentTokenRow,
     ResidentTokenStorage, RetirementBehavior, SourceLevel, SourceOpenDepths, SourceRetirement,
-    SourceSlot, StoredReplayReason, TokenBehavior, TokenRowHeader, TokenSources, backed_up_replay,
+    SourceSlot, StoredReplayReason, TokenBehavior, TokenSources, backed_up_replay,
     packed_token_frame, semantic_replay, transient_replay,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor, SourceOffsetMap};
@@ -376,7 +376,7 @@ pub(crate) fn tracked_input_projection<G>(
                 }
             }
             InputLevel::Resident(row) => {
-                let cursor = &row.header;
+                let cursor = row;
                 stack.byte(1);
                 // Macro-activation and alignment identities need stack-relative
                 // translation, which is deliberately fail-closed for now.
@@ -500,7 +500,7 @@ fn project_token_cursor<G>(
     levels: &InputStack<G>,
     state: &tex_state::CommandContext<'_, G>,
 ) -> Option<()> {
-    let cursor = &row.header;
+    let cursor = row;
     hash.u64(u64::from(cursor.frame.position()));
     hash.byte(match cursor.retirement() {
         RetirementBehavior::Pop => 0,
@@ -788,7 +788,7 @@ impl<G> InputState<G> {
     fn context_level_is_visible(row: &ResidentTokenRow<G>, current: bool) -> bool {
         // §312: a fully read backed-up list shows only as the current level.
         !(matches!(row.trace(), ReplayTrace::BackedUp)
-            && row.header.frame.position() >= row.header.frame.limit()
+            && row.frame.position() >= row.frame.limit()
             && !current)
     }
 
@@ -805,7 +805,7 @@ impl<G> InputState<G> {
         // the activation's retained immutable parameter text and replacement is
         // the projection's source.
         let replacement = levels.row_words(row);
-        let split = row.header.position().min(replacement.len());
+        let split = row.position().min(replacement.len());
         let render = |token: tex_state::token::Token| {
             let mut raw = String::new();
             crate::processor::expand_render::append_token_list_token_text(stores, token, &mut raw);
@@ -1083,7 +1083,7 @@ impl<G> InputState<G> {
         current: bool,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
-        let tokens = &row.header;
+        let tokens = row;
         let trace = row.trace();
         let words = levels.row_words(row);
 

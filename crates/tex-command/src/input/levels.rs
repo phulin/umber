@@ -252,18 +252,10 @@ impl<G> MacroBodyCursor<G> {
     }
 }
 
-/// One authoritative header shared by every token-backed input row.
-///
-/// Everything that selects delivery, retirement, provenance context, and the
-/// next word position lives here exactly once.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct TokenRowHeader {
-    pub(crate) frame: PackedInputFrame,
-}
-
+/// A token-backed input row owns its native frame and actual token storage.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ResidentTokenRow<G> {
-    pub(crate) header: TokenRowHeader,
+    pub(crate) frame: PackedInputFrame,
     pub(crate) storage: ResidentTokenStorage<G>,
 }
 
@@ -284,11 +276,7 @@ pub(crate) enum ResidentTokenStorage<G> {
     },
 }
 
-impl TokenRowHeader {
-    pub(crate) const fn new(frame: PackedInputFrame) -> Self {
-        Self { frame }
-    }
-
+impl<G> ResidentTokenRow<G> {
     pub(crate) fn identity(&self) -> InputLevelId {
         InputLevelId(self.frame.identity())
     }
@@ -316,7 +304,7 @@ impl TokenRowHeader {
                 },
             ),
             InputFrameKind::Recovery => TokenBehavior::Recovery,
-            InputFrameKind::Source => unreachable!("token header cannot be a source"),
+            InputFrameKind::Source => unreachable!("resident token frame cannot be a source"),
             InputFrameKind::Inserted
             | InputFrameKind::ExpandedTokenList
             | InputFrameKind::Macro
@@ -362,11 +350,9 @@ impl TokenRowHeader {
         });
         self.frame.set_flags(flags);
     }
-}
 
-impl<G> ResidentTokenRow<G> {
     pub(crate) fn trace(&self) -> ReplayTrace {
-        match self.header.frame.kind() {
+        match self.frame.kind() {
             InputFrameKind::Parameter => ReplayTrace::MacroParameter {
                 slot: match self.storage {
                     ResidentTokenStorage::MacroArgument { slot, .. } => slot,
@@ -424,7 +410,7 @@ impl<G> InputLevel<G> {
         match self {
             Self::Source(level) => Self::Source(level.checkpoint_copy()),
             Self::Resident(row) => Self::Resident(ResidentTokenRow {
-                header: row.header,
+                frame: row.frame,
                 storage: match &row.storage {
                     ResidentTokenStorage::List(ownership) => ResidentTokenStorage::List(*ownership),
                     ResidentTokenStorage::StoredList(list) => {
@@ -439,16 +425,16 @@ impl<G> InputLevel<G> {
         }
     }
 
-    pub(crate) fn stored_common(&self) -> Option<&TokenRowHeader> {
+    pub(crate) fn stored_common(&self) -> Option<&ResidentTokenRow<G>> {
         match self {
-            Self::Resident(row) => Some(&row.header),
+            Self::Resident(row) => Some(row),
             Self::Source(_) => None,
         }
     }
 
-    pub(crate) fn stored_common_mut(&mut self) -> Option<&mut TokenRowHeader> {
+    pub(crate) fn stored_common_mut(&mut self) -> Option<&mut ResidentTokenRow<G>> {
         match self {
-            Self::Resident(row) => Some(&mut row.header),
+            Self::Resident(row) => Some(row),
             Self::Source(_) => None,
         }
     }
@@ -465,7 +451,7 @@ impl<G> InputLevel<G> {
     pub(crate) const fn source_context(&self) -> Option<tex_state::packed_input::SourceContext> {
         match self {
             Self::Source(source) => source.frame.source_context(),
-            Self::Resident(tokens) => tokens.header.frame.source_context(),
+            Self::Resident(tokens) => tokens.frame.source_context(),
         }
     }
 
@@ -475,7 +461,7 @@ impl<G> InputLevel<G> {
     ) {
         match self {
             Self::Source(level) => level.frame.set_source_context(source),
-            Self::Resident(tokens) => tokens.header.frame.set_source_context(source),
+            Self::Resident(tokens) => tokens.frame.set_source_context(source),
         }
     }
 }

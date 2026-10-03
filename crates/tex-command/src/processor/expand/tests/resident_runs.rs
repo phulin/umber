@@ -173,7 +173,7 @@ fn skipped_resident_run_stops_before_the_over_budget_word() {
             else {
                 panic!("resident input expected")
             };
-            assert_eq!(u64::from(row.header.frame.position()), limit);
+            assert_eq!(u64::from(row.frame.position()), limit);
             drop(processor);
             assert_eq!(fuel.burned(), limit);
         });

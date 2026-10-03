@@ -20,10 +20,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let ResidentTokenStorage::MacroBody(body) = &row.storage else {
             return Ok(false);
         };
-        if row.header.frame.position() >= row.header.frame.limit()
+        if row.frame.position() >= row.frame.limit()
             || body
                 .body
-                .word(row.header.frame.position() as usize)
+                .word(row.frame.position() as usize)
                 .and_then(TokenWord::out_parameter_slot)
                 .is_none()
         {
@@ -73,7 +73,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let InputLevel::Resident(row) = row else {
             return Ok(None);
         };
-        let frame = &mut row.header.frame;
+        let frame = &mut row.frame;
         if frame.position() >= frame.limit() {
             return Ok(None);
         }
