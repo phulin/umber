@@ -480,17 +480,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    pub fn scan_dimension_retained(&mut self) -> RetainedScalarScan<ScannedScalar<Scaled>> {
+    pub fn scan_dimension_retained(&mut self) -> RetainedScalarScan<Scaled> {
         let result = self.scan_dimension();
         self.detach_retained_scalar(result)
     }
 
-    pub fn scan_mu_dimension_retained(&mut self) -> RetainedScalarScan<ScannedScalar<Scaled>> {
+    pub fn scan_mu_dimension_retained(&mut self) -> RetainedScalarScan<Scaled> {
         let result = self.scan_mu_dimension();
         self.detach_retained_scalar(result)
     }
 
-    pub fn scan_glue_retained(&mut self, mu: bool) -> RetainedScalarScan<ScannedScalar<GlueSpec>> {
+    pub fn scan_glue_retained(&mut self, mu: bool) -> RetainedScalarScan<GlueSpec> {
         let result = self.scan_glue(mu);
         self.detach_retained_scalar(result)
     }
@@ -751,14 +751,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     /// Scans a dimension or an internal dimension quantity.
-    fn scan_dimension(&mut self) -> Result<ScannedScalar<Scaled>, CommandError> {
+    fn scan_dimension(&mut self) -> Result<Scaled, CommandError> {
         Ok(self.scan_dimension_with_order(false, false)?.0)
     }
 
     /// Scans a dimension requiring TeX's `mu` unit. This is public only at
     /// the command-scanner boundary; replay receives the completed scaled
     /// value and never performs unit recognition itself.
-    fn scan_mu_dimension(&mut self) -> Result<ScannedScalar<Scaled>, CommandError> {
+    fn scan_mu_dimension(&mut self) -> Result<Scaled, CommandError> {
         Ok(self.scan_dimension_with_order(false, true)?.0)
     }
 
@@ -766,18 +766,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         allow_infinite: bool,
         mu: bool,
-    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
-        let result = self.scan_dimension_from_leading(false, OriginId::UNKNOWN, allow_infinite, mu);
+    ) -> Result<(Scaled, Order), CommandError> {
+        let result = self.scan_dimension_from_leading(false, allow_infinite, mu);
         finish_scalar_result!(self, result)
     }
 
     fn scan_dimension_after_integer(
         &mut self,
         negative: bool,
-        provenance: OriginId,
         allow_infinite: bool,
         mu: bool,
-    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
+    ) -> Result<(Scaled, Order), CommandError> {
         self.integer_terminator_character = None;
         let mut integer_call = ScalarCallFrame::default();
         let integer = scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call));
@@ -785,26 +784,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         if decimal {
             self.consume_token_spelling(&mut |_, _, _| Ok(()))?;
         }
-        self.scan_dimension_units(
-            integer.value,
-            decimal,
-            negative,
-            provenance,
-            allow_infinite,
-            mu,
-        )
+        self.scan_dimension_units(integer.value, decimal, negative, allow_infinite, mu)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn scan_dimension_units(
         &mut self,
         integer: i32,
         decimal: bool,
         negative: bool,
-        provenance: OriginId,
         allow_infinite: bool,
         mu: bool,
-    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
+    ) -> Result<(Scaled, Order), CommandError> {
         let (units, flip) = self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
         // TeX82 §448's trailing `<Scan an optional space>` sits between the
         // unit scan and `attach_sign:`, so every path that reached
@@ -813,24 +803,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         if !units.attach_sign {
             self.scan_optional_space()?;
         }
-        self.finish_dimension(
-            units.value,
-            units.order,
-            negative ^ flip,
-            provenance,
-            units.arith_error,
-        )
+        self.finish_dimension(units.value, units.order, negative ^ flip, units.arith_error)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn finish_dimension(
         &mut self,
         value: Scaled,
         order: Order,
         negative: bool,
-        provenance: OriginId,
         arith_error: bool,
-    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
+    ) -> Result<(Scaled, Order), CommandError> {
         // TeX82 §448-§460: every path converges at `attach_sign`, including
         // §449's internal-dimension shortcut.  The range check therefore
         // applies even when the stored internal value could only have arisen
@@ -841,24 +823,19 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         } else {
             value
         };
-        let scanned = ScannedScalar {
-            value: if negative {
-                Scaled::from_raw(-value.raw())
-            } else {
-                value
-            },
-            provenance: ScalarProvenance {
-                primary: provenance,
-            },
+        let value = if negative {
+            Scaled::from_raw(-value.raw())
+        } else {
+            value
         };
         observe!(
             self,
             CommandObservation::Scanner(ScannerRecord {
                 kind: "dimension",
-                value: ObservationValue::Scaled(i64::from(scanned.value.raw())),
+                value: ObservationValue::Scaled(i64::from(value.raw())),
             }),
         );
-        Ok((scanned, order))
+        Ok((value, order))
     }
 
     /// Classifies §413's committed value for TeX82 §449's two exits,
@@ -968,19 +945,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     /// Scans a normal or mu glue specification.
-    fn scan_glue(&mut self, mu: bool) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+    fn scan_glue(&mut self, mu: bool) -> Result<GlueSpec, CommandError> {
         self.scanned_glue_identity = None;
         self.scanned_glue_register = None;
         self.scanned_glue_shared_zero = false;
-        let result = self.scan_glue_from_leading(mu, false, OriginId::UNKNOWN);
+        let result = self.scan_glue_from_leading(mu, false);
         finish_scalar_result!(self, result)
     }
 
-    fn scan_glue_width(
-        &mut self,
-        mu: bool,
-        negative: bool,
-    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+    fn scan_glue_width(&mut self, mu: bool, negative: bool) -> Result<GlueSpec, CommandError> {
         self.scanned_glue_shared_zero = false;
         let width = self.scan_dimension_with_order(false, mu)?.0;
         if negative {
@@ -991,13 +964,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             mu,
             GlueSpec {
                 width: if negative {
-                    Scaled::from_raw(-width.value.raw())
+                    Scaled::from_raw(-width.raw())
                 } else {
-                    width.value
+                    width
                 },
                 ..GlueSpec::ZERO
             },
-            width.provenance.primary,
         );
         self.clear_fresh_glue_scan_origin();
         result
@@ -1015,12 +987,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         mu: bool,
         value: GlueSpec,
-        provenance: OriginId,
-    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+    ) -> Result<GlueSpec, CommandError> {
         if self.scan_keyword("plus")? {
-            self.scan_glue_stretch(mu, value, provenance)
+            self.scan_glue_stretch(mu, value)
         } else {
-            self.scan_glue_minus_keyword(mu, value, provenance)
+            self.scan_glue_minus_keyword(mu, value)
         }
     }
 
@@ -1028,24 +999,22 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         mu: bool,
         mut value: GlueSpec,
-        provenance: OriginId,
-    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+    ) -> Result<GlueSpec, CommandError> {
         let (stretch, order) = self.scan_dimension_with_order(true, mu)?;
-        value.stretch = stretch.value;
+        value.stretch = stretch;
         value.stretch_order = order;
-        self.scan_glue_minus_keyword(mu, value, provenance)
+        self.scan_glue_minus_keyword(mu, value)
     }
 
     fn scan_glue_minus_keyword(
         &mut self,
         mu: bool,
         value: GlueSpec,
-        provenance: OriginId,
-    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+    ) -> Result<GlueSpec, CommandError> {
         if self.scan_keyword("minus")? {
-            self.scan_glue_shrink(mu, value, provenance)
+            self.scan_glue_shrink(mu, value)
         } else {
-            self.finish_glue(value, provenance)
+            self.finish_glue(value)
         }
     }
 
@@ -1053,33 +1022,22 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         mu: bool,
         mut value: GlueSpec,
-        provenance: OriginId,
-    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+    ) -> Result<GlueSpec, CommandError> {
         let (shrink, order) = self.scan_dimension_with_order(true, mu)?;
-        value.shrink = shrink.value;
+        value.shrink = shrink;
         value.shrink_order = order;
-        self.finish_glue(value, provenance)
+        self.finish_glue(value)
     }
 
-    fn finish_glue(
-        &mut self,
-        value: GlueSpec,
-        provenance: OriginId,
-    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        let scanned = ScannedScalar {
-            value,
-            provenance: ScalarProvenance {
-                primary: provenance,
-            },
-        };
+    fn finish_glue(&mut self, value: GlueSpec) -> Result<GlueSpec, CommandError> {
         observe!(
             self,
             CommandObservation::Scanner(ScannerRecord {
                 kind: "glue",
-                value: observed_glue_value(&scanned.value),
+                value: observed_glue_value(&value),
             }),
         );
-        Ok(scanned)
+        Ok(value)
     }
 
     /// Runs TeX82 §465's `the_toks` recovery for a non-internal operand.
@@ -2217,7 +2175,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 | UnexpandablePrimitive::GlueStretchOrder
                 | UnexpandablePrimitive::GlueShrinkOrder),
             ) => {
-                let glue = self.scan_glue(false)?.value;
+                let glue = self.scan_glue(false)?;
                 let (kind, value) = match primitive {
                     UnexpandablePrimitive::GlueStretch => {
                         ("glue_stretch", InternalValue::Dimension(glue.stretch))

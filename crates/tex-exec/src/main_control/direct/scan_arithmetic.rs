@@ -18,7 +18,7 @@ pub(super) fn scan_arithmetic_operand<G, Facts: tex_command::CommandHostFacts<G>
         ArithmeticTarget::DimensionRegister(_) | ArithmeticTarget::DimensionParameter(_) => {
             match primitive {
                 UnexpandablePrimitive::Advance => ArithmeticOperand::Dimension(
-                    take_native_scalar!(processor.scan_dimension_retained(), scan_origin).value,
+                    take_native_scalar!(processor.scan_dimension_retained(), scan_origin),
                 ),
                 UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
                     ArithmeticOperand::Integer(
@@ -30,9 +30,10 @@ pub(super) fn scan_arithmetic_operand<G, Facts: tex_command::CommandHostFacts<G>
         }
         ArithmeticTarget::GlueRegister { mu, .. } | ArithmeticTarget::GlueParameter { mu, .. } => {
             match primitive {
-                UnexpandablePrimitive::Advance => ArithmeticOperand::Glue(
-                    take_native_scalar!(processor.scan_glue_retained(mu), scan_origin).value,
-                ),
+                UnexpandablePrimitive::Advance => ArithmeticOperand::Glue(take_native_scalar!(
+                    processor.scan_glue_retained(mu),
+                    scan_origin
+                )),
                 UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
                     ArithmeticOperand::Integer(
                         take_native_scalar!(processor.scan_integer_retained(), scan_origin).value,

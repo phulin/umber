@@ -271,7 +271,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             _ => unreachable!("only e-TeX glue conversions reach this scanner"),
         };
         let scan = self.scan_glue_retained(scan_mu);
-        let value = self.restore_retained_expression_child(scan)?.value;
+        let value = self.restore_retained_expression_child(scan)?;
         self.observe(CommandObservation::Scanner(ScannerRecord {
             kind: scanner,
             value: glue_value(value),
@@ -367,13 +367,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         ExpressionKind::Dimension => {
                             let result = self.scan_dimension_retained();
                             self.restore_retained_expression_child(result)
-                                .map(|value| ExpressionValue::Number(i64::from(value.value.raw())))
+                                .map(|value| ExpressionValue::Number(i64::from(value.raw())))
                         }
                         ExpressionKind::Glue => {
                             let result = self.scan_glue_retained(false);
                             self.restore_retained_expression_child(result).map(|value| {
                                 ExpressionValue::Glue(ExpressionGlue::from_spec(
-                                    value.value,
+                                    value,
                                     self.scanned_glue_identity,
                                     self.scanned_glue_register,
                                     self.scanned_glue_shared_zero,
@@ -384,7 +384,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             let result = self.scan_glue_retained(true);
                             self.restore_retained_expression_child(result).map(|value| {
                                 ExpressionValue::Glue(ExpressionGlue::from_spec(
-                                    value.value,
+                                    value,
                                     self.scanned_glue_identity,
                                     self.scanned_glue_register,
                                     self.scanned_glue_shared_zero,

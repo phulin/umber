@@ -187,10 +187,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn scan_dimension_from_leading(
         &mut self,
         mut negative: bool,
-        mut provenance: OriginId,
         allow_infinite: bool,
         mu: bool,
-    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
+    ) -> Result<(Scaled, Order), CommandError> {
         // TeX82 §448's `<Get the next non-blank non-sign token>` leaves that
         // token in hand and branches on it: an internal quantity (a command
         // code in §208/§209's `min_internal..=max_internal`) goes straight to
@@ -210,9 +209,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                           meaning,
                                           control_sequence,
                                           exceptional| {
-            if provenance == OriginId::UNKNOWN {
-                provenance = spelling.origin();
-            }
             match native_character(meaning) {
                 Some((' ' | '+', _)) => {}
                 Some(('-', _)) => negative = !negative,
@@ -223,7 +219,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         control_sequence,
                         exceptional,
                         negative,
-                        provenance,
                         allow_infinite,
                         mu,
                     )?);
@@ -234,13 +229,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         })?;
         match scanned {
             Some(scanned) => Ok(scanned),
-            None => self.finish_dimension(
-                Scaled::from_raw(0),
-                Order::Normal,
-                negative,
-                provenance,
-                false,
-            ),
+            None => self.finish_dimension(Scaled::from_raw(0), Order::Normal, negative, false),
         }
     }
 
@@ -252,10 +241,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         control_sequence: Option<Symbol>,
         exceptional: Option<&CurrentCommand<G>>,
         negative: bool,
-        provenance: OriginId,
         allow_infinite: bool,
         mu: bool,
-    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
+    ) -> Result<(Scaled, Order), CommandError> {
         // TeX82 §449's "Fetch an internal dimension and goto attach_sign,
         // or fetch an internal integer": `scan_something_internal(mu_val,
         // false)` when `mu`, and `scan_something_internal(dimen_val,false)`
@@ -279,18 +267,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         match internal {
             InternalScan::Value(value) => match self.fetch_internal_dimension(value, mu)? {
                 InternalDimension::Complete(value) => {
-                    self.finish_dimension(value, Order::Normal, negative, provenance, false)
+                    self.finish_dimension(value, Order::Normal, negative, false)
                 }
                 InternalDimension::Prefix(integer) => {
                     self.integer_terminator_character = None;
-                    self.scan_dimension_units(
-                        integer,
-                        false,
-                        negative,
-                        provenance,
-                        allow_infinite,
-                        mu,
-                    )
+                    self.scan_dimension_units(integer, false, negative, allow_infinite, mu)
                 }
             },
             // TeX82 §448's other branch: `back_input`, then either
@@ -301,9 +282,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 self.back_consumed_word(spelling, exceptional)?;
                 if leading_point {
                     self.consume_token_spelling(&mut |_, _, _| Ok(()))?;
-                    self.scan_dimension_units(0, true, negative, provenance, allow_infinite, mu)
+                    self.scan_dimension_units(0, true, negative, allow_infinite, mu)
                 } else {
-                    self.scan_dimension_after_integer(negative, provenance, allow_infinite, mu)
+                    self.scan_dimension_after_integer(negative, allow_infinite, mu)
                 }
             }
         }
@@ -313,8 +294,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         mu: bool,
         mut negative: bool,
-        mut provenance: OriginId,
-    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+    ) -> Result<GlueSpec, CommandError> {
         // TeX82 §461's `<Get the next non-blank non-sign token>`: `scan_glue`
         // owns its own leading signs so that §430 can negate an internal
         // glue's three components as a unit (`\skip0=-\skip1`). Routing a
@@ -326,9 +306,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                           meaning,
                                           control_sequence,
                                           exceptional| {
-            if provenance == OriginId::UNKNOWN {
-                provenance = spelling.origin();
-            }
             match native_character(meaning) {
                 Some((' ' | '+', _)) => {}
                 Some(('-', _)) => negative = !negative,
@@ -340,7 +317,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         exceptional,
                         mu,
                         negative,
-                        provenance,
                     )?);
                     return Ok(std::ops::ControlFlow::Break(()));
                 }
@@ -362,8 +338,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         exceptional: Option<&CurrentCommand<G>>,
         mu: bool,
         negative: bool,
-        provenance: OriginId,
-    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+    ) -> Result<GlueSpec, CommandError> {
         let level = if mu {
             InternalLevel::MuGlue
         } else {
@@ -409,7 +384,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let (InternalValue::Glue(glue) | InternalValue::MuGlue(glue)) = internal else {
                     unreachable!("outer pattern restricts the value to a glue specification")
                 };
-                self.finish_glue(glue, provenance)
+                self.finish_glue(glue)
             }
             // TeX82's `scan_glue` accepts an internal dimension as the
             // width of an ordinary glue specification.  In particular,
@@ -432,7 +407,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         width,
                         ..GlueSpec::ZERO
                     },
-                    provenance,
                 );
                 self.clear_fresh_glue_scan_origin();
                 result
@@ -452,7 +426,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         width,
                         ..GlueSpec::ZERO
                     },
-                    provenance,
                 );
                 self.clear_fresh_glue_scan_origin();
                 result

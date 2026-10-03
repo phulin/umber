@@ -68,7 +68,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         {
             let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
         }
-        let value = take_native_scalar!(processor.scan_dimension_retained(), scan_origin).value;
+        let value = take_native_scalar!(processor.scan_dimension_retained(), scan_origin);
         {
             let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) =
                 (index, dimension, value, global);

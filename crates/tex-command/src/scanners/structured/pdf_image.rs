@@ -34,7 +34,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfImageScalarPhase::WidthDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.width = Some(result.into_result()?.value);
+                    progress.width = Some(result.into_result()?);
                     progress.phase = PdfImageScalarPhase::WidthKeyword;
                 }
                 PdfImageScalarPhase::HeightKeyword => {
@@ -47,7 +47,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfImageScalarPhase::HeightDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.height = Some(result.into_result()?.value);
+                    progress.height = Some(result.into_result()?);
                     progress.phase = PdfImageScalarPhase::WidthKeyword;
                 }
                 PdfImageScalarPhase::DepthKeyword => {
@@ -60,7 +60,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfImageScalarPhase::DepthDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.depth = Some(result.into_result()?.value);
+                    progress.depth = Some(result.into_result()?);
                     progress.phase = PdfImageScalarPhase::WidthKeyword;
                 }
                 PdfImageScalarPhase::AttributeKeyword => {

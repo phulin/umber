@@ -123,7 +123,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let has_at = self.scan_keyword_retained("at").into_result()?;
         let size = if has_at {
             let result = self.scan_dimension_retained();
-            let requested = result.into_result()?.value;
+            let requested = result.into_result()?;
             // §1259's `if (s<=0)or(s>=@'1000000000)`.
             FontSizeSpec::At(
                 if requested.raw() > 0 && requested.raw() < 2048 * Scaled::UNITY {

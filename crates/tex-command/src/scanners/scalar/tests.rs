@@ -330,7 +330,7 @@ fn dimension_scanner_preserves_fractional_points_and_following_input() {
             crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
         };
         assert_eq!(
-            scalar_result.value,
+            scalar_result,
             Scaled::from_raw(Scaled::UNITY + Scaled::UNITY / 2)
         );
         let mut terminator = None;
@@ -380,7 +380,7 @@ fn glue_scanner_preserves_width_stretch_shrink_and_orders() {
             crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
         };
         assert_eq!(
-            scalar_result.value,
+            scalar_result,
             GlueSpec {
                 width: Scaled::from_raw(Scaled::UNITY),
                 stretch: Scaled::from_raw(2 * Scaled::UNITY),
@@ -520,14 +520,12 @@ fn numeric_heads_and_operands_need_no_unobserved_command_records() {
                             .scan_dimension_retained()
                             .into_result()
                             .expect("dimension")
-                            .value
                             .raw(),
                         2 | 5 => {
                             let glue = processor
                                 .scan_glue_retained(false)
                                 .into_result()
-                                .expect("glue")
-                                .value;
+                                .expect("glue");
                             assert_eq!(glue.stretch.raw(), 131072);
                             assert_eq!(
                                 glue.stretch_order,

@@ -603,9 +603,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(never)]
     fn evaluate_ifdim_operand(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
         let absolute = kind == ConditionalKind::IfPdfAbsDim;
-        let left = self.scan_dimension_retained().into_result()?.value.raw() as i64;
+        let left = self.scan_dimension_retained().into_result()?.raw() as i64;
         let relation = self.scan_if_relation(kind.canonical_name())?;
-        let right = self.scan_dimension_retained().into_result()?.value.raw() as i64;
+        let right = self.scan_dimension_retained().into_result()?.raw() as i64;
         Ok(relation.compare(
             if absolute { left.abs() } else { left },
             if absolute { right.abs() } else { right },

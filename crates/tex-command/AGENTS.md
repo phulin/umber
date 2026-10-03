@@ -34,6 +34,11 @@ print channel of its own outside the borrowed
 `\tracingifs` uses with the executor's operation-local detached-effect
 collector (see `src/conditionals.rs`).
 
+Dimension and glue scans return their actual scaled value or glue specification,
+without scalar wrappers or unused first-token origins. Infinite dimensions also
+return their actual order. Integer and internal-value diagnostic origins remain
+with their real consumers.
+
 Executor-facing scalar scans return their actual typed product or error. Generic
 scalar result unions, publication frames and projection/status APIs are absent.
 Nested scalar calls retain their own typed value/error slots only at actual

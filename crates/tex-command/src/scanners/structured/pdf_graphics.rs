@@ -114,7 +114,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfGraphicsScalarPhase::SnapY => {
                     let result = self.scan_glue_retained(false);
-                    let glue = result.into_result()?.value;
+                    let glue = result.into_result()?;
                     return Ok(Some(Request::SnapY { glue }));
                 }
                 PdfGraphicsScalarPhase::SnapYComp => {

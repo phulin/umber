@@ -44,7 +44,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let index = self.scan_profile_register_index_retained().into_result()?;
         let found = self.scan_keyword_retained("to").into_result()?;
         let missing_to_context = (!found).then(|| self.command.output_open_context(self.state));
-        let height = self.scan_dimension_retained().into_result()?.value;
+        let height = self.scan_dimension_retained().into_result()?;
         let split_context = self.command.output_open_context(self.state);
         Ok(ScannedVSplit {
             index,
@@ -262,7 +262,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         result.into_result()?;
 
         let result = self.scan_glue_retained(mu);
-        let value = result.into_result()?.value;
+        let value = result.into_result()?;
         Ok(ScannedGlueParameterAssignment { index, value, mu })
     }
 
@@ -309,7 +309,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 RuleScalarPhase::WidthDimension => {
                     let result = self.scan_dimension_retained();
-                    width = Some(result.into_result()?.value);
+                    width = Some(result.into_result()?);
                     phase = RuleScalarPhase::WidthKeyword;
                 }
                 RuleScalarPhase::HeightKeyword => {
@@ -322,7 +322,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 RuleScalarPhase::HeightDimension => {
                     let result = self.scan_dimension_retained();
-                    height = Some(result.into_result()?.value);
+                    height = Some(result.into_result()?);
                     phase = RuleScalarPhase::WidthKeyword;
                 }
                 RuleScalarPhase::DepthKeyword => {
@@ -335,7 +335,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 RuleScalarPhase::DepthDimension => {
                     let result = self.scan_dimension_retained();
-                    depth = Some(result.into_result()?.value);
+                    depth = Some(result.into_result()?);
                     phase = RuleScalarPhase::WidthKeyword;
                 }
             }
@@ -403,7 +403,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PackingScalarPhase::Dimension { exactly } => {
                     let result = self.scan_dimension_retained();
-                    let value = result.into_result()?.value;
+                    let value = result.into_result()?;
                     return Ok(if exactly {
                         ScannedPackingSpec::Exactly(value)
                     } else {
@@ -489,7 +489,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         primitive: UnexpandablePrimitive,
     ) -> Result<ScannedBoxShift, CommandError> {
         let result = self.scan_dimension_retained();
-        let amount = result.into_result()?.value;
+        let amount = result.into_result()?;
         let delta = match primitive {
             UnexpandablePrimitive::Lower | UnexpandablePrimitive::MoveRight => amount,
             UnexpandablePrimitive::Raise | UnexpandablePrimitive::MoveLeft => -amount,

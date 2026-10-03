@@ -1388,8 +1388,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 let value = take_native_scalar!(
                                     processor.scan_dimension_retained(),
                                     scan_origin
-                                )
-                                .value;
+                                );
                                 let step = retained_assignment!(
                                     receipts,
                                     |native_context,
@@ -1481,8 +1480,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 let value = take_native_scalar!(
                                     processor.scan_glue_retained(mu),
                                     scan_origin
-                                )
-                                .value;
+                                );
                                 let source_identity = processor.scanned_glue_identity();
                                 let source_register = processor.scanned_glue_register();
                                 let step = retained_assignment!(
@@ -1550,8 +1548,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     let value = take_native_scalar!(
                                         processor.scan_glue_retained(false),
                                         scan_origin
-                                    )
-                                    .value;
+                                    );
                                     let shared_zero_glue = processor.scanned_glue_shared_zero();
                                     retained_semantic!(
                                         receipts,
@@ -1573,8 +1570,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     let value = take_native_scalar!(
                                         processor.scan_dimension_retained(),
                                         scan_origin
-                                    )
-                                    .value;
+                                    );
                                     retained_semantic!(
                                         receipts,
                                         |context,
@@ -1617,8 +1613,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         let value = take_native_scalar!(
                                             processor.scan_dimension_retained(),
                                             scan_origin
-                                        )
-                                        .value;
+                                        );
                                         finish_scan!(self.execute_prev_depth(value))
                                     };
                                 } else {
@@ -1810,8 +1805,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     let value = take_native_scalar!(
                                         processor.scan_glue_retained(false),
                                         scan_origin
-                                    )
-                                    .value;
+                                    );
                                     let shared_zero_glue = processor.scanned_glue_shared_zero();
                                     retained_semantic!(
                                         receipts,
@@ -1909,13 +1903,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         let indent = take_native_scalar!(
                                             processor.scan_dimension_retained(),
                                             scan_origin
-                                        )
-                                        .value;
+                                        );
                                         let width = take_native_scalar!(
                                             processor.scan_dimension_retained(),
                                             scan_origin
-                                        )
-                                        .value;
+                                        );
                                         lines.push(ParagraphShapeLine { indent, width });
                                     }
                                     {
@@ -2146,8 +2138,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 let value = take_native_scalar!(
                                     processor.scan_dimension_retained(),
                                     scan_origin
-                                )
-                                .value;
+                                );
                                 let step = retained_assignment!(
                                     receipts,
                                     |native_context,
@@ -2186,8 +2177,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     let value = take_native_scalar!(
                                         processor.scan_dimension_retained(),
                                         scan_origin
-                                    )
-                                    .value;
+                                    );
                                     finish_scan!(self.execute_page_dimension(dimension, value))
                                 }
                             }
@@ -2824,8 +2814,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     let value = take_native_scalar!(
                                         processor.scan_dimension_retained(),
                                         scan_origin
-                                    )
-                                    .value;
+                                    );
                                     {
                                         let step = retained_assignment!(
                                             receipts,

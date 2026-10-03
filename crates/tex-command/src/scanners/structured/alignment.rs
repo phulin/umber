@@ -258,7 +258,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         match self.scan_glue_retained(false) {
                             crate::RetainedScalarScan::Complete(value) => {
                                 pending.current_tabskip = tex_state::node::GlueValue {
-                                    spec: value.value,
+                                    spec: value,
                                     origin: if self.scanned_glue_shared_zero {
                                         tex_state::node::GlueSpecOrigin::SharedZero
                                     } else {

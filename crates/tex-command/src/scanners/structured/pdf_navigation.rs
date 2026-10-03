@@ -146,7 +146,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 PdfNavigationScalarPhase::WidthDimension
                 | PdfNavigationScalarPhase::FitRWidthDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.dimensions.width = Some(result.into_result()?.value);
+                    progress.dimensions.width = Some(result.into_result()?);
                     progress.phase =
                         if progress.phase == PdfNavigationScalarPhase::FitRWidthDimension {
                             PdfNavigationScalarPhase::FitRWidthKeyword
@@ -173,7 +173,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 PdfNavigationScalarPhase::HeightDimension
                 | PdfNavigationScalarPhase::FitRHeightDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.dimensions.height = Some(result.into_result()?.value);
+                    progress.dimensions.height = Some(result.into_result()?);
                     progress.phase =
                         if progress.phase == PdfNavigationScalarPhase::FitRHeightDimension {
                             PdfNavigationScalarPhase::FitRWidthKeyword
@@ -219,7 +219,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 PdfNavigationScalarPhase::DepthDimension
                 | PdfNavigationScalarPhase::FitRDepthDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.dimensions.depth = Some(result.into_result()?.value);
+                    progress.dimensions.depth = Some(result.into_result()?);
                     progress.phase =
                         if progress.phase == PdfNavigationScalarPhase::FitRDepthDimension {
                             PdfNavigationScalarPhase::FitRWidthKeyword

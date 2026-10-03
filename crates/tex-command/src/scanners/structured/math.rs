@@ -484,7 +484,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let thickness = match kind {
             MathFractionKind::Above => {
                 let result = self.scan_dimension_retained();
-                Some(result.into_result()?.value)
+                Some(result.into_result()?)
             }
             MathFractionKind::Atop => Some(Scaled::from_raw(0)),
             MathFractionKind::Over => None,
@@ -504,14 +504,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<ScannedMathMuMaterial, CommandError> {
         if glue {
             let result = self.scan_glue_retained(true);
-            let spec = result.into_result()?.value;
+            let spec = result.into_result()?;
             Ok(ScannedMathMuMaterial::Glue {
                 spec,
                 shared_zero: self.scanned_glue_shared_zero,
             })
         } else {
             let result = self.scan_mu_dimension_retained();
-            Ok(ScannedMathMuMaterial::Kern(result.into_result()?.value))
+            Ok(ScannedMathMuMaterial::Kern(result.into_result()?))
         }
     }
 
