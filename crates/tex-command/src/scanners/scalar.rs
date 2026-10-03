@@ -2340,11 +2340,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// replaces it with `scan_register_num`, accepting sparse registers up to
     /// 32767 in extended mode; pdfTeX inherits that behavior.
     pub fn scan_profile_register_index(&mut self) -> Result<u16, CommandError> {
-        if self.profile().capabilities().supports_etex() {
-            self.scan_extended_register_index()
+        let class = if self.profile().capabilities().supports_etex() {
+            RestrictedIntegerClass::Register
         } else {
-            self.scan_eight_bit_register_index()
-        }
+            RestrictedIntegerClass::EightBit
+        };
+        let integer = self.scan_integer()?;
+        Ok(self.finish_restricted_integer(class, integer)?.value as u16)
     }
 
     /// Scans e-TeX 2.6 `etex.ch`'s `scan_register_num`.

@@ -122,23 +122,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
         let target = self.scan_definition_target()?;
         let meaning = if future {
-            let mut adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
-            let mut observed_spelling = None;
-            let first = self.read_backup_operand(&mut adjustment, &mut observed_spelling)?;
-            let meaning = self
-                .consume_raw_words::<true, _>(&mut |processor, spelling, meaning, command| {
-                    let meaning = *meaning.expect("raw meaning requested");
-                    processor.back_consumed_word(spelling, command)?;
-                    Ok(ControlFlow::Break(meaning))
-                })?
-                .ok_or_else(CommandError::input_invariant)?;
-            self.back_retained_word(
-                first,
-                adjustment,
-                observed_spelling,
-                BackupTreatment::Ordinary,
-            )?;
-            meaning
+            self.scan_futurelet_meaning()?
         } else {
             // §1221: any leading spaces, optional literal equals, then at
             // most one space. Space uses cur_cmd, equals uses cur_tok.
@@ -172,5 +156,27 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .ok_or_else(CommandError::input_invariant)?
         };
         Ok((target, meaning))
+    }
+    // Futurelet owns retained backup facts and a second reader; ordinary let
+    // does not pay for that larger call frame.
+    #[inline(never)]
+    fn scan_futurelet_meaning(&mut self) -> Result<tex_state::MeaningWord<G>, CommandError> {
+        let mut adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
+        let mut observed_spelling = None;
+        let first = self.read_backup_operand(&mut adjustment, &mut observed_spelling)?;
+        let meaning = self
+            .consume_raw_words::<true, _>(&mut |processor, spelling, meaning, command| {
+                let meaning = *meaning.expect("raw meaning requested");
+                processor.back_consumed_word(spelling, command)?;
+                Ok(std::ops::ControlFlow::Break(meaning))
+            })?
+            .ok_or_else(CommandError::input_invariant)?;
+        self.back_retained_word(
+            first,
+            adjustment,
+            observed_spelling,
+            BackupTreatment::Ordinary,
+        )?;
+        Ok(meaning)
     }
 }

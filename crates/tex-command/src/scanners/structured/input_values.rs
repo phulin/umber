@@ -73,16 +73,10 @@ pub(crate) const FILE_NAME_POOL_CAPACITY: usize = 32_000;
 pub enum InputStreamRequest<G> {
     Open {
         stream: i32,
-        /// The unrecovered §435 `scan_int` result for `int_error`.
-        scanned: i32,
-        /// Whether §435 replaced `scanned` with stream zero.
-        recovered: bool,
         file_name: ScannedFileName,
     },
     Close {
         stream: i32,
-        scanned: i32,
-        recovered: bool,
     },
     /// TeX82 §482's `read_toks` has already run: the collected list is
     /// carried here, not a stream the executor must go read itself.

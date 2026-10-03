@@ -625,8 +625,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     #[inline(never)]
     fn evaluate_ifeof_operand(&mut self) -> Result<bool, CommandError> {
-        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FourBit)?;
-        if scanned.recovered {
+        let integer = self.scan_integer()?;
+        let bad_stream = self.is_observed()
+            && !RestrictedIntegerClass::FourBit.accepts(self.profile(), integer.value);
+        let scanned = self.finish_restricted_integer(RestrictedIntegerClass::FourBit, integer)?;
+        if bad_stream {
             self.record_bad_number();
         }
         Ok(self

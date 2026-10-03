@@ -69,7 +69,7 @@ pub struct ScannedMacroDefinition<G> {
 /// Command processing owns the raw target, optional equals sign, and the
 /// class-restricted integer scan (§434 or §436) including its recovery. Main
 /// control receives no token or input capability: it only applies the
-/// assignment's effective scope and reports the recovery diagnostic.
+/// assignment's effective scope after scanner-owned range recovery.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedCharacterDefinition {
     pub target: Symbol,
@@ -77,10 +77,6 @@ pub struct ScannedCharacterDefinition {
     pub class: RestrictedIntegerClass,
     /// `cur_val` after §434/§436's recovery.
     pub value: i32,
-    /// The unrecovered `scan_int` result, which `int_error` reports.
-    pub scanned: i32,
-    /// Whether recovery replaced an out-of-range value with zero.
-    pub recovered: bool,
 }
 
 /// A completed TeX82 §1224 register-definition assignment.

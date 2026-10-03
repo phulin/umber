@@ -810,3 +810,7 @@ Expression operator and factor lookahead and raw/expanded math-shift probes cons
 Canonical backup mutation accepts actual storage, treatment and alignment adjustment without an observation closure. Cold observation follows insertion and reconstructs previous brace alignment from the applied unit adjustment; ordinary backup carries no discarded previous-state value.
 
 Filename grammar consumes native character meanings without per-character commands. Its one actual scanner retains Web2C tex.ch [29.526] preliminary backup, filename guard, quotation/group grammar, primary origin, string-pool publication and scalar-error unwind; redundant inner/leading/character result forwarding is deleted.
+
+Futurelet retains its two operands in its own outlined RHS grammar. Ordinary let scans its actual native meaning without the futurelet backup frame; target scanning and canonical backup mutation remain shared.
+
+Restricted integer scans return the existing scalar value and genuine primary origin. The separate restricted result and discarded scanned/recovered fields in math, character-definition and stream requests are removed. Canonical bounds/recovery stay central; ifeof demands its extra observer diagnostic locally. Profile register scanning selects the real bound before the direct integer scan, without traversing another register forwarding entry.

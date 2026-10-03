@@ -159,6 +159,22 @@ String-pool publication remains after character collection and before the
 completed filename returns. Source opening and resource replay keep their
 existing outer ownership boundary.
 
+### Restricted scalar values
+
+Restricted integer scans return the actual recovered integer and its genuine
+primary origin, using the same scalar value as ordinary integer scans. The
+separate restricted result and unused unrecovered-value/recovery fields in
+character definitions, math requests and input-stream requests are deleted.
+TeX82 sections 433 through 437 still diagnose from the original scanned value
+before returning the canonical zero. The ifeof observer's extra bad-stream
+record is demanded locally from its original operand; unrelated scans carry
+no recovery flag for it.
+
+Profile register selection chooses the actual eight-bit or extended bound
+once and invokes integer scanning and canonical range recovery directly.
+Eight-bit and explicitly extended entry points retain their real callers;
+there is no compatibility alias or second range-check implementation.
+
 ### Raw binding operands
 
 Binding scans return the actual native `MeaningWord` that the eqtb installs.
@@ -180,6 +196,12 @@ ordinary literal characters. Continuing consumers keep accepted spaces and
 the optional equals sign inside that reader; no delivered command or operand
 packet crosses the successful boundary. `get_token_spelling` returns the
 actual retained token when its caller needs one.
+
+The futurelet RHS owns a separate outlined grammar: its retained first token,
+backup metadata and second-operand reader frame do not enter the normal let
+call frame. Both grammars return the actual native meaning and share target
+scanning and canonical input mutation. There is no second let API or result
+wrapper.
 
 Normal `\let` consumes the RHS meaning directly. Its leading spaces are
 meaning-based, while its optional equals sign is spelling-based; after that

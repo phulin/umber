@@ -194,7 +194,7 @@ fn math_delimiter_recovery_backs_up_only_the_rejected_operand() {
         let scanned = processor
             .scan_math_delimiter_boundary(super::MathDelimiterBoundaryKind::Left)
             .expect("delimiter recovery");
-        assert!(scanned.delimiter.recovered);
+        assert_eq!(scanned.delimiter.code, 0);
         assert!(scanned.delimiter.missing_delimiter);
 
         let mut destination = None;

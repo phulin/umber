@@ -20,7 +20,6 @@
 //! agree with the reference engine.
 
 use crate::profile::{CharacterMode, CommandProfile};
-use crate::scanners::scalar::ScalarProvenance;
 use crate::{CommandError, processor::CommandProcessor};
 
 const RESTRICTED_INTEGER_DIAGNOSTIC: u64 = 0x7265_7374_0000_0433;
@@ -122,18 +121,6 @@ impl RestrictedIntegerClass {
     }
 }
 
-/// The completed result of a restricted integer scan.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RestrictedInteger {
-    /// `cur_val` after §433-§437's recovery: the scanned value, or zero.
-    pub value: i32,
-    /// The unrecovered `scan_int` result, which `int_error` reports.
-    pub scanned: i32,
-    /// Whether recovery replaced an out-of-range value with zero.
-    pub recovered: bool,
-    pub provenance: ScalarProvenance,
-}
-
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Performs TeX82 §433-§437's restricted integer scan.
     ///
@@ -144,10 +131,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         class: RestrictedIntegerClass,
         scanned: crate::ScannedScalar<i32>,
-    ) -> Result<RestrictedInteger, CommandError> {
+    ) -> Result<crate::ScannedScalar<i32>, CommandError> {
         let accepted = class.accepts(self.command.profile(), scanned.value);
-        let recovered = !accepted;
-        if recovered {
+        if !accepted {
             // §433-§437 report from inside the scan, before the command that
             // asked for the register ever runs. With no earlier detached
             // output, reporting synchronously keeps this ahead of §362's `)`
@@ -175,10 +161,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         site,
                     },
                 );
-                return Ok(RestrictedInteger {
+                return Ok(crate::ScannedScalar {
                     value: 0,
-                    scanned: scanned.value,
-                    recovered,
                     provenance: scanned.provenance,
                 });
             }
@@ -189,10 +173,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 report.int_error_with_effects_at(scanned.value, self.diagnostic_effects, site);
             self.finish_error_outcome(outcome)?;
         }
-        Ok(RestrictedInteger {
+        Ok(crate::ScannedScalar {
             value: if accepted { scanned.value } else { 0 },
-            scanned: scanned.value,
-            recovered,
             provenance: scanned.provenance,
         })
     }
@@ -200,7 +182,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_restricted_integer(
         &mut self,
         class: RestrictedIntegerClass,
-    ) -> Result<RestrictedInteger, CommandError> {
+    ) -> Result<crate::ScannedScalar<i32>, CommandError> {
         let scanned = self.scan_integer()?;
         self.finish_restricted_integer(class, scanned)
     }

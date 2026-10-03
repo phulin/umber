@@ -315,3 +315,5 @@ The operation-child result adapter is deleted; callers map actual command errors
 Let assignments keep their native meaning word through the redundant-local
 comparison and central admitted state write. Only demanded mutation receipts
 decode that word; no resolved-meaning assignment API remains.
+
+Completed restricted scanner requests carry their actual value and required provenance, with no discarded original-value or recovery flags. Missing-delimiter status remains with its real diagnostic consumer.

@@ -3166,7 +3166,6 @@ impl<G> MainControl<G> {
                     kind: MathDelimiterBoundaryKind::Right,
                     delimiter: tex_command::ScannedMathDelimiter {
                         code: 0,
-                        recovered: true,
                         missing_delimiter: false,
                         provenance: tex_command::StructuredProvenance {
                             primary: tex_state::token::OriginId::UNKNOWN,

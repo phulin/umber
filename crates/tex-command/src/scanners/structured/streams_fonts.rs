@@ -12,8 +12,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         match primitive {
             // §§1272--1275's `in_stream` command scans §435's
             // `scan_four_bit_int`. Recovery is complete before the request is
-            // committed; the raw value crosses the apply seam only so §435's
-            // `int_error` can report it first.
+            // committed; §435 reports from the original integer here,
+            // before filename acquisition and stream mutation.
             UnexpandablePrimitive::OpenIn => {
                 let result = self.scan_restricted_integer(RestrictedIntegerClass::FourBit);
                 let scanned = result?;
@@ -23,8 +23,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let file_name = result?;
                 Ok(InputStreamRequest::Open {
                     stream: scanned.value,
-                    scanned: scanned.scanned,
-                    recovered: scanned.recovered,
+
                     file_name,
                 })
             }
@@ -33,8 +32,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let scanned = result?;
                 Ok(InputStreamRequest::Close {
                     stream: scanned.value,
-                    scanned: scanned.scanned,
-                    recovered: scanned.recovered,
                 })
             }
             UnexpandablePrimitive::Read | UnexpandablePrimitive::ReadLine => {

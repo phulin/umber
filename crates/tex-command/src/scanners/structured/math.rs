@@ -213,7 +213,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     kind,
                     delimiter: ScannedMathDelimiter {
                         code: 0,
-                        recovered: true,
+
                         missing_delimiter: true,
                         provenance: StructuredProvenance {
                             primary: OriginId::UNKNOWN,
@@ -264,7 +264,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 kind,
                 delimiter: ScannedMathDelimiter {
                     code: 0,
-                    recovered: true,
+
                     missing_delimiter: true,
                     provenance: StructuredProvenance { primary },
                 },
@@ -274,7 +274,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             kind,
             delimiter: ScannedMathDelimiter {
                 code: code as u32,
-                recovered: false,
+
                 missing_delimiter: false,
                 provenance: StructuredProvenance { primary },
             },
@@ -287,7 +287,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let scanned = result?;
         Ok(ScannedMathCharacter {
             code: scanned.value as u16,
-            recovered: scanned.recovered,
+
             provenance: StructuredProvenance {
                 primary: scanned.provenance.primary,
             },
@@ -308,7 +308,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let scanned = result?;
         Ok(ScannedMathDelimiter {
             code: scanned.value as u32,
-            recovered: scanned.recovered,
+
             missing_delimiter: false,
             provenance: StructuredProvenance {
                 primary: scanned.provenance.primary,
@@ -354,7 +354,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             DeliveryStatus::End => {
                 return Ok(ScannedMathDelimiter {
                     code: 0,
-                    recovered: true,
+
                     missing_delimiter: true,
                     provenance: StructuredProvenance {
                         primary: OriginId::UNKNOWN,
@@ -387,14 +387,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.missing_delimiter_error(Some(site))?;
             return Ok(ScannedMathDelimiter {
                 code: 0,
-                recovered: true,
+
                 missing_delimiter: true,
                 provenance: StructuredProvenance { primary },
             });
         }
         Ok(ScannedMathDelimiter {
             code: code as u32,
-            recovered: false,
+
             missing_delimiter: false,
             provenance: StructuredProvenance { primary },
         })
@@ -450,7 +450,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         Ok(ScannedMathFamily {
             size,
             family: scanned.value as u8,
-            recovered: scanned.recovered,
+
             provenance: StructuredProvenance {
                 primary: scanned.provenance.primary,
             },
@@ -532,7 +532,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         if let Some(Meaning::MathCharGiven(code)) = static_meaning(command.meaning()) {
             return Ok(Some(Request::Character(ScannedMathCharacter {
                 code,
-                recovered: false,
+
                 provenance: StructuredProvenance {
                     primary: command.origin(),
                 },

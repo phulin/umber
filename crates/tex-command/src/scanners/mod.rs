@@ -10,7 +10,7 @@ mod token_list;
 
 pub(crate) use expression::ExpressionFrame;
 pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
-pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
+pub use restricted::RestrictedIntegerClass;
 pub use scalar::{InternalValue, ScalarProvenance, ScannedScalar};
 pub use structured::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,

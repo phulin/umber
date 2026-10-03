@@ -8,7 +8,6 @@ use super::*;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedMathCharacter {
     pub code: u16,
-    pub recovered: bool,
     pub provenance: StructuredProvenance,
 }
 
@@ -18,7 +17,6 @@ pub struct ScannedMathCharacter {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedMathDelimiter {
     pub code: u32,
-    pub recovered: bool,
     /// §1161 rejected a non-delimiter token and backed it up. The executor
     /// owns the resulting error report after the scanner borrow ends.
     pub missing_delimiter: bool,
@@ -68,7 +66,6 @@ impl From<MathFamilySize> for tex_state::math::MathFontSize {
 pub struct ScannedMathFamily {
     pub size: MathFamilySize,
     pub family: u8,
-    pub recovered: bool,
     pub provenance: StructuredProvenance,
 }
 

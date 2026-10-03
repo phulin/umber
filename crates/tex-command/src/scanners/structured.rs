@@ -260,8 +260,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             target,
             class,
             value: scanned.value,
-            scanned: scanned.scanned,
-            recovered: scanned.recovered,
         })
     }
 
