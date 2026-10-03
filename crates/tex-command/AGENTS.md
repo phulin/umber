@@ -776,3 +776,9 @@ The existing `consume_expanded_words` scanner seam lends native expanded words
 to executor-owned arithmetic target grammar. Invalid-target printing constructs
 `PrintCommand` from the demanded native meaning and control-sequence identity;
 ordinary arithmetic selection constructs no delivered command.
+
+Definition target scanning uses the canonical raw spelling consumer and the
+actual control-sequence or active-character identity. Its cached target
+projection enum, command-only non-space fetch wrapper and test-only metadata
+clearer are deleted. Malformed and frozen targets retain section 1215's exact
+backup, insertion and report order, including exceptional delivery metadata.

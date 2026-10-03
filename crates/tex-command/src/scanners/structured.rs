@@ -68,11 +68,11 @@ pub use definition_values::{
     ScannedCharacterDefinition, ScannedGeneratedFontDefinition, ScannedMacroDefinition,
     ScannedRegisterDefinition, StructuredProvenance,
 };
+use input_values::FILE_NAME_POOL_CAPACITY;
 pub use input_values::{
     AlignmentCellOpening, FileNameComponents, ImmediateExtension, InputStreamRequest,
     RegisteredInput, ScannedFileName, WriteStreamSelector,
 };
-use input_values::{DefinitionTargetProjection, FILE_NAME_POOL_CAPACITY};
 pub use math_values::{
     EquationNumberSide, MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize,
     MathFieldBody, MathFieldEpisode, MathFractionKind, MathLimitKind, MathRequest, MathScriptKind,
@@ -130,48 +130,22 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .map_err(|_| CommandError::input_invariant())
     }
 
-    /// Projects the packed token spelling into a definition target without
-    /// decoding its effective meaning. `Token::Cs` already carries the
-    /// ordinary control-sequence identity; active characters use their
-    /// separate active-character map and are interned only when §1215 first
-    /// needs to make that cell addressable. No fuel is charged here.
+    /// The raw spelling selects the actual definition cell.
     fn project_definition_target(
         &mut self,
-        command: &crate::command::CurrentCommand<G>,
-    ) -> DefinitionTargetProjection {
-        match command.spelling().semantic_token() {
-            Token::Cs(symbol) => {
-                if let Some(cached) = command.control_sequence() {
-                    debug_assert_eq!(
-                        cached, symbol,
-                        "cached control-sequence metadata disagrees with token spelling"
-                    );
-                }
-                DefinitionTargetProjection::Target(symbol)
-            }
+        spelling: tex_state::token::TokenWord,
+    ) -> Option<tex_state::interner::Symbol> {
+        match spelling.semantic_token() {
+            Token::Cs(symbol) => Some(symbol),
             Token::Char {
                 ch,
                 cat: Catcode::Active,
-            } => {
-                let symbol = self
-                    .state
+            } => Some(
+                self.state
                     .active_character_symbol(ch)
-                    .unwrap_or_else(|| self.state.intern_active_character(ch));
-                if let Some(cached) = command.control_sequence() {
-                    debug_assert_eq!(
-                        cached, symbol,
-                        "cached active-character metadata disagrees with active map"
-                    );
-                }
-                DefinitionTargetProjection::Target(symbol)
-            }
-            _ => {
-                debug_assert!(
-                    command.control_sequence().is_none(),
-                    "malformed definition target carries control-sequence metadata"
-                );
-                DefinitionTargetProjection::Malformed
-            }
+                    .unwrap_or_else(|| self.state.intern_active_character(ch)),
+            ),
+            _ => None,
         }
     }
 
@@ -179,58 +153,67 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// the inaccessible target. The rejected delivery is backed up, so the
     /// caller's following operand scan still owns it.
     fn scan_definition_target(&mut self) -> Result<tex_state::interner::Symbol, CommandError> {
-        let mut destination = None;
-        loop {
-            let command = match self.next_non_space_raw_hot_into(&mut destination)? {
-                DeliveryStatus::Command => destination
-                    .take()
-                    .ok_or_else(|| CommandError::input_invariant())?,
-                DeliveryStatus::End => {
-                    if self.next_non_space_raw_hot_into(&mut destination)?
-                        != DeliveryStatus::Command
-                    {
-                        return Err(CommandError::input_invariant());
+        let mut consume =
+            |processor: &mut Self,
+             spelling: TracedTokenWord,
+             exceptional: Option<&crate::CurrentCommand<G>>| {
+                if matches!(
+                    spelling.semantic_token(),
+                    Token::Char {
+                        cat: Catcode::Space,
+                        ..
                     }
-                    destination
-                        .take()
-                        .ok_or_else(|| CommandError::input_invariant())?
+                ) {
+                    return Ok(None);
                 }
-                _ => return Err(CommandError::input_invariant()),
+                if let Some(target) = processor.project_definition_target(spelling.token_word()) {
+                    return Ok(Some(target));
+                }
+                // §1215 backs up an ordinary non-control token (`cur_cs=0`),
+                // while an already-frozen control token is consumed before the
+                // inaccessible sentinel is inserted.
+                if !matches!(
+                    spelling.semantic_token(),
+                    tex_state::token::Token::Frozen(_)
+                ) {
+                    processor.back_consumed_word(spelling, exceptional)?;
+                }
+                let inaccessible = Token::Cs(
+                    processor
+                        .state
+                        .intern_internal_control_sequence("inaccessible"),
+                );
+                // §1215's `ins_error` is §327: the synthesized token is a live
+                // `inserted` level during §82's report, and `goto restart` then
+                // consumes that same level as the definition target.
+                processor.push_inserted_error_token(inaccessible);
+                let context = processor.command.output_open_context(processor.state);
+                let mut report = processor
+                    .state
+                    .print_err("Missing control sequence inserted");
+                report
+                    .help(&[
+                        "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
+                        "I've inserted an inaccessible control sequence so that your",
+                        "definition will be completed without mixing me up too badly.",
+                        "You can recover graciously from this error, if you're",
+                        "careful; see exercise 27.2 in The TeXbook.",
+                    ])
+                    .context(context);
+                let outcome = report.error();
+                processor.finish_error_outcome(outcome)?;
+                Ok(None)
             };
-            if let DefinitionTargetProjection::Target(target) =
-                self.project_definition_target(&command)
-            {
+        loop {
+            let target = match self.consume_token_spelling(&mut consume)? {
+                Some(target) => target,
+                None => self
+                    .consume_token_spelling(&mut consume)?
+                    .ok_or_else(CommandError::input_invariant)?,
+            };
+            if let Some(target) = target {
                 return Ok(target);
             }
-
-            // §1215 backs up an ordinary non-control token (`cur_cs=0`),
-            // while an already-frozen control token is consumed before the
-            // inaccessible sentinel is inserted.
-            if !matches!(
-                command.spelling().semantic_token(),
-                tex_state::token::Token::Frozen(_)
-            ) {
-                self.back_input(command)?;
-            }
-            let inaccessible =
-                Token::Cs(self.state.intern_internal_control_sequence("inaccessible"));
-            // §1215's `ins_error` is §327: the synthesized token is a live
-            // `inserted` level during §82's report, and `goto restart` then
-            // consumes that same level as the definition target.
-            self.push_inserted_error_token(inaccessible);
-            let context = self.command.output_open_context(self.state);
-            let mut report = self.state.print_err("Missing control sequence inserted");
-            report
-                .help(&[
-                    "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
-                    "I've inserted an inaccessible control sequence so that your",
-                    "definition will be completed without mixing me up too badly.",
-                    "You can recover graciously from this error, if you're",
-                    "careful; see exercise 27.2 in The TeXbook.",
-                ])
-                .context(context);
-            let outcome = report.error();
-            self.finish_error_outcome(outcome)?;
         }
     }
 

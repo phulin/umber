@@ -182,12 +182,3 @@ pub enum AlignmentCellOpening {
     /// The selected column starts with TeX82's template-free `\omit` path.
     Omit,
 }
-
-/// The result of projecting one delivered spelling for TeX82's
-/// `get_r_token` (§1215). The spelling is authoritative: cached effective
-/// command metadata is only an optional agreement check.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum DefinitionTargetProjection {
-    Target(tex_state::interner::Symbol),
-    Malformed,
-}

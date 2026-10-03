@@ -1,5 +1,5 @@
 use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, Token};
 
 use super::{FileNameComponents, WriteStreamSelector};
 use crate::{AlignmentIdentity, CommandHostCapabilities, CommandState};
@@ -288,37 +288,16 @@ fn definition_target_projection_uses_spelling_and_active_map() {
             .intern_active_character('~')
             .expect("active target")
             .symbol();
-        let mut resolve = |token| {
-            let context = universe.command_context().expect("command context");
-            crate::CurrentCommand::resolve(
-                TracedTokenWord::pack(token, OriginId::UNKNOWN),
-                false,
-                None,
-                &context,
-            )
-        };
-
-        let ordinary = resolve(Token::Cs(target));
-        assert_eq!(ordinary.control_sequence(), Some(target));
-        let mut ordinary_without_metadata = resolve(Token::Cs(target));
-        ordinary_without_metadata.clear_control_sequence_for_test();
-        assert_eq!(ordinary_without_metadata.control_sequence(), None);
-
-        let active_with_metadata = resolve(Token::Char {
+        let ordinary = tex_state::token::TokenWord::pack(Token::Cs(target));
+        let active_existing_word = tex_state::token::TokenWord::pack(Token::Char {
             ch: '~',
             cat: Catcode::Active,
         });
-        assert_eq!(
-            active_with_metadata.control_sequence(),
-            Some(active_existing)
-        );
-
-        let active_without_metadata = resolve(Token::Char {
+        let active_missing_word = tex_state::token::TokenWord::pack(Token::Char {
             ch: '^',
             cat: Catcode::Active,
         });
-        assert_eq!(active_without_metadata.control_sequence(), None);
-        let malformed = resolve(Token::Char {
+        let malformed = tex_state::token::TokenWord::pack(Token::Char {
             ch: 'x',
             cat: Catcode::Other,
         });
@@ -336,30 +315,21 @@ fn definition_target_projection_uses_spelling_and_active_map() {
             &mut diagnostic_effects,
         );
 
+        assert_eq!(processor.project_definition_target(ordinary), Some(target));
         assert_eq!(
-            processor.project_definition_target(&ordinary_without_metadata),
-            super::DefinitionTargetProjection::Target(target)
-        );
-        assert_eq!(
-            processor.project_definition_target(&active_with_metadata),
-            super::DefinitionTargetProjection::Target(active_existing)
+            processor.project_definition_target(active_existing_word),
+            Some(active_existing)
         );
         assert_eq!(processor.state.active_character_symbol('^'), None);
-        let first = processor.project_definition_target(&active_without_metadata);
+        let first = processor.project_definition_target(active_missing_word);
         let active_interned = processor
             .state
             .active_character_symbol('^')
             .expect("active target is interned");
-        let second = processor.project_definition_target(&active_without_metadata);
-        assert_eq!(
-            first,
-            super::DefinitionTargetProjection::Target(active_interned)
-        );
+        let second = processor.project_definition_target(active_missing_word);
+        assert_eq!(first, Some(active_interned));
         assert_eq!(second, first, "active target is reused after first intern");
-        assert_eq!(
-            processor.project_definition_target(&malformed),
-            super::DefinitionTargetProjection::Malformed
-        );
+        assert_eq!(processor.project_definition_target(malformed), None);
     });
 }
 

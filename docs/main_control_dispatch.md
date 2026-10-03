@@ -372,3 +372,17 @@ invalid-target executor adapter are deleted.
 Token-value completion keeps its actual optional result until the reader
 returns: an absent terminal is an input error, whereas a scanned empty braced
 list is a completed null value. EOF cannot silently assign a null list.
+
+## Raw definition targets
+
+TeX82 section 1215's `get_r_token` consumes actual raw spelling through the
+existing canonical raw-word consumer. Ordinary control sequences yield their
+symbol directly; active characters use the authoritative active-character map
+and intern the cell only when needed. Literal spaces are skipped by spelling,
+so a control sequence whose meaning is space remains a legal target.
+
+Malformed targets back up their actual spelling and borrowed exceptional
+metadata before inserting the inaccessible target and reporting the error.
+Frozen tokens retain the section 1215 consume-without-backup rule. The scanner
+keeps its existing EOF retry. There is no target-projection enum, cached-identity
+validation, non-space command-fetch wrapper or ordinary `CurrentCommand`.

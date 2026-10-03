@@ -367,41 +367,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         })
     }
 
-    /// TeX82 §1215's `repeat get_token until cur_tok<>space_token`.
-    ///
-    /// This tests the raw spelling, not `cur_cmd`: a control sequence whose
-    /// current meaning is a space remains a legal definition target. The
-    /// token stays a compact delivery because callers inspect only its
-    /// spelling and meaning.
-    pub(super) fn next_non_space_raw_hot_into(
-        &mut self,
-        destination: &mut Option<crate::command::CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        loop {
-            let delivery = self.get_token_into(destination)?;
-            if delivery == DeliveryStatus::End {
-                return Ok(DeliveryStatus::End);
-            }
-            if delivery != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            if !matches!(
-                destination
-                    .as_ref()
-                    .ok_or_else(|| CommandError::input_invariant())?
-                    .spelling()
-                    .semantic_token(),
-                Token::Char {
-                    cat: Catcode::Space,
-                    ..
-                }
-            ) {
-                return Ok(DeliveryStatus::Command);
-            }
-            destination.take();
-        }
-    }
-
     /// TeX82 §404's expanded nonblank/non-relax fetch, delivered directly
     /// into the structured scanner operation that will classify or hand off
     /// the command.
