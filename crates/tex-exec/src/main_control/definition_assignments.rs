@@ -159,8 +159,13 @@ pub(super) fn apply_catcode<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let value =
-        recover_code_table_value(UnexpandablePrimitive::CatCode, raw_value, stores, command)?;
+    let value = recover_code_table_value(
+        UnexpandablePrimitive::CatCode,
+        raw_value,
+        stores,
+        command.state,
+        command.diagnostic_effects,
+    )?;
     let catcode = catcode_from_value(value)?;
     let committed = commit_catcode(
         character,

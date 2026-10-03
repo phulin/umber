@@ -6,7 +6,8 @@ pub(super) fn recover_code_table_value<G>(
     primitive: UnexpandablePrimitive,
     raw_value: i32,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
+    state: &CommandState<G>,
+    effects: &mut DiagnosticEffects,
 ) -> Result<i32, ExecError> {
     let maximum = match primitive {
         UnexpandablePrimitive::CatCode => 15,
@@ -24,7 +25,7 @@ pub(super) fn recover_code_table_value<G>(
 
     // The scanner has consumed the complete operand. §1230 reports the bad
     // value, substitutes zero, then commits that assignment in this episode.
-    let context = command.state.output_open_context(stores);
+    let context = state.output_open_context(stores);
     let mut report = stores.print_err("Invalid code (");
     report
         .print_int(raw_value)
@@ -32,6 +33,6 @@ pub(super) fn recover_code_table_value<G>(
         .print_int(maximum)
         .help(&["I changed this one to zero."])
         .context(context);
-    report.error().defer_recovery(command.diagnostic_effects)?;
+    report.error().defer_recovery(effects)?;
     Ok(0)
 }

@@ -2303,17 +2303,22 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         _ => unreachable!(),
                                     };
                                     return {
-                                        let (direct_arg0, direct_arg1) = (
-                                            (processor
-                                                .scan_generated_font_definition(kind, global)
-                                                .map_err(command_error))
-                                            .map_err(|error| scan_error(error, scan_origin))?,
-                                            global,
-                                        );
-                                        finish_scan!(self.execute_generated_font_definition(
-                                            direct_arg0,
-                                            direct_arg1
-                                        ))
+                                        let definition = (processor
+                                            .scan_generated_font_definition(kind, global)
+                                            .map_err(command_error))
+                                        .map_err(|error| scan_error(error, scan_origin))?;
+                                        {
+                                            let step = retained_assignment!(
+                                                receipts,
+                                                |context, _state, effects, _fuel, _observer, _execution| {
+                                                    semantic::execute_generated_font_definition(
+                                                        context, effects, receipts, definition, global,
+                                                    )
+                                                }
+                                            )?;
+                                            self.schedule_assignment_token()?;
+                                            Ok(step)
+                                        }
                                     };
                                 }
                             }
@@ -2714,17 +2719,52 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     )
                                 };
                                 {
-                                    let (direct_arg0, direct_arg1, direct_arg2) =
-                                        (font, command.control_sequence(), global);
-                                    finish_scan!(self.execute_font_select(
-                                        direct_arg0,
-                                        direct_arg1,
-                                        direct_arg2
-                                    ))
+                                    let step = retained_assignment!(
+                                        receipts,
+                                        |context, _state, effects, _fuel, _observer, _execution| {
+                                            semantic::execute_font_select(
+                                                context, effects, font, global,
+                                            )
+                                        }
+                                    )?;
+                                    self.schedule_assignment_token()?;
+                                    Ok(step)
                                 }
                             }
                             (_, codes::PRIMITIVE_FONT_DIMEN) => {
-                                return finish_scan!(self.scan_font_dimen_assignment());
+                                return {
+                                    let number = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    let font = take_native_scalar!(
+                                        processor.scan_font_selector_retained(),
+                                        scan_origin
+                                    );
+                                    let recovery_context = (!processor
+                                        .font_dimen_writable(font, number))
+                                    .then(|| processor.error_context());
+                                    let _ = take_native_scalar!(
+                                        processor.scan_optional_equals_retained(),
+                                        scan_origin
+                                    );
+                                    let value = take_native_scalar!(
+                                        processor.scan_dimension_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    {
+                                        let step = retained_assignment!(
+                                            receipts,
+                                            |context, _state, effects, _fuel, _observer, _execution| {
+                                                semantic::execute_font_dimen(context, effects, font, number, value, recovery_context)
+                                            }
+                                        )?;
+                                        self.schedule_assignment_token()?;
+                                        Ok(step)
+                                    }
+                                };
                             }
                             (_, codes::PRIMITIVE_HYPHEN_CHAR | codes::PRIMITIVE_SKEW_CHAR) => {
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
@@ -2737,8 +2777,37 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     )
                                 };
                                 {
-                                    let (direct_arg0,) = (primitive,);
-                                    finish_scan!(self.scan_font_integer_assignment(direct_arg0))
+                                    {
+                                        let font = take_native_scalar!(
+                                            processor.scan_font_selector_retained(),
+                                            scan_origin
+                                        );
+                                        let _ = take_native_scalar!(
+                                            processor.scan_optional_equals_retained(),
+                                            scan_origin
+                                        );
+                                        let value = take_native_scalar!(
+                                            processor.scan_integer_retained(),
+                                            scan_origin
+                                        )
+                                        .value;
+                                        {
+                                            let step = retained_assignment!(
+                                                receipts,
+                                                |context, _state, effects, _fuel, _observer, _execution| {
+                                                    semantic::execute_font_integer(
+                                                        context,
+                                                        effects,
+                                                        font,
+                                                        primitive == UnexpandablePrimitive::SkewChar,
+                                                        value,
+                                                    )
+                                                }
+                                            )?;
+                                            self.schedule_assignment_token()?;
+                                            Ok(step)
+                                        }
+                                    }
                                 }
                             }
                             (_, codes::PRIMITIVE_OPEN_OUT) => {
@@ -2756,7 +2825,59 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // pdftex.web §§1680--1682 configures font metrics independently
                                 // of the selected output backend; generated fonts are valid in
                                 // both DVI and PDF mode.
-                                return finish_scan!(self.scan_pdf_font_expand_assignment());
+                                return {
+                                    let font = take_native_scalar!(
+                                        processor.scan_font_selector_retained(),
+                                        scan_origin
+                                    );
+                                    let _ = take_native_scalar!(
+                                        processor.scan_optional_equals_retained(),
+                                        scan_origin
+                                    );
+                                    let stretch = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    let shrink = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    let step = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    let auto_expand = take_native_scalar!(
+                                        processor.scan_keyword_retained("autoexpand"),
+                                        scan_origin
+                                    )
+                                    .value;
+                                    let mut spec = tex_typeset::expansion::FontExpansionSpec::new(
+                                        stretch,
+                                        shrink,
+                                        step,
+                                        auto_expand,
+                                    )
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                    let mut font = font;
+                                    let step = retained_assignment!(
+                                        receipts,
+                                        |context,
+                                         _state,
+                                         _effects,
+                                         _fuel,
+                                         _observer,
+                                         _execution| {
+                                            semantic::execute_pdf_font_expand(
+                                                context, &mut font, &mut spec,
+                                            )
+                                        }
+                                    )?;
+                                    self.schedule_assignment_token()?;
+                                    Ok(step)
+                                };
                             }
                             (
                                 _,
@@ -2901,13 +3022,24 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     // bound below; it is a distinct operand and must not inherit the
                                     // selector's recovery.
                                     return {
-                                        let (direct_arg0, direct_arg1) = (primitive, global);
-                                        finish_scan!(
-                                            self.scan_code_table_assignment(
-                                                direct_arg0,
-                                                direct_arg1
+                                        {
+                                            let (character, value) = scan_code_table_operands(
+                                                processor,
                                             )
-                                        )
+                                            .map_err(|error| scan_error(error, scan_origin))?;
+                                            {
+                                                let step = retained_assignment!(
+                                                    receipts,
+                                                    |context, state, effects, _fuel, _observer, _execution| {
+                                                        semantic::execute_code_table(
+                                                            context, state, effects, receipts, primitive, character, value, global,
+                                                        )
+                                                    }
+                                                )?;
+                                                self.schedule_assignment_token()?;
+                                                Ok(step)
+                                            }
+                                        }
                                     };
                                 }
                             }
@@ -2940,18 +3072,69 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     )
                                 };
                                 {
-                                    let (direct_arg0,) = (primitive,);
-                                    finish_scan!(self.scan_pdf_font_code_assignment(direct_arg0))
+                                    {
+                                        let font = take_native_scalar!(
+                                            processor.scan_font_selector_retained(),
+                                            scan_origin
+                                        );
+                                        let character = take_native_scalar!(
+                                            processor.scan_restricted_integer_retained(
+                                                RestrictedIntegerClass::CharacterCode
+                                            ),
+                                            scan_origin
+                                        )
+                                        .value;
+                                        let character = u8::try_from(character)
+                                            .expect("pdfTeX character scanner is byte bounded");
+                                        let _ = take_native_scalar!(
+                                            processor.scan_optional_equals_retained(),
+                                            scan_origin
+                                        );
+                                        let value = take_native_scalar!(
+                                            processor.scan_integer_retained(),
+                                            scan_origin
+                                        )
+                                        .value;
+                                        {
+                                            let step = retained_assignment!(
+                                                receipts,
+                                                |context, _state, effects, _fuel, _observer, _execution| {
+                                                    semantic::execute_pdf_font_code(
+                                                        context,
+                                                        effects,
+                                                        receipts,
+                                                        pdf_font_code_table(primitive),
+                                                        font,
+                                                        character,
+                                                        value,
+                                                    )
+                                                }
+                                            )?;
+                                            self.schedule_assignment_token()?;
+                                            Ok(step)
+                                        }
+                                    }
                                 }
                             }
                             (_, codes::PRIMITIVE_PDF_NO_LIGATURES) => {
-                                let meaning = static_meaning(command.meaning());
-                                {
-                                    return {
-                                        let (direct_arg0,) = (meaning,);
-                                        finish_scan!(self.scan_font_only_operation(direct_arg0))
-                                    };
-                                }
+                                return {
+                                    {
+                                        let font = take_native_scalar!(
+                                            processor.scan_font_selector_retained(),
+                                            scan_origin
+                                        );
+                                        {
+                                            let step = retained_assignment!(
+                                                receipts,
+                                                |context, _state, effects, _fuel, _observer, _execution| {
+                                                    semantic::execute_pdf_no_ligatures(context, effects, receipts, font)
+                                                }
+                                            )?;
+                                            self.schedule_assignment_token()?;
+                                            Ok(step)
+                                        }
+                                    }
+                                };
                             }
                             (
                                 _,
@@ -4064,26 +4247,23 @@ impl<G> DirectDispatch<'_, '_, G> {
                                                 context: "discarded late patterns",
                                             })?;
                                         return {
-                                            let (
-                                                direct_arg0,
-                                                direct_arg1,
-                                                direct_arg2,
-                                                direct_arg3,
-                                                direct_arg4,
-                                            ) = (
-                                                Vec::new(),
-                                                Vec::new(),
-                                                true,
-                                                rejection_context,
-                                                trie_built,
-                                            );
-                                            finish_scan!(self.execute_hyphenation_data(
-                                                direct_arg0,
-                                                direct_arg1,
-                                                direct_arg2,
-                                                direct_arg3,
-                                                direct_arg4
-                                            ))
+                                            let step = retained_assignment!(
+                                                receipts,
+                                                |context, _state, effects, _fuel, _observer, execution| {
+                                                    semantic::execute_hyphenation_data(
+                                                        context,
+                                                        effects,
+                                                        execution.initex,
+                                                        Vec::new(),
+                                                        Vec::new(),
+                                                        true,
+                                                        rejection_context,
+                                                        trie_built,
+                                                    )
+                                                }
+                                            )?;
+                                            self.schedule_assignment_token()?;
+                                            Ok(step)
                                         };
                                     }
                                     let scanned = (processor
@@ -4095,26 +4275,23 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         .map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     return {
-                                        let (
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2,
-                                            direct_arg3,
-                                            direct_arg4,
-                                        ) = (
-                                            scanned.words,
-                                            scanned.patterns,
-                                            patterns,
-                                            rejection_context,
-                                            trie_built,
-                                        );
-                                        finish_scan!(self.execute_hyphenation_data(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2,
-                                            direct_arg3,
-                                            direct_arg4
-                                        ))
+                                        let step = retained_assignment!(
+                                            receipts,
+                                            |context, _state, effects, _fuel, _observer, execution| {
+                                                semantic::execute_hyphenation_data(
+                                                    context,
+                                                    effects,
+                                                    execution.initex,
+                                                    scanned.words,
+                                                    scanned.patterns,
+                                                    patterns,
+                                                    rejection_context,
+                                                    trie_built,
+                                                )
+                                            }
+                                        )?;
+                                        self.schedule_assignment_token()?;
+                                        Ok(step)
                                     };
                                 }
                             }

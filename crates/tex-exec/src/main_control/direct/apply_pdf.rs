@@ -1,60 +1,6 @@
 //! Apply scanned pdf values directly.
 use super::*;
 impl<G> DirectDispatch<'_, '_, G> {
-    pub(super) fn execute_pdf_font_code(
-        &mut self,
-        mut table: tex_state::PdfFontCode,
-        mut font: FontId,
-        mut character: u8,
-        mut value: i32,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        let step = self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, _, _, _, command, _, _, _, _, _, _, _| {
-                semantic::execute_pdf_font_code(
-                    stores,
-                    command,
-                    &mut table,
-                    &mut font,
-                    &mut character,
-                    &mut value,
-                )
-            },
-        )?;
-        self.schedule_assignment_token()?;
-        Ok(step)
-    }
-
-    pub(super) fn execute_pdf_no_ligatures(
-        &mut self,
-        mut font: FontId,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        let step = self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, _, _, _, command, _, _, _, _, _, _, _| {
-                semantic::execute_pdf_no_ligatures(stores, command, &mut font)
-            },
-        )?;
-        self.schedule_assignment_token()?;
-        Ok(step)
-    }
-
     pub(super) fn execute_pdf_x_image(
         &mut self,
         mut request: tex_command::PdfImageRequest<tex_command::AttemptTokenListId>,
@@ -348,27 +294,6 @@ impl<G> DirectDispatch<'_, '_, G> {
             None,
             |stores, modes, _, _, command, _, _, _, _, _, _, _| {
                 semantic::execute_pdf_navigation(stores, modes, command, &mut operand0)
-            },
-        )
-    }
-
-    pub(super) fn execute_pdf_font_expand(
-        &mut self,
-        mut font: FontId,
-        mut spec: tex_typeset::expansion::FontExpansionSpec,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, _, _, _, _, _, _, _, _, _, _, _| {
-                semantic::execute_pdf_font_expand(stores, &mut font, &mut spec)
             },
         )
     }

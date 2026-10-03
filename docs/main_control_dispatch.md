@@ -169,3 +169,25 @@ in-flight TeX operation and cannot become a driver checkpoint cut. Replacement
 fetches enter the same reswitch without backup or an intervening command record.
 World dialogue, prepared shipout, output-page ownership and driver checkpoint
 cuts return their actual typed results after the relevant loans end.
+
+## Native font and code-table owners
+
+Font selection, font dimensions and character controls, generated-font
+installation, and character-code tables scan and mutate through the retained
+processor in the sole packed switch. Their source-free semantics borrow only
+the admitted context, actual diagnostic effects, command state when needed
+for recovery context, and demand-owned mutation receipts. INITEX policy is
+read from the actual execution owner. They construct no `CommandMachine`,
+scanner adapter, substitute host-fact record or continuation payload.
+
+The scanner consumes its final scalar operands in that switch arm. A generated
+font definition keeps its actual scanned definition value through installation;
+a pattern or exception scanner transfers its actual completed words into the
+hyphenation store. Ordered scanning reports, error dialogue, observer evidence
+and afterassignment input retain their existing semantic seams. Loading an
+external font still crosses its actual immutable-resource resolution boundary;
+that boundary is not an eligibility classification for a second interpreter.
+
+This removes the source-free adapters needed by a future native reader-owned
+main switch. Production main control still retains `CurrentCommand` across
+its fetch/switch boundary; the complete removal of that handoff is unfinished.

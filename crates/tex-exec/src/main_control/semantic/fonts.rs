@@ -3,138 +3,119 @@ use super::super::*;
 
 pub(in crate::main_control) fn execute_font_dimen<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    font: &mut FontId,
-    number: &mut i32,
-    value: &mut Scaled,
-    recovery_context: &mut Option<String>,
+    effects: &mut DiagnosticEffects,
+    font: FontId,
+    number: i32,
+    value: Scaled,
+    recovery_context: Option<String>,
 ) -> Result<ReplayStep, ExecError> {
-    {
-        // tex.web §578's `find_font_dimen` resolves an unusable parameter
-        // number to the scratch location `fmem_ptr`; §579 then reports
-        // "Font x has only n fontdimen parameters" and §1253 still runs
-        // `scan_optional_equals; scan_normal_dimen; font_info[k].sc:=
-        // cur_val` into that scratch cell, so the font is unchanged and
-        // the job continues. Only §580's grow path, which
-        // `set_font_dimen` implements, can add a parameter.
-        //
-        // The scan already made §578's decision and captured §579's
-        // context there, so this only writes or reports.
-        match recovery_context {
-            Some(context) => report_font_parameter_recovery(
-                stores,
-                command.diagnostic_effects,
-                *font,
-                std::mem::take(context),
-                None,
-            )?,
-            None => {
-                let number =
-                    u32::try_from(*number).expect("a writable parameter number is a positive u32");
-                match AssignmentCommitter::new(stores, command.diagnostic_effects)
-                    .try_unscoped(|stores| stores.set_font_dimen(*font, number, *value))
-                {
-                    Ok(_) => {}
-                    Err(capacity) => {
-                        return Err(ExecError::Fatal(tex_command::FatalError::overflow(
-                            "font memory",
-                            i32::try_from(capacity).expect("font capacity fits TeX integer"),
-                        )));
-                    }
+    // tex.web §578's `find_font_dimen` resolves an unusable parameter
+    // number to the scratch location `fmem_ptr`; §579 then reports
+    // "Font x has only n fontdimen parameters" and §1253 still runs
+    // `scan_optional_equals; scan_normal_dimen; font_info[k].sc:=
+    // cur_val` into that scratch cell, so the font is unchanged and
+    // the job continues. Only §580's grow path, which
+    // `set_font_dimen` implements, can add a parameter.
+    //
+    // The scan already made §578's decision and captured §579's
+    // context there, so this only writes or reports.
+    match recovery_context {
+        Some(context) => report_font_parameter_recovery(stores, effects, font, context, None)?,
+        None => {
+            let number =
+                u32::try_from(number).expect("a writable parameter number is a positive u32");
+            match AssignmentCommitter::new(stores, effects)
+                .try_unscoped(|stores| stores.set_font_dimen(font, number, value))
+            {
+                Ok(_) => {}
+                Err(capacity) => {
+                    return Err(ExecError::Fatal(tex_command::FatalError::overflow(
+                        "font memory",
+                        i32::try_from(capacity).expect("font capacity fits TeX integer"),
+                    )));
                 }
             }
         }
-        Ok(ReplayStep::Continue)
     }
+    Ok(ReplayStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_font_integer<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    font: &mut FontId,
-    skew: &mut bool,
-    value: &mut i32,
+    effects: &mut DiagnosticEffects,
+    font: FontId,
+    skew: bool,
+    value: i32,
 ) -> Result<ReplayStep, ExecError> {
-    {
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
-            if *skew {
-                stores.set_font_skew_char(*font, *value)
-            } else {
-                stores.set_font_hyphen_char(*font, *value)
-            }
-        });
-        Ok(ReplayStep::Continue)
-    }
+    AssignmentCommitter::new(stores, effects).unscoped(|stores| {
+        if skew {
+            stores.set_font_skew_char(font, value)
+        } else {
+            stores.set_font_hyphen_char(font, value)
+        }
+    });
+    Ok(ReplayStep::Continue)
 }
 
+// Borrow the actual owners and pass concrete operands without a command packet.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::main_control) fn execute_hyphenation_data<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    words: &mut Vec<Vec<char>>,
-    pattern_specs: &mut Vec<tex_state::hyphenation::PatternSpec>,
-    patterns: &mut bool,
-    rejection_context: &mut String,
-    trie_built: &mut bool,
+    effects: &mut DiagnosticEffects,
+    initex: bool,
+    words: Vec<Vec<char>>,
+    pattern_specs: Vec<tex_state::hyphenation::PatternSpec>,
+    patterns: bool,
+    rejection_context: String,
+    trie_built: bool,
 ) -> Result<ReplayStep, ExecError> {
-    {
-        // TeX82 §1252 rejects `\patterns` for two different reasons, and
-        // the two do not share a message. The `init`/`tini` split comes
-        // first: a production binary has no `new_patterns` to call, so it
-        // reports "Patterns can be loaded only by INITEX" with `help0`
-        // and flushes the braced group. Only INITEX reaches §960, whose
-        // own `trie_not_ready=false` guard is the "Too late" one, and it
-        // does carry help. `\hyphenation` is legal in both binaries.
-        if *patterns && !command.initex {
-            let mut report = stores.print_err("Patterns can be loaded only by INITEX");
-            report.context(std::mem::take(rejection_context));
-            report.error().defer_recovery(command.diagnostic_effects)?;
-            return Ok(ReplayStep::Continue);
-        }
-        if *trie_built {
-            let mut report = stores.print_err("Too late for \\patterns");
-            report.help(&["All patterns must be given before typesetting begins."]);
-            report.context(std::mem::take(rejection_context));
-            report.error().defer_recovery(command.diagnostic_effects)?;
-            return Ok(ReplayStep::Continue);
-        }
-        // Both halves of §§935/963's diagnostics were already reported by
-        // the live scan, where §82 could still show the character that
-        // caused them; installing is all that is left here.
-        if *patterns {
-            AssignmentCommitter::new(stores, command.diagnostic_effects).try_unscoped(
-                |stores| {
-                    crate::paragraph_end::apply_scanned_patterns(
-                        stores,
-                        std::mem::take(pattern_specs),
-                    )
-                },
-            )?;
-        } else {
-            AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
-                crate::paragraph_end::apply_scanned_hyphenation_exceptions(
-                    stores,
-                    std::mem::take(words),
-                );
-            });
-        }
-        Ok(ReplayStep::Continue)
+    // TeX82 §1252 rejects `\patterns` for two different reasons, and
+    // the two do not share a message. The `init`/`tini` split comes
+    // first: a production binary has no `new_patterns` to call, so it
+    // reports "Patterns can be loaded only by INITEX" with `help0`
+    // and flushes the braced group. Only INITEX reaches §960, whose
+    // own `trie_not_ready=false` guard is the "Too late" one, and it
+    // does carry help. `\hyphenation` is legal in both binaries.
+    if patterns && !initex {
+        let mut report = stores.print_err("Patterns can be loaded only by INITEX");
+        report.context(rejection_context);
+        report.error().defer_recovery(effects)?;
+        return Ok(ReplayStep::Continue);
     }
+    if trie_built {
+        let mut report = stores.print_err("Too late for \\patterns");
+        report.help(&["All patterns must be given before typesetting begins."]);
+        report.context(rejection_context);
+        report.error().defer_recovery(effects)?;
+        return Ok(ReplayStep::Continue);
+    }
+    // Both halves of §§935/963's diagnostics were already reported by
+    // the live scan, where §82 could still show the character that
+    // caused them; installing is all that is left here.
+    if patterns {
+        AssignmentCommitter::new(stores, effects).try_unscoped(|stores| {
+            crate::paragraph_end::apply_scanned_patterns(stores, pattern_specs)
+        })?;
+    } else {
+        AssignmentCommitter::new(stores, effects).unscoped(|stores| {
+            crate::paragraph_end::apply_scanned_hyphenation_exceptions(stores, words);
+        });
+    }
+    Ok(ReplayStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_font_select<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    font: &mut FontId,
-    global: &mut bool,
+    effects: &mut DiagnosticEffects,
+    font: FontId,
+    global: bool,
 ) -> Result<ReplayStep, ExecError> {
-    {
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
-            stores
-                .assign_current_font(*font, assignment_scope(*global))
-                .expect("current font belongs to admitted state")
-        });
-        Ok(ReplayStep::Continue)
-    }
+    AssignmentCommitter::new(stores, effects).unscoped(|stores| {
+        stores
+            .assign_current_font(font, assignment_scope(global))
+            .expect("current font belongs to admitted state")
+    });
+    Ok(ReplayStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_font_definition<G>(
@@ -283,62 +264,59 @@ pub(in crate::main_control) fn execute_font_definition<G>(
 
 pub(in crate::main_control) fn execute_generated_font_definition<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    definition: &mut ScannedGeneratedFontDefinition,
-    global: &mut bool,
+    effects: &mut DiagnosticEffects,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    definition: ScannedGeneratedFontDefinition,
+    global: bool,
 ) -> Result<ReplayStep, ExecError> {
+    if definition.kind == GeneratedFontKind::Copy
+        && matches!(
+            stores.font_construction(definition.source),
+            tex_fonts::FontConstruction::Letterspaced { .. }
+                | tex_fonts::FontConstruction::Expanded { .. }
+        )
     {
-        if definition.kind == GeneratedFontKind::Copy
-            && matches!(
-                stores.font_construction(definition.source),
-                tex_fonts::FontConstruction::Letterspaced { .. }
-                    | tex_fonts::FontConstruction::Expanded { .. }
-            )
-        {
-            let reason = match stores.font_construction(definition.source) {
-                tex_fonts::FontConstruction::Expanded { .. } => "cannot copy an expanded font",
-                _ => "cannot copy a letterspaced font",
-            };
-            return Err(ExecError::CannotCopyFont(reason));
-        }
-        let id = match definition.kind {
-            GeneratedFontKind::Copy => {
-                stores.try_copy_font_with_identifier(definition.source, definition.target)?
-            }
-            GeneratedFontKind::Letterspace => {
-                let zero_em = stores.font_parameter(definition.source, 6).raw() == 0;
-                let id = stores.try_letterspace_font_with_identifier(
-                    definition.source,
-                    definition.target,
-                    definition.amount,
-                    definition.no_ligatures,
-                )?;
-                if zero_em {
-                    stores.printer().print_rendered(
-                            "\npdfTeX warning (\\letterspacefont): font has zero em size (\\fontdimen6)\n",
-                        );
-                }
-                id
-            }
+        let reason = match stores.font_construction(definition.source) {
+            tex_fonts::FontConstruction::Expanded { .. } => "cannot copy an expanded font",
+            _ => "cannot copy a letterspaced font",
         };
-        let record = font_definition_mutation(
-            stores,
-            definition.target,
-            *global,
-            command.observes_mutations(),
-        );
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
-            stores
-                .assign_resolved_meaning(
-                    definition.target,
-                    tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
-                    assignment_scope(*global),
-                )
-                .expect("generated-font selector belongs to admitted state")
-        });
-        if let Some(record) = record {
-            command.retain_assignment_mutation(record);
-        }
-        Ok(ReplayStep::Continue)
+        return Err(ExecError::CannotCopyFont(reason));
     }
+    let id = match definition.kind {
+        GeneratedFontKind::Copy => {
+            stores.try_copy_font_with_identifier(definition.source, definition.target)?
+        }
+        GeneratedFontKind::Letterspace => {
+            let zero_em = stores.font_parameter(definition.source, 6).raw() == 0;
+            let id = stores.try_letterspace_font_with_identifier(
+                definition.source,
+                definition.target,
+                definition.amount,
+                definition.no_ligatures,
+            )?;
+            if zero_em {
+                stores.printer().print_rendered(
+                    "\npdfTeX warning (\\letterspacefont): font has zero em size (\\fontdimen6)\n",
+                );
+            }
+            id
+        }
+    };
+    let record = font_definition_mutation(stores, definition.target, global, receipts.is_some());
+    AssignmentCommitter::new(stores, effects).unscoped(|stores| {
+        stores
+            .assign_resolved_meaning(
+                definition.target,
+                tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
+                assignment_scope(global),
+            )
+            .expect("generated-font selector belongs to admitted state")
+    });
+    if let Some(record) = record {
+        receipts
+            .as_mut()
+            .expect("requested mutation receipt")
+            .push(record);
+    }
+    Ok(ReplayStep::Continue)
 }

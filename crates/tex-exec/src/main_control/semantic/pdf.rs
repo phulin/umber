@@ -3,20 +3,21 @@ use super::super::*;
 
 pub(in crate::main_control) fn execute_pdf_font_code<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    table: &mut tex_state::PdfFontCode,
-    font: &mut FontId,
-    character: &mut u8,
-    value: &mut i32,
+    effects: &mut DiagnosticEffects,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    table: tex_state::PdfFontCode,
+    font: FontId,
+    character: u8,
+    value: i32,
 ) -> Result<ReplayStep, ExecError> {
     {
-        AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .unscoped(|stores| stores.set_pdf_font_code(*table, *font, *character, *value));
-        if command.observes_mutations() {
-            command.retain_assignment_mutation(MutationRecord {
+        AssignmentCommitter::new(stores, effects)
+            .unscoped(|stores| stores.set_pdf_font_code(table, font, character, value));
+        if let Some(receipts) = receipts.as_mut() {
+            receipts.push(MutationRecord {
                 target: MutationTarget::Register,
                 key: ObservationValue::Name(format!("{table:?}:{}:{character}", font.raw())),
-                value: ObservationValue::Integer(i64::from(*value)),
+                value: ObservationValue::Integer(i64::from(value)),
                 global: true,
             });
         }
@@ -26,14 +27,15 @@ pub(in crate::main_control) fn execute_pdf_font_code<G>(
 
 pub(in crate::main_control) fn execute_pdf_no_ligatures<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    font: &mut FontId,
+    effects: &mut DiagnosticEffects,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    font: FontId,
 ) -> Result<ReplayStep, ExecError> {
     {
-        AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .unscoped(|stores| stores.disable_pdf_font_ligatures(*font));
-        if command.observes_mutations() {
-            command.retain_assignment_mutation(MutationRecord {
+        AssignmentCommitter::new(stores, effects)
+            .unscoped(|stores| stores.disable_pdf_font_ligatures(font));
+        if let Some(receipts) = receipts.as_mut() {
+            receipts.push(MutationRecord {
                 target: MutationTarget::Register,
                 key: ObservationValue::Name("pdf_no_ligatures".into()),
                 value: ObservationValue::Name(font.raw().to_string()),
