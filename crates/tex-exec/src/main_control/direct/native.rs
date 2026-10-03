@@ -34,6 +34,38 @@ impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
             }
         };
         let result = match code {
+            codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN => {
+                let tex_state::meaning::MeaningWord::Static(word) = meaning else {
+                    unreachable!("native character meaning")
+                };
+                let ch = if code == codes::CHAR_GIVEN {
+                    char::from_u32(Meaning::runtime_word_operand(*word) as u32)
+                        .expect("validated character-definition word")
+                } else {
+                    Meaning::runtime_word_character(*word)
+                        .expect("native character word")
+                        .0
+                };
+                let origin = processor.active_macro_origin().unwrap_or(spelling.origin());
+                let etex_extended = processor.profile() == CommandProfile::ETEX26;
+                processor.with_execution_owners(
+                    |context, _, effects, fuel, _, execution, _, _, _| {
+                        if TEXT_BOUNDARY {
+                            execution.main_loop_active = false;
+                        }
+                        characters::append_native_character(
+                            context,
+                            effects,
+                            fuel,
+                            execution,
+                            ch,
+                            origin,
+                            etex_extended,
+                        )?;
+                        Ok(ReplayStep::Continue)
+                    },
+                )
+            }
             codes::CHAR_SPACE => processor.with_execution_owners(
                 |context, _, effects, fuel, _, execution, _, _, _| {
                     execution.main_loop_active = false;
@@ -68,10 +100,14 @@ impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
                     unreachable!("native font operand")
                 };
                 let global = effective_global(processor.int_param(IntParam::GLOBAL_DEFS), false);
-                let result =
-                    processor.with_execution_owners(|context, _, effects, _, _, _, _, _, _| {
+                let result = processor.with_execution_owners(
+                    |context, _, effects, _, _, execution, _, _, _| {
+                        if TEXT_BOUNDARY {
+                            execution.main_loop_active = false;
+                        }
                         semantic::execute_font_select(context, effects, *font, global)
-                    });
+                    },
+                );
                 result.and_then(|step| {
                     processor
                         .complete_assignment()
@@ -87,6 +123,9 @@ impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
                 };
                 processor.with_execution_owners(
                     |context, command, effects, fuel, _, execution, _, _, _| {
+                        if TEXT_BOUNDARY {
+                            execution.main_loop_active = false;
+                        }
                         apply_groups::begin_native_group(
                             context,
                             command,
@@ -107,6 +146,7 @@ impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
                 (if TEXT_BOUNDARY {
                     processor.with_execution_owners(
                         |context, _, effects, fuel, _, execution, _, _, _| {
+                            execution.main_loop_active = false;
                             if execution.modes.current_list().pending_hchars().is_some() {
                                 crate::box_runtime::flush_pending_hchars_with_fuel(
                                     &mut execution.modes,
@@ -151,6 +191,10 @@ impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
         // Unsave can restore tracing parameters and can deliver aftergroup
         // diagnostics. Re-enter main control before another word in either case.
         if TEXT_BOUNDARY
+            || matches!(
+                code,
+                codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN
+            )
             || *self.completed_operations + 1 >= self.remaining_operations
             || result.is_err()
             || processor.has_pending_reports()
@@ -202,6 +246,15 @@ impl<'state, 'host, G, const TEXT_BOUNDARY: bool>
             tex_state::meaning::MeaningWord::Macro { .. } => return false,
         };
         match Meaning::runtime_word_control_code(word) {
+            codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN => processor
+                .with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+                    matches!(
+                        execution.modes.current_mode(),
+                        Mode::Horizontal | Mode::RestrictedHorizontal
+                    ) && execution.active_alignment.is_none()
+                        && !execution.page_region_succession_pending
+                        && !context.tracked_region_is_active()
+                }),
             codes::CHAR_SPACE | codes::PRIMITIVE_BEGIN_GROUP => true,
             codes::CHAR_BEGIN_GROUP => {
                 processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {

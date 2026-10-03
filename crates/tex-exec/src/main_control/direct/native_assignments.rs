@@ -326,13 +326,11 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             Ok(step)
         }
         codes::PRIMITIVE_LET | codes::PRIMITIVE_FUTURE_LET => {
-            let (target, meaning) = (if code == codes::PRIMITIVE_FUTURE_LET {
-                processor.scan_futurelet_assignment()
+            let (target, meaning) = if code == codes::PRIMITIVE_FUTURE_LET {
+                take_native_scalar!(processor.scan_futurelet_assignment(), scan_origin)
             } else {
-                processor.scan_let_assignment()
-            })
-            .map_err(command_error)
-            .map_err(|error| scan_error(error, scan_origin))?;
+                take_native_scalar!(processor.scan_let_assignment(), scan_origin)
+            };
             let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |context, _state, effects, fuel, _observer, native_execution| {

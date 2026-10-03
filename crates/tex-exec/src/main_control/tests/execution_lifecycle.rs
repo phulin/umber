@@ -574,3 +574,63 @@ fn native_terminals_after_text_refresh_delivery_and_preserve_group_restoration()
         }
     }
 }
+
+#[test]
+fn native_first_character_preserves_the_completed_character_loop_state() {
+    // TeX82 §§1030/1038: a completed horizontal character switches the next
+    // fetch to main_loop_lookahead, including §1039's char_given entry.
+    for first in ["a", r"\g "] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_cmr10_as(&mut control, stores, "cmr10.tfm");
+            let source = format!(
+                "\\font\\f=cmr10 \\f\\chardef\\g=97 \\setbox0=\\hbox{{{first}bc xyz}}\\setbox1=\\hbox{{abc xyz}}\\ifdim\\wd0=\\wd1\\global\\count0=1 \\fi\\end"
+            );
+            register_source(&mut control, source.as_bytes());
+            for _ in 0..4 {
+                control.advance(stores).expect("font, alias and box setup");
+            }
+            assert_eq!(
+                control.execution.modes.current_mode(),
+                Mode::RestrictedHorizontal
+            );
+            assert!(!control.execution.main_loop_active);
+            let mut effects = DiagnosticEffects::new();
+            let mut provider = None;
+            let mut completed = 0;
+            assert!(matches!(
+                control
+                    .execute_control_chunk(
+                        stores,
+                        None,
+                        None,
+                        &mut effects,
+                        false,
+                        &mut provider,
+                        1,
+                        &mut completed,
+                    )
+                    .expect("consume one native first character"),
+                ReplayStep::Continue
+            ));
+            assert_eq!(completed, 0, "the driver owns the budget-cut character");
+            assert!(control.execution.main_loop_active, "first={first}");
+            assert!(
+                control
+                    .execution
+                    .modes
+                    .current_list()
+                    .pending_hchars()
+                    .is_some()
+            );
+            run_to_end(&mut control, stores);
+            assert_eq!(
+                admitted!(stores, |context| context
+                    .count(0)
+                    .expect("text width result")),
+                1,
+                "the character is retained once and the text resumes: first={first}"
+            );
+        });
+    }
+}

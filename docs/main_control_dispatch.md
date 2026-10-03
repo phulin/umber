@@ -565,3 +565,24 @@ afterassignment delivery. No second processor or semantic application wrapper
 is built. The obsolete family request, its unused math-request variant and the
 math-family scanner/application modules are deleted. Font identifiers referring
 to a math-size bank also scan the actual restricted integer directly.
+
+## Native entry into a character run
+
+Horizontal letter, other-character and character-definition words enter the
+existing glyph builder directly from their native meaning. They share the
+same source-free scalar glyph admission as resident character runs, including
+fuel, provenance, font metrics and the actual character-loop flag. Math,
+paragraph-start, alignment, tracking and boundary-suppression cases retain
+their real semantic consumers.
+
+A consumed glyph returns its actual completion so the retained processor
+refreshes into character lookahead before reading another word. This completion
+already owns the resulting execution state: the shared continuation must not
+clear its loop flag as if it were about to apply another semantic operation.
+Fonts and groups leave text at their own semantic entry; assignments retain
+their existing entry. No second context admission or command record is needed
+to resume the horizontal character loop.
+
+The private `HotToken` wrapper is also removed. Remaining delivered commands
+hold their actual word, origin, demanded delivery site and native meaning
+directly; ordinary native input constructs neither representation.

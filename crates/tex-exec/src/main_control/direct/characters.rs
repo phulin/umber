@@ -79,25 +79,47 @@ impl<G> tex_command::MainCharacterConsumer<G, &mut ExecutionState<G>> for MainSo
             }
             tex_command::MainCharacterInput::Scalar { ch, origin } => {
                 self.applied = true;
-                if let Err(error) = crate::box_runtime::append_character_with_fuel(
-                    &mut execution.modes,
+                if let Err(error) = append_native_character(
                     context,
-                    &mut *diagnostic_effects,
+                    diagnostic_effects,
+                    fuel,
+                    execution,
                     ch,
                     origin,
                     self.etex_extended,
-                    fuel,
                 ) {
                     self.error = Some(error);
                     return tex_command::CharacterRunAdmission::new(0, false);
                 }
-                execution.main_loop_active = u8::try_from(u32::from(ch)).ok().is_some_and(|code| {
-                    context
-                        .font_char_metrics(context.current_font(), code)
-                        .is_some()
-                });
                 tex_command::CharacterRunAdmission::new(1, execution.main_loop_active)
             }
         }
     }
+}
+
+/// Append an actual scalar glyph and select the next fetch role in its owner.
+pub(super) fn append_native_character<G>(
+    context: &mut CommandContext<'_, G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    execution: &mut ExecutionState<G>,
+    ch: char,
+    origin: OriginId,
+    etex_extended: bool,
+) -> Result<(), ExecError> {
+    crate::box_runtime::append_character_with_fuel(
+        &mut execution.modes,
+        context,
+        effects,
+        ch,
+        origin,
+        etex_extended,
+        fuel,
+    )?;
+    execution.main_loop_active = u8::try_from(u32::from(ch)).ok().is_some_and(|code| {
+        context
+            .font_char_metrics(context.current_font(), code)
+            .is_some()
+    });
+    Ok(())
 }

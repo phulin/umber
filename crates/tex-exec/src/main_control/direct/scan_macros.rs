@@ -31,7 +31,7 @@ macro_rules! direct_finish_scan {
 // the still-live context. Evidence remains demand-owned at the common tail.
 macro_rules! direct_native_semantic {
     ($this:ident, $processor:ident, $admission:ident, $receipts:ident,
-     $initial_receipts:expr, $result:ident, $apply:expr) => {{
+     $initial_receipts:expr, $result:ident, $reset_loop:expr, $apply:expr) => {{
         $this.cursor = Some($processor.delivery_cursor());
         let diagnostics = $processor.take_semantic_diagnostics();
         if !diagnostics.is_empty() {
@@ -45,7 +45,9 @@ macro_rules! direct_native_semantic {
             $this.effects,
             std::mem::take(&mut $this.diagnostics),
         )?;
-        $this.control.execution.main_loop_active = false;
+        if $reset_loop {
+            $this.control.execution.main_loop_active = false;
+        }
         let $receipts = &mut $initial_receipts;
         let $result = $apply;
         if $result.is_ok() && $this.control.command.has_pending_named_token_list_pushes() {
@@ -82,6 +84,7 @@ macro_rules! direct_apply_relax {
                 .is_some()
                 .then(Vec::new),
             result,
+            true,
             semantic::execute_relax(
                 &mut $admission,
                 Some(&mut $this.control.execution.modes),

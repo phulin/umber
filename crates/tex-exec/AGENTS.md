@@ -333,3 +333,9 @@ The native consumer is specialized at its actual entry: bulk text boundaries
 flush and return their real completion; ordinary admitted terminals continue
 without per-word text-owner queries. The existing reader admission guards
 remain with their actual call sites; no cached eligibility state is added.
+
+Horizontal letter/other/character-definition words also enter the glyph builder
+through the native consumer. Scalar resident text shares that same admission
+helper. Already-completed semantics preserve their live character-loop state
+through retained continuation; fonts and groups leave the loop at their real
+semantic entry. No second context admission is used to resume native text.

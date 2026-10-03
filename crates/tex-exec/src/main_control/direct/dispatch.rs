@@ -60,7 +60,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                 }
 
                 macro_rules! native_semantic {
-                    ($receipts:ident, $apply:expr) => {
+                    ($receipts:ident, $reset_loop:expr, $apply:expr) => {
                         direct_native_semantic!(
                             self,
                             owned_processor,
@@ -68,23 +68,27 @@ impl<G> DirectDispatch<'_, '_, G> {
                             $receipts,
                             observation_receipts.take(),
                             result,
+                            $reset_loop,
                             $apply
                         )
                     };
                 }
 
                 macro_rules! retained_semantic {
-                    ($($args:tt)*) => { retained_apply!(false, $($args)*) };
+                    ($($args:tt)*) => { retained_apply!(false, true, $($args)*) };
                 }
                 macro_rules! retained_assignment {
-                    ($($args:tt)*) => { retained_apply!(true, $($args)*) };
+                    ($($args:tt)*) => { retained_apply!(true, true, $($args)*) };
+                }
+                macro_rules! retained_completed {
+                    ($($args:tt)*) => { retained_apply!(false, false, $($args)*) };
                 }
                 macro_rules! retained_apply {
-                    ($assignment:expr, $receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident, $observer:ident, $execution:ident| $apply:expr) => {{
+                    ($assignment:expr, $reset_loop:expr, $receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident, $observer:ident, $execution:ident| $apply:expr) => {{
                         // Reports from scanning precede semantic application. Their
                         // actual demand releases the scanner before publication.
                         if owned_processor.has_pending_reports() {
-                            native_semantic!($receipts, {
+                            native_semantic!($receipts, $reset_loop, {
                                 let $context = &mut admitted_context;
                                 let $state = &mut self.control.command;
                                 let $effects = &mut *self.effects;
@@ -95,7 +99,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     .as_mut()
                                     .map(|buffer| buffer as &mut dyn CommandObserver);
                                 let $execution = &mut self.control.execution;
-                                $execution.main_loop_active = false;
+                                if $reset_loop {
+                                    $execution.main_loop_active = false;
+                                }
                                 $apply
                             })
                         } else {
@@ -110,7 +116,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                                  _,
                                  _,
                                  _| {
-                                    $execution.main_loop_active = false;
+                                    if $reset_loop {
+                                        $execution.main_loop_active = false;
+                                    }
                                     $apply
                                 },
                             );
@@ -230,7 +238,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }));
                         }
                         if let Some(completed) = native_completion {
-                            return retained_semantic!(
+                            return retained_completed!(
                                 receipts,
                                 |_context, _state, _effects, _fuel, _observer, _execution| {
                                     completed.map_err(|error| scan_error(error, scan_origin))
@@ -294,7 +302,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                         (delivery, native.completion)
                     };
                     if let Some(completed) = native_completion {
-                        return retained_semantic!(
+                        return retained_completed!(
                             receipts,
                             |_context, _state, _effects, _fuel, _observer, _execution| completed
                                 .map_err(|error| scan_error(error, scan_origin))
@@ -921,6 +929,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     if processor.has_pending_reports() {
                                         native_semantic!(
                                             receipts,
+                                            true,
                                             self.control.apply_native_group_leave(
                                                 &mut admitted_context,
                                                 self.effects,
@@ -1025,6 +1034,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         if processor.has_pending_reports() {
                                             native_semantic!(
                                                 receipts,
+                                                true,
                                                 self.control.apply_native_group_leave(
                                                     &mut admitted_context,
                                                     self.effects,

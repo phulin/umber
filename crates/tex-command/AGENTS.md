@@ -157,7 +157,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   crosses that boundary. The live `CommandState` also owns TeX82's three
   scalar stack maxima directly; they are operational session evidence outside
   snapshot roots and survive restore without shared synchronization.
-- `src/command.rs`: compact internal `HotToken { word, origin, site }`, native
+- `src/command.rs`: actual delivered word, origin and site fields, native
   `MeaningWord<G>` from the authoritative eqtb (static meaning, macro key/flags,
   or full font capability), and public opaque, ephemeral `CurrentCommand` containing that same packed
   word. Its native control-code projection drives the sole executor switch;
@@ -824,3 +824,5 @@ Filename grammar consumes native character meanings without per-character comman
 Futurelet retains its two operands in its own scanner grammar. Ordinary let scans its actual native meaning without the futurelet backup frame; target scanning and canonical backup mutation remain shared. The boolean-selected scanner and outlined RHS forwarding helper are deleted.
 
 Restricted integer scans return the existing scalar value and genuine primary origin. The separate restricted result and discarded scanned/recovered fields in math, character-definition and stream requests are removed. Canonical bounds/recovery stay central; ifeof demands its extra observer diagnostic locally. Profile register scanning selects the real bound before the direct integer scan, without traversing another register forwarding entry.
+
+The private HotToken wrapper is deleted. Remaining CurrentCommand consumers hold only their actual spelling, demanded delivery facts and native meaning directly; ordinary native input constructs no delivered record.
