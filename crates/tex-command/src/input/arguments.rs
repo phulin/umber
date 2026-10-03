@@ -299,7 +299,7 @@ impl<G> ArgumentArena<G> {
             return Err(ScratchError::InvalidCoordinate);
         }
         self.append_owned(writer.region, spelling)?;
-        writer.visible_end = self.pending_len(writer.region);
+        writer.visible_end += 1;
         Ok(writer.cursor.settle_argument_word(spelling.token_word()))
     }
     pub(crate) fn append_delimiter_word(
@@ -445,7 +445,7 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
         }
         if count != 0 {
             arena.extend_region(self.region, source, slot, range.start as u32, count as u32)?;
-            self.visible_end = arena.pending_len(self.region);
+            self.visible_end += count as u32;
         }
         Ok(count)
     }
@@ -468,7 +468,7 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
         }
         if count != 0 {
             arena.extend_definition(self.region, body, range.start as u32, count as u32)?;
-            self.visible_end = arena.pending_len(self.region);
+            self.visible_end += count as u32;
         }
         Ok(count)
     }

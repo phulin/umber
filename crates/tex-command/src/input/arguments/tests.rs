@@ -425,6 +425,9 @@ fn definition_argument_survives_publication_and_source_body_retirement() {
                     word('a').token_word(),
                     word('b').token_word(),
                     word('c').token_word(),
+                    word('d').token_word(),
+                    word('e').token_word(),
+                    word('f').token_word(),
                 ],
             )
             .expect("source definition");
@@ -440,10 +443,10 @@ fn definition_argument_survives_publication_and_source_body_retirement() {
             cursor.consume_token_span(
                 &mut arena,
                 &body,
-                1..3,
+                1..6,
                 &mut ArgumentRunAdmission::characters(),
             ),
-            Ok(2)
+            Ok(5)
         );
         drop(body);
         drop(publication);
@@ -453,7 +456,7 @@ fn definition_argument_survives_publication_and_source_body_retirement() {
         let region = arena.publish(matching);
         assert_eq!(
             arena.words(region, 0).iter().collect::<Vec<_>>(),
-            [word('b'), word('c')]
+            [word('b'), word('c'), word('d'), word('e'), word('f')]
         );
         arena.release(region);
         assert!(arena.is_empty());

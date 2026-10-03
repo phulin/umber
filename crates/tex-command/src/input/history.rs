@@ -757,12 +757,8 @@ impl<G> InputStack<G> {
         word: tex_state::token::TracedTokenWord,
         delimiter: bool,
     ) -> Result<u32, crate::execution_scratch::ScratchError> {
-        let row = self.rows.last().and_then(|level| match level {
-            InputLevel::Resident(row) => Some(row),
-            _ => None,
-        });
         self.arguments
-            .append_from_input(writer, word, row, delimiter)
+            .append_from_input(writer, word, &self.rows, delimiter)
     }
 
     /// The innermost macro activation's argument words and replacement.

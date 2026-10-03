@@ -168,14 +168,17 @@ impl<G> ArgumentArena<G> {
         len: u32,
     ) -> Result<(), ScratchError> {
         let slot = self.pending_slot(id);
-        if len == 1 && self.regions[id.index()].source_slots & (1 << slot) == 0 {
-            return self.append_owned(
-                id,
-                TracedTokenWord::from_parts(
-                    body.word(start as usize).expect("admitted word"),
-                    tex_state::token::OriginId::UNKNOWN,
-                ),
+        let region = &mut self.regions[id.index()];
+        if len <= 4 && region.source_slots & (1 << slot) == 0 {
+            region.words.extend(
+                body.replacement_from(start)[..len as usize]
+                    .iter()
+                    .map(|&word| {
+                        TracedTokenWord::from_parts(word, tex_state::token::OriginId::UNKNOWN)
+                    }),
             );
+            region.values[usize::from(slot)].len += len;
+            return Ok(());
         }
         self.retain_definition_span(id, body, start, len)
     }
@@ -319,7 +322,7 @@ impl<G> ArgumentArena<G> {
         &mut self,
         writer: &mut ArgumentCursor,
         word: TracedTokenWord,
-        row: Option<&super::super::ResidentTokenRow<G>>,
+        rows: &[super::super::InputLevel<G>],
         delimiter: bool,
     ) -> Result<u32, ScratchError> {
         if !delimiter && writer.holdback_len != 0 {
@@ -337,7 +340,7 @@ impl<G> ArgumentArena<G> {
             };
         }
         let mut retained = false;
-        if let Some(row) = row
+        if let Some(super::super::InputLevel::Resident(row)) = rows.last()
             && row.header.frame.position() != 0
         {
             let at = row.header.frame.position() - 1;
@@ -373,7 +376,7 @@ impl<G> ArgumentArena<G> {
             writer.holdback_len += 1;
             Ok(writer.brace_depth())
         } else {
-            writer.visible_end = self.pending_len(writer.region);
+            writer.visible_end += 1;
             Ok(writer.cursor.settle_argument_word(word.token_word()))
         }
     }

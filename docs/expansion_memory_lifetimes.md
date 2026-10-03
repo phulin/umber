@@ -321,13 +321,19 @@ its pooled word offset; a retained range names its source-lane row. That row
 owns the source and its offset, while the range owns the length. Normal short
 arguments require no tagged owner or per-argument destructor.
 
-The canonical matcher writes every argument into that final region. A singleton
-uses its pooled traced spelling directly. A larger contiguous resident span
+The canonical matcher writes every argument into that final region. Up to four
+immutable definition words write directly into the pooled traced spelling, which
+costs less than acquiring and dropping a source owner for a tiny span. A singleton
+from another argument also writes directly. A larger contiguous resident span
 retains its actual source; contiguous writes extend it. A fragmented write
 materializes only its actual argument at the consuming write. Source aliases
 flatten once to an immutable definition or original owned word offset. No
 second matcher, copied parameter array, deferred-copy stage or successful-command
 cleanup stage exists.
+
+Scalar capture queries the live input row only when an actual source lease can
+extend. Accepted writes advance the local visible end by their consumed count;
+they do not reload the pending range length from the invocation bank.
 
 Parameter input rows name the invocation and argument slot and use local offsets.
 Delimiter holdback retains incomplete prefixes; the completing word finishes
