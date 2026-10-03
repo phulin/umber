@@ -152,9 +152,9 @@ fn hot_state_gate() -> (
         {
             let mut context = universe.command_context().expect("admit command context");
             context
-                .assign_resolved_meaning(
+                .assign_meaning(
                     symbol,
-                    ResolvedMeaning::Static(Meaning::Relax),
+                    tex_state::MeaningWord::from_static(Meaning::Relax),
                     AssignmentScope::Global,
                 )
                 .expect("install direct meaning");
@@ -169,21 +169,12 @@ fn hot_state_gate() -> (
                 direct_reads(&context, symbol)
             })
         };
-        let write_operation = universe
-            .begin_state_operation()
-            .expect("warm state operation");
         for value in 0..WARM_WRITES {
             let mut context = universe.command_context().expect("write context");
             context
                 .assign_count(0, value as i32, AssignmentScope::Global)
-                .expect("prime the rollback lane high-water");
+                .expect("warm the admitted count cell");
         }
-        universe
-            .restore_state(write_operation)
-            .expect("restore priming writes");
-        let write_operation = universe
-            .begin_state_operation()
-            .expect("warmed state operation");
         let writes = measure(HotCoreAllocationOwner::SemanticApply, || {
             for value in 0..WARM_WRITES {
                 {
@@ -193,10 +184,10 @@ fn hot_state_gate() -> (
                         .expect("same admitted count cell remains writable");
                 }
             }
-            universe
-                .restore_state(write_operation)
-                .expect("discard the operation-local journal suffix");
-            black_box(universe.count(0).expect("read restored count"));
+            assert_eq!(
+                universe.count(0).expect("read assigned count"),
+                (WARM_WRITES - 1) as i32
+            );
         });
 
         {

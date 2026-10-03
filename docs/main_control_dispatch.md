@@ -119,6 +119,19 @@ record that it would immediately unpack and discard.
 
 ### Raw binding operands
 
+Binding scans return the actual native `MeaningWord` that the eqtb installs.
+`\let` neither decodes its RHS nor reencodes it during assignment. e-TeX's
+redundant-local-definition check compares the two native words directly;
+observed mutation rendering decodes only at its demanded receipt boundary.
+The admitted context's meaning write accepts that same native word, validates
+its font capability when present, then enters the existing central state
+mutation. All callers use this one API; the resolved-meaning write API is
+removed. Definition publications acquire their installed native root before
+releasing the publication, preserving group and checkpoint ownership.
+
+The name terminator check compares the packed word to its canonical encoded
+`\endcsname` constant. It does not decode unrelated meaning variants.
+
 The canonical raw reader lends spelling and, when its consumer requests it,
 the already-resolved native meaning. A spelling-only consumer does not resolve
 ordinary literal characters. Continuing consumers keep accepted spaces and

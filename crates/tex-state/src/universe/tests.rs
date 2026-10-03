@@ -1492,9 +1492,9 @@ fn runtime_checkpoint_preserves_exact_font_roots_across_every_state_owner() {
             let mut context = universe.command_context().expect("context");
             let font = context.intern_font(test_font("checkpointfont"));
             context
-                .assign_resolved_meaning(
+                .assign_meaning(
                     selector.symbol(),
-                    ResolvedMeaning::Static(Meaning::Font(font)),
+                    crate::MeaningWord::from_static(Meaning::Font(font)),
                     AssignmentScope::Global,
                 )
                 .expect("font meaning");
@@ -1551,9 +1551,9 @@ fn checkpoint_capture_and_restore_do_not_scan_font_bearing_roots() {
             {
                 let mut context = universe.command_context().expect("context");
                 context
-                    .assign_resolved_meaning(
+                    .assign_meaning(
                         selector.symbol(),
-                        ResolvedMeaning::Static(Meaning::Font(font)),
+                        crate::MeaningWord::from_static(Meaning::Font(font)),
                         AssignmentScope::Global,
                     )
                     .expect("font meaning");

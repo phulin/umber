@@ -2418,12 +2418,9 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
             let definition = definition_publication.reference();
             let name = stores.intern("n").expect("symbol interning");
             admitted!(stores, |context| context
-                .assign_resolved_meaning(
+                .assign_meaning(
                     name.symbol(),
-                    tex_state::ResolvedMeaning::Macro {
-                        flags: MeaningFlags::EMPTY,
-                        definition,
-                    },
+                    tex_state::MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
                     tex_state::AssignmentScope::Global,
                 )
                 .expect("fixture macro assignment"));

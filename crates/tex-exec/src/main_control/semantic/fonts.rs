@@ -151,9 +151,9 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                 );
                 AssignmentCommitter::new(stores, diagnostic_effects).unscoped(|stores| {
                     stores
-                        .assign_resolved_meaning(
+                        .assign_meaning(
                             request.target,
-                            tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(
+                            tex_state::MeaningWord::from_static(Meaning::Font(
                                 tex_state::font::NULL_FONT,
                             )),
                             assignment_scope(*global),
@@ -248,9 +248,9 @@ pub(in crate::main_control) fn execute_font_definition<G>(
             font_definition_mutation(stores, request.target, *global, observe_font_definition);
         AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
             stores
-                .assign_resolved_meaning(
+                .assign_meaning(
                     request.target,
-                    tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
+                    tex_state::MeaningWord::from_static(Meaning::Font(id)),
                     assignment_scope(*global),
                 )
                 .expect("font selector belongs to admitted state")
@@ -305,9 +305,9 @@ pub(in crate::main_control) fn execute_generated_font_definition<G>(
     let record = font_definition_mutation(stores, definition.target, global, receipts.is_some());
     AssignmentCommitter::new(stores, effects).unscoped(|stores| {
         stores
-            .assign_resolved_meaning(
+            .assign_meaning(
                 definition.target,
-                tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
+                tex_state::MeaningWord::from_static(Meaning::Font(id)),
                 assignment_scope(global),
             )
             .expect("generated-font selector belongs to admitted state")

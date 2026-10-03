@@ -50,9 +50,9 @@ fn direct_state_access(c: &mut Criterion) {
         {
             let mut context = universe.command_context().expect("command context");
             context
-                .assign_resolved_meaning(
+                .assign_meaning(
                     symbol,
-                    ResolvedMeaning::Static(Meaning::Relax),
+                    tex_state::MeaningWord::from_static(Meaning::Relax),
                     AssignmentScope::Global,
                 )
                 .expect("install direct meaning");
@@ -78,24 +78,15 @@ fn direct_state_access(c: &mut Criterion) {
             });
         }
 
-        let write_operation = universe
-            .begin_state_operation()
-            .expect("prime state operation");
         for value in 0..WARM_WRITES {
             let mut context = universe.command_context().expect("write context");
             context
                 .assign_count(0, value as i32, AssignmentScope::Global)
-                .expect("prime the rollback lane high-water");
+                .expect("warm the admitted count cell");
         }
-        universe
-            .restore_state(write_operation)
-            .expect("restore priming writes");
         let mut value = 0_i32;
         c.bench_function("direct_state/same_cell_global_write", |b| {
             b.iter(|| {
-                let operation = universe
-                    .begin_state_operation()
-                    .expect("warmed state operation");
                 for _ in 0..WARM_WRITES {
                     value = value.wrapping_add(1);
                     {
@@ -105,10 +96,7 @@ fn direct_state_access(c: &mut Criterion) {
                             .expect("write admitted count");
                     }
                 }
-                universe
-                    .restore_state(operation)
-                    .expect("discard the operation-local journal suffix");
-                black_box(universe.count(0).expect("read restored count"));
+                black_box(universe.count(0).expect("read assigned count"));
             });
         });
     })

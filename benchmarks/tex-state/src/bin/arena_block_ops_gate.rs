@@ -11,6 +11,14 @@ static ALLOCATOR: HotCoreAllocator = HotCoreAllocator;
 
 enum AnnexLane {}
 
+impl tex_state::fork_arena::RegionValue<AnnexLane> for u32 {
+    const HAS_INLINE_REGION_LISTS: bool = false;
+
+    fn visit_region_lists(&self, _visit: &mut dyn FnMut(ArenaListId<AnnexLane>)) {}
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
 const LISTS: usize = 4_096;
 const WORDS_PER_LIST: usize = 11;
 const LONG_WORDS: usize = 65_536;

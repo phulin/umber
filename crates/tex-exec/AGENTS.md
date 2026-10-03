@@ -311,3 +311,7 @@ borrows actual command and effect owners without an operation request.
 Native calls consume standard `Result` from the direct scanner APIs. Retained
 scalar unions, result projections and compatibility scanner entries are absent.
 The operation-child result adapter is deleted; callers map actual command errors.
+
+Let assignments keep their native meaning word through the redundant-local
+comparison and central admitted state write. Only demanded mutation receipts
+decode that word; no resolved-meaning assignment API remains.

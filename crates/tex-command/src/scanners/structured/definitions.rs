@@ -117,7 +117,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_let_assignment(
         &mut self,
         future: bool,
-    ) -> Result<(Symbol, ResolvedMeaning<G>), CommandError> {
+    ) -> Result<(Symbol, tex_state::MeaningWord<G>), CommandError> {
         use std::ops::ControlFlow;
 
         let target = self.scan_definition_target()?;
@@ -127,7 +127,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let first = self.read_backup_operand(&mut adjustment, &mut observed_spelling)?;
             let meaning = self
                 .consume_raw_words::<true, _>(&mut |processor, spelling, meaning, command| {
-                    let meaning = meaning.expect("raw meaning requested").resolve();
+                    let meaning = *meaning.expect("raw meaning requested");
                     processor.back_consumed_word(spelling, command)?;
                     Ok(ControlFlow::Break(meaning))
                 })?
@@ -144,13 +144,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // most one space. Space uses cur_cmd, equals uses cur_tok.
             let mut after_equals = 0;
             self.consume_raw_words::<true, _>(&mut |_, spelling, meaning, _| {
-                let meaning = meaning.expect("raw meaning requested").resolve();
+                let meaning = *meaning.expect("raw meaning requested");
                 let space = matches!(
                     meaning,
-                    ResolvedMeaning::Static(Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    })
+                    tex_state::MeaningWord::Static(word) if matches!(Meaning::runtime_word_character(word), Some((_, Catcode::Space)))
                 );
                 if after_equals == 0 {
                     if space {

@@ -185,7 +185,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 - `src/processor/expand/collect.rs`: raw collection and `get_token_spelling`
   consume tokens in the canonical reader. Raw operand consumers receive actual
   spelling and demand-only native meaning in one continuing reader; ordinary
-  unobserved operands construct no command. Let consumes meaning directly;
+  unobserved operands construct no command. Let returns the native meaning word directly for installation;
   futurelet releases its first reader before the second operand and backs
   both words through the common canonical insertion implementation. Observation,
   outer recovery, alignment and source control-sequence creation keep their

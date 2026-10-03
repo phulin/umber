@@ -39,9 +39,9 @@ fn assign_static_meaning<G>(
     meaning: Meaning,
 ) {
     admitted!(stores, |context| context
-        .assign_resolved_meaning(
+        .assign_meaning(
             symbol.symbol(),
-            tex_state::ResolvedMeaning::Static(meaning),
+            tex_state::MeaningWord::from_static(meaning),
             tex_state::AssignmentScope::Global,
         )
         .expect("static test meaning assignment"));

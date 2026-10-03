@@ -359,7 +359,7 @@ fn malformed_definition_target_follows_get_r_token_backup_and_diagnostic() {
             .expect("inaccessible target recovery");
         assert_eq!(processor.state.resolve(target), "inaccessible");
         assert_eq!(
-            meaning,
+            meaning.resolve(),
             ResolvedMeaning::Static(Meaning::CharToken {
                 ch: 'x',
                 cat: Catcode::Other,
@@ -440,7 +440,7 @@ fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
         );
 
         let (_, warm) = processor.scan_let_assignment(false).expect("warm let scan");
-        assert!(matches!(warm, tex_state::ResolvedMeaning::Macro { .. }));
+        assert!(matches!(warm, tex_state::MeaningWord::Macro { .. }));
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
 
@@ -452,7 +452,7 @@ fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
         };
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
 
-        assert!(matches!(measured, tex_state::ResolvedMeaning::Macro { .. }));
+        assert!(matches!(measured, tex_state::MeaningWord::Macro { .. }));
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
     });
@@ -532,7 +532,7 @@ fn let_uses_meaning_for_spaces_but_spelling_for_equals() {
                 unreachable!()
             };
             assert_eq!(
-                meaning,
+                meaning.resolve(),
                 ResolvedMeaning::Static(Meaning::CharToken { ch, cat })
             );
             assert_eq!(

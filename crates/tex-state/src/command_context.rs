@@ -768,24 +768,17 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("command symbols are admitted")
     }
 
-    /// Assigns one already-resolved static or generation-local macro meaning.
-    pub fn assign_resolved_meaning(
+    /// Installs the actual native meaning through the central state mutation.
+    pub fn assign_meaning(
         &mut self,
         symbol: Symbol,
-        meaning: ResolvedMeaning<G>,
+        meaning: MeaningWord<G>,
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
-        let word = match meaning {
-            ResolvedMeaning::Static(Meaning::Font(font)) => {
-                self.validate_font_root(font)?;
-                MeaningWord::from_static(Meaning::Font(font))
-            }
-            ResolvedMeaning::Static(meaning) => MeaningWord::from_static(meaning),
-            ResolvedMeaning::Macro { flags, definition } => {
-                MeaningWord::macro_definition(flags, definition)
-            }
-        };
-        self.admitted.assign_meaning(symbol, word, scope)
+        if let MeaningWord::Font(font) = meaning {
+            self.validate_font_root(font)?;
+        }
+        self.admitted.assign_meaning(symbol, meaning, scope)
     }
 
     /// Consumes a real publication after the destination acquires its semantic root.
@@ -796,12 +789,9 @@ impl<'a, G> CommandContext<'a, G> {
         flags: MeaningFlags,
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
-        self.assign_resolved_meaning(
+        self.assign_meaning(
             symbol,
-            ResolvedMeaning::Macro {
-                flags,
-                definition: definition.reference(),
-            },
+            crate::MeaningWord::macro_definition(flags, definition.reference()),
             scope,
         )?;
         drop(definition);

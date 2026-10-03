@@ -24,9 +24,9 @@ pub(in crate::main_control) fn execute_character_definition<G>(
         global,
         |stores| {
             stores
-                .assign_resolved_meaning(
+                .assign_meaning(
                     target,
-                    tex_state::meaning::ResolvedMeaning::Static(meaning),
+                    tex_state::MeaningWord::from_static(meaning),
                     assignment_scope(global),
                 )
                 .expect("character-definition target belongs to admitted state")
@@ -74,9 +74,9 @@ pub(in crate::main_control) fn execute_register_definition<G>(
         global,
         |stores| {
             stores
-                .assign_resolved_meaning(
+                .assign_meaning(
                     target,
-                    tex_state::meaning::ResolvedMeaning::Static(meaning),
+                    tex_state::MeaningWord::from_static(meaning),
                     assignment_scope(global),
                 )
                 .expect("register-definition target belongs to admitted state")

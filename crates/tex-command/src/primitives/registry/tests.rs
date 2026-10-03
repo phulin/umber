@@ -24,9 +24,9 @@ fn nullfont_identifier_is_a_distinct_frozen_control_sequence() {
         );
 
         context
-            .assign_resolved_meaning(
+            .assign_meaning(
                 ordinary,
-                ResolvedMeaning::Static(Meaning::Relax),
+                tex_state::MeaningWord::from_static(Meaning::Relax),
                 tex_state::AssignmentScope::Global,
             )
             .expect("redefine ordinary nullfont");

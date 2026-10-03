@@ -249,9 +249,9 @@ fn configure_nullfont<G>(universe: &mut Universe<G>, install: bool, meaning: Mea
         // inaccessible frozen_null_font slot during fresh initialization.
         let frozen = context.intern_internal_control_sequence("nullfont");
         context
-            .assign_resolved_meaning(
+            .assign_meaning(
                 frozen,
-                tex_state::meaning::ResolvedMeaning::Static(meaning),
+                tex_state::MeaningWord::from_static(meaning),
                 tex_state::AssignmentScope::Global,
             )
             .expect("frozen nullfont belongs to the admitted state");

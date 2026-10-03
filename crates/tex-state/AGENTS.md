@@ -42,6 +42,8 @@ Definition-owned parameter programs expose literal delimiter views only for none
   detached paragraph-shape and e-TeX penalty-array projections with journaled
   assignment whose encoded words stream directly into the existing publication lane without an intermediate vector, and bounded assignment-diagnostic rendering,
   including e-TeX's assignment-free forced-online diagnostic scope,
+  and native meaning assignment with font-root validation at the central
+  mutation boundary; no resolved-meaning write or encode/decode round trip exists,
   PDF traversal/form/color operations, output-stream normalization,
   definitions, token/glue allocation, and dependency-aware mutations without
   per-read owner admission. It opens, commits, and restores ordinary state and

@@ -12,6 +12,13 @@ use crate::processor::status::{ScannerStatus, ScannerStatusVisibility};
 use super::expand_render::print_esc_text;
 use super::{CommandProcessor, DeliveryStatus};
 
+const END_CS_NAME_WORD: u64 = match tex_state::MeaningWord::<()>::from_static(
+    Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName),
+) {
+    tex_state::MeaningWord::Static(word) => word,
+    _ => unreachable!(),
+};
+
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
 /// inserted` recovery. Rendering belongs to the diagnostic milestone.
 pub(crate) const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
@@ -94,9 +101,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.consume_expanded_words(
                 &mut |processor, spelling, meaning, control_sequence, exceptional| {
                     if let tex_state::meaning::MeaningWord::Static(word) = meaning {
-                        if Meaning::from_runtime_word(*word)
-                            == Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName)
-                        {
+                        if *word == END_CS_NAME_WORD {
                             completed = true;
                             return Ok(std::ops::ControlFlow::Break(()));
                         }

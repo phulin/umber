@@ -94,7 +94,7 @@ pub(super) fn commit_macro_definition<G>(
 
 pub(super) fn apply_let<G>(
     target: Symbol,
-    meaning: tex_state::meaning::ResolvedMeaning<G>,
+    meaning: tex_state::MeaningWord<G>,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
@@ -107,7 +107,7 @@ pub(super) fn apply_let<G>(
         let record = MutationRecord {
             target: MutationTarget::Meaning,
             key: ObservationValue::Name(stores.resolve(target).to_owned()),
-            value: meaning_mutation_value(meaning, stores),
+            value: meaning_mutation_value(meaning.resolve(), stores),
             global,
         };
         receipts.push(record);
@@ -120,17 +120,17 @@ pub(super) fn apply_let<G>(
 /// definition.
 pub(super) fn commit_let<G>(
     target: Symbol,
-    meaning: tex_state::meaning::ResolvedMeaning<G>,
+    meaning: tex_state::MeaningWord<G>,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-) -> Result<Option<tex_state::meaning::ResolvedMeaning<G>>, ExecError> {
+) -> Result<Option<tex_state::MeaningWord<G>>, ExecError> {
     // TeX82 §§277/1221 always route `\let` through `eq_define`. e-TeX change
     // [19.277] (retained by pdftex.web §277) alone suppresses an identical
     // local definition while extended mode is active.
     let redundant = if !global && stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 {
-        let current = stores.meaning(target);
-        crate::assignments::committer::redundant_local_assignment(true, &current, &meaning, false)
+        let current = stores.compact_control_sequence_meaning_word(target);
+        crate::assignments::committer::redundant_local_assignment(true, current, &meaning, false)
     } else {
         false
     };
@@ -144,7 +144,7 @@ pub(super) fn commit_let<G>(
         |stores| {
             if committed {
                 stores
-                    .assign_resolved_meaning(target, meaning, assignment_scope(global))
+                    .assign_meaning(target, meaning, assignment_scope(global))
                     .expect("let target belongs to the admitted generation");
             }
         },

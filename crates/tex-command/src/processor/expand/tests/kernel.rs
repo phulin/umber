@@ -278,9 +278,9 @@ fn resumed_replacement_reads_the_live_meaning_after_backup() {
         processor.back_input(first).expect("backup");
         processor
             .state
-            .assign_resolved_meaning(
+            .assign_meaning(
                 symbol,
-                tex_state::meaning::ResolvedMeaning::Static(Meaning::CharGiven('B')),
+                tex_state::MeaningWord::from_static(Meaning::CharGiven('B')),
                 AssignmentScope::Global,
             )
             .expect("new live meaning");

@@ -157,6 +157,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Shared §326 insertion for [`Self::back_input_token`]. The level's
     /// storage is the caller's: an inline word, or a replay-lane list when
     /// e-TeX will link further `\aftergroup` tokens onto it.
+    #[inline(always)] // pure forwarding must not add a native backup call frame
     fn push_backed_up_token(
         &mut self,
         spelling: TracedTokenWord,
@@ -172,6 +173,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     /// Reads the actual spelling and backup facts that must survive another
     /// operand read or a temporary scanner-status scope.
+    #[inline]
     pub(crate) fn read_backup_operand(
         &mut self,
         adjustment: &mut super::AlignmentDeliveryAdjustment,
@@ -194,6 +196,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     /// Backs a real token retained across another operand read. Only its
     /// original adjustment and demanded observed spelling outlive delivery.
+    #[inline(always)] // pure forwarding must not add a native backup call frame
     pub(crate) fn back_retained_word(
         &mut self,
         spelling: TracedTokenWord,
@@ -206,6 +209,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         })
     }
 
+    #[inline]
     fn push_backed_up_input(
         &mut self,
         storage: impl crate::input::PackedTokenSpanSource<G>,
@@ -352,6 +356,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Canonical backing operation used by `\\noexpand` for one replayed
     /// command. The treatment belongs to the backed-up level, not the token
     /// or the returned command.
+    #[inline(always)] // pure forwarding must not add a native backup call frame
     pub(crate) fn back_input_with_treatment(
         &mut self,
         command: CurrentCommand<G>,
