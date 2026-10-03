@@ -434,7 +434,7 @@ impl<'a> PageContributionView<'a> {
 
     #[must_use]
     pub fn front(self) -> Option<crate::NodeView<'a>> {
-        self.get(0)
+        self.nodes.first()
     }
 
     #[must_use]
@@ -458,6 +458,7 @@ pub(crate) type PageCurrentIter<'a> = NodeCursorIter<'a>;
 /// Snapshot-owned state for TeX.web's page builder.
 pub(crate) struct PageBuilderState {
     contribution: PageListSpan,
+    contribution_front: crate::fork_arena::ArenaListFront<crate::fork_arena::PageMaterialLane>,
     current_page: PageListSpan,
     page_discards: PageListSpan,
     split_discards: PageListSpan,
@@ -2376,6 +2377,7 @@ impl Default for PageBuilderState {
     fn default() -> Self {
         Self {
             contribution: PageListSpan::empty(),
+            contribution_front: Default::default(),
             current_page: PageListSpan::empty(),
             page_discards: PageListSpan::empty(),
             split_discards: PageListSpan::empty(),
@@ -4070,10 +4072,13 @@ impl PageBuilderState {
     }
 
     pub(crate) fn contribution_second<'a>(
-        &self,
+        &mut self,
         arena: &'a PageMaterialArena,
     ) -> Option<crate::NodeView<'a>> {
-        self.contribution(arena).get(1)
+        arena
+            .span_second_node(self.contribution, &mut self.contribution_front)
+            .ok()
+            .flatten()
     }
 
     pub(crate) fn pop_contribution_front(
@@ -4083,17 +4088,17 @@ impl PageBuilderState {
         if self.contribution.is_empty() {
             return None;
         }
-        let node = arena.span_node_cursor(self.contribution).ok()?.get(0)?;
+        let node = arena.span_node_cursor(self.contribution).ok()?.first()?;
         let words = node.tex_memory_words(false).1;
         let etex_words = node.tex_memory_words(true).1;
         let retains_root = node_retains_page_handle(node);
         self.record_scalars();
         self.advance_progress();
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
-        let removed = arena.slice_span(self.contribution, 0..1).ok()?;
-        self.contribution = arena
-            .slice_span(self.contribution, 1..self.contribution.len())
+        let (removed, remaining) = arena
+            .take_span_front(self.contribution, &mut self.contribution_front)
             .ok()?;
+        self.contribution = remaining;
         self.release_dynamic_word_totals((words, etex_words));
         self.page_node_root_count = self
             .page_node_root_count

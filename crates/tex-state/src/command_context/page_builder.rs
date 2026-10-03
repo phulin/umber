@@ -172,7 +172,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub fn page_contribution_second(&self) -> Option<crate::NodeView<'_>> {
+    pub fn page_contribution_second(&mut self) -> Option<crate::NodeView<'_>> {
         self.page.contribution_second(&self.page_nodes)
     }
 

@@ -218,6 +218,137 @@ fn page_list_accounting_walks_direct_chunks_once_without_index_recovery() {
 }
 
 #[test]
+fn contribution_drain_and_kern_lookahead_do_linear_chunk_and_identity_work() {
+    // TeX82 §994 consumes the front; §1000 needs the following node for kerns.
+    // One-record chunks make every logical successor a real boundary crossing.
+    for identity in [false, true] {
+        for count in [1, 128, 4096] {
+            let mut pool = NodePool::with_chunk_bytes(1);
+            let mut region = PageMaterialRegion::new(&mut pool);
+            let mut arena = PageMaterialArena::new(&mut pool, &mut region);
+            if identity {
+                arena.enable_semantic_identity();
+            }
+            let root = publish_nodes(&mut arena, (0..count).map(kern));
+            let mut page = PageBuilderState::default();
+            page.append_contributions(&mut arena, root);
+            // Independently summarize retained suffixes before measuring the drain.
+            let expected = [0, count / 2, count - 1].map(|start| {
+                (
+                    start,
+                    arena
+                        .slice_sequence(root, start as usize..count as usize)
+                        .expect("reference suffix")
+                        .semantic_identity(),
+                )
+            });
+            let before = arena.counters();
+            let traversal_before = page.contribution(&arena).nodes.testing_traversal_counters();
+            for value in 0..count {
+                for (start, identity) in expected {
+                    if value == start {
+                        assert_eq!(page.contribution_root().semantic_identity(), identity);
+                    }
+                }
+                assert_eq!(
+                    page.contribution_front(&arena).map(|node| node.to_owned()),
+                    Some(kern(value))
+                );
+                assert_eq!(
+                    page.contribution_second(&arena).map(|node| node.to_owned()),
+                    (value + 1 < count).then(|| kern(value + 1))
+                );
+                let removed = page
+                    .pop_contribution_front(&mut arena)
+                    .expect("next contribution");
+                assert_eq!(list_nodes(&arena, removed.list()), [kern(value)]);
+                page.discard_carrier(removed);
+            }
+            let after = arena.counters();
+            let traversal_after = page.contribution(&arena).nodes.testing_traversal_counters();
+            assert!(page.contribution_front(&arena).is_none());
+            assert!(page.contribution_second(&arena).is_none());
+            assert!(page.pop_contribution_front(&mut arena).is_none());
+            assert_eq!(page.contribution_root().semantic_identity(), Some(0));
+            assert_eq!(
+                after.identity_nodes_hashed - before.identity_nodes_hashed,
+                if identity { count as u64 } else { 0 }
+            );
+            assert_eq!(
+                after.identity_summaries_combined,
+                before.identity_summaries_combined
+            );
+            assert_eq!(after.new_semantic_nodes, before.new_semantic_nodes);
+            assert_eq!(after.whole_payload_copies, before.whole_payload_copies);
+            assert_eq!(
+                traversal_after.index_predecessor_steps,
+                traversal_before.index_predecessor_steps
+            );
+            assert_eq!(
+                traversal_after.forward_chunk_crossings - traversal_before.forward_chunk_crossings,
+                (count - 1) as u64
+            );
+        }
+    }
+}
+
+#[test]
+fn contribution_drain_rebinds_after_partial_chunk_splice_and_checkpoint_restore() {
+    for identity in [false, true] {
+        let mut pool = NodePool::with_chunk_bytes(128);
+        let mut region = PageMaterialRegion::new(&mut pool);
+        let mut arena = PageMaterialArena::new(&mut pool, &mut region);
+        if identity {
+            arena.enable_semantic_identity();
+        }
+        let full = publish_nodes(&mut arena, (0..12).map(kern));
+        // The physical head chunk contains more than this selected prefix.
+        let prefix = arena
+            .slice_sequence(full, 0..2)
+            .expect("partial chunk prefix");
+        let mut page = PageBuilderState::default();
+        page.append_contributions(&mut arena, prefix);
+        page.push_contribution(&mut arena, kern(50));
+        let checkpoint = page.checkpoint_mark();
+        let expected = hash_page(&page, &arena);
+        assert_eq!(
+            page.contribution_second(&arena).map(|node| node.to_owned()),
+            Some(kern(1))
+        );
+        for value in [0, 1] {
+            let node = page
+                .pop_contribution_front(&mut arena)
+                .expect("prefix contribution");
+            assert_eq!(list_nodes(&arena, node.list()), [kern(value)]);
+            page.discard_carrier(node);
+        }
+        page.prepend_contribution(&mut arena, kern(49));
+        page.push_contribution(&mut arena, kern(51));
+        assert_eq!(
+            page.contribution_second(&arena).map(|node| node.to_owned()),
+            Some(kern(50))
+        );
+        let removed = page.remove_contribution_range(&mut arena, 1..=1);
+        assert_eq!(list_nodes(&arena, removed.list()), [kern(50)]);
+        page.discard_carrier(removed);
+        assert_eq!(
+            page.contribution_second(&arena).map(|node| node.to_owned()),
+            Some(kern(51))
+        );
+        page.restore_checkpoint_mark(checkpoint);
+        assert_eq!(hash_page(&page, &arena), expected);
+        for value in [0, 1, 50] {
+            let node = page
+                .pop_contribution_front(&mut arena)
+                .expect("restored contribution");
+            assert_eq!(list_nodes(&arena, node.list()), [kern(value)]);
+            page.discard_carrier(node);
+        }
+        assert!(page.pop_contribution_front(&mut arena).is_none());
+    }
+}
+
+#[test]
 fn scalar_and_class_marks_store_handle_free_page_values() {
     let mut page = PageBuilderState::default();
     let scalar = tokens(&[Token::param(3)]);

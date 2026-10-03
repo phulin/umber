@@ -1380,3 +1380,33 @@ The compact-record continuation is dependency ordered:
 
 No step changes restart eligibility, adds replay, or creates a temporary second
 production node topology.
+
+## Linear page-contribution consumption
+
+TeX82 §994 consumes the head of the contribution list. The checked page span
+remains the sole semantic root and the journal saves that span as before.
+Consumption must not repeatedly recover a head position from the tail or
+summarize the remaining suffix.
+
+A derived drain cursor belongs to the live page builder, outside its checkpoint
+roots. It retains only the exact source root and a temporary stack of
+chunk endpoints in predecessor order, reusing inline capacity for short
+lists. The first front-consumption or second-node enquiry binds the actual root
+and walks its predecessor chain once. Successive removals advance within that
+chunk and pop the next coordinate at a block boundary. Chunk bounds come from
+the actual predecessor edges, including partially used head chunks; physical
+used lengths and adjacent allocation ordinals cannot establish list order.
+
+A prepend, append, interior removal, restore, or region transfer changes the
+root and therefore rebinds the cursor before another read. Scratch carries no block admission proof: each payload read borrows its actual
+root through the current arena owner, so pool mutations cannot leave a cached
+physical capability. No node payload is copied, no successor topology is stored, and
+no cursor enters a checkpoint, format, semantic hash, or node closure.
+
+Removing the front produces the actual one-node carrier and remaining checked
+span directly from their endpoint coordinates. With semantic identity enabled,
+the removed record is hashed once and the suffix polynomial subtracts that
+identity in constant time. Disabled identity performs no hashing. The existing
+root journal and dynamic word/root accounting retain their original order.
+Front and second-node enquiries use the same direct endpoints and drain
+coordinates, so kern lookahead cannot reintroduce repeated index recovery.

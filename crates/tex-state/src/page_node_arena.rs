@@ -2638,6 +2638,68 @@ impl<'a> PageMaterialArena<'a> {
         self.admit_span(list)
     }
 
+    pub(crate) fn span_second_node<'view>(
+        &'view self,
+        span: PageListSpan,
+        front: &mut crate::fork_arena::ArenaListFront<PageMaterialLane>,
+    ) -> Result<Option<crate::NodeView<'view>>, ForkArenaError> {
+        let coordinate = front.second(
+            &self.region.pub_arena,
+            &self.pool.chunks,
+            span.list.coordinate(),
+        )?;
+        self.span_node_cursor(PageListSpan {
+            list: PageListId::from_parts(coordinate, None),
+        })
+        .map(|view| view.first())
+    }
+
+    pub(crate) fn take_span_front(
+        &mut self,
+        span: PageListSpan,
+        front: &mut crate::fork_arena::ArenaListFront<PageMaterialLane>,
+    ) -> Result<(PageListSpan, PageListSpan), ForkArenaError> {
+        let (removed, remaining) = front.take(
+            &self.region.pub_arena,
+            &self.pool.chunks,
+            span.list.coordinate(),
+        )?;
+        let identities = if *self.semantic_identity_enabled && !span.is_empty() {
+            let view = self
+                .region
+                .pub_arena
+                .validated_list(&self.pool.chunks, removed)?;
+            let item = semantic_record_identity(
+                view.first().ok_or(ForkArenaError::InvalidRange)?,
+                self.annex_view(),
+            );
+            let mut remaining = span
+                .list
+                .sequence_identity()
+                .ok_or(ForkArenaError::InvalidRegion)?;
+            remaining.pop_front(item);
+            let mut removed = SemanticSequenceIdentity::empty();
+            removed.push_back(item);
+            self.region
+                .pub_arena
+                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
+                    hashed_values: 1,
+                    combined_summaries: 0,
+                });
+            (Some(removed), Some(remaining))
+        } else {
+            (None, None)
+        };
+        Ok((
+            PageListSpan {
+                list: PageListId::from_parts(removed, identities.0),
+            },
+            PageListSpan {
+                list: PageListId::from_parts(remaining, identities.1),
+            },
+        ))
+    }
+
     pub fn admit_span(&self, list: PageListId) -> Result<PageListSpan, ForkArenaError> {
         self.region
             .pub_arena

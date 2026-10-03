@@ -174,6 +174,10 @@ expose substores or introduce another arena.
 - `src/fork_arena/physical_extents.rs`: Optional and packed physical suffix
   compaction on sealing, bounded full-width range reuse, and exclusive
   same-owner rollback regrowth behind stable logical chunk keys.
+- `src/fork_arena/front.rs`: reusable coordinate-only chunk-end traversal
+  scratch for linear front consumption and second-node enquiries. Checked
+  spans remain the sole roots; no node copies or cached block proofs survive
+  mutation.
 - `src/fork_arena/packed_source.rs`: Operation-scoped packed source chunk
   admission with epoch refresh and exact body/span bounds under an immutable
   source owner borrow.
@@ -395,7 +399,9 @@ expose substores or introduce another arena.
   same-region journal, and private owner-relative checkpoint rows; active
   capture preflights boundary/frame serial headroom and paired node/annex
   readiness before sealing or reclaiming rootless material;
-  insertion classes and sparse mark classes retain canonical iteration order
+  the contribution drain retains derived chunk endpoints outside checkpoint
+  roots and subtracts each removed record identity without resummarizing the
+  remaining suffix; insertion classes and sparse mark classes retain canonical iteration order
   beside dense direct lookup indexes. One fixed-chunk prior/current journal
   owns every reversible alternate; duplicate insertion/mark mutation lanes and
   canonical-lane rebuild scans are absent.

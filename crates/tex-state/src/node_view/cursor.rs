@@ -428,11 +428,23 @@ impl<'a> NodeCursor<'a> {
     }
     #[must_use]
     pub fn first(&self) -> Option<NodeView<'a>> {
-        self.get(0)
+        match self.source {
+            NodeCursorSource::Slice(nodes) => nodes.first().map(NodeView::from),
+            NodeCursorSource::Fork(view, annex) => view
+                .first()
+                .and_then(|record| record.decode_owned(annex))
+                .map(NodeView::from_owned),
+        }
     }
     #[must_use]
     pub fn last(&self) -> Option<NodeView<'a>> {
-        self.len().checked_sub(1).and_then(|index| self.get(index))
+        match self.source {
+            NodeCursorSource::Slice(nodes) => nodes.last().map(NodeView::from),
+            NodeCursorSource::Fork(view, annex) => view
+                .last()
+                .and_then(|record| record.decode_owned(annex))
+                .map(NodeView::from_owned),
+        }
     }
     #[must_use]
     pub fn char_codes(&self, index: usize) -> Option<CharCodes<'a>> {
