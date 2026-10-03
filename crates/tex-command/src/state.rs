@@ -22,7 +22,7 @@ use crate::processor::delivery_mode::DeliveryMode;
 use crate::processor::{
     AlignmentCellDelimiter, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
     AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE, PreparedAlignmentCellTemplates,
-    ScannerState,
+    ScannerStatus,
 };
 use crate::profile::{
     CommandEngineSemantics, CommandProfile, CommandProfileBoundary, CommandProfileFingerprint,
@@ -61,7 +61,7 @@ pub struct CommandStateRoots<G> {
     /// of portable format identity.
     pub(crate) engine_semantics: CommandEngineSemantics,
     pub(crate) input: InputState<G>,
-    pub(crate) scanner: ScannerState,
+    pub(crate) scanner: ScannerStatus,
     pub(crate) conditions: ConditionStack,
     pub(crate) alignment: AlignmentDeliveryState<G>,
     pub(crate) profile: CommandProfile,
@@ -212,7 +212,7 @@ impl<G> Default for CommandStateRoots<G> {
             reachable_state_identity_enabled: false,
             engine_semantics: CommandEngineSemantics::default(),
             input: InputState::default(),
-            scanner: ScannerState::default(),
+            scanner: ScannerStatus::Normal,
             conditions: ConditionStack::default(),
             alignment: AlignmentDeliveryState::default(),
             profile: CommandProfile::default(),
@@ -984,7 +984,7 @@ impl<G> CommandState<G> {
     /// command and are never reconstructed here.
     pub(crate) fn synchronize_delivery_mode_roots(&mut self) {
         self.delivery_mode.set_scanner_active(!matches!(
-            self.scanner.status(),
+            self.scanner,
             crate::processor::ScannerStatus::Normal
         ));
         self.delivery_mode

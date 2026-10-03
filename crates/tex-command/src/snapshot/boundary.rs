@@ -1,7 +1,7 @@
 //! Named-checkpoint publication, restore, and candidate settlement.
 
 use super::*;
-use crate::processor::ScannerState;
+use crate::processor::ScannerStatus;
 
 impl<G> CommandStateRoots<G> {
     fn capture_checkpoint(&self) -> CommandCapture<G> {
@@ -20,7 +20,7 @@ impl<G> CommandStateRoots<G> {
     /// accounting are left live.
     fn install_capture(&mut self, capture: &CommandCapture<G>) {
         self.input.install_checkpoint(&capture.input);
-        self.scanner = ScannerState::default();
+        self.scanner = ScannerStatus::Normal;
         self.conditions.frames.clone_from(&capture.conditions);
         self.alignment = capture.alignment.checkpoint_copy();
         self.transient.builders.clear();
@@ -153,16 +153,13 @@ impl<G> CommandState<G> {
     /// TeX's `\dump` may be delivered through either, and a successful format
     /// capture closes those command-only levels rather than serializing them.
     fn validate_format_dump_quiescence(&self) -> Result<(), CommandSummaryError> {
-        match self.scanner.status() {
+        match self.scanner {
             ScannerStatus::Normal => {}
             ScannerStatus::Skipping { .. } => return Err(CommandSummaryError::ConditionalSkip),
             ScannerStatus::Defining { .. } => return Err(CommandSummaryError::DefinitionScan),
             ScannerStatus::Matching { .. } => return Err(CommandSummaryError::MacroMatch),
             ScannerStatus::Aligning { .. } => return Err(CommandSummaryError::AlignmentScan),
             ScannerStatus::Absorbing { .. } => return Err(CommandSummaryError::AbsorbingScan),
-        }
-        if self.scanner.warning().is_some() {
-            return Err(CommandSummaryError::ScannerWarningContext);
         }
         if !self.semantic_diagnostics.is_empty() {
             return Err(CommandSummaryError::PendingSemanticDiagnostic);

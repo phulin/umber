@@ -12,7 +12,7 @@ use crate::observation::{
 };
 
 use super::CommandProcessor;
-use super::status::{EofLegality, RecoveryContext, ScannerStatus};
+use super::status::{EofLegality, ScannerStatus};
 
 /// TeX82 §336's `Incomplete \if...; all text was ignored after line N`.
 const INCOMPLETE_CONDITIONAL_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0336;
@@ -26,21 +26,21 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         command: &mut CurrentCommand<G>,
     ) -> Result<(), CommandError> {
-        if !command.is_outer() || matches!(self.command.scanner.status(), ScannerStatus::Normal) {
+        if !command.is_outer() || matches!(self.command.scanner, ScannerStatus::Normal) {
             return Ok(());
         }
 
-        let recovery = self.command.scanner.recovery_context();
+        let recovery = self.command.scanner;
         // The pinned TeX82 observer instruments `check_outer_validity` at
         // entry, before §23 backs up the forbidden outer control sequence.
         // Keep this command-owned: the backup still belongs to raw delivery,
         // but the diagnostic describes the live scanner episode that selected
         // its recovery.
-        self.observe_outer_validity_diagnostic(&recovery.status, false);
-        if matches!(recovery.status, ScannerStatus::Matching(_)) {
+        self.observe_outer_validity_diagnostic(&recovery, false);
+        if matches!(recovery, ScannerStatus::Matching(_)) {
             self.outer_recovered_while_matching = true;
         }
-        if matches!(recovery.status, ScannerStatus::Absorbing(_)) {
+        if matches!(recovery, ScannerStatus::Absorbing(_)) {
             self.outer_recovered_while_absorbing = true;
         }
         // TeX82 §336 deliberately does not back up an outer control
@@ -64,18 +64,18 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Recovers terminal input only while a scanner episode is live. The
     /// inserted tokens are then delivered through this same raw loop.
     pub(super) fn recover_runaway_eof(&mut self) -> Result<bool, CommandError> {
-        let recovery = self.command.scanner.recovery_context();
+        let recovery = self.command.scanner;
         if matches!(self.command.scanner.eof_legality(), EofLegality::Legal) {
             return Ok(false);
         }
-        if matches!(recovery.status, ScannerStatus::Matching(_)) {
+        if matches!(recovery, ScannerStatus::Matching(_)) {
             // TeX82 §23 calls `check_outer_validity` after retiring an input
             // file at EOF. Its frozen `\par` ends the failed §394 match; it
             // is not an ordinary paragraph that `back_error` replays after
             // the expansion returns.
             self.eof_recovered_while_matching = true;
         }
-        self.observe_outer_validity_diagnostic(&recovery.status, true);
+        self.observe_outer_validity_diagnostic(&recovery, true);
         self.install_outer_recovery(recovery, true)?;
         Ok(true)
     }
@@ -84,10 +84,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// reassigned their visible spellings.
     fn install_outer_recovery(
         &mut self,
-        recovery: RecoveryContext,
+        status: ScannerStatus,
         at_file_end: bool,
     ) -> Result<(), CommandError> {
-        let RecoveryContext { status, .. } = recovery;
         if matches!(status, ScannerStatus::Aligning(_)) {
             // TeX82 §23's `check_outer_validity` reports the aligning
             // recovery before `ins_error` inserts inaccessible frozen `\cr`.

@@ -18,7 +18,7 @@ use tex_state::{GenerationOwner, Universe};
 
 use crate::conditionals::ConditionFrame;
 use crate::input::InputCapture;
-use crate::processor::{AlignmentDeliveryState, ScannerStatus};
+use crate::processor::AlignmentDeliveryState;
 use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
 use crate::state::{CommandPayload, CommandState, CommandStateRoots};
 
@@ -281,7 +281,6 @@ pub enum CommandSummaryError {
     SuspendedAlignment,
     LiveTokenBuilder,
     LiveRollbackRoot,
-    ScannerWarningContext,
     PendingSemanticDiagnostic,
     ResourceSuspension,
     AttemptSuspended,
@@ -303,7 +302,6 @@ impl fmt::Display for CommandSummaryError {
             Self::SuspendedAlignment => "an alignment delivery context is suspended",
             Self::LiveTokenBuilder => "a semantic token builder is live",
             Self::LiveRollbackRoot => "a temporary rollback root is live",
-            Self::ScannerWarningContext => "scanner warning context remains installed",
             Self::PendingSemanticDiagnostic => {
                 "a command semantic diagnostic is awaiting executor delivery"
             }

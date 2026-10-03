@@ -12,7 +12,7 @@ use crate::command::CurrentCommand;
 use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, transient_replay};
 use crate::processor::CommandProcessor;
 use crate::processor::status::{
-    ConditionId, ScannerStatus, ScannerStatusVisibility, ScannerWarning, SkippingContext,
+    ConditionId, ScannerStatus, ScannerStatusVisibility, SkippingContext,
 };
 use crate::scanners::RestrictedIntegerClass;
 use crate::{CommandError, CommandState};
@@ -1145,7 +1145,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         mut remaining: i32,
     ) -> Result<bool, CommandError> {
         while remaining != 0 {
-            let delimiter = self.pass_text(condition, ScannerWarning(0))?.delimiter;
+            let delimiter = self.pass_text(condition)?.delimiter;
             // TeX82 §509 compares `cond_ptr` with the frame saved before
             // scanning the case number.  Operand expansion can have pushed a
             // newer conditional, in which case only its `\fi` is acted on;
@@ -1189,7 +1189,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// limb and is diagnosed rather than accepted.
     fn resume_after_skip(&mut self, condition: ConditionId) -> Result<(), CommandError> {
         loop {
-            let delimiter = self.pass_text(condition, ScannerWarning(0))?.delimiter;
+            let delimiter = self.pass_text(condition)?.delimiter;
             if self
                 .command
                 .conditions
@@ -1316,7 +1316,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<(), CommandError> {
         let mut stopped = delimiter;
         while stopped != ConditionalDelimiter::Fi {
-            stopped = self.pass_text(frame.identity, ScannerWarning(0))?.delimiter;
+            stopped = self.pass_text(frame.identity)?.delimiter;
         }
         self.warn_cross_file_conditional_close(&frame);
         let popped = self
@@ -1424,7 +1424,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(crate) fn pass_text(
         &mut self,
         condition: ConditionId,
-        warning: ScannerWarning,
     ) -> Result<PassTextStop, CommandError> {
         // §494's `skip_line:=line`, taken before any token of the skipped
         // text is read.
@@ -1439,8 +1438,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .map_or(ConditionalKind::IfTrue, |frame| frame.kind);
         let episode = self.begin_scanner_episode(
             ScannerStatus::Skipping(SkippingContext {
-                condition,
-                warning,
                 skip_line,
                 conditional,
             }),

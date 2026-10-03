@@ -205,7 +205,7 @@ impl CharacterRunAdmission {
     }
 }
 
-pub(crate) use status::{ScannerState, ScannerStatus};
+pub(crate) use status::ScannerStatus;
 
 /// Borrow-only capability facade for one bounded executor operation.
 ///

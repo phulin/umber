@@ -45,7 +45,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        if matches!(self.command.scanner.status(), ScannerStatus::Normal) {
+        if matches!(self.command.scanner, ScannerStatus::Normal) {
             return self.get_token_into(destination);
         }
 

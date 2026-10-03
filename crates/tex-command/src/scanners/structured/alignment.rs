@@ -190,12 +190,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     tokens: live_tokens,
                 });
             let scanner_episode = self.begin_scanner_episode(
-                ScannerStatus::Aligning(AlignmentScanContext {
-                    alignment: AlignmentId(alignment.raw()),
-                    builder,
-                    owner,
-                    warning: ScannerWarning(0),
-                }),
+                ScannerStatus::Aligning(AlignmentScanContext { builder, owner }),
                 ScannerStatusVisibility::Observed,
             );
             observe!(

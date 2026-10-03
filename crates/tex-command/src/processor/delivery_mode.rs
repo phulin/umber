@@ -100,7 +100,7 @@ mod tests {
     use super::DeliveryMode;
     use crate::CommandState;
     use crate::conditionals::ConditionalKind;
-    use crate::processor::status::{ConditionId, ScannerWarning, SkippingContext};
+    use crate::processor::status::SkippingContext;
     use crate::processor::{AlignmentIdentity, ScannerStatus};
 
     #[test]
@@ -118,8 +118,6 @@ mod tests {
     fn semantic_transition_sites_maintain_the_persistent_bits() {
         let mut state = CommandState::<()>::default();
         let scanner = state.begin_scanner_status(ScannerStatus::Skipping(SkippingContext {
-            condition: ConditionId(1),
-            warning: ScannerWarning(2),
             skip_line: 3,
             conditional: ConditionalKind::IfTrue,
         }));

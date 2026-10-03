@@ -714,3 +714,10 @@ The same matcher writes all four forms. Parameter rows use local offsets;
 source aliases flatten once at capture. Native region release walks its reserved
 free-list suffix iteratively. Active captures and macro regions remain excluded
 from full checkpoints and formats.
+
+The live scanner owns `ScannerStatus` directly. `src/processor/status.rs` owns
+its actual diagnostic targets and scoped prior/installed status; recovery copies
+that status before clearing it. Synthetic warning serials, `ScannerState`,
+`RecoveryContext`, and unreachable warning-only checkpoint rejection are deleted.
+Alignment keeps its real partial builder, while definition/absorption statuses
+carry no unused builder identities.

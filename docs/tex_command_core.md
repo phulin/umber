@@ -1469,8 +1469,7 @@ The future-relevant command-machine state is one ownership unit:
 ```rust
 pub struct CommandState {
     input: InputState,
-    parameters: ParameterState,
-    scanner: ScannerState,
+    scanner: ScannerStatus,
     conditions: ConditionStack,
     alignment: AlignmentDeliveryState,
     profile: CommandProfile,
@@ -1480,8 +1479,8 @@ pub struct CommandState {
 
 This is the command owner for direct execution. It is never independently
 restored against a different `Universe`, mode nest, execution state, effect,
-generated-write, or output timeline. Main control settles expansion and
-scanning before semantic apply. A resource miss unwinds the ordinary call tree;
+generated-write, or output timeline. Main control runs expansion, scanning and selected semantics through the same
+actual owners. A resource miss unwinds the ordinary call tree;
 the host restores the full checkpoint and re-enters the command owner, rather
 than retaining an activation, argument, input, or provenance continuation.
 
@@ -1492,17 +1491,22 @@ condition frames, meanings, scanner policy, or host callbacks.
 
 ### 8.2 Parameter state
 
-`ParameterState` owns the live macro-argument activation chain. Its Rust
-representation may attach arguments directly to macro input levels, but it
-must implement the same ownership semantics as TeX's `param_stack` and
-`param_start`.
+The input stack owns native macro argument regions and its scalar live
+parameter count. Each final argument owns an inline word, retained immutable
+span, indexed source-region lease, or genuinely fragmented pooled spelling.
+Parameter input rows refer directly to those values with local offsets; there
+is no separate parameter-state owner or copied activation chain. Native
+retirement and actual lease release implement TeX's `param_stack` and
+`param_start` lifetimes.
 
 ### 8.3 Scanner state
 
-`ScannerState` owns `scanner_status`, warning identity, and the typed handle
-needed to describe incomplete input. Each non-normal context owns its warning
-identity, and a scoped installation restores the complete previous state; no
-scanner caller reconstructs warning ownership after nested work. The detached
+`ScannerStatus` is the actual live scanner state. Each non-normal context
+retains its real TeX diagnostic target, or the alignment builder needed to
+render partial preamble input. A scoped installation restores the actual prior
+status; synthetic warning serials, a parallel warning column and a recovery
+package duplicating the status are deleted. Recovery copies the actual status
+before clearing it. The detached
 observer records each actual typed `from`/`to` transition, so a macro matcher
 entered during an expanded definition reports `defining -> matching` rather
 than flattening the enclosing scanner scope to `normal`. Terminal EOF
@@ -1513,13 +1517,12 @@ decision does not inject recovery tokens; command-owned outer-validity
 recovery consumes it at that boundary.
 
 `CommandProcessor` owns one `ScannerEpisode` lifetime mechanism above that
-state. It installs the typed status and warning together, applies the explicit
+state. It installs the typed status with its diagnostic owner, applies the explicit
 observer-visibility policy, reasserts an enclosing collector after nested
 outer-validity recovery, and publishes the recovery-aware exit before
 restoring the complete prior state. Balanced token collection, `read_toks`,
 macro matching, conditional skipping, temporary-normal operand reads, and
-alignment preamble scanning all use that seam rather than pairing status and
-warning mutations by hand. e-TeX general-text recursion selects the hidden
+alignment preamble scanning all use that seam. e-TeX general-text recursion selects the hidden
 visibility policy explicitly; it still receives the same live absorbing
 recovery semantics.
 
@@ -1543,8 +1546,6 @@ pub enum ScannerStatus {
 
 pub struct DefinitionContext {
     target: Option<Symbol>,
-    builder: TokenBuilderId,
-    warning: ScannerWarning,
 }
 ```
 

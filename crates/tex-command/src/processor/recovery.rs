@@ -155,7 +155,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             Some(self.host.diagnostic_mode_name())
         };
         site.scanner_status =
-            crate::observation::canonical_names::scanner_status_name(self.command.scanner.status());
+            crate::observation::canonical_names::scanner_status_name(&self.command.scanner);
         site
     }
 

@@ -1126,7 +1126,7 @@ fn direct_definition_collection_matches_observed_recovery_at_every_fuel_cut() {
                 Err(error) => panic!("unexpected scan failure: {error:?}"),
             };
             assert!(matches!(
-                processor.command.scanner.status(),
+                processor.command.scanner,
                 crate::processor::status::ScannerStatus::Normal
             ));
             (

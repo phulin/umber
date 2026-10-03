@@ -18,7 +18,6 @@ use crate::command::CurrentCommand;
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
 use crate::processor::status::{
     AbsorbingContext, DefinitionContext, ScannerEpisode, ScannerStatus, ScannerStatusVisibility,
-    ScannerWarning, TokenBuilderId,
 };
 use crate::{CommandError, CommandProcessor};
 use tex_state::CommandLineSource;
@@ -347,22 +346,12 @@ impl ScanToksConfig {
         }
     }
 
-    const fn scanner_status(
-        self,
-        builder: TokenBuilderId,
-        warning: ScannerWarning,
-    ) -> ScannerStatus {
+    const fn scanner_status(self) -> ScannerStatus {
         match self.owner {
-            ScanToksOwner::Absorbed(owner) => ScannerStatus::Absorbing(AbsorbingContext {
-                owner,
-                builder,
-                warning,
-            }),
-            ScanToksOwner::Definition(target) => ScannerStatus::Defining(DefinitionContext {
-                target,
-                builder,
-                warning,
-            }),
+            ScanToksOwner::Absorbed(owner) => ScannerStatus::Absorbing(AbsorbingContext { owner }),
+            ScanToksOwner::Definition(target) => {
+                ScannerStatus::Defining(DefinitionContext { target })
+            }
         }
     }
 }
@@ -816,15 +805,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Err(error);
         }
         let scope = self.command.attempt.mark();
-        let builder = TokenBuilderId(self.command.transient.next_builder_identity);
-        self.command.transient.next_builder_identity =
-            self.command.transient.next_builder_identity.wrapping_add(1);
-        let warning = ScannerWarning(builder.0);
         let diagnostic_start = self.command.semantic_diagnostics.len();
-        let episode = self.begin_scanner_episode(
-            config.scanner_status(builder, warning),
-            config.status_visibility,
-        );
+        let episode = self.begin_scanner_episode(config.scanner_status(), config.status_visibility);
         let mut phase = ScanToksStage::Opening;
         if let Err(error) = self.admit_scan_toks_definition_writer(&mut collector) {
             self.settle_failed_scan_toks(&mut collector, episode, scope, attempt_opening)?;
@@ -1928,14 +1910,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         raw_catcodes: bool,
     ) -> Result<tex_state::PublishedDefinition<G>, CommandError> {
         let scope = self.command.attempt.mark();
-        let builder = TokenBuilderId(self.command.transient.next_builder_identity);
-        self.command.transient.next_builder_identity =
-            self.command.transient.next_builder_identity.wrapping_add(1);
         // §482: `scanner_status:=defining; warning_index:=r`.
         let status = ScannerStatus::Defining(DefinitionContext {
             target: Some(target),
-            builder,
-            warning: ScannerWarning(builder.0),
         });
         let episode = self.begin_scanner_episode(status, ScannerStatusVisibility::Observed);
         // §482: `s:=align_state; align_state:=1000000` disables tab marks and

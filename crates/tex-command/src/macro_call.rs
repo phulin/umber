@@ -8,9 +8,7 @@ use tex_state::{DefinitionRef, ResidentMacroBody};
 use crate::command::CurrentCommand;
 use crate::execution_scratch::ArgumentRunAdmission;
 use crate::input::{ArgumentCursor, MatchedArguments};
-use crate::processor::status::{
-    MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
-};
+use crate::processor::status::{MatchingContext, ScannerStatus, ScannerStatusVisibility};
 use crate::{CommandError, CommandProcessor};
 
 use crate::observation::{
@@ -216,13 +214,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .transpose()
             .map_err(|_| CommandError::input_invariant())?;
         let episode = if needs_matching {
-            let status = ScannerStatus::Matching(MatchingContext {
-                macro_name,
-                // The diagnostic/provenance bridge assigns stable warning ids in
-                // its own ordered slice; matching nevertheless owns a typed live
-                // warning slot now so outer recovery has one canonical path.
-                warning: ScannerWarning(0),
-            });
+            let status = ScannerStatus::Matching(MatchingContext { macro_name });
             Some(self.begin_scanner_episode(status, ScannerStatusVisibility::Observed))
         } else {
             None

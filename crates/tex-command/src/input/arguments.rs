@@ -171,33 +171,43 @@ impl<G> ArgumentArena<G> {
             self.capture = None;
         }
     }
-    fn release_root(&mut self, id: ArgumentRegionId) {
+    pub(crate) fn release(&mut self, id: ArgumentRegionId) {
         let region = &mut self.regions[id.index()];
         debug_assert!(region.roots != 0);
         region.roots -= 1;
-        if region.roots == 0 {
-            region.words.clear();
-            self.free.push(id);
+        if region.roots != 0 {
+            return;
         }
-    }
-    pub(crate) fn release(&mut self, id: ArgumentRegionId) {
         let mut pending = self.free.len();
-        self.release_root(id);
+        self.free.push(id);
         while pending < self.free.len() {
             let released = self.free[pending];
             pending += 1;
-            let slots = (usize::from(self.regions[released.index()].count)
-                + usize::from(self.capture == Some(released)))
-            .min(9);
-            for slot in 0..slots {
-                if let ArgumentValue::Region { region, .. } =
-                    core::mem::take(&mut self.regions[released.index()].values[slot])
-                {
-                    self.release_root(region);
+            let index = released.index();
+            let (before, rest) = self.regions.split_at_mut(index);
+            let (region, after) = rest.split_first_mut().expect("released region");
+            let slots =
+                (usize::from(region.count) + usize::from(self.capture == Some(released))).min(9);
+            region.words.clear();
+            region.count = 0;
+            region.published_raw_words = 0;
+            for value in &mut region.values[..slots] {
+                if let ArgumentValue::Region { region: owner, .. } = value {
+                    let owner = *owner;
+                    debug_assert_ne!(owner, released);
+                    let source = if owner.index() < index {
+                        &mut before[owner.index()]
+                    } else {
+                        &mut after[owner.index() - index - 1]
+                    };
+                    debug_assert!(source.roots != 0);
+                    source.roots -= 1;
+                    if source.roots == 0 {
+                        self.free.push(owner);
+                    }
                 }
+                *value = ArgumentValue::default();
             }
-            self.regions[released.index()].count = 0;
-            self.regions[released.index()].published_raw_words = 0;
         }
     }
     pub(crate) fn clear(&mut self) {

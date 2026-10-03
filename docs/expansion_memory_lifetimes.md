@@ -354,3 +354,21 @@ incomplete prefix needs holdback spelling for a later mismatch; completing a
 delimiter never appends its final word only to remove it immediately. Existing
 held prefix words are truncated at that actual delimiter match, preserving
 brace delivery, fuel and overlapping-prefix recovery.
+
+Native region release drops argument values in place. Its source-region lease
+is the only scalar copied out before release; it never moves whole argument
+values into immediately consumed temporaries. Splitting the region bank around
+the released row lends its actual values and the other root counters separately,
+so releasing a lease does not repeatedly locate the same argument row. The
+ordinary singleton splice remains small; multiword source-retention bookkeeping
+belongs to the actual retained-span operation.
+
+Scanner status is the one actual TeX state, with status-specific diagnostic
+owners. Macro matching retains its control-sequence identity; definition and
+absorption scans retain their diagnostic target; alignment retains its real
+partial builder and owner; skipping retains its starting line and conditional
+kind. Synthetic warning serials, a parallel warning column and a duplicated
+recovery package serve no consumer and are deleted. Recovery copies the actual
+status before clearing it. Scoped episodes retain only that installed status,
+the actual prior status and observation demand. Full checkpoint admission
+rejects an active status directly, without a redundant warning-state check.

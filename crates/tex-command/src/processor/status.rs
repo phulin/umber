@@ -11,69 +11,23 @@ use crate::{CommandProcessor, CommandState};
 
 use crate::observation::{CommandObservation, ScannerStatusRecord};
 
-/// Persistent scanner status and the warning context owned by that status.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct ScannerState {
-    status: ScannerStatus,
-    warning: Option<ScannerWarning>,
-}
-
-#[allow(dead_code)] // consumed by the ordered scanner and macro-call milestones
-impl ScannerState {
-    /// Installs one scanner episode, retaining the complete outer episode for
-    /// canonical restoration on every return path.
-    /// Returns the live status.
-    pub(crate) const fn status(&self) -> &ScannerStatus {
-        &self.status
-    }
-
-    /// Returns the warning identity owned by the live scanner episode.
-    pub(crate) const fn warning(&self) -> Option<ScannerWarning> {
-        self.warning
-    }
-
-    /// Classifies terminal EOF without making a recovery mutation.
-    pub(crate) const fn eof_legality(&self) -> EofLegality {
-        self.status.eof_legality()
-    }
-
-    /// True only when no scanner episode or stale warning remains live.
-    pub(crate) const fn is_quiescent(&self) -> bool {
-        matches!(self.status, ScannerStatus::Normal) && self.warning.is_none()
-    }
-
-    /// Leaves the current scanner episode before its inserted recovery input
-    /// is delivered. The scoped caller still restores its complete outer
-    /// state when it returns.
-    pub(crate) fn clear_for_recovery(&mut self) {
-        self.status = ScannerStatus::Normal;
-        self.warning = None;
-    }
-}
-
 #[allow(dead_code)] // invoked by the ordered scanner, macro-call, and conditional milestones
 impl<G> CommandState<G> {
-    pub(crate) fn begin_scanner_status(&mut self, status: ScannerStatus) -> ScannerState {
-        let prior = std::mem::replace(
-            &mut self.scanner,
-            ScannerState {
-                warning: status.warning(),
-                status,
-            },
-        );
+    pub(crate) fn begin_scanner_status(&mut self, status: ScannerStatus) -> ScannerStatus {
+        let prior = std::mem::replace(&mut self.scanner, status);
         self.delivery_mode
             .set_scanner_active(!matches!(status, ScannerStatus::Normal));
         prior
     }
 
-    pub(crate) fn restore_scanner_status(&mut self, prior: ScannerState) {
+    pub(crate) fn restore_scanner_status(&mut self, prior: ScannerStatus) {
         self.scanner = prior;
         self.delivery_mode
-            .set_scanner_active(!matches!(self.scanner.status(), ScannerStatus::Normal));
+            .set_scanner_active(!matches!(self.scanner, ScannerStatus::Normal));
     }
 
     pub(crate) fn clear_scanner_for_recovery(&mut self) {
-        self.scanner.clear_for_recovery();
+        self.scanner = ScannerStatus::Normal;
         self.delivery_mode.set_scanner_active(false);
     }
 
@@ -110,7 +64,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let prior = self.command.begin_scanner_status(status);
         let observed = visibility.is_observed() && self.is_observed();
         if observed {
-            self.observe_scanner_status_transition(*prior.status(), *self.command.scanner.status());
+            self.observe_scanner_status_transition(prior, self.command.scanner);
         }
         ScannerEpisode {
             installed: status,
@@ -125,15 +79,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// macro argument.  Keeping this on the episode prevents the collector
     /// from reconstructing status or observation policy independently.
     pub(crate) fn resume_scanner_episode_after_recovery(&mut self, episode: &ScannerEpisode) {
-        if !matches!(self.command.scanner.status(), ScannerStatus::Normal) {
+        if !matches!(self.command.scanner, ScannerStatus::Normal) {
             return;
         }
         let displaced = self.command.begin_scanner_status(episode.installed);
         if episode.observed {
-            self.observe_scanner_status_transition(
-                *displaced.status(),
-                *self.command.scanner.status(),
-            );
+            self.observe_scanner_status_transition(displaced, self.command.scanner);
         }
     }
 
@@ -171,9 +122,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(crate) fn restore_scanner_status_with_observation(
         &mut self,
         installed: ScannerStatus,
-        prior: ScannerState,
+        prior: ScannerStatus,
     ) {
-        let current = *self.command.scanner.status();
+        let current = self.command.scanner;
         let from = if matches!(current, ScannerStatus::Normal)
             && !matches!(installed, ScannerStatus::Normal)
         {
@@ -181,7 +132,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         } else {
             current
         };
-        self.observe_scanner_status_transition(from, *prior.status());
+        self.observe_scanner_status_transition(from, prior);
         self.command.restore_scanner_status(prior);
     }
 }
@@ -203,7 +154,7 @@ impl ScannerStatusVisibility {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ScannerEpisode {
     installed: ScannerStatus,
-    prior: ScannerState,
+    prior: ScannerStatus,
     /// Observation eligibility is settled once at admission. An ordinary
     /// unobserved scan never enters name translation or observer dispatch.
     observed: bool,
@@ -222,17 +173,10 @@ pub(crate) enum ScannerStatus {
     Absorbing(AbsorbingContext),
 }
 
-#[allow(dead_code)] // invoked by ScannerState installation
+#[allow(dead_code)] // invoked by ScannerStatus installation
 impl ScannerStatus {
-    const fn warning(&self) -> Option<ScannerWarning> {
-        match self {
-            Self::Normal => None,
-            Self::Skipping(context) => Some(context.warning),
-            Self::Defining(context) => Some(context.warning),
-            Self::Matching(context) => Some(context.warning),
-            Self::Aligning(context) => Some(context.warning),
-            Self::Absorbing(context) => Some(context.warning),
-        }
+    pub(crate) const fn is_quiescent(&self) -> bool {
+        matches!(self, Self::Normal)
     }
 
     /// The canonical runaway family selected at terminal input exhaustion.
@@ -248,10 +192,6 @@ impl ScannerStatus {
     }
 }
 
-/// A warning source retained for canonical runaway diagnostics.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ScannerWarning(pub(crate) u64);
-
 /// Stable identity of the condition whose text is being skipped.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ConditionId(pub(crate) u64);
@@ -260,15 +200,9 @@ pub(crate) struct ConditionId(pub(crate) u64);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TokenBuilderId(pub(crate) u64);
 
-/// Identity of an active alignment scan.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct AlignmentId(pub(crate) u64);
-
 /// Context for skipped conditional text.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SkippingContext {
-    pub(crate) condition: ConditionId,
-    pub(crate) warning: ScannerWarning,
     /// TeX82 §494's `skip_line:=line`, which §336 prints as "all text was
     /// ignored after line N". It is the line skipping *began* on, not the
     /// line the `\if` opened on, so it cannot be read back off the frame.
@@ -281,34 +215,27 @@ pub(crate) struct SkippingContext {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct DefinitionContext {
     pub(crate) target: Option<Symbol>,
-    pub(crate) builder: TokenBuilderId,
-    pub(crate) warning: ScannerWarning,
 }
 
 /// Context for macro argument matching.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MatchingContext {
     pub(crate) macro_name: Symbol,
-    pub(crate) warning: ScannerWarning,
 }
 
 /// Context for an alignment preamble scan.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AlignmentScanContext {
-    pub(crate) alignment: AlignmentId,
     pub(crate) builder: TokenBuilderId,
     /// TeX82 §774's saved `cs_ptr`, installed as §776's
     /// `warning_index` for the duration of the preamble scan.
     pub(crate) owner: Option<Symbol>,
-    pub(crate) warning: ScannerWarning,
 }
 
 /// Context for a balanced token-list scan other than a definition/preamble.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AbsorbingContext {
     pub(crate) owner: Option<Symbol>,
-    pub(crate) builder: TokenBuilderId,
-    pub(crate) warning: ScannerWarning,
 }
 
 /// Whether terminal EOF is permitted by the current scanner episode.
@@ -326,21 +253,4 @@ pub(crate) enum RunawayKind {
     MacroArgument,
     AlignmentPreamble,
     AbsorbedTokens,
-}
-
-/// The context captured before canonical outer-validity recovery clears the
-/// active scanner episode.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct RecoveryContext {
-    pub(crate) status: ScannerStatus,
-    pub(crate) warning: Option<ScannerWarning>,
-}
-
-impl ScannerState {
-    pub(crate) fn recovery_context(&self) -> RecoveryContext {
-        RecoveryContext {
-            status: self.status,
-            warning: self.warning,
-        }
-    }
 }

@@ -114,7 +114,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// `matching` scanner status carries, so the name is read back from there
     /// rather than threaded through every argument scanner.
     fn matching_macro_name(&self) -> String {
-        match self.command.scanner.status() {
+        match self.command.scanner {
             ScannerStatus::Matching(context) => {
                 let spelling = self.state.resolve(context.macro_name).to_owned();
                 crate::processor::expand_render::print_esc_text(self.state, &spelling)

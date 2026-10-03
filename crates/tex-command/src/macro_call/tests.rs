@@ -1815,7 +1815,7 @@ fn every_match_fuel_exit_releases_capture_and_restores_scanner_status() {
             );
             assert!(
                 matches!(
-                    processor.command.scanner.status(),
+                    processor.command.scanner,
                     crate::processor::status::ScannerStatus::Normal
                 ),
                 "fuel cut {limit} restores the prior scanner status"

@@ -25,8 +25,7 @@ use crate::input::{
 };
 use crate::processor::alignment::{PREAMBLE_ALIGN_STATE, is_character_command};
 use crate::processor::status::{
-    AlignmentId, AlignmentScanContext, ScannerEpisode, ScannerStatus, ScannerStatusVisibility,
-    ScannerWarning, TokenBuilderId,
+    AlignmentScanContext, ScannerEpisode, ScannerStatus, ScannerStatusVisibility, TokenBuilderId,
 };
 use crate::scan_toks::{ScanToksMode, ScannedToks};
 use crate::scanners::RestrictedIntegerClass;

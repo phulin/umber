@@ -135,14 +135,12 @@ impl<G> ArgumentArena<G> {
         start: u32,
         len: u32,
     ) -> Result<(), ScratchError> {
-        let slot = usize::from(self.pending_slot(id));
-        let value = &self.regions[id.index()].values[slot];
-        if matches!(value, ArgumentValue::Definition { body: previous, start: begin, len: size } if previous == body && *begin + *size == start)
+        if len == 1
+            && matches!(
+                self.regions[id.index()].values[usize::from(self.pending_slot(id))],
+                ArgumentValue::Inline(_) | ArgumentValue::Owned { .. }
+            )
         {
-            self.regions[id.index()].values[slot].extend(len);
-            return Ok(());
-        }
-        if len == 1 {
             return self.append_owned(
                 id,
                 TracedTokenWord::from_parts(
@@ -150,6 +148,23 @@ impl<G> ArgumentArena<G> {
                     tex_state::token::OriginId::UNKNOWN,
                 ),
             );
+        }
+        self.retain_definition_span(id, body, start, len)
+    }
+    #[inline(never)]
+    fn retain_definition_span(
+        &mut self,
+        id: ArgumentRegionId,
+        body: &ResidentMacroBody<G>,
+        start: u32,
+        len: u32,
+    ) -> Result<(), ScratchError> {
+        let slot = usize::from(self.pending_slot(id));
+        let value = &self.regions[id.index()].values[slot];
+        if matches!(value, ArgumentValue::Definition { body: previous, start: begin, len: size } if previous == body && *begin + *size == start)
+        {
+            self.regions[id.index()].values[slot].extend(len);
+            return Ok(());
         }
         if value.len() == 0 {
             // A zero-length existing lease still has an owner to release.
