@@ -12,78 +12,16 @@ pub(super) struct NativeMainControl<'a> {
     pub(super) completion: Option<Result<ReplayStep, ExecError>>,
 }
 
-impl<'state, 'host, G>
-    tex_command::MainControlConsumer<
-        CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
-        G,
-    > for NativeMainControl<'_>
-{
-    #[inline(always)]
-    fn accepts_native_terminal(
-        &mut self,
-        processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
-        meaning: &tex_state::meaning::MeaningWord<G>,
-    ) -> bool {
-        if matches!(
-            meaning,
-            tex_state::meaning::MeaningWord::Static(Meaning::RELAX_WORD)
-        ) {
-            return self.continue_native && !processor.has_pending_reports();
-        }
-        if !self.continue_native || processor.has_pending_reports() {
-            return false;
-        }
-        let word = match meaning {
-            tex_state::meaning::MeaningWord::Font(_) => return true,
-            tex_state::meaning::MeaningWord::Static(word) => *word,
-            tex_state::meaning::MeaningWord::Macro { .. } => return false,
-        };
-        match Meaning::runtime_word_control_code(word) {
-            codes::PRIMITIVE_BEGIN_GROUP => true,
-            codes::CHAR_BEGIN_GROUP => {
-                processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                    !matches!(
-                        execution.modes.current_mode(),
-                        Mode::Math | Mode::DisplayMath
-                    ) && !execution.boxes.output_routine_opening_pending
-                        && !execution.boxes.recovery_simple_group_pending
-                })
-            }
-            codes::CHAR_END_GROUP => {
-                processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
-                    !execution.boxes.recovery_simple_group_open
-                        && context.innermost_group_kind() == Some(GroupKind::Simple)
-                })
-            }
-            codes::PRIMITIVE_END_GROUP => {
-                processor.with_execution_owners(|context, _, _, _, _, _, _, _, _| {
-                    context.innermost_group_kind() == Some(GroupKind::SemiSimple)
-                })
-            }
-            code => native_assignments::accepts_scalar_assignment(code),
-        }
-    }
-
-    #[inline(always)]
-    fn consume_native_terminal(
+impl NativeMainControl<'_> {
+    // Keep actual command semantics out of the per-word expansion back edge.
+    // The no-op arm stays inline; this is its sibling substantive dispatcher.
+    #[inline(never)]
+    fn consume_substantive_terminal<'state, 'host, G>(
         &mut self,
         processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
         spelling: tex_state::token::TracedTokenWord,
         meaning: &tex_state::meaning::MeaningWord<G>,
-        _: Option<tex_state::interner::Symbol>,
     ) -> std::ops::ControlFlow<()> {
-        if matches!(
-            meaning,
-            tex_state::meaning::MeaningWord::Static(Meaning::RELAX_WORD)
-        ) {
-            // TeX82 §1045: relax has no list effect after leaving main_loop.
-            if *self.completed_operations + 1 >= self.remaining_operations {
-                self.completion = Some(Ok(ReplayStep::Continue));
-                return std::ops::ControlFlow::Break(());
-            }
-            *self.completed_operations += 1;
-            return std::ops::ControlFlow::Continue(());
-        }
         *self.scan_origin = Some(spelling.origin());
         let code = match meaning {
             tex_state::meaning::MeaningWord::Font(_) => codes::FONT,
@@ -177,5 +115,81 @@ impl<'state, 'host, G>
         }
         *self.completed_operations += 1;
         std::ops::ControlFlow::Continue(())
+    }
+}
+
+impl<'state, 'host, G>
+    tex_command::MainControlConsumer<
+        CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
+        G,
+    > for NativeMainControl<'_>
+{
+    #[inline(always)]
+    fn accepts_native_terminal(
+        &mut self,
+        processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+    ) -> bool {
+        if matches!(
+            meaning,
+            tex_state::meaning::MeaningWord::Static(Meaning::RELAX_WORD)
+        ) {
+            return self.continue_native && !processor.has_pending_reports();
+        }
+        if !self.continue_native || processor.has_pending_reports() {
+            return false;
+        }
+        let word = match meaning {
+            tex_state::meaning::MeaningWord::Font(_) => return true,
+            tex_state::meaning::MeaningWord::Static(word) => *word,
+            tex_state::meaning::MeaningWord::Macro { .. } => return false,
+        };
+        match Meaning::runtime_word_control_code(word) {
+            codes::PRIMITIVE_BEGIN_GROUP => true,
+            codes::CHAR_BEGIN_GROUP => {
+                processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                    !matches!(
+                        execution.modes.current_mode(),
+                        Mode::Math | Mode::DisplayMath
+                    ) && !execution.boxes.output_routine_opening_pending
+                        && !execution.boxes.recovery_simple_group_pending
+                })
+            }
+            codes::CHAR_END_GROUP => {
+                processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+                    !execution.boxes.recovery_simple_group_open
+                        && context.innermost_group_kind() == Some(GroupKind::Simple)
+                })
+            }
+            codes::PRIMITIVE_END_GROUP => {
+                processor.with_execution_owners(|context, _, _, _, _, _, _, _, _| {
+                    context.innermost_group_kind() == Some(GroupKind::SemiSimple)
+                })
+            }
+            code => native_assignments::accepts_scalar_assignment(code),
+        }
+    }
+
+    #[inline(always)]
+    fn consume_native_terminal(
+        &mut self,
+        processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
+        spelling: tex_state::token::TracedTokenWord,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+        _: Option<tex_state::interner::Symbol>,
+    ) -> std::ops::ControlFlow<()> {
+        if matches!(
+            meaning,
+            tex_state::meaning::MeaningWord::Static(Meaning::RELAX_WORD)
+        ) {
+            // TeX82 §1045: relax has no list effect after leaving main_loop.
+            if *self.completed_operations + 1 >= self.remaining_operations {
+                self.completion = Some(Ok(ReplayStep::Continue));
+                return std::ops::ControlFlow::Break(());
+            }
+            *self.completed_operations += 1;
+            return std::ops::ControlFlow::Continue(());
+        }
+        self.consume_substantive_terminal(processor, spelling, meaning)
     }
 }

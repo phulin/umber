@@ -308,3 +308,13 @@ and effects directly, and owns no processor or command. Report effects, tracing
 changes, afterassignment delivery and the real operation budget stop native
 continuation at their existing semantic boundaries. Operand scanning remains
 inside the canonical processor and cannot add another input reader.
+
+## Native reader code size
+
+The native terminal adapter keeps the common no-op inline. Group, font and
+assignment semantics run in one outlined substantive handler, still synchronously
+inside the canonical reader. This bounds the reader's machine-code growth as
+more switch families move into it; it creates no command record, operation
+carrier or second interpreter. Eligibility remains inline and the actual handler
+returns only its consumer control flow, with real semantic completion retained
+only at a budget, diagnostic or error boundary.

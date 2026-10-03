@@ -64,7 +64,8 @@ not allocate a vector merely to publish one already-complete node.
   without generic frame publication/projection. Fetch/reswitch borrows the one
   initialized command slot at remaining semantic ownership boundaries. Ordinary
   relax words execute through the executor-owned terminal consumer inside the
-  canonical reader; the old post-fetch relax continuation is deleted. The
+  canonical reader; substantive groups, fonts and scalar assignments run through
+  one outlined semantic handler to bound the per-word reader code size; the old post-fetch relax continuation is deleted. The
   consumer borrows actual driver counters and preserves pre-fetched raw
   character lookahead. Remaining commands clear their tag at successful continuation and
   copying only values needed across real input overwrites
