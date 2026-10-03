@@ -496,8 +496,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn depleted_input_top(&self) -> Option<(InputLevelId, RetirementBehavior)> {
         match self.command.input.levels.last() {
             Some(level @ InputLevel::Resident(row))
-                if drains_for_stack_conservation(&row.header.behavior())
-                    && level.stored_is_exhausted() == Some(true) =>
+                if !matches!(
+                    row.header.frame.kind(),
+                    tex_state::packed_input::InputFrameKind::AlignmentVTemplate
+                        | tex_state::packed_input::InputFrameKind::OmitTemplate
+                ) && level.stored_is_exhausted() == Some(true) =>
             {
                 Some((row.header.identity(), row.header.retirement()))
             }
@@ -580,18 +583,4 @@ pub(super) enum RetirementHandoff {
     Continue,
     EndV,
     Completed(crate::CommandReplayEpisode),
-}
-
-/// Exhaustive over [`TokenBehavior`]: TeX82 §§325 and 390's stack-conservation
-/// loop excludes exactly one token type, `v_template`. A new token-list kind
-/// must state which side of that rule it is on rather than inherit a default.
-fn drains_for_stack_conservation(behavior: &TokenBehavior) -> bool {
-    match behavior {
-        TokenBehavior::Ordinary
-        | TokenBehavior::Recovery
-        | TokenBehavior::Parameter
-        | TokenBehavior::BackedUp(_)
-        | TokenBehavior::UTemplate => true,
-        TokenBehavior::VTemplate => false,
-    }
 }

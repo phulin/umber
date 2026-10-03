@@ -18,19 +18,19 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         opener: OriginId,
     ) -> Result<(), CommandError> {
         let mut restore_at_page_start = false;
-        let mode = if self.scan_keyword_retained("page").into_result()?.value {
+        let mode = if self.scan_keyword_retained("page").into_result()? {
             restore_at_page_start = true;
-            let direct = self.scan_keyword_retained("direct").into_result()?.value;
+            let direct = self.scan_keyword_retained("direct").into_result()?;
             if direct {
                 tex_state::PdfColorStackMode::Direct
-            } else if self.scan_keyword_retained("page").into_result()?.value {
+            } else if self.scan_keyword_retained("page").into_result()? {
                 tex_state::PdfColorStackMode::Page
             } else {
                 tex_state::PdfColorStackMode::Origin
             }
-        } else if self.scan_keyword_retained("direct").into_result()?.value {
+        } else if self.scan_keyword_retained("direct").into_result()? {
             tex_state::PdfColorStackMode::Direct
-        } else if self.scan_keyword_retained("page").into_result()?.value {
+        } else if self.scan_keyword_retained("page").into_result()? {
             tex_state::PdfColorStackMode::Page
         } else {
             tex_state::PdfColorStackMode::Origin

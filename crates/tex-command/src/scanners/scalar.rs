@@ -62,15 +62,6 @@ fn pdf_font_code_table(primitive: UnexpandablePrimitive) -> tex_state::PdfFontCo
     }
 }
 
-/// Recovery performed by a canonical scalar scan.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ScalarRecovery {
-    /// The operand was present and valid.
-    None,
-    /// TeX's missing-number recovery supplied a zero value.
-    InsertedZero,
-}
-
 /// Provenance retained for a scalar scan without exposing input frames.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScalarProvenance {
@@ -78,11 +69,10 @@ pub struct ScalarProvenance {
     pub primary: OriginId,
 }
 
-/// A typed scalar result plus canonical recovery and provenance information.
+/// A typed scalar value and the primary origin needed by diagnostic consumers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedScalar<T> {
     pub value: T,
-    pub recovery: ScalarRecovery,
     pub provenance: ScalarProvenance,
 }
 
@@ -456,15 +446,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    pub fn scan_optional_equals_retained(&mut self) -> RetainedScalarScan<ScannedScalar<bool>> {
+    pub fn scan_optional_equals_retained(&mut self) -> RetainedScalarScan<bool> {
         let result = self.scan_optional_equals();
         self.detach_retained_scalar(result)
     }
 
-    pub fn scan_keyword_retained(
-        &mut self,
-        keyword: &str,
-    ) -> RetainedScalarScan<ScannedScalar<bool>> {
+    pub fn scan_keyword_retained(&mut self, keyword: &str) -> RetainedScalarScan<bool> {
         let result = self.scan_keyword(keyword);
         self.detach_retained_scalar(result)
     }
@@ -564,7 +551,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
-    fn scan_optional_equals(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
+    fn scan_optional_equals(&mut self) -> Result<bool, CommandError> {
         let mut call = ScalarCallFrame::default();
         match self.scan_optional_equals_into_call(&mut call) {
             ScalarCallStatus::Complete => Ok(call.take_complete()),
@@ -574,15 +561,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     fn scan_optional_equals_into_call(
         &mut self,
-        call: &mut ScalarCallFrame<ScannedScalar<bool>>,
+        call: &mut ScalarCallFrame<bool>,
     ) -> ScalarCallStatus {
-        let mut provenance = OriginId::UNKNOWN;
         let mut equals = false;
         let result = self.consume_expanded_words(
             &mut |processor, spelling, meaning, _control_sequence, exceptional| {
-                if provenance == OriginId::UNKNOWN {
-                    provenance = spelling.origin();
-                }
                 match native_character(meaning) {
                     Some((' ', Catcode::Space)) => Ok(std::ops::ControlFlow::Continue(())),
                     // §405 compares the actual other-category '=' token.
@@ -599,13 +582,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         );
         match result {
             Ok(()) => {
-                call.put_complete(ScannedScalar {
-                    value: equals,
-                    recovery: ScalarRecovery::None,
-                    provenance: ScalarProvenance {
-                        primary: provenance,
-                    },
-                });
+                call.put_complete(equals);
                 ScalarCallStatus::Complete
             }
             Err(error) => self.finish_scalar_destination_error(error, call),
@@ -651,7 +628,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// matches under any category code, and `cur_chr-"a"+"A"` accepts the
     /// uppercase form of tex.web's all-lowercase keywords.
     #[inline(always)]
-    fn scan_keyword(&mut self, keyword: &str) -> Result<ScannedScalar<bool>, CommandError> {
+    fn scan_keyword(&mut self, keyword: &str) -> Result<bool, CommandError> {
         let mut call = ScalarCallFrame::default();
         match self.scan_keyword_into_call(keyword, &mut call) {
             ScalarCallStatus::Complete => Ok(call.take_complete()),
@@ -662,7 +639,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn scan_keyword_into_call(
         &mut self,
         keyword: &str,
-        call: &mut ScalarCallFrame<ScannedScalar<bool>>,
+        call: &mut ScalarCallFrame<bool>,
     ) -> ScalarCallStatus {
         macro_rules! fail {
             ($error:expr) => {{
@@ -678,15 +655,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut matched = smallvec::SmallVec::<
             [crate::input::BackedUpToken; KEYWORD_PREFIX_INLINE_CAPACITY],
         >::new();
-        let mut provenance = OriginId::UNKNOWN;
         let result = if keyword.is_empty() {
             Ok(())
         } else {
             self.consume_expanded_words(
                 &mut |processor, spelling, meaning, control_sequence, exceptional| {
-                    if provenance == OriginId::UNKNOWN {
-                        provenance = spelling.origin();
-                    }
                     let letter = keyword.as_bytes()[matched.len()];
                     let character = native_character(meaning);
                     if control_sequence.is_none()
@@ -720,16 +693,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
         // `flush_list(link(backup_head))`: a complete match consumes its
         // tokens outright.
-        call.put_complete(Self::keyword_result(matched_keyword, provenance));
+        call.put_complete(matched_keyword);
         ScalarCallStatus::Complete
-    }
-
-    const fn keyword_result(value: bool, primary: OriginId) -> ScannedScalar<bool> {
-        ScannedScalar {
-            value,
-            recovery: ScalarRecovery::None,
-            provenance: ScalarProvenance { primary },
-        }
     }
 
     /// Scans an integer or an internal integer quantity.
@@ -743,7 +708,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         value: i32,
         negative: bool,
         provenance: OriginId,
-        recovery: ScalarRecovery,
     ) -> ScannedScalar<i32> {
         let scanned = ScannedScalar {
             value: if negative {
@@ -751,7 +715,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             } else {
                 value
             },
-            recovery,
             provenance: ScalarProvenance {
                 primary: provenance,
             },
@@ -779,7 +742,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn inserted_zero_integer(&mut self, provenance: OriginId) -> ScannedScalar<i32> {
         let scanned = ScannedScalar {
             value: 0,
-            recovery: ScalarRecovery::InsertedZero,
             provenance: ScalarProvenance {
                 primary: provenance,
             },
@@ -830,7 +792,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             provenance,
             allow_infinite,
             mu,
-            integer.recovery,
         )
     }
 
@@ -843,7 +804,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         provenance: OriginId,
         allow_infinite: bool,
         mu: bool,
-        recovery: ScalarRecovery,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         let (units, flip) = self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
         // TeX82 §448's trailing `<Scan an optional space>` sits between the
@@ -858,7 +818,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             units.order,
             negative ^ flip,
             provenance,
-            recovery,
             units.arith_error,
         )
     }
@@ -870,7 +829,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         order: Order,
         negative: bool,
         provenance: OriginId,
-        recovery: ScalarRecovery,
         arith_error: bool,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         // TeX82 §448-§460: every path converges at `attach_sign`, including
@@ -889,7 +847,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             } else {
                 value
             },
-            recovery,
             provenance: ScalarProvenance {
                 primary: provenance,
             },
@@ -1040,7 +997,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 },
                 ..GlueSpec::ZERO
             },
-            width.recovery,
             width.provenance.primary,
         );
         self.clear_fresh_glue_scan_origin();
@@ -1059,13 +1015,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         mu: bool,
         value: GlueSpec,
-        recovery: ScalarRecovery,
         provenance: OriginId,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        if self.scan_keyword("plus")?.value {
-            self.scan_glue_stretch(mu, value, recovery, provenance)
+        if self.scan_keyword("plus")? {
+            self.scan_glue_stretch(mu, value, provenance)
         } else {
-            self.scan_glue_minus_keyword(mu, value, recovery, provenance)
+            self.scan_glue_minus_keyword(mu, value, provenance)
         }
     }
 
@@ -1073,26 +1028,24 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         mu: bool,
         mut value: GlueSpec,
-        _recovery: ScalarRecovery,
         provenance: OriginId,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
         let (stretch, order) = self.scan_dimension_with_order(true, mu)?;
         value.stretch = stretch.value;
         value.stretch_order = order;
-        self.scan_glue_minus_keyword(mu, value, stretch.recovery, provenance)
+        self.scan_glue_minus_keyword(mu, value, provenance)
     }
 
     fn scan_glue_minus_keyword(
         &mut self,
         mu: bool,
         value: GlueSpec,
-        recovery: ScalarRecovery,
         provenance: OriginId,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        if self.scan_keyword("minus")?.value {
-            self.scan_glue_shrink(mu, value, recovery, provenance)
+        if self.scan_keyword("minus")? {
+            self.scan_glue_shrink(mu, value, provenance)
         } else {
-            self.finish_glue(value, recovery, provenance)
+            self.finish_glue(value, provenance)
         }
     }
 
@@ -1100,24 +1053,21 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         mu: bool,
         mut value: GlueSpec,
-        _recovery: ScalarRecovery,
         provenance: OriginId,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
         let (shrink, order) = self.scan_dimension_with_order(true, mu)?;
         value.shrink = shrink.value;
         value.shrink_order = order;
-        self.finish_glue(value, shrink.recovery, provenance)
+        self.finish_glue(value, provenance)
     }
 
     fn finish_glue(
         &mut self,
         value: GlueSpec,
-        recovery: ScalarRecovery,
         provenance: OriginId,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
         let scanned = ScannedScalar {
             value,
-            recovery,
             provenance: ScalarProvenance {
                 primary: provenance,
             },
@@ -1177,7 +1127,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             };
             scanned = Some(ScannedScalar {
                 value,
-                recovery: ScalarRecovery::None,
                 provenance: ScalarProvenance {
                     primary: spelling.origin(),
                 },
@@ -1220,7 +1169,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    fn scan_character_code(&mut self) -> Result<(i32, ScalarRecovery, bool), CommandError> {
+    fn scan_character_code(&mut self) -> Result<(i32, bool), CommandError> {
         self.consume_token_spelling(&mut |processor, spelling, exceptional| {
             let token = spelling.semantic_token();
             // §442 cancels raw brace accounting before interpreting cur_tok
@@ -1257,14 +1206,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .capabilities()
                         .supports_unicode())
             {
-                Ok((value, ScalarRecovery::None, true))
+                Ok((value, true))
             } else {
                 processor.back_consumed_word(spelling, exceptional)?;
                 processor.improper_alphabetic_constant_error()?;
-                Ok((0, ScalarRecovery::InsertedZero, false))
+                Ok((0, false))
             }
         })
-        .map(|result| result.unwrap_or((0, ScalarRecovery::None, false)))
+        .map(|result| result.unwrap_or((0, false)))
     }
 
     fn scan_decimal_dimension(
@@ -1429,7 +1378,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // an `in` following a fraction must be replayed through precisely the
         // internal/`em`/`ex`/`true`/`pt` probes before `scan_keyword("in")`
         // consumes its `i` and its following `n` directly.
-        if allow_infinite && self.scan_keyword("fil")?.value {
+        if allow_infinite && self.scan_keyword("fil")? {
             return Ok((self.scan_infinite_unit(Order::Fil)?, None));
         }
         if let Some(unit) = self.probe_dimension_unit(mu)? {
@@ -1449,7 +1398,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // consumes exactly one space and `3\dimen0 x` consumes none.
         if !mu {
             for (keyword, parameter) in [("em", 6), ("ex", 5)] {
-                if self.scan_keyword(keyword)?.value {
+                if self.scan_keyword(keyword)? {
                     let unit = self.state.current_font_parameter(parameter);
                     self.scan_optional_space()?;
                     return Ok((DimensionUnit::Internal(unit), None));
@@ -1460,9 +1409,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // assignable `\pdfpxdimen` parameter initialized in §32a. This
             // belongs to the installed pdfTeX command profile, like the
             // additional physical units in §458 below.
-            if self.command.profile().capabilities().supports_pdftex()
-                && self.scan_keyword("px")?.value
-            {
+            if self.command.profile().capabilities().supports_pdftex() && self.scan_keyword("px")? {
                 let unit = self.state.dimen_param(DimenParam::PDF_PX_DIMEN);
                 self.scan_optional_space()?;
                 return Ok((DimensionUnit::Internal(unit), None));
@@ -1473,14 +1420,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // measure (mu inserted)": TeX reports it, keeps the scanned quantity
         // as mu, and leaves the offending text for the caller to re-read.
         if mu {
-            if !self.scan_keyword("mu")?.value {
+            if !self.scan_keyword("mu")? {
                 self.illegal_unit_mu_error()?;
             }
             return Ok((DimensionUnit::Mu, None));
         }
         // §457's `if scan_keyword("true") then <Adjust for the magnification
         // ratio>`, whose first statement is `prepare_mag`.
-        let magnification = if self.scan_keyword("true")?.value {
+        let magnification = if self.scan_keyword("true")? {
             let (mag, diagnostic) = self.state.prepare_mag();
             if let Some(diagnostic) = diagnostic {
                 self.prepare_mag_error(diagnostic)?;
@@ -1489,7 +1436,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         } else {
             None
         };
-        if self.scan_keyword("pt")?.value {
+        if self.scan_keyword("pt")? {
             return Ok((DimensionUnit::Physical(PhysicalUnit::Pt), magnification));
         }
         for (keyword, unit) in [
@@ -1501,7 +1448,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             ("dd", PhysicalUnit::Dd),
             ("cc", PhysicalUnit::Cc),
         ] {
-            if self.scan_keyword(keyword)?.value {
+            if self.scan_keyword(keyword)? {
                 return Ok((DimensionUnit::Physical(unit), magnification));
             }
         }
@@ -1511,12 +1458,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // only to the pdfTeX command profile.
         if self.command.profile().capabilities().supports_pdftex() {
             for (keyword, unit) in [("nd", PhysicalUnit::Nd), ("nc", PhysicalUnit::Nc)] {
-                if self.scan_keyword(keyword)?.value {
+                if self.scan_keyword(keyword)? {
                     return Ok((DimensionUnit::Physical(unit), magnification));
                 }
             }
         }
-        if self.scan_keyword("sp")?.value {
+        if self.scan_keyword("sp")? {
             return Ok((DimensionUnit::Physical(PhysicalUnit::Sp), magnification));
         }
         // §459's "Complain about unknown unit": TeX assumes `pt` and
@@ -1595,7 +1542,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // every suffix letter. Besides accepting either case, that consumes
         // leading spaces before each candidate (`fill L L L`) and restores
         // the first non-`l` token after the loop.
-        while self.scan_keyword("l")?.value {
+        while self.scan_keyword("l")? {
             if order == Order::Filll {
                 self.excess_infinite_order_error()?;
             } else {

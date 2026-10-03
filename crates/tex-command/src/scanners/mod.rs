@@ -11,9 +11,7 @@ mod token_list;
 pub(crate) use expression::ExpressionFrame;
 pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
-pub use scalar::{
-    InternalValue, RetainedScalarScan, ScalarProvenance, ScalarRecovery, ScannedScalar,
-};
+pub use scalar::{InternalValue, RetainedScalarScan, ScalarProvenance, ScannedScalar};
 pub use structured::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
     FontLoadRequest, FontSizeRecovery, GeneratedFontKind, ImmediateExtension, InputStreamRequest,

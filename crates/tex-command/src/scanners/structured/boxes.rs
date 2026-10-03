@@ -43,8 +43,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_vsplit(&mut self) -> Result<ScannedVSplit, CommandError> {
         let index = self.scan_profile_register_index_retained().into_result()?;
         let found = self.scan_keyword_retained("to").into_result()?;
-        let missing_to_context =
-            (!found.value).then(|| self.command.output_open_context(self.state));
+        let missing_to_context = (!found).then(|| self.command.output_open_context(self.state));
         let height = self.scan_dimension_retained().into_result()?.value;
         let split_context = self.command.output_open_context(self.state);
         Ok(ScannedVSplit {
@@ -302,7 +301,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             match phase {
                 RuleScalarPhase::WidthKeyword => {
                     let result = self.scan_keyword_retained("width");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         phase = RuleScalarPhase::WidthDimension;
                     } else {
                         phase = RuleScalarPhase::HeightKeyword;
@@ -315,7 +314,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 RuleScalarPhase::HeightKeyword => {
                     let result = self.scan_keyword_retained("height");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         phase = RuleScalarPhase::HeightDimension;
                     } else {
                         phase = RuleScalarPhase::DepthKeyword;
@@ -328,7 +327,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 RuleScalarPhase::DepthKeyword => {
                     let result = self.scan_keyword_retained("depth");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         phase = RuleScalarPhase::DepthDimension;
                     } else {
                         break;
@@ -388,7 +387,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             match phase {
                 PackingScalarPhase::ToKeyword => {
                     let result = self.scan_keyword_retained("to");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         phase = PackingScalarPhase::Dimension { exactly: true };
                     } else {
                         phase = PackingScalarPhase::SpreadKeyword;
@@ -396,7 +395,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PackingScalarPhase::SpreadKeyword => {
                     let result = self.scan_keyword_retained("spread");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         phase = PackingScalarPhase::Dimension { exactly: false };
                     } else {
                         return Ok(ScannedPackingSpec::Natural);
@@ -454,7 +453,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         is_vadjust: bool,
     ) -> Result<ScannedInsertConstruction, CommandError> {
         let pre = if is_vadjust && self.command.profile().capabilities().supports_pdftex() {
-            self.scan_keyword_retained("pre").into_result()?.value
+            self.scan_keyword_retained("pre").into_result()?
         } else {
             false
         };

@@ -50,12 +50,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             match phase {
                 PdfGraphicsScalarPhase::LiteralShipout => {
                     let result = self.scan_keyword_retained("shipout");
-                    let deferred = result.into_result()?.value;
+                    let deferred = result.into_result()?;
                     phase = PdfGraphicsScalarPhase::LiteralDirect { deferred };
                 }
                 PdfGraphicsScalarPhase::LiteralDirect { deferred } => {
                     let result = self.scan_keyword_retained("direct");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         return self.finish_pdf_graphics_literal(
                             tex_state::node::PdfLiteralMode::Direct,
                             deferred,
@@ -65,7 +65,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfGraphicsScalarPhase::LiteralPage { deferred } => {
                     let result = self.scan_keyword_retained("page");
-                    let page = result.into_result()?.value;
+                    let page = result.into_result()?;
                     let mode = if page {
                         tex_state::node::PdfLiteralMode::Page
                     } else {
@@ -80,7 +80,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfGraphicsScalarPhase::ColorSet { id } => {
                     let result = self.scan_keyword_retained("set");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         return self
                             .finish_pdf_color_stack_text(id, PendingPdfColorStackAction::Set);
                     }
@@ -88,7 +88,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfGraphicsScalarPhase::ColorPush { id } => {
                     let result = self.scan_keyword_retained("push");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         return self
                             .finish_pdf_color_stack_text(id, PendingPdfColorStackAction::Push);
                     }
@@ -96,7 +96,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfGraphicsScalarPhase::ColorPop { id } => {
                     let result = self.scan_keyword_retained("pop");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         return Ok(Some(Request::ColorStack {
                             id,
                             action: Some(Action::Pop),
@@ -106,7 +106,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfGraphicsScalarPhase::ColorCurrent { id } => {
                     let result = self.scan_keyword_retained("current");
-                    let current = result.into_result()?.value;
+                    let current = result.into_result()?;
                     return Ok(Some(Request::ColorStack {
                         id,
                         action: current.then_some(Action::Current),

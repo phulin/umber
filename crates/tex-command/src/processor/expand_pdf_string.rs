@@ -206,9 +206,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut case_insensitive = false;
         let mut subcount = 10_u32;
         loop {
-            if self.scan_keyword_retained("icase").into_result()?.value {
+            if self.scan_keyword_retained("icase").into_result()? {
                 case_insensitive = true;
-            } else if self.scan_keyword_retained("subcount").into_result()?.value {
+            } else if self.scan_keyword_retained("subcount").into_result()? {
                 subcount = self.scan_integer_retained().into_result()?.value.max(0) as u32;
             } else {
                 break;

@@ -2940,8 +2940,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     let auto_expand = take_native_scalar!(
                                         processor.scan_keyword_retained("autoexpand"),
                                         scan_origin
-                                    )
-                                    .value;
+                                    );
                                     let mut spec = tex_typeset::expansion::FontExpansionSpec::new(
                                         stretch,
                                         shrink,

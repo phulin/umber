@@ -88,7 +88,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // brace instead of speculatively backing it up and replaying it.
         let deferred = if self.profile().capabilities().supports_pdftex() {
             let result = self.scan_keyword_retained("shipout");
-            result.into_result()?.value
+            result.into_result()?
         } else {
             false
         };

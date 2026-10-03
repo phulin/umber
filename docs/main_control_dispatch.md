@@ -258,3 +258,29 @@ same group helpers; there is no second group engine or deferred cleanup stage.
 Native terminal selection compares the exact relax word before deriving a
 family/selector code. Relax consumes no operand and constructs no switch key;
 only the group arms derive the native control selector they actually use.
+
+## Scalar recovery at the consuming scan
+
+A scalar scanner returns its actual value and the primary origin needed by
+restricted-number and structured diagnostics. Missing-number and alphabetic
+constant recovery already report their diagnostic and supply the canonical
+zero before returning. No consumer branches on an additional recovery marker.
+Integer, dimension and glue scans therefore carry no recovery enum, and nested
+unit/stretch/shrink scans do not propagate one. Character-code scanning keeps
+its actual optional-space decision; restricted scans retain their real range
+check and diagnostic origin. Full checkpoints, input backup, observations and
+error chronology continue to use the same semantic paths.
+
+Stack conservation decides from the actual packed frame kind. It retires every
+exhausted token-list kind except the two canonical v-template encodings, with
+no reconstructed token-behavior enum or additional cached classification.
+
+Relax's eligibility arm tests its actual word before checking the driver budget
+and reporting state. Other native kinds evaluate their group-specific rules in
+their own arm; they do not add selection work to each ordinary relax word.
+
+Keyword and optional-equals scans return the actual boolean. Their callers use
+no scalar origin, so those scans track no first-token provenance and construct
+no scalar packet. Failed keyword matching still owns and backs its actual
+prefix spelling; observations, alignment correction and diagnostics stay in
+the same reader and backup paths.

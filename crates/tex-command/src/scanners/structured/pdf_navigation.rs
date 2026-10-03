@@ -11,7 +11,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         action: PdfActionSpec,
     ) -> Result<PdfNavigationRequest, CommandError> {
         let result = self.scan_keyword_retained("count");
-        let count = if result.into_result()?.value {
+        let count = if result.into_result()? {
             let result = self.scan_integer_retained();
             result.into_result()?.value
         } else {
@@ -33,7 +33,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         attributes: Option<ScannedBalancedText>,
     ) -> Result<PdfNavigationRequest, CommandError> {
         let result = self.scan_keyword_retained("name");
-        let name = result.into_result()?.value;
+        let name = result.into_result()?;
         if name {
             let text = self.scan_pdf_navigation_text()?;
             return Ok(PdfNavigationRequest::Thread(PdfThreadRequest {
@@ -45,7 +45,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
 
         let result = self.scan_keyword_retained("num");
-        let num = result.into_result()?.value;
+        let num = result.into_result()?;
         let identifier = if num {
             let result = self.scan_integer_retained();
             let value = result.into_result()?.value;
@@ -107,7 +107,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             match progress.phase {
                 PdfNavigationScalarPhase::AnnotationReserve => {
                     let result = self.scan_keyword_retained("reserveobjnum");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         return Ok(PdfNavigationRequest::Annotation(
                             PdfAnnotationRequest::Reserve,
                         ));
@@ -116,7 +116,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::AnnotationUse => {
                     let result = self.scan_keyword_retained("useobjnum");
-                    progress.phase = if result.into_result()?.value {
+                    progress.phase = if result.into_result()? {
                         PdfNavigationScalarPhase::AnnotationUseObject
                     } else {
                         PdfNavigationScalarPhase::WidthKeyword
@@ -131,7 +131,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 | PdfNavigationScalarPhase::FitRWidthKeyword => {
                     let result = self.scan_keyword_retained("width");
                     let fitr = progress.phase == PdfNavigationScalarPhase::FitRWidthKeyword;
-                    progress.phase = if result.into_result()?.value {
+                    progress.phase = if result.into_result()? {
                         if fitr {
                             PdfNavigationScalarPhase::FitRWidthDimension
                         } else {
@@ -158,7 +158,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 | PdfNavigationScalarPhase::FitRHeightKeyword => {
                     let result = self.scan_keyword_retained("height");
                     let fitr = progress.phase == PdfNavigationScalarPhase::FitRHeightKeyword;
-                    progress.phase = if result.into_result()?.value {
+                    progress.phase = if result.into_result()? {
                         if fitr {
                             PdfNavigationScalarPhase::FitRHeightDimension
                         } else {
@@ -185,7 +185,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 | PdfNavigationScalarPhase::FitRDepthKeyword => {
                     let result = self.scan_keyword_retained("depth");
                     let fitr = progress.phase == PdfNavigationScalarPhase::FitRDepthKeyword;
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         progress.phase = if fitr {
                             PdfNavigationScalarPhase::FitRDepthDimension
                         } else {
@@ -229,7 +229,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::AttributeKeyword => {
                     let result = self.scan_keyword_retained("attr");
-                    let has_attr = result.into_result()?.value;
+                    let has_attr = result.into_result()?;
                     match progress.primitive {
                         UnexpandablePrimitive::PdfStartLink => {
                             if has_attr {
@@ -282,7 +282,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::DestinationStructure => {
                     let result = self.scan_keyword_retained("struct");
-                    progress.phase = if result.into_result()?.value {
+                    progress.phase = if result.into_result()? {
                         PdfNavigationScalarPhase::DestinationStructureValue
                     } else {
                         PdfNavigationScalarPhase::DestinationName
@@ -299,7 +299,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::DestinationName => {
                     let result = self.scan_keyword_retained("name");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         let identifier = self.scan_pdf_navigation_text()?;
                         progress.identifier = Some(PdfActionIdentifier::Name(identifier.tokens));
                         progress.phase = PdfNavigationScalarPhase::DestinationXyz;
@@ -309,7 +309,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::DestinationNumber => {
                     let result = self.scan_keyword_retained("num");
-                    if !result.into_result()?.value {
+                    if !result.into_result()? {
                         return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
@@ -328,7 +328,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::DestinationXyz => {
                     let result = self.scan_keyword_retained("xyz");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         progress.phase = PdfNavigationScalarPhase::DestinationZoom;
                     } else {
                         progress.phase = PdfNavigationScalarPhase::DestinationFitBh;
@@ -336,7 +336,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::DestinationZoom => {
                     let result = self.scan_keyword_retained("zoom");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         progress.phase = PdfNavigationScalarPhase::DestinationZoomValue;
                     } else {
                         return self.finish_pdf_destination(progress, Kind::Xyz { zoom: None });
@@ -396,7 +396,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         _ => unreachable!(),
                     };
                     let result = self.scan_keyword_retained(keyword);
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         if progress.phase == PdfNavigationScalarPhase::DestinationFitR {
                             progress.dimensions = tex_state::PdfAnnotationDimensions::RUNNING;
                             progress.phase = PdfNavigationScalarPhase::FitRWidthKeyword;

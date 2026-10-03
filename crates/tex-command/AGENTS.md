@@ -439,7 +439,8 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   ordinary delivery retirement stays inside the resident input transition.
   Stack conservation tests `loc=null` from each admitted row's scalar position
   and limit; it never reclassifies a storage domain, indexes replay, or reads a
-  definition word merely to decide exhaustion.
+  definition word merely to decide exhaustion. The v-template exception uses
+  the actual packed kind directly, without constructing token behavior.
 - `src/processor/backup.rs`, `src/processor/recovery.rs`, and
   `src/processor/outer_recovery.rs`: exact command backup/replay insertion,
   executor-facing recovery operations, and scanner-status outer/runaway
@@ -740,3 +741,13 @@ carry no unused builder identities.
   consumer contract and its canonical-reader adapter. Selection precedes literal
   brace accounting; accepted terminals continue without command construction.
   Lexical inspection explicitly requests the actual terminal record.
+
+Scalar scans retain only the actual typed value and diagnostic primary origin.
+There is no recovery enum or pass-through recovery bookkeeping in integer,
+dimension, unit, stretch or shrink results. Recovery reports and canonical zero
+values are produced at their consuming scan; optional-space and restricted-range
+semantics retain their actual decisions.
+
+Keyword and optional-equals scanners return only a boolean, with no scalar
+packet or primary-origin tracking. Actual keyword prefix backup and scanner
+error chronology retain their existing spelling owners.

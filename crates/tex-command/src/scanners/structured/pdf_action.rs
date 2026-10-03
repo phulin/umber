@@ -29,7 +29,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             match progress.phase {
                 PdfActionScalarPhase::UserKeyword => {
                     let result = self.scan_keyword_retained("user");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         let text = self.scan_pdf_action_owned_text()?;
                         return Ok((owner, PdfActionSpec::User(text.tokens)));
                     }
@@ -37,7 +37,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfActionScalarPhase::GotoKeyword => {
                     let result = self.scan_keyword_retained("goto");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         progress.goto = Some(true);
                         progress.phase = PdfActionScalarPhase::FileKeyword;
                     } else {
@@ -46,7 +46,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfActionScalarPhase::ThreadKeyword => {
                     let result = self.scan_keyword_retained("thread");
-                    if !result.into_result()?.value {
+                    if !result.into_result()? {
                         return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): action type missing",
                         ));
@@ -56,7 +56,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfActionScalarPhase::FileKeyword => {
                     let result = self.scan_keyword_retained("file");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         let _ = progress
                             .goto
                             .ok_or_else(|| CommandError::input_invariant())?;
@@ -66,7 +66,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfActionScalarPhase::StructureKeyword => {
                     let result = self.scan_keyword_retained("struct");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         let goto = progress
                             .goto
                             .ok_or_else(|| CommandError::input_invariant())?;
@@ -89,7 +89,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfActionScalarPhase::StructureNameKeyword => {
                     let result = self.scan_keyword_retained("name");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         let _ = progress
                             .goto
                             .ok_or_else(|| CommandError::input_invariant())?;
@@ -103,7 +103,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfActionScalarPhase::StructureNumberKeyword => {
                     let result = self.scan_keyword_retained("num");
-                    if !result.into_result()?.value {
+                    if !result.into_result()? {
                         return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
@@ -120,7 +120,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfActionScalarPhase::PageKeyword => {
                     let result = self.scan_keyword_retained("page");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         if !progress
                             .goto
                             .ok_or_else(|| CommandError::input_invariant())?
@@ -150,7 +150,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfActionScalarPhase::NameKeyword => {
                     let result = self.scan_keyword_retained("name");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         let _ = progress
                             .goto
                             .ok_or_else(|| CommandError::input_invariant())?;
@@ -165,7 +165,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfActionScalarPhase::NumberKeyword => {
                     let result = self.scan_keyword_retained("num");
-                    if !result.into_result()?.value {
+                    if !result.into_result()? {
                         return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
@@ -194,14 +194,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfActionScalarPhase::NewWindowKeyword => {
                     let result = self.scan_keyword_retained("newwindow");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         return self.finish_pdf_action(owner, progress, PdfActionWindow::New);
                     }
                     progress.phase = PdfActionScalarPhase::NoNewWindowKeyword;
                 }
                 PdfActionScalarPhase::NoNewWindowKeyword => {
                     let result = self.scan_keyword_retained("nonewwindow");
-                    let same = result.into_result()?.value;
+                    let same = result.into_result()?;
                     return self.finish_pdf_action(
                         owner,
                         progress,

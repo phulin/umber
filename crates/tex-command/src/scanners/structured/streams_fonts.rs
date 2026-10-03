@@ -52,7 +52,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 // been printed yet.
 
                 let result = self.scan_keyword_retained("to");
-                let found_to = result.into_result()?.value;
+                let found_to = result.into_result()?;
                 if !found_to {
                     let context = self.command.output_open_context(self.state);
                     let mut report = self.state.print_err("Missing `to' inserted");
@@ -120,7 +120,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let result = self.scan_file_name_retained();
         let file_name = result.into_result()?;
         let mut size_recovery = None;
-        let has_at = self.scan_keyword_retained("at").into_result()?.value;
+        let has_at = self.scan_keyword_retained("at").into_result()?;
         let size = if has_at {
             let result = self.scan_dimension_retained();
             let requested = result.into_result()?.value;
@@ -138,7 +138,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             )
         } else {
             let result = self.scan_keyword_retained("scaled");
-            let scaled = result.into_result()?.value;
+            let scaled = result.into_result()?;
             if scaled {
                 let result = self.scan_integer_retained();
                 let requested = result.into_result()?.value;
@@ -201,7 +201,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let amount = result.into_result()?.value.clamp(-1000, 1000) as i16;
 
                 let result = self.scan_keyword_retained("nolig");
-                let no_ligatures = result.into_result()?.value;
+                let no_ligatures = result.into_result()?;
                 (amount, no_ligatures)
             }
         };

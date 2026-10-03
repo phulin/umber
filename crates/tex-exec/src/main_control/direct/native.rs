@@ -24,6 +24,14 @@ impl<'state, 'host, G>
         processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
         meaning: &tex_state::meaning::MeaningWord<G>,
     ) -> bool {
+        if matches!(
+            meaning,
+            tex_state::meaning::MeaningWord::Static(Meaning::RELAX_WORD)
+        ) {
+            return self.continue_native
+                && *self.completed_operations + 1 < self.remaining_operations
+                && !processor.has_pending_reports();
+        }
         if !self.continue_native
             || *self.completed_operations + 1 >= self.remaining_operations
             || processor.has_pending_reports()
@@ -33,9 +41,6 @@ impl<'state, 'host, G>
         let tex_state::meaning::MeaningWord::Static(word) = meaning else {
             return false;
         };
-        if *word == Meaning::RELAX_WORD {
-            return true;
-        }
         match Meaning::runtime_word_control_code(*word) {
             codes::PRIMITIVE_BEGIN_GROUP => true,
             codes::CHAR_BEGIN_GROUP => {

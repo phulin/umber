@@ -18,7 +18,6 @@ fn scalar_call_frame_separates_compact_status_value_and_error() {
     let mut call = super::ScalarCallFrame::default();
     call.put_complete(super::ScannedScalar {
         value: 17,
-        recovery: super::ScalarRecovery::None,
         provenance: super::ScalarProvenance {
             primary: tex_state::token::OriginId::UNKNOWN,
         },
@@ -149,7 +148,7 @@ fn optional_equals_consumes_spaces_but_leaves_the_following_operand() {
             crate::RetainedScalarScan::Complete(value) => value,
             crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
         };
-        assert!(scalar_result.value);
+        assert!(scalar_result);
         let scalar_result = match processor.scan_integer_retained() {
             crate::RetainedScalarScan::Complete(value) => value,
             crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
@@ -176,7 +175,7 @@ fn failed_keyword_replays_the_matched_prefix_before_the_offender() {
             &mut diagnostic_effects,
         );
 
-        assert!(!processor.scan_keyword("em").expect("keyword").value);
+        assert!(!processor.scan_keyword("em").expect("keyword"));
         let replayed = (0..3)
             .map(|_| {
                 let mut replayed = None;
@@ -222,7 +221,7 @@ fn warmed_keyword_success_path_allocates_zero_heap() {
             crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
         };
         let warm = scalar_result;
-        assert!(warm.value);
+        assert!(warm);
 
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
@@ -236,7 +235,7 @@ fn warmed_keyword_success_path_allocates_zero_heap() {
                     }
                 };
                 let scanned = scalar_result;
-                assert!(scanned.value);
+                assert!(scanned);
             }
         }
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
@@ -272,7 +271,7 @@ fn warmed_keyword_failed_prefix_path_allocates_zero_heap() {
                 crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
             };
             let scanned = scalar_result;
-            assert!(!scanned.value);
+            assert!(!scanned);
             for _ in 0..9 {
                 let mut replayed = None;
                 assert_eq!(

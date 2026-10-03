@@ -26,7 +26,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             match progress.phase {
                 PdfImageScalarPhase::WidthKeyword => {
                     let result = self.scan_keyword_retained("width");
-                    progress.phase = if result.into_result()?.value {
+                    progress.phase = if result.into_result()? {
                         PdfImageScalarPhase::WidthDimension
                     } else {
                         PdfImageScalarPhase::HeightKeyword
@@ -39,7 +39,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfImageScalarPhase::HeightKeyword => {
                     let result = self.scan_keyword_retained("height");
-                    progress.phase = if result.into_result()?.value {
+                    progress.phase = if result.into_result()? {
                         PdfImageScalarPhase::HeightDimension
                     } else {
                         PdfImageScalarPhase::DepthKeyword
@@ -52,7 +52,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfImageScalarPhase::DepthKeyword => {
                     let result = self.scan_keyword_retained("depth");
-                    progress.phase = if result.into_result()?.value {
+                    progress.phase = if result.into_result()? {
                         PdfImageScalarPhase::DepthDimension
                     } else {
                         PdfImageScalarPhase::AttributeKeyword
@@ -65,7 +65,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfImageScalarPhase::AttributeKeyword => {
                     let result = self.scan_keyword_retained("attr");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         let attr = self.scan_pdf_navigation_text()?;
                         progress.attr = Some(attr.tokens);
                     }
@@ -73,7 +73,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfImageScalarPhase::NamedKeyword => {
                     let result = self.scan_keyword_retained("named");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         let text = self.scan_pdf_navigation_text()?;
                         progress.page = PendingPdfImagePage::Named(text.tokens);
                         progress.phase = PdfImageScalarPhase::ColorSpaceKeyword;
@@ -83,7 +83,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfImageScalarPhase::PageKeyword => {
                     let result = self.scan_keyword_retained("page");
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         progress.phase = PdfImageScalarPhase::PageNumber;
                     } else {
                         progress.page = PendingPdfImagePage::Number(1);
@@ -97,7 +97,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfImageScalarPhase::ColorSpaceKeyword => {
                     let result = self.scan_keyword_retained("colorspace");
-                    progress.phase = if result.into_result()?.value {
+                    progress.phase = if result.into_result()? {
                         PdfImageScalarPhase::ColorSpaceObject
                     } else {
                         PdfImageScalarPhase::MediaBox
@@ -142,7 +142,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         _ => unreachable!(),
                     };
                     let result = self.scan_keyword_retained(keyword);
-                    if result.into_result()?.value {
+                    if result.into_result()? {
                         progress.page_box = Some(selected);
                         progress.phase = PdfImageScalarPhase::FileName;
                     } else {

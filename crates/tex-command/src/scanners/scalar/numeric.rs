@@ -106,7 +106,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // No substantive operand was delivered before EOF.
             return Ok(ScannedScalar {
                 value: 0,
-                recovery: ScalarRecovery::InsertedZero,
                 provenance: ScalarProvenance {
                     primary: provenance,
                 },
@@ -116,7 +115,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.missing_number_error_at(missing_site)?;
             return Ok(self.inserted_zero_integer(provenance));
         }
-        Ok(self.finish_integer(value, negative, provenance, ScalarRecovery::None))
+        Ok(self.finish_integer(value, negative, provenance))
     }
 
     /// TeX82 §440's `scan_int` body, from the token its
@@ -147,8 +146,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             InternalLevel::Integer,
             false,
         )?;
-        let (value, recovery) = match internal {
-            InternalScan::Value(InternalValue::Integer(value)) => (value, ScalarRecovery::None),
+        let value = match internal {
+            InternalScan::Value(InternalValue::Integer(value)) => value,
             InternalScan::Value(_) => {
                 unreachable!("TeX82 §429 lowers an int_val request to an integer")
             }
@@ -161,11 +160,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     ch: '`',
                     cat: Catcode::Other,
                 } => {
-                    let (value, recovery, optional_space) = self.scan_character_code()?;
+                    let (value, optional_space) = self.scan_character_code()?;
                     if optional_space && let Err(error) = self.scan_optional_space() {
                         return Err(error);
                     }
-                    (value, recovery)
+                    value
                 }
                 _ => {
                     // §444's vacuous constant backs up its offender before reporting.
@@ -181,7 +180,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
             },
         };
-        let scanned = self.finish_integer(value, negative, provenance, recovery);
+        let scanned = self.finish_integer(value, negative, provenance);
         Ok(scanned)
     }
 
@@ -240,7 +239,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Order::Normal,
                 negative,
                 provenance,
-                ScalarRecovery::InsertedZero,
                 false,
             ),
         }
@@ -280,14 +278,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         )?;
         match internal {
             InternalScan::Value(value) => match self.fetch_internal_dimension(value, mu)? {
-                InternalDimension::Complete(value) => self.finish_dimension(
-                    value,
-                    Order::Normal,
-                    negative,
-                    provenance,
-                    ScalarRecovery::None,
-                    false,
-                ),
+                InternalDimension::Complete(value) => {
+                    self.finish_dimension(value, Order::Normal, negative, provenance, false)
+                }
                 InternalDimension::Prefix(integer) => {
                     self.integer_terminator_character = None;
                     self.scan_dimension_units(
@@ -297,7 +290,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         provenance,
                         allow_infinite,
                         mu,
-                        ScalarRecovery::None,
                     )
                 }
             },
@@ -309,15 +301,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 self.back_consumed_word(spelling, exceptional)?;
                 if leading_point {
                     self.consume_token_spelling(&mut |_, _, _| Ok(()))?;
-                    self.scan_dimension_units(
-                        0,
-                        true,
-                        negative,
-                        provenance,
-                        allow_infinite,
-                        mu,
-                        ScalarRecovery::None,
-                    )
+                    self.scan_dimension_units(0, true, negative, provenance, allow_infinite, mu)
                 } else {
                     self.scan_dimension_after_integer(negative, provenance, allow_infinite, mu)
                 }
@@ -425,7 +409,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let (InternalValue::Glue(glue) | InternalValue::MuGlue(glue)) = internal else {
                     unreachable!("outer pattern restricts the value to a glue specification")
                 };
-                self.finish_glue(glue, ScalarRecovery::None, provenance)
+                self.finish_glue(glue, provenance)
             }
             // TeX82's `scan_glue` accepts an internal dimension as the
             // width of an ordinary glue specification.  In particular,
@@ -448,7 +432,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         width,
                         ..GlueSpec::ZERO
                     },
-                    ScalarRecovery::None,
                     provenance,
                 );
                 self.clear_fresh_glue_scan_origin();
@@ -469,7 +452,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         width,
                         ..GlueSpec::ZERO
                     },
-                    ScalarRecovery::None,
                     provenance,
                 );
                 self.clear_fresh_glue_scan_origin();
