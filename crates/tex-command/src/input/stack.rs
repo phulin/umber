@@ -8,7 +8,7 @@ use super::MatchedArguments;
 use super::{
     CompactSourceStepQueries, InputLevel, InputLevelId, ReplayTrace, ResidentTokenRow,
     ResidentTokenStorage, RetirementBehavior, SourceControlSequenceKind, SourceNameClass,
-    SourceToken, StoredReplayReason, TokenBehavior, TokenRowHeader,
+    StoredReplayReason, TokenBehavior, TokenRowHeader,
 };
 
 /// Completed command-state outcome of one resident input transition.
@@ -854,42 +854,40 @@ impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
         TokenWord::pack(token)
     }
 
-    fn compact_source_token(&mut self, source_token: &SourceToken) -> TokenWord {
-        let token = match source_token {
-            SourceToken::Character { code, catcode, .. } => Token::Char {
-                ch: crate::profile::token_character(*code),
-                cat: *catcode,
+    fn compact_control_sequence(
+        &mut self,
+        name: &super::tokenizer::ControlSequenceName,
+        kind: SourceControlSequenceKind,
+    ) -> TokenWord {
+        let token = match kind {
+            SourceControlSequenceKind::Active => Token::Char {
+                ch: crate::profile::token_character(name[0]),
+                cat: Catcode::Active,
             },
-            SourceToken::ControlSequence { name, kind, .. } => match kind {
-                SourceControlSequenceKind::Active => Token::Char {
-                    ch: crate::profile::token_character(name[0]),
-                    cat: Catcode::Active,
-                },
-                SourceControlSequenceKind::Word
-                | SourceControlSequenceKind::Symbol
-                | SourceControlSequenceKind::Paragraph
-                | SourceControlSequenceKind::Null => {
-                    if name.len() == 1 {
-                        let mut encoded = [0_u8; 4];
-                        let spelling =
-                            crate::profile::token_character(name[0]).encode_utf8(&mut encoded);
-                        Token::Cs(self.state.intern_control_sequence(spelling))
-                    } else {
-                        let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
-                        name.with_text(|name| {
-                            if hashed && !self.create_control_sequences {
-                                self.state
-                                    .known_control_sequence(name)
-                                    .map_or_else(Token::undefined_control_sequence, Token::Cs)
-                            } else if hashed {
-                                Token::Cs(self.state.intern_hash_control_sequence(name))
-                            } else {
-                                Token::Cs(self.state.intern_control_sequence(name))
-                            }
-                        })
-                    }
+            SourceControlSequenceKind::Word
+            | SourceControlSequenceKind::Symbol
+            | SourceControlSequenceKind::Paragraph
+            | SourceControlSequenceKind::Null => {
+                if name.len() == 1 {
+                    let mut encoded = [0_u8; 4];
+                    let spelling =
+                        crate::profile::token_character(name[0]).encode_utf8(&mut encoded);
+                    Token::Cs(self.state.intern_control_sequence(spelling))
+                } else {
+                    let hashed = kind == SourceControlSequenceKind::Word && name.len() > 1;
+                    name.with_text(|name| {
+                        if hashed && !self.create_control_sequences {
+                            self.state
+                                .known_control_sequence(name)
+                                .map_or_else(Token::undefined_control_sequence, Token::Cs)
+                        } else if hashed {
+                            Token::Cs(self.state.intern_hash_control_sequence(name))
+                        } else {
+                            Token::Cs(self.state.intern_control_sequence(name))
+                        }
+                    })
                 }
-            },
+            }
         };
         TokenWord::pack(token)
     }

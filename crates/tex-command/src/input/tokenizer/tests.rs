@@ -895,13 +895,12 @@ impl super::SourceStepQueries for CompactNameProbe {
 }
 
 impl super::CompactSourceStepQueries for CompactNameProbe {
-    fn compact_source_token(&mut self, token: &SourceToken) -> TokenWord {
-        if let SourceToken::ControlSequence {
-            name,
-            kind: SourceControlSequenceKind::Word,
-            ..
-        } = token
-        {
+    fn compact_control_sequence(
+        &mut self,
+        name: &super::ControlSequenceName,
+        kind: SourceControlSequenceKind,
+    ) -> TokenWord {
+        if kind == SourceControlSequenceKind::Word {
             name.with_text(|text| self.owned_words.push(text.to_owned()));
         }
         TokenWord::pack(Token::undefined_control_sequence())

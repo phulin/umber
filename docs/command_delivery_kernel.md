@@ -653,3 +653,23 @@ existing reader alive across the flush and subsequent native mutation. A
 preexisting diagnostic demand still releases the loan for ordered reporting.
 Group unsave inserts aftergroup words through that same processor; flushing a
 word creates neither a replacement processor nor a cached mode sample.
+
+## Native lexical emission
+
+The shared tokenizer grammar emits directly into its actual destination.
+Production input requests packed words and provenance; lexical inspection
+requests its actual structured `SourceToken`. Literal characters never build
+that large owning enum merely to project a character and category back out.
+The native query type is concrete, so category reads and name resolution have
+no trait-object handoff. Category reads still use the authoritative live bank;
+there is no copied table, prediction cache, or additional mutable owner.
+
+The control-word scanner invokes the selected name consumer directly. Ordinary
+multi-character names borrow validated source backing. Actual transformed
+names retain their semantic character spelling until that consumer interns
+them. The former `ScannedControlSequence` union and general-token projection
+callback are deleted. Category assignments, `^^` reduction, normalized line
+state, source ranges, diagnostic locations, and origin creation retain their
+existing grammar and ownership. Full checkpoints capture the same source
+cursor and backing; all emission callbacks and transformed-name locals end
+with their synchronous call.

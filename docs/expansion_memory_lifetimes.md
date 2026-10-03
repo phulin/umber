@@ -414,3 +414,15 @@ Continuing reservation bookkeeping is selected statically for this consumer.
 Ordinary single-word consumers compile the reservation and its callback
 wrappers away; both use the same canonical input loop and cold transitions.
 No completed-command cleanup or settlement stage is introduced.
+
+## Source spelling ends at lexical consumption
+
+The canonical tokenizer emits ordinary literal characters directly into packed
+words and provenance. Its concrete native queries borrow the current state;
+no category table is copied or cached. Untransformed control words borrow
+validated backing until lookup. Only a transformed name owns its semantic
+characters, and the selected name consumer interns it before the scanner call
+ends. Native delivery constructs neither a general `SourceToken` nor the
+retired `ScannedControlSequence` projection. Lexical inspection still requests
+its actual structured source token. Source cursors, normalized lines, origins
+and backing retain their existing input/checkpoint lifetime.

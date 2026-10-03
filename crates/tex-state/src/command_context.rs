@@ -4011,6 +4011,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
+    #[inline(always)]
     pub fn catcode(&self, ch: char) -> crate::token::Catcode {
         let raw = self
             .code(CodeTableKind::Catcode, ch)

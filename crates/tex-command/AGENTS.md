@@ -333,9 +333,12 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 - `src/input/tokenizer.rs`, `src/input/tokenizer/tests.rs`: canonical
   token-at-a-time exact-byte and separately identified UnicodeExtended M/N/S
   tokenization, semantic control-sequence spelling, direct production
-  projection of ordinary characters without an owned-name-sized carrier,
-  projection of a borrowed untransformed control-word slice or owned
-  superscript fallback into packed identity plus direct provenance,
+  emission of ordinary characters directly into packed identity and provenance,
+  with concrete native queries and no general SourceToken projection. Control
+  words complete into their borrowed-text or transformed-name consumer without
+  a ScannedControlSequence union. Structured SourceToken values are produced
+  only for lexical inspection. Physical spelling checks are reused within
+  each control-name character;
   profile-specific superscript notation,
   invalid-character recovery steps, byte/scalar ranges, and focused conformance
   tests. A cursor with no loaded line returns `NeedLine`; physical acquisition
