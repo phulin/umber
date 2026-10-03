@@ -226,22 +226,35 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // `get_x_token`; §1034's inner character loop instead re-enters at
                     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
                     // run of adjacent characters from being delivered through expansion.
-                    if processor.int_param(IntParam::TRACING_COMMANDS) > 0
-                        || processor.int_param(IntParam::TRACING_IFS) > 0
-                    {
+                    let tracing_commands = processor.int_param(IntParam::TRACING_COMMANDS);
+                    let tracing_ifs = processor.int_param(IntParam::TRACING_IFS);
+                    if tracing_commands > 0 || tracing_ifs > 0 {
                         let shown_mode =
                             processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
                                 execution.shown_mode
                             });
                         prepare_command_trace(processor, mode, shown_mode);
                     }
+                    // Expansion and relax cannot apply stomach changes or trace
+                    // assignments. Admit their continuation once at this real
+                    // reader boundary; reports and budget remain live per word.
+                    let continue_relax = retain_commands
+                        && initial_prefix.is_none()
+                        && !main_loop_active
+                        && tracing_commands <= 0
+                        && tracing_ifs <= 0
+                        && !processor.command_trace_printed()
+                        && processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                            execution.boxes.pending_leader.is_none()
+                                && execution.modes.current_list().pending_hchars().is_none()
+                        });
+                    if continue_relax {
+                        self.current_origin = None;
+                    }
                     let mut native = NativeMainControl {
-                        retain_commands: retain_commands
-                            && initial_prefix.is_none()
-                            && !main_loop_active,
+                        continue_relax,
                         remaining_operations: self.remaining_operations,
                         completed_operations: &mut self.completed_operations,
-                        current_origin: &mut self.current_origin,
                         scan_origin: &mut scan_origin,
                     };
                     let delivery = processor.main_control_until(
@@ -283,8 +296,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             )
                         );
                     if !continues_main_loop
-                        && (processor.command_trace_printed()
-                            || processor.int_param(IntParam::TRACING_COMMANDS) > 0)
+                        && (processor.command_trace_printed() || tracing_commands > 0)
                     {
                         let (mut shown_mode, pending_leader, output_opening, pending_shipout) =
                             processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {

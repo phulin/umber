@@ -690,3 +690,13 @@ Tracing, observation, leaders, prefixes, character lookahead, replay and the
 caller's operation budget remain actual admission boundaries. The former
 post-fetch relax continuation is deleted. Other stomach arms still require
 migration into this consumer; this does not complete command-object removal.
+
+Relax admission reads trace parameters, leaders, pending character state and
+the character-loop entry at the actual reader boundary. Expansion and accepted
+relax words cannot change those stomach facts or assign trace parameters. The
+consumer therefore checks only the live meaning, remaining operation budget
+and newly demanded reports per terminal. It neither re-queries the executor
+nor repeatedly writes its already-false character-loop flag. Every return to
+execution refreshes admission before the next reader invocation. Diagnostic
+spelling updates the actual scan origin; the driver owns its command origin
+only when a word returns to the switch.
