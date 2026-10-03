@@ -132,19 +132,16 @@ impl<G> ArgumentArena<G> {
             ArgumentRegionId(id)
         };
         let value = &mut self.regions[region.index()];
+        debug_assert_eq!(value.count, 0);
+        debug_assert_eq!(value.published_raw_words, 0);
         value.roots = 1;
-        value.count = 0;
-        value.published_raw_words = 0;
         self.capture = Some(region);
         Ok(MatchedArguments { region })
     }
-    pub(crate) fn begin_argument(&mut self, matching: &MatchedArguments) -> ArgumentCursor {
-        let region = &mut self.regions[matching.region.index()];
+    pub(crate) fn begin_argument(&self, matching: &MatchedArguments) -> ArgumentCursor {
+        let region = &self.regions[matching.region.index()];
         debug_assert!(region.count < 9);
-        region.values[usize::from(region.count)] = ArgumentValue::Owned {
-            start: region.words.len() as u32,
-            len: 0,
-        };
+        debug_assert_eq!(region.values[usize::from(region.count)].len(), 0);
         ArgumentCursor {
             region: matching.region,
             start: 0,
@@ -169,8 +166,9 @@ impl<G> ArgumentArena<G> {
         &r.values[..usize::from(r.count)]
     }
     pub(crate) fn abort_capture(&mut self) {
-        if let Some(region) = self.capture.take() {
+        if let Some(region) = self.capture {
             self.release(region);
+            self.capture = None;
         }
     }
     fn release_root(&mut self, id: ArgumentRegionId) {
@@ -188,7 +186,9 @@ impl<G> ArgumentArena<G> {
         while pending < self.free.len() {
             let released = self.free[pending];
             pending += 1;
-            let slots = (usize::from(self.regions[released.index()].count) + 1).min(9);
+            let slots = (usize::from(self.regions[released.index()].count)
+                + usize::from(self.capture == Some(released)))
+            .min(9);
             for slot in 0..slots {
                 if let ArgumentValue::Region { region, .. } =
                     core::mem::take(&mut self.regions[released.index()].values[slot])

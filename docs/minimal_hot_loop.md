@@ -1,6 +1,7 @@
 # Minimal hot loop
 
-Status: implemented redesign, 2026-10-02.
+Status: ownership redesign implemented; native main-control consumption remains
+in progress, 2026-10-03.
 Tracking: Beads `umber2-i0n5`. The selected storage and lifecycle authority is
 [Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md).
 [Main-control dispatch](main_control_dispatch.md) maps the direct interpreter.
@@ -51,18 +52,23 @@ errors and drops on failure. Provisional shorthand tracing renders the old
 meaning before replacement. There is no namespace promotion, delayed naked old
 meaning, definition frontier, accepted row tail or append-only payload history.
 
-`ArgumentArena` retains one pooled vector per simultaneous invocation. Matching
-writes every word and each of at most nine half-open ranges once into that
-final region. Publishing transfers only its owner coordinate; no call-local
-range array is copied into a separate parameter stack. A scalar live parameter
-count supplies TeX’s capacity and high-water bookkeeping.
-Parameter frames borrow the body-owned region. Delimiter holdback occupies an
-unpublished suffix, and brace trimming narrows the range. Parent retirement,
-child capture, recovery backup and forwarded-source reads have independent
-lifetimes. Retirement, failure and aggregate restore release each actual owner;
-returned vector capacity stays with the engine and is excluded from captures.
-Ordinary parameterless macros acquire no argument region or matcher carrier.
-Their genuine body frame and invocation origin remain.
+`ArgumentArena` owns each final argument directly: an inline single traced
+word, a retained immutable definition span, an indexed lease on an original
+owned argument range, or pooled spelling for genuinely fragmented input.
+Contiguous spans extend without copying, and aliases flatten at capture.
+Publishing transfers only the invocation coordinate; no parameter vector or
+range array is copied into a separate stack. Native parameter and raw-word
+counts preserve TeX capacity and high-water bookkeeping. Parameter frames use
+local offsets into their actual argument value.
+
+Delimiter holdback retains only incomplete prefixes; the completing delimiter
+word is consumed directly. Brace trimming narrows the actual value. Parent
+retirement, child capture, recovery backup and forwarded-source reads have
+independent lifetimes. Native lease release walks its reserved free list
+iteratively; abandoned capture and aggregate restore release their own actual
+owners. Returned vector capacity stays with the engine and is excluded from
+captures. Ordinary parameterless macros acquire no argument region or matcher
+carrier. Their genuine body frame and invocation origin remain.
 
 The expansion consumer owns the shared reader’s semantic back edge. A macro
 activates directly from its resolved word and continues that same read loop;
@@ -76,7 +82,9 @@ expansion and parameter matching retain their own exceptional call frames. Each 
 clears its actual destination at its own completion or failure boundary; no
 generic result-settlement adapter repeats that cleanup after the reader
 returns. Main control folds its real fetch label into its retained command
-consumer.
+consumer, but production fetching still returns `CurrentCommand` records.
+Moving the complete sole switch into synchronous native consumption remains
+unimplemented; the exported consumer API alone does not remove that handoff.
 
 Assignments share one mutation policy. A local first write at a new TeX level
 owns a native group preimage. A first touch in a retained host checkpoint

@@ -6,6 +6,7 @@ impl<G> ArgumentArena<G> {
     #[inline(always)]
     pub(crate) fn words(&self, id: ArgumentRegionId, slot: u8) -> ArgumentWords<'_> {
         match &self.regions[id.index()].values[usize::from(slot)] {
+            ArgumentValue::Inline(word) => ArgumentWords::Traced(core::slice::from_ref(word)),
             ArgumentValue::Owned { start, len } => ArgumentWords::Traced(
                 &self.regions[id.index()].words[*start as usize..(*start + *len) as usize],
             ),
@@ -48,6 +49,7 @@ impl<G> ArgumentArena<G> {
         let old = core::mem::take(&mut self.regions[id.index()].values[slot]);
         let start = self.regions[id.index()].words.len() as u32;
         match &old {
+            ArgumentValue::Inline(word) => self.regions[id.index()].words.push(*word),
             ArgumentValue::Definition { body, start, len } => {
                 self.regions[id.index()].words.extend(
                     body.replacement_from(*start)[..*len as usize]
@@ -96,6 +98,16 @@ impl<G> ArgumentArena<G> {
         word: TracedTokenWord,
     ) -> Result<(), ScratchError> {
         let slot = usize::from(self.pending_slot(id));
+        if self.regions[id.index()].values[slot].len() == 0 {
+            let old = core::mem::replace(
+                &mut self.regions[id.index()].values[slot],
+                ArgumentValue::Inline(word),
+            );
+            if let ArgumentValue::Region { region, .. } = old {
+                self.release(region);
+            }
+            return Ok(());
+        }
         if !matches!(
             self.regions[id.index()].values[slot],
             ArgumentValue::Owned { .. }
@@ -125,6 +137,20 @@ impl<G> ArgumentArena<G> {
     ) -> Result<(), ScratchError> {
         let slot = usize::from(self.pending_slot(id));
         let value = &self.regions[id.index()].values[slot];
+        if matches!(value, ArgumentValue::Definition { body: previous, start: begin, len: size } if previous == body && *begin + *size == start)
+        {
+            self.regions[id.index()].values[slot].extend(len);
+            return Ok(());
+        }
+        if len == 1 {
+            return self.append_owned(
+                id,
+                TracedTokenWord::from_parts(
+                    body.word(start as usize).expect("admitted definition word"),
+                    tex_state::token::OriginId::UNKNOWN,
+                ),
+            );
+        }
         if value.len() == 0 {
             // A zero-length existing lease still has an owner to release.
             let old = core::mem::replace(
@@ -138,9 +164,6 @@ impl<G> ArgumentArena<G> {
             if let ArgumentValue::Region { region, .. } = old {
                 self.release(region);
             }
-        } else if matches!(value, ArgumentValue::Definition { body: previous, start: begin, len: size } if previous == body && *begin + *size == start)
-        {
-            self.regions[id.index()].values[slot].extend(len);
         } else {
             self.materialize(id)?;
             self.regions[id.index()].words.extend(
@@ -167,6 +190,13 @@ impl<G> ArgumentArena<G> {
             return Err(ScratchError::InvalidCoordinate);
         }
         let slot = usize::from(self.pending_slot(id));
+        if len == 1 {
+            let word = self
+                .words(source, source_slot)
+                .get(start as usize)
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            return self.append_owned(id, word);
+        }
         // Flatten to the original immutable definition or pooled owner once.
         if let ArgumentValue::Definition {
             body, start: base, ..
@@ -192,6 +222,7 @@ impl<G> ArgumentArena<G> {
                     ..
                 } => (*region, *slot, *base + start),
                 ArgumentValue::Definition { .. } => unreachable!(),
+                ArgumentValue::Inline(_) => unreachable!(),
             };
         let value = &self.regions[id.index()].values[slot];
         if value.len() == 0 {
@@ -246,6 +277,18 @@ impl<G> ArgumentArena<G> {
     ) -> Result<u32, ScratchError> {
         if !delimiter && writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
+        }
+        if matches!(
+            self.regions[writer.region.index()].values
+                [usize::from(self.pending_slot(writer.region))],
+            ArgumentValue::Owned { .. } | ArgumentValue::Inline(_)
+        ) {
+            return if delimiter {
+                self.append_delimiter_word(writer, word)?;
+                Ok(writer.brace_depth())
+            } else {
+                self.append_argument_word(writer, word)
+            };
         }
         let mut retained = false;
         if let Some(row) = row

@@ -202,36 +202,30 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         && prefix_len < delimiter.len()
                         && spelling == delimiter.words()[prefix_len]
                     {
-                        processor
-                            .command
-                            .input
-                            .levels
-                            .append_macro_argument_word(tokens, word, true)
-                            .map_err(|_| CommandError::input_invariant())?;
-                        if processor
-                            .command
-                            .input
-                            .levels
-                            .arguments
-                            .delimiter_prefix_len(tokens)
-                            .map_err(|_| CommandError::input_invariant())?
-                            == delimiter.len()
-                        {
+                        if prefix_len + 1 == delimiter.len() {
                             // `#{` consumes the opening brace as parameter text. Raw
                             // delivery has accounted for it, but no replacement-body
                             // replay exists yet to provide the balancing delivery.
                             if word.token_word().literal_catcode() == Some(Catcode::BeginGroup) {
                                 processor.undo_delimiter_begin_group_delivery();
                             }
-                            processor
-                                .command
-                                .input
-                                .levels
-                                .arguments
-                                .truncate_delimiter_suffix(tokens)
-                                .map_err(|_| CommandError::input_invariant())?;
+                            if prefix_len != 0 {
+                                processor
+                                    .command
+                                    .input
+                                    .levels
+                                    .arguments
+                                    .truncate_delimiter_suffix(tokens)
+                                    .map_err(|_| CommandError::input_invariant())?;
+                            }
                             return Ok(true);
                         }
+                        processor
+                            .command
+                            .input
+                            .levels
+                            .append_macro_argument_word(tokens, word, true)
+                            .map_err(|_| CommandError::input_invariant())?;
                         return Ok(false);
                     }
 

@@ -5,6 +5,7 @@ use tex_state::token::{OriginId, TokenWord, TracedTokenWord};
 
 #[derive(Debug)]
 pub(crate) enum ArgumentValue<G> {
+    Inline(TracedTokenWord),
     Owned {
         start: u32,
         len: u32,
@@ -30,6 +31,7 @@ impl<G> ArgumentValue<G> {
     #[inline(always)]
     pub(crate) fn len(&self) -> u32 {
         match self {
+            Self::Inline(_) => 1,
             Self::Owned { len, .. } | Self::Definition { len, .. } | Self::Region { len, .. } => {
                 *len
             }
@@ -37,6 +39,12 @@ impl<G> ArgumentValue<G> {
     }
     pub(super) fn trim(&mut self, start_delta: u32, len: u32) {
         match self {
+            Self::Inline(_) => {
+                debug_assert!(start_delta + len <= 1);
+                if len == 0 {
+                    *self = Self::default();
+                }
+            }
             Self::Owned { start, len: size }
             | Self::Definition {
                 start, len: size, ..
@@ -51,6 +59,7 @@ impl<G> ArgumentValue<G> {
     }
     pub(super) fn extend(&mut self, count: u32) {
         match self {
+            Self::Inline(_) => unreachable!("extending an inline word materializes its owner"),
             Self::Owned { len, .. } | Self::Definition { len, .. } | Self::Region { len, .. } => {
                 *len += count
             }

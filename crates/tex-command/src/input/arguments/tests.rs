@@ -379,10 +379,10 @@ fn reused_argument_region_does_not_retain_prior_range_suffix_as_semantic_state()
 fn fragmented_argument_materializes_before_either_source_retires() {
     let mut arena = ArgumentArena::<()>::default();
     let mut sources = Vec::new();
-    for ch in ['a', 'b'] {
+    for chars in [['a', 'b'], ['c', 'd']] {
         let mut matching = arena.begin_match().expect("source match");
         let mut cursor = arena.begin_argument(&matching);
-        append_all(&mut arena, &mut cursor, [word(ch)]);
+        append_all(&mut arena, &mut cursor, chars.map(word));
         arena
             .publish_argument(&mut matching, cursor)
             .expect("source argument");
@@ -396,10 +396,10 @@ fn fragmented_argument_materializes_before_either_source_retires() {
                 &mut arena,
                 source,
                 0,
-                0..1,
+                0..2,
                 &mut ArgumentRunAdmission::characters(),
             ),
-            Ok(1)
+            Ok(2)
         );
         arena.release(source);
     }
@@ -409,7 +409,7 @@ fn fragmented_argument_materializes_before_either_source_retires() {
     let child = arena.publish(child);
     assert_eq!(
         arena.words(child, 0).iter().collect::<Vec<_>>(),
-        [word('a'), word('b')]
+        [word('a'), word('b'), word('c'), word('d')]
     );
     arena.release(child);
     assert!(arena.is_empty());
@@ -467,7 +467,7 @@ fn deeply_nested_argument_leases_release_without_recursive_drops() {
     for _ in 0..10_000 {
         let mut matching = arena.begin_match().expect("nested match");
         let mut own = arena.begin_argument(&matching);
-        append_all(&mut arena, &mut own, [word('x')]);
+        append_all(&mut arena, &mut own, [word('x'), word('y')]);
         arena
             .publish_argument(&mut matching, own)
             .expect("own argument");
@@ -478,10 +478,10 @@ fn deeply_nested_argument_leases_release_without_recursive_drops() {
                     &mut arena,
                     source,
                     0,
-                    0..1,
+                    0..2,
                     &mut ArgumentRunAdmission::characters(),
                 ),
-                Ok(1)
+                Ok(2)
             );
             arena
                 .publish_argument(&mut matching, borrowed)

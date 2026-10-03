@@ -313,7 +313,7 @@ ordered delimiter and argument records.
 ## Retained macro argument spans
 
 The final invocation region owns up to nine argument values. Each value owns
-its actual spelling in one of three forms: a range in that region's pooled
+its actual spelling in one of four forms: a single traced word, a range in that region's pooled
 traced-word vector, an immutable definition body and range, or a counted lease
 on a range of an older region's owned argument. A parameter input row names its
 region and argument slot, and advances a local offset into that value. There is
@@ -342,3 +342,15 @@ and raw captured words even when no spelling is copied. Checkpoint admission
 continues to exclude active macro frames and captures; the retained-span owner
 does not enter full checkpoints or formats. The main `CurrentCommand` handoff
 is a separate unfinished redesign.
+
+A one-word argument owns its traced spelling inline. Its source needs no lease,
+and forwarding copies that actual word directly. Empty pending slots receive
+their first spelling at the consuming write; beginning an argument does not
+rewrite or drop an already-empty value. Region release visits only completed
+parameters and a real pending capture, rather than a spare unused slot.
+
+A delimiter's completing word is consumed directly by the matcher. Only an
+incomplete prefix needs holdback spelling for a later mismatch; completing a
+delimiter never appends its final word only to remove it immediately. Existing
+held prefix words are truncated at that actual delimiter match, preserving
+brace delivery, fuel and overlapping-prefix recovery.
