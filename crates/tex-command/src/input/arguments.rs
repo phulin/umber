@@ -21,7 +21,9 @@ pub(crate) struct MatchedArguments {
 #[derive(Debug)]
 struct Region<G> {
     words: Vec<TracedTokenWord>,
-    values: [ArgumentValue<G>; 9],
+    values: [ArgumentValue; 9],
+    sources: Vec<Option<backing::RetainedSource<G>>>,
+    source_slots: u16,
     count: u8,
     roots: u32,
     published_raw_words: usize,
@@ -30,7 +32,9 @@ impl<G> Default for Region<G> {
     fn default() -> Self {
         Self {
             words: Vec::new(),
-            values: core::array::from_fn(|_| ArgumentValue::default()),
+            values: [ArgumentValue::default(); 9],
+            sources: Vec::new(),
+            source_slots: 0,
             count: 0,
             roots: 0,
             published_raw_words: 0,
@@ -135,13 +139,17 @@ impl<G> ArgumentArena<G> {
         debug_assert_eq!(value.count, 0);
         debug_assert_eq!(value.published_raw_words, 0);
         value.roots = 1;
+        value.values[0] = ArgumentValue::default();
         self.capture = Some(region);
         Ok(MatchedArguments { region })
     }
-    pub(crate) fn begin_argument(&self, matching: &MatchedArguments) -> ArgumentCursor {
-        let region = &self.regions[matching.region.index()];
+    pub(crate) fn begin_argument(&mut self, matching: &MatchedArguments) -> ArgumentCursor {
+        let region = &mut self.regions[matching.region.index()];
         debug_assert!(region.count < 9);
-        debug_assert_eq!(region.values[usize::from(region.count)].len(), 0);
+        region.values[usize::from(region.count)] = ArgumentValue {
+            start: region.words.len() as u32,
+            len: 0,
+        };
         ArgumentCursor {
             region: matching.region,
             start: 0,
@@ -161,7 +169,7 @@ impl<G> ArgumentArena<G> {
     pub(crate) fn argument_count(&self, id: ArgumentRegionId) -> usize {
         usize::from(self.regions[id.index()].count)
     }
-    pub(crate) fn values(&self, id: ArgumentRegionId) -> &[ArgumentValue<G>] {
+    pub(crate) fn values(&self, id: ArgumentRegionId) -> &[ArgumentValue] {
         let r = &self.regions[id.index()];
         &r.values[..usize::from(r.count)]
     }
@@ -186,13 +194,12 @@ impl<G> ArgumentArena<G> {
             let index = released.index();
             let (before, rest) = self.regions.split_at_mut(index);
             let (region, after) = rest.split_first_mut().expect("released region");
-            let slots =
-                (usize::from(region.count) + usize::from(self.capture == Some(released))).min(9);
             region.words.clear();
             region.count = 0;
             region.published_raw_words = 0;
-            for value in &mut region.values[..slots] {
-                if let ArgumentValue::Region { region: owner, .. } = value {
+            region.source_slots = 0;
+            for value in &mut region.sources {
+                if let Some(backing::RetainedSource::Region { region: owner, .. }) = value {
                     let owner = *owner;
                     debug_assert_ne!(owner, released);
                     let source = if owner.index() < index {
@@ -206,8 +213,9 @@ impl<G> ArgumentArena<G> {
                         self.free.push(owner);
                     }
                 }
-                *value = ArgumentValue::default();
+                *value = None;
             }
+            region.sources.clear();
         }
     }
     pub(crate) fn clear(&mut self) {
@@ -218,9 +226,8 @@ impl<G> ArgumentArena<G> {
             region.roots = 0;
             region.count = 0;
             region.published_raw_words = 0;
-            for value in &mut region.values {
-                *value = ArgumentValue::default();
-            }
+            region.source_slots = 0;
+            region.sources.clear();
             self.free.push(ArgumentRegionId(
                 NonZeroU32::new(index as u32 + 1).expect("region"),
             ));
@@ -257,7 +264,11 @@ impl<G> ArgumentArena<G> {
             + self
                 .regions
                 .iter()
-                .map(|r| r.words.capacity() * core::mem::size_of::<TracedTokenWord>())
+                .map(|r| {
+                    r.words.capacity() * core::mem::size_of::<TracedTokenWord>()
+                        + r.sources.capacity()
+                            * core::mem::size_of::<Option<backing::RetainedSource<G>>>()
+                })
                 .sum::<usize>()
     }
     fn pending_slot(&self, id: ArgumentRegionId) -> u8 {
@@ -348,7 +359,17 @@ impl<G> ArgumentArena<G> {
         let (start, end) = writer.range()?;
         let region = &mut self.regions[matching.region.index()];
         region.published_raw_words += writer.visible_end as usize;
-        region.values[usize::from(region.count)].trim(start, end - start);
+        let slot = usize::from(region.count);
+        let value = &mut region.values[slot];
+        if region.source_slots & (1 << slot) == 0 {
+            value.start += start;
+        } else {
+            region.sources[value.start as usize]
+                .as_mut()
+                .expect("retained argument")
+                .advance(start);
+        }
+        value.len = end - start;
         region.count += 1;
         Ok(())
     }

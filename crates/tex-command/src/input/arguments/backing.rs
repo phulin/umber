@@ -1,92 +1,92 @@
-//! Capture extends a retained source or materializes its actual final owner.
+//! Final pooled spelling and sparse leases on actual immutable sources.
 use super::*;
 use tex_state::ResidentMacroBody;
 
+#[derive(Debug)]
+pub(super) enum RetainedSource<G> {
+    Definition {
+        body: ResidentMacroBody<G>,
+        start: u32,
+    },
+    Region {
+        region: ArgumentRegionId,
+        start: u32,
+    },
+}
+impl<G> RetainedSource<G> {
+    pub(super) fn advance(&mut self, delta: u32) {
+        match self {
+            Self::Definition { start, .. } | Self::Region { start, .. } => *start += delta,
+        }
+    }
+}
 impl<G> ArgumentArena<G> {
     #[inline(always)]
     pub(crate) fn words(&self, id: ArgumentRegionId, slot: u8) -> ArgumentWords<'_> {
-        match &self.regions[id.index()].values[usize::from(slot)] {
-            ArgumentValue::Inline(word) => ArgumentWords::Traced(core::slice::from_ref(word)),
-            ArgumentValue::Owned { start, len } => ArgumentWords::Traced(
-                &self.regions[id.index()].words[*start as usize..(*start + *len) as usize],
+        let region = &self.regions[id.index()];
+        let value = region.values[usize::from(slot)];
+        if region.source_slots & (1 << slot) == 0 {
+            return ArgumentWords::Traced(
+                &region.words[value.start as usize..(value.start + value.len) as usize],
+            );
+        }
+        match region.sources[value.start as usize]
+            .as_ref()
+            .expect("retained argument source")
+        {
+            RetainedSource::Definition { body, start } => {
+                ArgumentWords::Definition(&body.replacement_from(*start)[..value.len as usize])
+            }
+            RetainedSource::Region { region, start } => ArgumentWords::Traced(
+                &self.regions[region.index()].words[*start as usize..(*start + value.len) as usize],
             ),
-            ArgumentValue::Definition { body, start, len } => {
-                ArgumentWords::Definition(&body.replacement_from(*start)[..*len as usize])
-            }
-            ArgumentValue::Region {
-                region,
-                slot,
-                start,
-                len,
-            } => {
-                let ArgumentValue::Owned { start: base, .. } =
-                    self.regions[region.index()].values[usize::from(*slot)]
-                else {
-                    unreachable!("region aliases resolve to owned spelling")
-                };
-                ArgumentWords::Traced(
-                    &self.regions[region.index()].words
-                        [(base + *start) as usize..(base + *start + *len) as usize],
-                )
-            }
         }
     }
-
     #[inline(never)]
     fn materialize(&mut self, id: ArgumentRegionId) -> Result<(), ScratchError> {
         let slot = usize::from(self.pending_slot(id));
-        if matches!(
-            self.regions[id.index()].values[slot],
-            ArgumentValue::Owned { .. }
-        ) {
-            return Ok(());
-        }
-        let len = self.regions[id.index()].values[slot].len();
+        let value = self.regions[id.index()].values[slot];
         self.regions[id.index()]
             .words
-            .try_reserve(len as usize)
+            .try_reserve(value.len as usize)
             .map_err(|_| ScratchError::AllocationFailed)?;
-        let old = core::mem::take(&mut self.regions[id.index()].values[slot]);
+        let source = self.regions[id.index()].sources[value.start as usize]
+            .take()
+            .expect("retained source");
         let start = self.regions[id.index()].words.len() as u32;
-        match &old {
-            ArgumentValue::Inline(word) => self.regions[id.index()].words.push(*word),
-            ArgumentValue::Definition { body, start, len } => {
-                self.regions[id.index()].words.extend(
-                    body.replacement_from(*start)[..*len as usize]
-                        .iter()
-                        .map(|&word| {
-                            TracedTokenWord::from_parts(word, tex_state::token::OriginId::UNKNOWN)
-                        }),
-                );
-            }
-            ArgumentValue::Region {
-                region,
-                slot,
-                start,
-                len,
-            } => {
-                let source = region.index();
+        match &source {
+            RetainedSource::Definition { body, start } => self.regions[id.index()].words.extend(
+                body.replacement_from(*start)[..value.len as usize]
+                    .iter()
+                    .map(|&word| {
+                        TracedTokenWord::from_parts(word, tex_state::token::OriginId::UNKNOWN)
+                    }),
+            ),
+            RetainedSource::Region { region, start } => {
+                let original = region.index();
                 let destination = id.index();
-                debug_assert_ne!(source, destination);
-                let (from, to) = if source < destination {
+                debug_assert_ne!(original, destination);
+                let (from, to) = if original < destination {
                     let (a, b) = self.regions.split_at_mut(destination);
-                    (&a[source], &mut b[0])
+                    (&a[original], &mut b[0])
                 } else {
-                    let (a, b) = self.regions.split_at_mut(source);
+                    let (a, b) = self.regions.split_at_mut(original);
                     (&b[0], &mut a[destination])
                 };
-                let ArgumentValue::Owned { start: base, .. } = from.values[usize::from(*slot)]
-                else {
-                    unreachable!("alias owns an original pooled range")
-                };
-                to.words.extend_from_slice(
-                    &from.words[(base + *start) as usize..(base + *start + *len) as usize],
-                );
+                to.words
+                    .extend_from_slice(&from.words[*start as usize..(*start + value.len) as usize]);
             }
-            ArgumentValue::Owned { .. } => unreachable!(),
         }
-        self.regions[id.index()].values[slot] = ArgumentValue::Owned { start, len };
-        if let ArgumentValue::Region { region, .. } = old {
+        self.regions[id.index()].source_slots &= !(1 << slot);
+        self.regions[id.index()].values[slot].start = start;
+        while self.regions[id.index()]
+            .sources
+            .last()
+            .is_some_and(Option::is_none)
+        {
+            self.regions[id.index()].sources.pop();
+        }
+        if let RetainedSource::Region { region, .. } = source {
             self.release(region);
         }
         Ok(())
@@ -98,34 +98,66 @@ impl<G> ArgumentArena<G> {
         word: TracedTokenWord,
     ) -> Result<(), ScratchError> {
         let slot = usize::from(self.pending_slot(id));
-        if self.regions[id.index()].values[slot].len() == 0 {
-            let old = core::mem::replace(
-                &mut self.regions[id.index()].values[slot],
-                ArgumentValue::Inline(word),
-            );
-            if let ArgumentValue::Region { region, .. } = old {
-                self.release(region);
-            }
-            return Ok(());
-        }
-        if !matches!(
-            self.regions[id.index()].values[slot],
-            ArgumentValue::Owned { .. }
-        ) {
+        if self.regions[id.index()].source_slots & (1 << slot) != 0 {
             self.materialize(id)?;
         }
-        self.regions[id.index()].words.push(word);
-        self.regions[id.index()].values[slot].extend(1);
+        let region = &mut self.regions[id.index()];
+        region.words.push(word);
+        region.values[slot].len += 1;
         Ok(())
     }
     pub(super) fn truncate_pending(&mut self, id: ArgumentRegionId, len: u32) {
         let slot = usize::from(self.pending_slot(id));
-        if let ArgumentValue::Owned { start, .. } = self.regions[id.index()].values[slot] {
-            self.regions[id.index()]
+        let region = &mut self.regions[id.index()];
+        if region.source_slots & (1 << slot) == 0 {
+            region
                 .words
-                .truncate((start + len) as usize);
+                .truncate((region.values[slot].start + len) as usize);
         }
-        self.regions[id.index()].values[slot].trim(0, len);
+        region.values[slot].len = len;
+    }
+    fn install_source(
+        &mut self,
+        id: ArgumentRegionId,
+        source: RetainedSource<G>,
+        len: u32,
+    ) -> Result<(), ScratchError> {
+        let slot = usize::from(self.pending_slot(id));
+        let borrowed = self.regions[id.index()].source_slots & (1 << slot) != 0;
+        let new_root = if let RetainedSource::Region { region, .. } = &source {
+            Some((
+                *region,
+                self.regions[region.index()]
+                    .roots
+                    .checked_add(1)
+                    .ok_or(ScratchError::CapacityOverflow)?,
+            ))
+        } else {
+            None
+        };
+        if !borrowed {
+            self.regions[id.index()]
+                .sources
+                .try_reserve(1)
+                .map_err(|_| ScratchError::AllocationFailed)?;
+        }
+        if let Some((region, roots)) = new_root {
+            self.regions[region.index()].roots = roots;
+        }
+        let region = &mut self.regions[id.index()];
+        let old = if borrowed {
+            region.sources[region.values[slot].start as usize].replace(source)
+        } else {
+            region.values[slot].start = region.sources.len() as u32;
+            region.sources.push(Some(source));
+            region.source_slots |= 1 << slot;
+            None
+        };
+        region.values[slot].len = len;
+        if let Some(RetainedSource::Region { region, .. }) = old {
+            self.release(region);
+        }
+        Ok(())
     }
     #[inline(always)]
     pub(super) fn extend_definition(
@@ -135,16 +167,12 @@ impl<G> ArgumentArena<G> {
         start: u32,
         len: u32,
     ) -> Result<(), ScratchError> {
-        if len == 1
-            && matches!(
-                self.regions[id.index()].values[usize::from(self.pending_slot(id))],
-                ArgumentValue::Inline(_) | ArgumentValue::Owned { .. }
-            )
-        {
+        let slot = self.pending_slot(id);
+        if len == 1 && self.regions[id.index()].source_slots & (1 << slot) == 0 {
             return self.append_owned(
                 id,
                 TracedTokenWord::from_parts(
-                    body.word(start as usize).expect("admitted definition word"),
+                    body.word(start as usize).expect("admitted word"),
                     tex_state::token::OriginId::UNKNOWN,
                 ),
             );
@@ -160,36 +188,37 @@ impl<G> ArgumentArena<G> {
         len: u32,
     ) -> Result<(), ScratchError> {
         let slot = usize::from(self.pending_slot(id));
-        let value = &self.regions[id.index()].values[slot];
-        if matches!(value, ArgumentValue::Definition { body: previous, start: begin, len: size } if previous == body && *begin + *size == start)
+        let region = &self.regions[id.index()];
+        let value = region.values[slot];
+        if region.source_slots & (1 << slot) != 0
+            && matches!(region.sources[value.start as usize].as_ref(),
+            Some(RetainedSource::Definition { body: previous, start: begin }) if previous == body && *begin + value.len == start)
         {
-            self.regions[id.index()].values[slot].extend(len);
+            self.regions[id.index()].values[slot].len += len;
             return Ok(());
         }
-        if value.len() == 0 {
-            // A zero-length existing lease still has an owner to release.
-            let old = core::mem::replace(
-                &mut self.regions[id.index()].values[slot],
-                ArgumentValue::Definition {
+        if value.len == 0 {
+            return self.install_source(
+                id,
+                RetainedSource::Definition {
                     body: body.clone(),
                     start,
-                    len,
                 },
+                len,
             );
-            if let ArgumentValue::Region { region, .. } = old {
-                self.release(region);
-            }
-        } else {
-            self.materialize(id)?;
-            self.regions[id.index()].words.extend(
-                body.replacement_from(start)[..len as usize]
-                    .iter()
-                    .map(|&word| {
-                        TracedTokenWord::from_parts(word, tex_state::token::OriginId::UNKNOWN)
-                    }),
-            );
-            self.regions[id.index()].values[slot].extend(len);
         }
+        if region.source_slots & (1 << slot) != 0 {
+            self.materialize(id)?;
+        }
+        let region = &mut self.regions[id.index()];
+        region.words.extend(
+            body.replacement_from(start)[..len as usize]
+                .iter()
+                .map(|&word| {
+                    TracedTokenWord::from_parts(word, tex_state::token::OriginId::UNKNOWN)
+                }),
+        );
+        region.values[slot].len += len;
         Ok(())
     }
     #[inline(always)]
@@ -204,7 +233,6 @@ impl<G> ArgumentArena<G> {
         if id == source {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let slot = usize::from(self.pending_slot(id));
         if len == 1 {
             let word = self
                 .words(source, source_slot)
@@ -212,76 +240,80 @@ impl<G> ArgumentArena<G> {
                 .ok_or(ScratchError::InvalidCoordinate)?;
             return self.append_owned(id, word);
         }
-        // Flatten to the original immutable definition or pooled owner once.
-        if let ArgumentValue::Definition {
-            body, start: base, ..
-        } = &self.regions[source.index()].values[usize::from(source_slot)]
-        {
-            let at = *base + start;
-            let value = &self.regions[id.index()].values[slot];
-            if matches!(value, ArgumentValue::Definition { body: previous, start: begin, len: size } if previous == body && *begin + *size == at)
-            {
-                self.regions[id.index()].values[slot].extend(len);
-                return Ok(());
-            }
-            let body = body.clone();
-            return self.extend_definition(id, &body, at, len);
-        }
-        let (owner, owner_slot, at) =
-            match &self.regions[source.index()].values[usize::from(source_slot)] {
-                ArgumentValue::Owned { .. } => (source, source_slot, start),
-                ArgumentValue::Region {
-                    region,
-                    slot,
-                    start: base,
-                    ..
-                } => (*region, *slot, *base + start),
-                ArgumentValue::Definition { .. } => unreachable!(),
-                ArgumentValue::Inline(_) => unreachable!(),
-            };
-        let value = &self.regions[id.index()].values[slot];
-        if value.len() == 0 {
-            self.regions[owner.index()].roots = self.regions[owner.index()]
-                .roots
-                .checked_add(1)
-                .ok_or(ScratchError::CapacityOverflow)?;
-            let old = core::mem::replace(
-                &mut self.regions[id.index()].values[slot],
-                ArgumentValue::Region {
-                    region: owner,
-                    slot: owner_slot,
-                    start: at,
-                    len,
-                },
-            );
-            if let ArgumentValue::Region { region, .. } = old {
-                self.release(region);
-            }
-        } else if matches!(value, ArgumentValue::Region { region, slot: previous_slot, start: begin, len: size } if *region == owner && *previous_slot == owner_slot && *begin + *size == at)
-        {
-            self.regions[id.index()].values[slot].extend(len);
+        let source_region = &self.regions[source.index()];
+        let source_value = source_region.values[usize::from(source_slot)];
+        let (owner, at) = if source_region.source_slots & (1 << source_slot) == 0 {
+            (source, source_value.start + start)
         } else {
-            self.materialize(id)?;
-            let destination = id.index();
-            let source = owner.index();
-            let (from, to) = if source < destination {
-                let (a, b) = self.regions.split_at_mut(destination);
-                (&a[source], &mut b[0])
-            } else {
-                let (a, b) = self.regions.split_at_mut(source);
-                (&b[0], &mut a[destination])
-            };
-            let ArgumentValue::Owned { start: base, .. } = from.values[usize::from(owner_slot)]
-            else {
-                unreachable!("alias resolves to owned range")
-            };
-            to.words
-                .extend_from_slice(&from.words[(base + at) as usize..(base + at + len) as usize]);
-            to.values[slot].extend(len);
+            match source_region.sources[source_value.start as usize]
+                .as_ref()
+                .expect("retained source")
+            {
+                RetainedSource::Definition { body, start: base } => {
+                    let at = *base + start;
+                    let slot = usize::from(self.pending_slot(id));
+                    let destination = &self.regions[id.index()];
+                    let value = destination.values[slot];
+                    if destination.source_slots & (1 << slot) != 0
+                        && matches!(destination.sources[value.start as usize].as_ref(),
+                        Some(RetainedSource::Definition { body: previous, start: begin }) if previous == body && *begin + value.len == at)
+                    {
+                        self.regions[id.index()].values[slot].len += len;
+                        return Ok(());
+                    }
+                    let body = body.clone();
+                    if value.len == 0 {
+                        return self.install_source(
+                            id,
+                            RetainedSource::Definition { body, start: at },
+                            len,
+                        );
+                    }
+                    return self.retain_definition_span(id, &body, at, len);
+                }
+                RetainedSource::Region {
+                    region,
+                    start: base,
+                } => (*region, *base + start),
+            }
+        };
+        let slot = usize::from(self.pending_slot(id));
+        let destination = &self.regions[id.index()];
+        let value = destination.values[slot];
+        if value.len == 0 {
+            return self.install_source(
+                id,
+                RetainedSource::Region {
+                    region: owner,
+                    start: at,
+                },
+                len,
+            );
         }
+        if destination.source_slots & (1 << slot) != 0
+            && matches!(destination.sources[value.start as usize].as_ref(),
+            Some(RetainedSource::Region { region, start: begin }) if *region == owner && *begin + value.len == at)
+        {
+            self.regions[id.index()].values[slot].len += len;
+            return Ok(());
+        }
+        if destination.source_slots & (1 << slot) != 0 {
+            self.materialize(id)?;
+        }
+        let original = owner.index();
+        let destination = id.index();
+        let (from, to) = if original < destination {
+            let (a, b) = self.regions.split_at_mut(destination);
+            (&a[original], &mut b[0])
+        } else {
+            let (a, b) = self.regions.split_at_mut(original);
+            (&b[0], &mut a[destination])
+        };
+        to.words
+            .extend_from_slice(&from.words[at as usize..(at + len) as usize]);
+        to.values[slot].len += len;
         Ok(())
     }
-
     /// Scalar matching shares the resident source proof used by bulk capture.
     pub(crate) fn append_from_input(
         &mut self,
@@ -293,11 +325,10 @@ impl<G> ArgumentArena<G> {
         if !delimiter && writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        if matches!(
-            self.regions[writer.region.index()].values
-                [usize::from(self.pending_slot(writer.region))],
-            ArgumentValue::Owned { .. } | ArgumentValue::Inline(_)
-        ) {
+        if self.regions[writer.region.index()].source_slots
+            & (1 << self.pending_slot(writer.region))
+            == 0
+        {
             return if delimiter {
                 self.append_delimiter_word(writer, word)?;
                 Ok(writer.brace_depth())

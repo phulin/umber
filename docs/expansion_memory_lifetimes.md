@@ -312,56 +312,42 @@ ordered delimiter and argument records.
 
 ## Retained macro argument spans
 
-The final invocation region owns up to nine argument values. Each value owns
-its actual spelling in one of four forms: a single traced word, a range in that region's pooled
-traced-word vector, an immutable definition body and range, or a counted lease
-on a range of an older region's owned argument. A parameter input row names its
-region and argument slot, and advances a local offset into that value. There is
-no second matcher or command product.
+The final invocation region owns up to nine compact argument ranges and one
+pooled traced-word vector. A sparse retained-source lane contains only actual
+immutable definition spans or leases on an original owned argument region.
+A source-slot mask identifies those actual backings. An ordinary range names
+its pooled word offset; a retained range names its source-lane row. That row
+owns the source and its offset, while the range owns the length. Normal short
+arguments require no tagged owner or per-argument destructor.
 
-The canonical argument writer starts with a retained span when a resident
-source supplies its words. Contiguous writes extend that span. A write from a
-different source materializes only that argument into its invocation's pooled
-vector, at the consuming write; no successful-command copying or settlement
-phase exists. Scalar deliveries use the same writer and retain a source only
-when its spelling and provenance equal the delivered word. Delimiter holdback,
-outer-group trimming, argument tracing and runaway diagnostics read that same
-final value.
+The canonical matcher writes every argument into that final region. A singleton
+uses its pooled traced spelling directly. A larger contiguous resident span
+retains its actual source; contiguous writes extend it. A fragmented write
+materializes only its actual argument at the consuming write. Source aliases
+flatten once to an immutable definition or original owned word offset. No
+second matcher, copied parameter array, deferred-copy stage or successful-command
+cleanup stage exists.
 
-Source input rows may retire before a descendant macro consumes an argument.
-Definition spans therefore retain the actual immutable definition body. Region
-spans retain the original owned region with an indexed root count. Aliases
-resolve to that original owner at capture, so parameter substitution does not
-walk an alias chain. Body retirement, abandoned capture and materialization
-release their own leases. Zero-root regions return through the allocator's
-already-reserved free list; an iterative release walk avoids recursive drops
-across deeply nested invocations.
+Parameter input rows name the invocation and argument slot and use local offsets.
+Delimiter holdback retains incomplete prefixes; the completing word finishes
+the match directly. Brace trimming adjusts the pooled offset or actual source
+offset. Tracing, observed values and runaway diagnostics read the same spelling
+view, preserving original traced words and unknown origins for definition words.
 
-TeX parameter and input-capacity bookkeeping still counts the logical arguments
-and raw captured words even when no spelling is copied. Checkpoint admission
-continues to exclude active macro frames and captures; the retained-span owner
-does not enter full checkpoints or formats. The main `CurrentCommand` handoff
-is a separate unfinished redesign.
+Input rows can retire before descendants finish with an argument. Retained
+sources therefore own their definition body or an indexed lease on the original
+owned region. Native release visits only those sparse actual sources, drops
+them in place through disjoint bank loans, and iteratively returns zero-root
+regions through the already-reserved free list. It neither moves whole argument
+values into immediately consumed temporaries nor visits normal ranges to drop
+owners they never had. Returned word and source-lane capacity stays with the
+engine.
 
-A one-word argument owns its traced spelling inline. Its source needs no lease,
-and forwarding copies that actual word directly. Empty pending slots receive
-their first spelling at the consuming write; beginning an argument does not
-rewrite or drop an already-empty value. Region release visits only completed
-parameters and a real pending capture, rather than a spare unused slot.
-
-A delimiter's completing word is consumed directly by the matcher. Only an
-incomplete prefix needs holdback spelling for a later mismatch; completing a
-delimiter never appends its final word only to remove it immediately. Existing
-held prefix words are truncated at that actual delimiter match, preserving
-brace delivery, fuel and overlapping-prefix recovery.
-
-Native region release drops argument values in place. Its source-region lease
-is the only scalar copied out before release; it never moves whole argument
-values into immediately consumed temporaries. Splitting the region bank around
-the released row lends its actual values and the other root counters separately,
-so releasing a lease does not repeatedly locate the same argument row. The
-ordinary singleton splice remains small; multiword source-retention bookkeeping
-belongs to the actual retained-span operation.
+Native parameter and virtual raw-word bookkeeping still counts all logical
+arguments and captured words. Full checkpoints and formats exclude active
+macro frames and captures. Their cold restore clears the actual transient
+owners while preserving reusable pool capacity. Production main control still
+returns `CurrentCommand`; removing that handoff is a separate unfinished change.
 
 Scanner status is the one actual TeX state, with status-specific diagnostic
 owners. Macro matching retains its control-sequence identity; definition and

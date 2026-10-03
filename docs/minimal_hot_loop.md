@@ -52,9 +52,9 @@ errors and drops on failure. Provisional shorthand tracing renders the old
 meaning before replacement. There is no namespace promotion, delayed naked old
 meaning, definition frontier, accepted row tail or append-only payload history.
 
-`ArgumentArena` owns each final argument directly: an inline single traced
-word, a retained immutable definition span, an indexed lease on an original
-owned argument range, or pooled spelling for genuinely fragmented input.
+`ArgumentArena` owns each final argument directly: a compact range in pooled traced spelling or a sparse retained-source lane
+with an immutable definition span or indexed lease on original owned words.
+Singletons copy their actual traced word directly, without a tagged owner.
 Contiguous spans extend without copying, and aliases flatten at capture.
 Publishing transfers only the invocation coordinate; no parameter vector or
 range array is copied into a separate stack. Native parameter and raw-word

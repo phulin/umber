@@ -234,7 +234,7 @@ impl<G> MacroBodyCursor<G> {
     pub(crate) fn argument_values<'a>(
         &self,
         arguments: &'a super::ArgumentArena<G>,
-    ) -> &'a [super::ArgumentValue<G>] {
+    ) -> &'a [super::ArgumentValue] {
         self.argument_region
             .map_or(&[], |region| arguments.values(region))
     }

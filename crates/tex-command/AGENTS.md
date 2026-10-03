@@ -706,14 +706,15 @@ Rules, all of them load-bearing (umber2-johp.141):
   divergences that the producer's name would have exposed, which is exactly
   what a spelling-derived command name did until umber2-johp.141 deleted it.
 
-Macro argument regions own per-parameter values directly: inline single words, pooled traced ranges,
-retained immutable definition spans, or indexed leases on original owned
-argument ranges. `src/input/arguments/words.rs` owns their spelling views and
+Macro argument regions own compact per-parameter ranges in pooled traced
+spelling or a sparse lane of actual retained definition/region sources.
+`src/input/arguments/words.rs` owns those ranges and spelling views;
 `backing.rs` owns source retention and actual fragmented-argument materialization.
-The same matcher writes all four forms. Parameter rows use local offsets;
-source aliases flatten once at capture. Native region release walks its reserved
-free-list suffix iteratively. Active captures and macro regions remain excluded
-from full checkpoints and formats.
+The same matcher writes both actual backings. Parameter rows use local offsets;
+source aliases flatten once at capture. Native release visits only sparse actual
+leases and walks its reserved free-list suffix iteratively. Normal ranges have
+no destructor. Active captures and macro regions remain excluded from full
+checkpoints and formats.
 
 The live scanner owns `ScannerStatus` directly. `src/processor/status.rs` owns
 its actual diagnostic targets and scoped prior/installed status; recovery copies

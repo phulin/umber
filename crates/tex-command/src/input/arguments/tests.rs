@@ -507,3 +507,53 @@ fn deeply_nested_argument_leases_release_without_recursive_drops() {
     arena.abort_capture();
     assert!(arena.is_empty());
 }
+
+#[test]
+fn forwarded_trimmed_second_argument_retains_its_original_owned_offset() {
+    let mut arena = ArgumentArena::<()>::default();
+    let mut parent = arena.begin_match().expect("parent");
+    let mut first = arena.begin_argument(&parent);
+    append_all(&mut arena, &mut first, [word('a'), word('b')]);
+    arena.publish_argument(&mut parent, first).expect("first");
+    let mut second = arena.begin_argument(&parent);
+    append_all(
+        &mut arena,
+        &mut second,
+        [
+            brace('{', Catcode::BeginGroup),
+            word('x'),
+            word('y'),
+            brace('}', Catcode::EndGroup),
+        ],
+    );
+    second.strip_outer_group().expect("trim second");
+    arena.publish_argument(&mut parent, second).expect("second");
+    let mut source = arena.publish(parent);
+    let mut slot = 1;
+    for _ in 0..3 {
+        let mut child = arena.begin_match().expect("forwarding child");
+        let mut cursor = arena.begin_argument(&child);
+        assert_eq!(
+            cursor.consume_region_span(
+                &mut arena,
+                source,
+                slot,
+                0..2,
+                &mut ArgumentRunAdmission::characters()
+            ),
+            Ok(2)
+        );
+        arena.release(source);
+        arena
+            .publish_argument(&mut child, cursor)
+            .expect("child argument");
+        source = arena.publish(child);
+        slot = 0;
+        assert_eq!(
+            arena.words(source, slot).iter().collect::<Vec<_>>(),
+            [word('x'), word('y')]
+        );
+    }
+    arena.release(source);
+    assert!(arena.is_empty());
+}

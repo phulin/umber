@@ -1492,8 +1492,8 @@ condition frames, meanings, scanner policy, or host callbacks.
 ### 8.2 Parameter state
 
 The input stack owns native macro argument regions and its scalar live
-parameter count. Each final argument owns an inline word, retained immutable
-span, indexed source-region lease, or genuinely fragmented pooled spelling.
+parameter count. Each final argument owns a compact pooled range or sparse retained immutable definition/region source.
+Singletons and fragmented input use the invocation's pooled traced spelling.
 Parameter input rows refer directly to those values with local offsets; there
 is no separate parameter-state owner or copied activation chain. Native
 retirement and actual lease release implement TeX's `param_stack` and

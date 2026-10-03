@@ -15,7 +15,7 @@ fn undelimited_admission_completes_on_its_sole_token_or_closing_brace() {
 
         let mut arena = crate::input::ArgumentArena::<()>::default();
         let matching = arena.begin_match().expect("argument match");
-        let cursor = || arena.begin_argument(&matching);
+        let mut cursor = || arena.begin_argument(&matching);
 
         // TeX82 §392: a sole ordinary token is the whole argument.
         let mut run = admission();
