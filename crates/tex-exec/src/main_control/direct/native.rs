@@ -60,7 +60,7 @@ impl<'state, 'host, G>
                     context.innermost_group_kind() == Some(GroupKind::SemiSimple)
                 })
             }
-            _ => false,
+            code => native_assignments::accepts_scalar_assignment(code),
         }
     }
 
@@ -140,16 +140,37 @@ impl<'state, 'host, G>
                 GroupKind::SemiSimple,
                 "semi simple group",
             ),
-            _ => unreachable!("native main-control selection accepts font and group terminals"),
+            code => {
+                let tex_state::meaning::MeaningWord::Static(word) = meaning else {
+                    unreachable!("scalar assignment meaning")
+                };
+                native_assignments::execute_scalar_assignment(
+                    processor,
+                    *word,
+                    code,
+                    false,
+                    *self.scan_origin,
+                    &mut None,
+                    None,
+                )
+                .and_then(|step| {
+                    processor
+                        .complete_assignment()
+                        .map(|()| step)
+                        .map_err(command_error)
+                })
+            }
         };
         // Unsave can restore tracing parameters and can deliver aftergroup
         // diagnostics. Re-enter main control before another word in either case.
         if *self.completed_operations + 1 >= self.remaining_operations
             || result.is_err()
             || processor.has_pending_reports()
-            || (matches!(code, codes::CHAR_END_GROUP | codes::PRIMITIVE_END_GROUP)
-                && (processor.int_param(IntParam::TRACING_COMMANDS) > 0
-                    || processor.int_param(IntParam::TRACING_IFS) > 0))
+            || (matches!(
+                code,
+                codes::CHAR_END_GROUP | codes::PRIMITIVE_END_GROUP | codes::INT_PARAM
+            ) && (processor.int_param(IntParam::TRACING_COMMANDS) > 0
+                || processor.int_param(IntParam::TRACING_IFS) > 0))
         {
             self.completion = Some(result);
             return std::ops::ControlFlow::Break(());

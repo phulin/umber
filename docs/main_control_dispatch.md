@@ -292,3 +292,19 @@ Font selection consumes its final native font operand in the same reader through
 Dimension and glue scans return `Scaled` and `GlueSpec` directly. Infinite dimension scans additionally return their actual glue order. These scans store no primary-origin packet and propagate no first-token provenance through signs, units or glue components, because no semantic consumer reads it. Integer, restricted-range and internal-value scans retain the primary origins their diagnostic and structured consumers need. Existing arithmetic recovery, optional spaces, raw backup, observation values and physical glue-source identity follow their original semantic positions.
 
 Synchronous keyword, optional-equals, nested integer and expression scans return their actual value or error directly. `CommandError` keeps large payloads boxed only when raised; a success needs no separate result frame, status tag, optional error slot or extraction macro. Actual resource failures unwind expression scratch, and expression errors truncate their real stack suffix at the original error edge.
+
+## Reader-owned scalar assignments
+
+Count, dimension, skip and muskip registers and integer, dimension and glue
+parameters execute in the canonical reader's terminal consumer. The native
+meaning word selects their sole scanner/application switch; no current-command
+record, delivered-token packet or assignment request is constructed for these
+operations. Prefixed and observed calls enter that same switch with their actual
+scope and demanded mutation receipts. Their former main-switch bodies are deleted. Parameter and shorthand targets come directly from the packed operand, without a semantic meaning decode. The glue-parameter assignment packet and scanner wrapper are deleted; its arm consumes the actual optional-equals decision and glue specification.
+
+A scanner's actual diagnostic reports precede its mutation through the retained
+context. The diagnostic helper borrows command state, execution state, context
+and effects directly, and owns no processor or command. Report effects, tracing
+changes, afterassignment delivery and the real operation budget stop native
+continuation at their existing semantic boundaries. Operand scanning remains
+inside the canonical processor and cannot add another input reader.

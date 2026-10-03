@@ -449,6 +449,10 @@ fn native_terminal_continuation_preserves_the_actual_operation_budget() {
         br"\def\m{{}}\m\m\m\count0=9 \relax%",
         br"\def\m{\begingroup\endgroup}\m\m\m\count0=9 \relax%",
         br"\def\m{\nullfont\nullfont}\m\m\m\count0=9 \relax%",
+        br"\def\m{\count2=1 \dimen2=1pt}\m\m\m\count0=9 \relax%",
+        br"\def\m{\skip2=1pt \muskip2=1mu}\m\m\m\count0=9 \relax%",
+        br"\def\m{\tolerance=100 \hsize=100pt}\m\m\m\count0=9 \relax%",
+        br"\def\m{\baselineskip=12pt \thinmuskip=3mu}\m\m\m\count0=9 \relax%",
     ] {
         for budget in [1, 2, 3, 4, 6, 7] {
             crate::test_harness::with_nonstop_plain_universe(|stores| {

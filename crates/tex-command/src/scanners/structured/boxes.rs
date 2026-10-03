@@ -248,24 +248,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    /// Scans TeX82's named glue-parameter assignment operand.
-    ///
-    /// This follows `scan_optional_equals` and `scan_glue`, retaining their
-    /// canonical backup and alignment-delivery transitions before replay
-    /// applies the aggregate mutation.
-    pub fn scan_glue_parameter_assignment(
-        &mut self,
-        index: u16,
-        mu: bool,
-    ) -> Result<ScannedGlueParameterAssignment, CommandError> {
-        let result = self.scan_optional_equals_retained();
-        result.into_result()?;
-
-        let result = self.scan_glue_retained(mu);
-        let value = result.into_result()?;
-        Ok(ScannedGlueParameterAssignment { index, value, mu })
-    }
-
     /// Scans the complete expanded specification of a TeX82 rule.
     ///
     /// This is TeX.web's `scan_rule_spec`: keyword recognition and dimension

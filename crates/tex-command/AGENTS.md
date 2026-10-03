@@ -757,3 +757,7 @@ semantics retain their actual decisions.
 Keyword and optional-equals scanners return only a boolean, with no scalar
 packet or primary-origin tracking. Actual keyword prefix backup and scanner
 error chronology retain their existing spelling owners.
+
+Named glue parameters scan optional equals and their actual glue specification in the
+reader-owned execution arm. The glue-parameter assignment packet and scanner
+adapter are deleted; the selected packed meaning already supplies the target.

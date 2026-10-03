@@ -159,19 +159,6 @@ pub enum ScannedLeaderPayload {
     Rule(ScannedRuleSpec),
 }
 
-/// A completed named glue-parameter assignment.
-///
-/// Command processing owns the optional equals sign and scalar glue scan;
-/// replay receives only the parameter selector and its finished value.  The
-/// `mu` flag preserves the TeX distinction between ordinary and math glue
-/// parameters without exposing another input path to the executor.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ScannedGlueParameterAssignment {
-    pub index: u16,
-    pub value: GlueSpec,
-    pub mu: bool,
-}
-
 /// A completed TeX82 `\hrule` or `\vrule` specification.
 ///
 /// The command processor owns the expanded `width`, `height`, and `depth`

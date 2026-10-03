@@ -66,6 +66,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             owned_processor,
                             admitted_context,
                             $receipts,
+                            observation_receipts.take(),
                             result,
                             $apply
                         )
@@ -1319,92 +1320,35 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     return finish_scan!(self.execute_stop(*command, dump));
                                 }
                             }
-                            (_, codes::PRIMITIVE_COUNT | codes::COUNT_REGISTER) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
+                            (
+                                _,
+                                code @ (codes::PRIMITIVE_COUNT
+                                | codes::COUNT_REGISTER
+                                | codes::PRIMITIVE_DIMEN
+                                | codes::DIMEN_REGISTER
+                                | codes::PRIMITIVE_SKIP
+                                | codes::SKIP_REGISTER
+                                | codes::PRIMITIVE_MUSKIP
+                                | codes::MUSKIP_REGISTER
+                                | codes::INT_PARAM
+                                | codes::DIMEN_PARAM
+                                | codes::GLUE_PARAM
+                                | codes::MU_GLUE_PARAM),
+                            ) => {
+                                let word = command.static_word().expect("scalar assignment word");
+                                let completed = native_assignments::execute_scalar_assignment(
+                                    processor,
+                                    word,
+                                    code,
                                     global,
-                                );
-                                let index =
-                                    if let ResolvedMeaning::Static(Meaning::CountRegister(index)) =
-                                        command.meaning()
-                                    {
-                                        index
-                                    } else {
-                                        take_native_scalar!(
-                                            processor.scan_profile_register_index_retained(),
-                                            scan_origin
-                                        )
-                                    };
-                                let _ = take_native_scalar!(
-                                    processor.scan_optional_equals_retained(),
-                                    scan_origin
-                                );
-                                let value = take_native_scalar!(
-                                    processor.scan_integer_retained(),
-                                    scan_origin
-                                )
-                                .value;
-                                let step = retained_assignment!(
-                                    receipts,
-                                    |native_context,
-                                     _native_state,
-                                     native_effects,
-                                     _native_fuel,
-                                     _native_observer,
-                                     native_execution| {
-                                        semantic::execute_count(
-                                            native_context,
-                                            native_effects,
-                                            receipts,
-                                            index,
-                                            value,
-                                            global,
-                                        )
-                                    }
-                                )?;
-                                self.schedule_assignment_token()?;
-                                Ok(step)
-                            }
-                            (_, codes::PRIMITIVE_DIMEN | codes::DIMEN_REGISTER) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let index =
-                                    if let ResolvedMeaning::Static(Meaning::DimenRegister(index)) =
-                                        command.meaning()
-                                    {
-                                        index
-                                    } else {
-                                        take_native_scalar!(
-                                            processor.scan_profile_register_index_retained(),
-                                            scan_origin
-                                        )
-                                    };
-                                let _ = take_native_scalar!(
-                                    processor.scan_optional_equals_retained(),
-                                    scan_origin
-                                );
-                                let value = take_native_scalar!(
-                                    processor.scan_dimension_retained(),
-                                    scan_origin
+                                    scan_origin,
+                                    &mut observation_receipts,
+                                    Some(diagnostics),
                                 );
                                 let step = retained_assignment!(
                                     receipts,
-                                    |native_context,
-                                     _native_state,
-                                     native_effects,
-                                     _native_fuel,
-                                     _native_observer,
-                                     native_execution| {
-                                        semantic::execute_dimen(
-                                            native_context,
-                                            native_effects,
-                                            receipts,
-                                            index,
-                                            value,
-                                            global,
-                                        )
+                                    |_context, _state, _effects, _fuel, _observer, _execution| {
+                                        completed
                                     }
                                 )?;
                                 self.schedule_assignment_token()?;
@@ -1447,101 +1391,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         ))
                                     };
                                 }
-                            }
-                            (
-                                _,
-                                codes::PRIMITIVE_SKIP
-                                | codes::SKIP_REGISTER
-                                | codes::PRIMITIVE_MUSKIP
-                                | codes::MUSKIP_REGISTER,
-                            ) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let mu = matches!(
-                                    command_code,
-                                    Some(codes::PRIMITIVE_MUSKIP | codes::MUSKIP_REGISTER)
-                                );
-                                let index = match command.meaning() {
-                                    ResolvedMeaning::Static(
-                                        Meaning::SkipRegister(index)
-                                        | Meaning::MuskipRegister(index),
-                                    ) => index,
-                                    _ => take_native_scalar!(
-                                        processor.scan_profile_register_index_retained(),
-                                        scan_origin
-                                    ),
-                                };
-                                let _ = take_native_scalar!(
-                                    processor.scan_optional_equals_retained(),
-                                    scan_origin
-                                );
-                                let value = take_native_scalar!(
-                                    processor.scan_glue_retained(mu),
-                                    scan_origin
-                                );
-                                let source_identity = processor.scanned_glue_identity();
-                                let source_register = processor.scanned_glue_register();
-                                let step = retained_assignment!(
-                                    receipts,
-                                    |native_context,
-                                     _native_state,
-                                     native_effects,
-                                     _native_fuel,
-                                     _native_observer,
-                                     native_execution| {
-                                        let reassigning =
-                                            MainControl::direct_glue_pointer_reassigned(
-                                                native_context,
-                                                mu,
-                                                index,
-                                                value,
-                                                source_identity,
-                                                source_register,
-                                                global,
-                                                &native_execution.skip_pointer_sources,
-                                                &native_execution.muskip_pointer_sources,
-                                            );
-                                        let redundant = native_context
-                                            .int_param(IntParam::ETEX_EXTENDED_MODE)
-                                            > 0
-                                            && reassigning;
-                                        let result = semantic::execute_skip(
-                                            native_context,
-                                            native_effects,
-                                            receipts,
-                                            index,
-                                            value,
-                                            global,
-                                            mu,
-                                            redundant,
-                                            reassigning,
-                                        );
-                                        if result.is_ok() && !redundant {
-                                            let physical = if mu {
-                                                native_context.muskip(index)
-                                            } else {
-                                                native_context.glue_register(index).ok().flatten()
-                                            };
-                                            if let Some(physical) = physical {
-                                                let pointers = if mu {
-                                                    &mut native_execution.muskip_pointer_sources
-                                                } else {
-                                                    &mut native_execution.skip_pointer_sources
-                                                };
-                                                if pointers.len() <= usize::from(index) {
-                                                    pointers.resize(usize::from(index) + 1, None);
-                                                }
-                                                pointers[usize::from(index)] =
-                                                    Some((physical, source_identity));
-                                            }
-                                        }
-                                        result
-                                    }
-                                )?;
-                                self.schedule_assignment_token()?;
-                                Ok(step)
                             }
                             (_, codes::PRIMITIVE_H_SKIP) => {
                                 return {
@@ -2080,87 +1929,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     };
                                 }
                             }
-                            (_, codes::INT_PARAM) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let ResolvedMeaning::Static(Meaning::IntParam(index)) =
-                                    command.meaning()
-                                else {
-                                    unreachable!("native parameter operand")
-                                };
-                                let _ = take_native_scalar!(
-                                    processor.scan_optional_equals_retained(),
-                                    scan_origin
-                                );
-                                let value = take_native_scalar!(
-                                    processor.scan_integer_retained(),
-                                    scan_origin
-                                )
-                                .value;
-                                let step = retained_assignment!(
-                                    receipts,
-                                    |native_context,
-                                     native_state,
-                                     native_effects,
-                                     _native_fuel,
-                                     _native_observer,
-                                     native_execution| {
-                                        semantic::execute_int_param(
-                                            native_context,
-                                            native_effects,
-                                            native_state,
-                                            receipts,
-                                            index,
-                                            value,
-                                            global,
-                                        )
-                                    }
-                                )?;
-                                self.schedule_assignment_token()?;
-                                Ok(step)
-                            }
-                            (_, codes::DIMEN_PARAM) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let ResolvedMeaning::Static(Meaning::DimenParam(index)) =
-                                    command.meaning()
-                                else {
-                                    unreachable!("native parameter operand")
-                                };
-                                let _ = take_native_scalar!(
-                                    processor.scan_optional_equals_retained(),
-                                    scan_origin
-                                );
-                                let value = take_native_scalar!(
-                                    processor.scan_dimension_retained(),
-                                    scan_origin
-                                );
-                                let step = retained_assignment!(
-                                    receipts,
-                                    |native_context,
-                                     native_state,
-                                     native_effects,
-                                     _native_fuel,
-                                     _native_observer,
-                                     native_execution| {
-                                        semantic::execute_dimen_param(
-                                            native_context,
-                                            native_effects,
-                                            native_state,
-                                            receipts,
-                                            index,
-                                            value,
-                                            global,
-                                        )
-                                    }
-                                )?;
-                                self.schedule_assignment_token()?;
-                                Ok(step)
-                            }
                             (_, codes::PAGE_DIMENSION) => {
                                 let ResolvedMeaning::Static(Meaning::PageDimension(dimension)) =
                                     command.meaning()
@@ -2237,46 +2005,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         Ok(step)
                                     };
                                 }
-                            }
-                            (_, codes::GLUE_PARAM | codes::MU_GLUE_PARAM) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let (index, mu) = match command.meaning() {
-                                    ResolvedMeaning::Static(Meaning::GlueParam(index)) => {
-                                        (index, false)
-                                    }
-                                    ResolvedMeaning::Static(Meaning::MuGlueParam(index)) => {
-                                        (index, true)
-                                    }
-                                    _ => unreachable!("native glue parameter operand"),
-                                };
-                                let assignment = processor
-                                    .scan_glue_parameter_assignment(index, mu)
-                                    .map_err(command_error)
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                let step = retained_assignment!(
-                                    receipts,
-                                    |native_context,
-                                     native_state,
-                                     native_effects,
-                                     _native_fuel,
-                                     _native_observer,
-                                     native_execution| {
-                                        semantic::execute_glue_param(
-                                            native_context,
-                                            native_effects,
-                                            native_state,
-                                            receipts,
-                                            assignment.index,
-                                            assignment.value,
-                                            global,
-                                        )
-                                    }
-                                )?;
-                                self.schedule_assignment_token()?;
-                                Ok(step)
                             }
                             (
                                 _,

@@ -26,10 +26,10 @@ pub use structured::{
     ScannedBoxKind, ScannedBoxRegister, ScannedBoxShift, ScannedBoxShiftPayload,
     ScannedCharacterDefinition, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
     ScannedEquationNumber, ScannedFileName, ScannedGeneratedFontDefinition,
-    ScannedGlueParameterAssignment, ScannedInsertConstruction, ScannedLeaderPayload,
-    ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily,
-    ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec,
-    ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment, ScannedSetBoxPath,
-    ScannedVSplit, StructuredProvenance, TokenRequest, WriteStreamSelector,
+    ScannedInsertConstruction, ScannedLeaderPayload, ScannedMacroDefinition, ScannedMathCharacter,
+    ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial,
+    ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec,
+    ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, TokenRequest,
+    WriteStreamSelector,
 };
 pub use token_list::{ScannedTokenParameterAssignment, ScannedTokenRegisterAssignment};

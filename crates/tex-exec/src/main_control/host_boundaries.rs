@@ -155,25 +155,13 @@ impl<G> MainControl<G> {
         effects: &mut DiagnosticEffects,
         diagnostics: Vec<PendingDiagnostic<G>>,
     ) -> Result<(), ExecError> {
-        if self.execution.first_causal_context.is_none() {
-            let cause = if context.reported_error_count() > 0 {
-                Some("command-error")
-            } else {
-                diagnostics.iter().find_map(PendingDiagnostic::causal_kind)
-            };
-            if let Some(cause) = cause {
-                self.execution.first_causal_context =
-                    Some(crate::FrozenDiagnosticContext::capture(
-                        context,
-                        self.command.diagnostic_input_context(8),
-                        cause,
-                    ));
-            }
-        }
-        if diagnostics.is_empty() {
-            return Ok(());
-        }
-        report_pending_diagnostics_in_context(context, effects, diagnostics)
+        report_scan_on_owners(
+            context,
+            &self.command,
+            &mut self.execution,
+            effects,
+            diagnostics,
+        )
     }
 
     pub(super) fn operation_evidence_limit_error(&self) -> Option<ExecError> {
@@ -1002,4 +990,31 @@ impl CommandObserver for ObservationBuffer {
             self.overflowed = true;
         }
     }
+}
+
+pub(super) fn report_scan_on_owners<G>(
+    context: &mut CommandContext<'_, G>,
+    command: &tex_command::CommandState<G>,
+    execution: &mut ExecutionState<G>,
+    effects: &mut DiagnosticEffects,
+    diagnostics: Vec<PendingDiagnostic<G>>,
+) -> Result<(), ExecError> {
+    if execution.first_causal_context.is_none() {
+        let cause = if context.reported_error_count() > 0 {
+            Some("command-error")
+        } else {
+            diagnostics.iter().find_map(PendingDiagnostic::causal_kind)
+        };
+        if let Some(cause) = cause {
+            execution.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
+                context,
+                command.diagnostic_input_context(8),
+                cause,
+            ));
+        }
+    }
+    if diagnostics.is_empty() {
+        return Ok(());
+    }
+    report_pending_diagnostics_in_context(context, effects, diagnostics)
 }
