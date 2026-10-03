@@ -33,8 +33,11 @@ impl<'state, 'host, G>
         let tex_state::meaning::MeaningWord::Static(word) = meaning else {
             return false;
         };
+        if *word == Meaning::RELAX_WORD {
+            return true;
+        }
         match Meaning::runtime_word_control_code(*word) {
-            codes::RELAX | codes::PRIMITIVE_BEGIN_GROUP => true,
+            codes::PRIMITIVE_BEGIN_GROUP => true,
             codes::CHAR_BEGIN_GROUP => {
                 processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
                     !matches!(
@@ -71,12 +74,12 @@ impl<'state, 'host, G>
         let tex_state::meaning::MeaningWord::Static(word) = meaning else {
             unreachable!("native main-control selection accepts static terminals")
         };
-        let code = Meaning::runtime_word_control_code(*word);
-        if code == codes::RELAX {
+        if *word == Meaning::RELAX_WORD {
             // TeX82 §1045: relax has no list effect after leaving main_loop.
             *self.completed_operations += 1;
             return std::ops::ControlFlow::Continue(());
         }
+        let code = Meaning::runtime_word_control_code(*word);
         let result = match code {
             codes::CHAR_BEGIN_GROUP | codes::PRIMITIVE_BEGIN_GROUP => {
                 let kind = if code == codes::CHAR_BEGIN_GROUP {

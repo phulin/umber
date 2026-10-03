@@ -254,3 +254,7 @@ Unsave checks restored tracing parameters before consuming another terminal.
 Tracing, observation, character flushing, box/math/recovery group behavior and
 the final driver-budget operation retain their genuine boundaries and share the
 same group helpers; there is no second group engine or deferred cleanup stage.
+
+Native terminal selection compares the exact relax word before deriving a
+family/selector code. Relax consumes no operand and constructs no switch key;
+only the group arms derive the native control selector they actually use.
