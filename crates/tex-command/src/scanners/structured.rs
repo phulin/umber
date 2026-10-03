@@ -259,8 +259,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 global: provisional_global,
             }),
         );
-        self.scan_optional_equals_retained().into_result()?;
-        let scanned = self.scan_restricted_integer_retained(class).into_result()?;
+        self.scan_optional_equals()?;
+        let scanned = self.scan_restricted_integer(class)?;
         Ok(ScannedCharacterDefinition {
             target,
             class,
@@ -307,17 +307,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 global: provisional_global,
             }),
         );
-        self.scan_optional_equals_retained().into_result()?;
+        self.scan_optional_equals()?;
         // TeX82 §1224 uses `scan_eight_bit_int`, while e-TeX 2.6
         // etex.ch [49.1224] replaces that scan with `scan_register_num` so
         // sparse register shorthands may address 0..=32767. pdfTeX inherits
         // the same e-TeX register extension.
         let index = if self.command.profile().capabilities().supports_etex() {
-            let result = self.scan_extended_register_index_retained();
-            result.into_result()?
+            let result = self.scan_extended_register_index();
+            result?
         } else {
-            let result = self.scan_eight_bit_register_index_retained();
-            result.into_result()?
+            let result = self.scan_eight_bit_register_index();
+            result?
         };
         Ok(ScannedRegisterDefinition { target, index })
     }

@@ -16,28 +16,28 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         loop {
             match progress.phase {
                 PdfObjectScalarPhase::ReserveKeyword => {
-                    let result = self.scan_keyword_retained("reserveobjnum");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("reserveobjnum");
+                    if result? {
                         return Ok(PdfObjectRequest::Reserve);
                     }
                     progress.phase = PdfObjectScalarPhase::UseKeyword;
                 }
                 PdfObjectScalarPhase::UseKeyword => {
-                    let result = self.scan_keyword_retained("useobjnum");
-                    progress.phase = if result.into_result()? {
+                    let result = self.scan_keyword("useobjnum");
+                    progress.phase = if result? {
                         PdfObjectScalarPhase::UseObject
                     } else {
                         PdfObjectScalarPhase::StreamKeyword
                     };
                 }
                 PdfObjectScalarPhase::UseObject => {
-                    let result = self.scan_integer_retained();
-                    progress.use_object = Some(result.into_result()?.value);
+                    let result = self.scan_integer();
+                    progress.use_object = Some(result?.value);
                     progress.phase = PdfObjectScalarPhase::StreamKeyword;
                 }
                 PdfObjectScalarPhase::StreamKeyword => {
-                    let result = self.scan_keyword_retained("stream");
-                    progress.stream = result.into_result()?;
+                    let result = self.scan_keyword("stream");
+                    progress.stream = result?;
                     progress.phase = if progress.stream {
                         PdfObjectScalarPhase::AttributeKeyword
                     } else {
@@ -45,8 +45,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     };
                 }
                 PdfObjectScalarPhase::AttributeKeyword => {
-                    let result = self.scan_keyword_retained("attr");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("attr");
+                    if result? {
                         progress.stream_attr = match self.scan_balanced_text(true) {
                             Ok(value) => Some(value),
                             Err(error) => {
@@ -57,8 +57,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     progress.phase = PdfObjectScalarPhase::FileKeyword;
                 }
                 PdfObjectScalarPhase::FileKeyword => {
-                    let result = self.scan_keyword_retained("file");
-                    let file = result.into_result()?;
+                    let result = self.scan_keyword("file");
+                    let file = result?;
                     let data = match self.scan_balanced_text(true) {
                         Ok(data) => data,
                         Err(error) => {
@@ -82,9 +82,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         primitive: UnexpandablePrimitive,
     ) -> Result<PdfFormRequest, CommandError> {
         if primitive == UnexpandablePrimitive::PdfRefXForm {
-            let result = self.scan_integer_retained();
+            let result = self.scan_integer();
             return Ok(PdfFormRequest::Reference {
-                object: result.into_result()?.value,
+                object: result?.value,
             });
         }
         let mut progress = PdfFormScalarProgress {
@@ -95,8 +95,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         loop {
             match progress.phase {
                 PdfFormScalarPhase::AttributeKeyword => {
-                    let result = self.scan_keyword_retained("attr");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("attr");
+                    if result? {
                         progress.attr = match self.scan_balanced_text(true) {
                             Ok(attr) => Some(attr),
                             Err(error) => {
@@ -107,16 +107,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     progress.phase = PdfFormScalarPhase::ResourcesKeyword;
                 }
                 PdfFormScalarPhase::ResourcesKeyword => {
-                    let result = self.scan_keyword_retained("resources");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("resources");
+                    if result? {
                         let resources = match self.scan_balanced_text(true) {
                             Ok(resources) => resources,
                             Err(error) => {
                                 return Err(error);
                             }
                         };
-                        let result = self.scan_extended_register_index_retained();
-                        let box_register = result.into_result()?;
+                        let result = self.scan_extended_register_index();
+                        let box_register = result?;
                         return Ok(PdfFormRequest::Create {
                             attr: progress.attr,
                             resources: Some(resources),
@@ -126,8 +126,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     progress.phase = PdfFormScalarPhase::BoxRegister;
                 }
                 PdfFormScalarPhase::BoxRegister => {
-                    let result = self.scan_extended_register_index_retained();
-                    let box_register = result.into_result()?;
+                    let result = self.scan_extended_register_index();
+                    let box_register = result?;
                     return Ok(PdfFormRequest::Create {
                         attr: progress.attr,
                         resources: progress.resources,
@@ -141,9 +141,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_pdf_reference_object_request(
         &mut self,
     ) -> Result<PdfReferenceObjectRequest, CommandError> {
-        let result = self.scan_integer_retained();
+        let result = self.scan_integer();
         Ok(PdfReferenceObjectRequest {
-            object: result.into_result()?.value,
+            object: result?.value,
         })
     }
 
@@ -158,8 +158,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 | UnexpandablePrimitive::PdfNoBuiltinToUnicode
         );
         let font = if needs_font {
-            let scan = self.scan_font_selector_retained();
-            Some(scan.into_result()?)
+            let scan = self.scan_font_selector();
+            Some(scan?)
         } else {
             None
         };
@@ -211,9 +211,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             (kind, text)
         };
         let open_action = if kind == Kind::Catalog && {
-            let result = self.scan_keyword_retained("openaction");
+            let result = self.scan_keyword("openaction");
 
-            result.into_result()?
+            result?
         } {
             let (owner, action) =
                 self.scan_pdf_action_for_owner(PendingPdfActionOwner::DocumentFragment {

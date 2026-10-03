@@ -197,18 +197,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         })
     }
 
-    pub fn scan_restricted_integer_retained(
+    pub fn scan_restricted_integer(
         &mut self,
         class: RestrictedIntegerClass,
-    ) -> crate::RetainedScalarScan<RestrictedInteger> {
-        match self.scan_integer_retained() {
-            crate::RetainedScalarScan::Complete(scanned) => {
-                match self.finish_restricted_integer(class, scanned) {
-                    Ok(value) => crate::RetainedScalarScan::Complete(value),
-                    Err(error) => crate::RetainedScalarScan::Failed(error),
-                }
-            }
-            crate::RetainedScalarScan::Failed(error) => crate::RetainedScalarScan::Failed(error),
-        }
+    ) -> Result<RestrictedInteger, CommandError> {
+        let scanned = self.scan_integer()?;
+        self.finish_restricted_integer(class, scanned)
     }
 }

@@ -22,8 +22,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// the `open_node_size` case (`\openout`) and which reports "Bad number"
     /// and recovers as stream zero instead.
     pub fn scan_write_stream(&mut self) -> Result<WriteStreamSelector, CommandError> {
-        let result = self.scan_integer_retained();
-        let value = result.into_result()?.value;
+        let result = self.scan_integer();
+        let value = result?.value;
         Ok(if value < 0 {
             WriteStreamSelector::Negative
         } else if value > 15 {
@@ -88,8 +88,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn scan_immediate_write_stream_selector(
         &mut self,
     ) -> Result<WriteStreamSelector, CommandError> {
-        let result = self.scan_integer_retained();
-        let value = result.into_result()?.value;
+        let result = self.scan_integer();
+        let value = result?.value;
         Ok(if value < 0 {
             WriteStreamSelector::Negative
         } else if value > 15 {
@@ -153,12 +153,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     fn finish_immediate_open_out(&mut self) -> Result<ImmediateExtension, CommandError> {
-        let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
-        let stream = result.into_result()?.value as u8;
-        let result = self.scan_optional_equals_retained();
-        result.into_result()?;
-        let result = self.scan_file_name_retained();
-        let file_name = result.into_result()?;
+        let result = self.scan_restricted_integer(RestrictedIntegerClass::FourBit);
+        let stream = result?.value as u8;
+        let result = self.scan_optional_equals();
+        result?;
+        let result = self.scan_file_name();
+        let file_name = result?;
         Ok(ImmediateExtension::OpenOut { stream, file_name })
     }
 

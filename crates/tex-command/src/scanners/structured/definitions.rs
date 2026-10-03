@@ -25,14 +25,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         })
     }
 
-    pub fn scan_balanced_text_retained(
-        &mut self,
-        expanded: bool,
-    ) -> crate::RetainedScalarScan<ScannedBalancedText> {
-        let result = self.scan_balanced_text(expanded);
-        self.detach_retained_scalar(result)
-    }
-
     /// Performs TeX82 §1288's complete `shift_case`.
     ///
     /// `\uppercase`/`\lowercase` are `any_mode` main-control cases that never
@@ -87,8 +79,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // an e-TeX job must enter `absorbing` before delivering the opening
         // brace instead of speculatively backing it up and replaying it.
         let deferred = if self.profile().capabilities().supports_pdftex() {
-            let result = self.scan_keyword_retained("shipout");
-            result.into_result()?
+            let result = self.scan_keyword("shipout");
+            result?
         } else {
             false
         };

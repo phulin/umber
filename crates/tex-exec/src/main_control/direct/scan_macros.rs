@@ -4,8 +4,8 @@
 macro_rules! take_native_scalar {
     ($scan:expr, $origin:expr $(,)?) => {{
         match $scan {
-            tex_command::RetainedScalarScan::Complete(value) => value,
-            tex_command::RetainedScalarScan::Failed(error) => {
+            Ok(value) => value,
+            Err(error) => {
                 return Err(scan_error(command_error(error), $origin));
             }
         }

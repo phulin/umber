@@ -14,9 +14,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         set_box_allowed: bool,
     ) -> Result<ScannedSetBoxAssignment, CommandError> {
-        let index = self.scan_profile_register_index_retained().into_result()?;
-        let result = self.scan_optional_equals_retained();
-        result.into_result()?;
+        let index = self.scan_profile_register_index()?;
+        let result = self.scan_optional_equals();
+        result?;
         let path = if set_box_allowed {
             ScannedSetBoxPath::Payload(self.scan_box_payload()?)
         } else {
@@ -30,10 +30,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Scans the register operand of TeX82 §1079's `make_box(box_code)` and
     /// e-TeX 2.6 [47.1079]'s sparse-array replacement.
     pub fn scan_box_register(&mut self) -> Result<ScannedBoxRegister, CommandError> {
-        let result = self.scan_profile_register_index_retained();
-        Ok(ScannedBoxRegister {
-            index: result.into_result()?,
-        })
+        let result = self.scan_profile_register_index();
+        Ok(ScannedBoxRegister { index: result? })
     }
 
     /// Scans TeX82 §1082's `\\vsplit <number> to <dimen>` prefix.
@@ -41,10 +39,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// e-TeX 2.6 [47.1082] widens the source box selector from
     /// `scan_eight_bit_int` to `scan_register_num`.
     pub fn scan_vsplit(&mut self) -> Result<ScannedVSplit, CommandError> {
-        let index = self.scan_profile_register_index_retained().into_result()?;
-        let found = self.scan_keyword_retained("to").into_result()?;
+        let index = self.scan_profile_register_index()?;
+        let found = self.scan_keyword("to")?;
         let missing_to_context = (!found).then(|| self.command.output_open_context(self.state));
-        let height = self.scan_dimension_retained().into_result()?;
+        let height = self.scan_dimension()?;
         let split_context = self.command.output_open_context(self.state);
         Ok(ScannedVSplit {
             index,
@@ -129,8 +127,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     /// TeX82 §46's `\\showthe` internal-value scan.
     pub fn scan_showthe(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
-        let result = self.scan_internal_value_or_zero_retained();
-        let value = result.into_result()?;
+        let result = self.scan_internal_value_or_zero();
+        let value = result?;
         let text = match value.value {
             value @ (InternalValue::Integer(_)
             | InternalValue::Dimension(_)
@@ -195,8 +193,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         } else {
             RestrictedIntegerClass::EightBit
         };
-        let result = self.scan_restricted_integer_retained(class);
-        let index = result.into_result()?;
+        let result = self.scan_restricted_integer(class);
+        let index = result?;
         Ok((
             u16::try_from(index.value).expect("recovered register number is in range"),
             StructuredProvenance {
@@ -218,16 +216,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .ok_or_else(|| CommandError::input_invariant())?;
         match static_meaning(command.meaning()) {
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)) => {
-                let result = self.scan_eight_bit_register_index_retained();
+                let result = self.scan_eight_bit_register_index();
                 Ok(ScannedLeaderPayload::BoxRegister {
-                    index: result.into_result()?,
+                    index: result?,
                     copy: false,
                 })
             }
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy)) => {
-                let result = self.scan_eight_bit_register_index_retained();
+                let result = self.scan_eight_bit_register_index();
                 Ok(ScannedLeaderPayload::BoxRegister {
-                    index: result.into_result()?,
+                    index: result?,
                     copy: true,
                 })
             }
@@ -282,42 +280,42 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         loop {
             match phase {
                 RuleScalarPhase::WidthKeyword => {
-                    let result = self.scan_keyword_retained("width");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("width");
+                    if result? {
                         phase = RuleScalarPhase::WidthDimension;
                     } else {
                         phase = RuleScalarPhase::HeightKeyword;
                     }
                 }
                 RuleScalarPhase::WidthDimension => {
-                    let result = self.scan_dimension_retained();
-                    width = Some(result.into_result()?);
+                    let result = self.scan_dimension();
+                    width = Some(result?);
                     phase = RuleScalarPhase::WidthKeyword;
                 }
                 RuleScalarPhase::HeightKeyword => {
-                    let result = self.scan_keyword_retained("height");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("height");
+                    if result? {
                         phase = RuleScalarPhase::HeightDimension;
                     } else {
                         phase = RuleScalarPhase::DepthKeyword;
                     }
                 }
                 RuleScalarPhase::HeightDimension => {
-                    let result = self.scan_dimension_retained();
-                    height = Some(result.into_result()?);
+                    let result = self.scan_dimension();
+                    height = Some(result?);
                     phase = RuleScalarPhase::WidthKeyword;
                 }
                 RuleScalarPhase::DepthKeyword => {
-                    let result = self.scan_keyword_retained("depth");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("depth");
+                    if result? {
                         phase = RuleScalarPhase::DepthDimension;
                     } else {
                         break;
                     }
                 }
                 RuleScalarPhase::DepthDimension => {
-                    let result = self.scan_dimension_retained();
-                    depth = Some(result.into_result()?);
+                    let result = self.scan_dimension();
+                    depth = Some(result?);
                     phase = RuleScalarPhase::WidthKeyword;
                 }
             }
@@ -368,24 +366,24 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         loop {
             match phase {
                 PackingScalarPhase::ToKeyword => {
-                    let result = self.scan_keyword_retained("to");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("to");
+                    if result? {
                         phase = PackingScalarPhase::Dimension { exactly: true };
                     } else {
                         phase = PackingScalarPhase::SpreadKeyword;
                     }
                 }
                 PackingScalarPhase::SpreadKeyword => {
-                    let result = self.scan_keyword_retained("spread");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("spread");
+                    if result? {
                         phase = PackingScalarPhase::Dimension { exactly: false };
                     } else {
                         return Ok(ScannedPackingSpec::Natural);
                     }
                 }
                 PackingScalarPhase::Dimension { exactly } => {
-                    let result = self.scan_dimension_retained();
-                    let value = result.into_result()?;
+                    let result = self.scan_dimension();
+                    let value = result?;
                     return Ok(if exactly {
                         ScannedPackingSpec::Exactly(value)
                     } else {
@@ -435,15 +433,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         is_vadjust: bool,
     ) -> Result<ScannedInsertConstruction, CommandError> {
         let pre = if is_vadjust && self.command.profile().capabilities().supports_pdftex() {
-            self.scan_keyword_retained("pre").into_result()?
+            self.scan_keyword("pre")?
         } else {
             false
         };
         let (class, reserved_class_context) = if is_vadjust {
             (255, None)
         } else {
-            let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::EightBit);
-            let class = result.into_result()?.value;
+            let result = self.scan_restricted_integer(RestrictedIntegerClass::EightBit);
+            let class = result?.value;
             let context = (class == 255).then(|| self.command.output_open_context(self.state));
             (class, context)
         };
@@ -470,8 +468,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         primitive: UnexpandablePrimitive,
     ) -> Result<ScannedBoxShift, CommandError> {
-        let result = self.scan_dimension_retained();
-        let amount = result.into_result()?;
+        let result = self.scan_dimension();
+        let amount = result?;
         let delta = match primitive {
             UnexpandablePrimitive::Lower | UnexpandablePrimitive::MoveRight => amount,
             UnexpandablePrimitive::Raise | UnexpandablePrimitive::MoveLeft => -amount,

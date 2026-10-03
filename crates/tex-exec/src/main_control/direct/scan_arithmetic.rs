@@ -7,22 +7,22 @@ pub(super) fn scan_arithmetic_operand<G, Facts: tex_command::CommandHostFacts<G>
     primitive: UnexpandablePrimitive,
     scan_origin: Option<OriginId>,
 ) -> Result<ArithmeticOperand, ExecError> {
-    let _ = take_native_scalar!(processor.scan_keyword_retained("by"), scan_origin);
+    let _ = take_native_scalar!(processor.scan_keyword("by"), scan_origin);
 
     let operand = match target {
         ArithmeticTarget::IntegerRegister(_) | ArithmeticTarget::IntegerParameter(_) => {
             ArithmeticOperand::Integer(
-                take_native_scalar!(processor.scan_integer_retained(), scan_origin).value,
+                take_native_scalar!(processor.scan_integer(), scan_origin).value,
             )
         }
         ArithmeticTarget::DimensionRegister(_) | ArithmeticTarget::DimensionParameter(_) => {
             match primitive {
                 UnexpandablePrimitive::Advance => ArithmeticOperand::Dimension(
-                    take_native_scalar!(processor.scan_dimension_retained(), scan_origin),
+                    take_native_scalar!(processor.scan_dimension(), scan_origin),
                 ),
                 UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
                     ArithmeticOperand::Integer(
-                        take_native_scalar!(processor.scan_integer_retained(), scan_origin).value,
+                        take_native_scalar!(processor.scan_integer(), scan_origin).value,
                     )
                 }
                 _ => unreachable!("arithmetic primitive is filtered above"),
@@ -31,12 +31,12 @@ pub(super) fn scan_arithmetic_operand<G, Facts: tex_command::CommandHostFacts<G>
         ArithmeticTarget::GlueRegister { mu, .. } | ArithmeticTarget::GlueParameter { mu, .. } => {
             match primitive {
                 UnexpandablePrimitive::Advance => ArithmeticOperand::Glue(take_native_scalar!(
-                    processor.scan_glue_retained(mu),
+                    processor.scan_glue(mu),
                     scan_origin
                 )),
                 UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
                     ArithmeticOperand::Integer(
-                        take_native_scalar!(processor.scan_integer_retained(), scan_origin).value,
+                        take_native_scalar!(processor.scan_integer(), scan_origin).value,
                     )
                 }
                 _ => unreachable!("arithmetic primitive is filtered above"),
@@ -64,7 +64,7 @@ pub(super) fn execute_arithmetic<'state, 'host, G>(
                     register @ (UnexpandablePrimitive::Count | UnexpandablePrimitive::Dimen
                     | UnexpandablePrimitive::Skip | UnexpandablePrimitive::Muskip))) => {
                     let index = take_native_scalar!(
-                        processor.scan_profile_register_index_retained(), scan_origin);
+                        processor.scan_profile_register_index(), scan_origin);
                     match register {
                         UnexpandablePrimitive::Count => ArithmeticTarget::IntegerRegister(index),
                         UnexpandablePrimitive::Dimen => ArithmeticTarget::DimensionRegister(index),

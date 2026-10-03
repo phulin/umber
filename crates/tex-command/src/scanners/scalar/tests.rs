@@ -42,9 +42,9 @@ fn integer_scanner_preserves_signs_and_backs_up_the_nonspace_terminator() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let scalar_result = match processor.scan_integer_retained() {
-            crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        let scalar_result = match processor.scan_integer() {
+            Ok(value) => value,
+            Err(error) => panic!("scalar scan failed: {error:?}"),
         };
         let integer = scalar_result;
         assert_eq!(integer.value, -42);
@@ -84,9 +84,9 @@ fn integer_scanner_preserves_the_frozen_conditional_recovery_terminator() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let scalar_result = match processor.scan_integer_retained() {
-            crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        let scalar_result = match processor.scan_integer() {
+            Ok(value) => value,
+            Err(error) => panic!("scalar scan failed: {error:?}"),
         };
         assert_eq!(scalar_result.value, 42);
         // TeX82 §§379 and 444: the inserted sentinel is still the next
@@ -123,14 +123,14 @@ fn optional_equals_consumes_spaces_but_leaves_the_following_operand() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let scalar_result = match processor.scan_optional_equals_retained() {
-            crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        let scalar_result = match processor.scan_optional_equals() {
+            Ok(value) => value,
+            Err(error) => panic!("scalar scan failed: {error:?}"),
         };
         assert!(scalar_result);
-        let scalar_result = match processor.scan_integer_retained() {
-            crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        let scalar_result = match processor.scan_integer() {
+            Ok(value) => value,
+            Err(error) => panic!("scalar scan failed: {error:?}"),
         };
         let integer = scalar_result;
         assert_eq!(integer.value, 7);
@@ -195,9 +195,9 @@ fn warmed_keyword_success_path_allocates_zero_heap() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let scalar_result = match processor.scan_keyword_retained("dimension") {
-            crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        let scalar_result = match processor.scan_keyword("dimension") {
+            Ok(value) => value,
+            Err(error) => panic!("scalar scan failed: {error:?}"),
         };
         let warm = scalar_result;
         assert!(warm);
@@ -207,9 +207,9 @@ fn warmed_keyword_success_path_allocates_zero_heap() {
         {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
             for _ in 1..SCANS {
-                let scalar_result = match processor.scan_keyword_retained("dimension") {
-                    crate::RetainedScalarScan::Complete(value) => value,
-                    crate::RetainedScalarScan::Failed(error) => {
+                let scalar_result = match processor.scan_keyword("dimension") {
+                    Ok(value) => value,
+                    Err(error) => {
                         panic!("scalar scan failed: {error:?}")
                     }
                 };
@@ -245,9 +245,9 @@ fn warmed_keyword_failed_prefix_path_allocates_zero_heap() {
             &mut diagnostic_effects,
         );
         let run = |processor: &mut crate::CommandProcessor<'_, '_, _>| {
-            let scalar_result = match processor.scan_keyword_retained("dimension") {
-                crate::RetainedScalarScan::Complete(value) => value,
-                crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+            let scalar_result = match processor.scan_keyword("dimension") {
+                Ok(value) => value,
+                Err(error) => panic!("scalar scan failed: {error:?}"),
             };
             let scanned = scalar_result;
             assert!(!scanned);
@@ -304,9 +304,9 @@ fn dimension_scanner_preserves_fractional_points_and_following_input() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let scalar_result = match processor.scan_dimension_retained() {
-            crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        let scalar_result = match processor.scan_dimension() {
+            Ok(value) => value,
+            Err(error) => panic!("scalar scan failed: {error:?}"),
         };
         assert_eq!(
             scalar_result,
@@ -354,9 +354,9 @@ fn glue_scanner_preserves_width_stretch_shrink_and_orders() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let scalar_result = match processor.scan_glue_retained(false) {
-            crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        let scalar_result = match processor.scan_glue(false) {
+            Ok(value) => value,
+            Err(error) => panic!("scalar scan failed: {error:?}"),
         };
         assert_eq!(
             scalar_result,
@@ -495,16 +495,9 @@ fn numeric_heads_and_operands_need_no_unobserved_command_records() {
                     let alignment_before = processor.command.alignment.align_state;
                     let before = crate::command::command_ownership_counters();
                     let value = match kind {
-                        1 => processor
-                            .scan_dimension_retained()
-                            .into_result()
-                            .expect("dimension")
-                            .raw(),
+                        1 => processor.scan_dimension().expect("dimension").raw(),
                         2 | 5 => {
-                            let glue = processor
-                                .scan_glue_retained(false)
-                                .into_result()
-                                .expect("glue");
+                            let glue = processor.scan_glue(false).expect("glue");
                             assert_eq!(glue.stretch.raw(), 131072);
                             assert_eq!(
                                 glue.stretch_order,
@@ -512,13 +505,7 @@ fn numeric_heads_and_operands_need_no_unobserved_command_records() {
                             );
                             glue.width.raw()
                         }
-                        _ => {
-                            processor
-                                .scan_integer_retained()
-                                .into_result()
-                                .expect("integer")
-                                .value
-                        }
+                        _ => processor.scan_integer().expect("integer").value,
                     };
                     assert_eq!(value, expected);
                     assert_eq!(
@@ -601,10 +588,7 @@ fn internal_expansion_and_font_selection_consume_native_operands() {
             .expect("internal conversion");
         assert_eq!(text, "42");
         assert_eq!(
-            processor
-                .scan_font_selector_retained()
-                .into_result()
-                .expect("font"),
+            processor.scan_font_selector().expect("font"),
             tex_state::font::NULL_FONT
         );
         let after = crate::command::command_ownership_counters();

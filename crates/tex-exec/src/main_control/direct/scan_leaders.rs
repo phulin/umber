@@ -201,9 +201,9 @@ pub(super) fn scan_leader_glue_operand<G, Facts: tex_command::CommandHostFacts<G
     if (horizontal && primitive == UnexpandablePrimitive::HSkip)
         || (!horizontal && primitive == UnexpandablePrimitive::VSkip)
     {
-        let glue = match processor.scan_glue_retained(false) {
-            tex_command::RetainedScalarScan::Complete(value) => value,
-            tex_command::RetainedScalarScan::Failed(error) => return Err(command_error(error)),
+        let glue = match processor.scan_glue(false) {
+            Ok(value) => value,
+            Err(error) => return Err(command_error(error)),
         };
         return Ok(Some((glue, processor.scanned_glue_shared_zero())));
     }

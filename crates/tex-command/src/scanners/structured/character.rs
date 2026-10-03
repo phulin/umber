@@ -7,8 +7,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// only then `do_assignments`, so the accent code is the whole of what the
     /// command layer owns before the executor takes over.
     pub fn scan_accent(&mut self) -> Result<ScannedAccent, CommandError> {
-        let result = self.scan_integer_retained();
-        let accent = result.into_result()?;
+        let result = self.scan_integer();
+        let accent = result?;
         Ok(ScannedAccent {
             accent: accent.value,
             accent_provenance: StructuredProvenance {
@@ -63,9 +63,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 })
             }
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)) => {
-                let result = self.scan_integer_retained();
-                let character = u8::try_from(result.into_result()?.value)
-                    .map_err(|_| CommandError::input_invariant())?;
+                let result = self.scan_integer();
+                let character =
+                    u8::try_from(result?.value).map_err(|_| CommandError::input_invariant())?;
                 Ok(ScannedAccentBase::Character {
                     character,
                     provenance,

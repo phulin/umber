@@ -15,12 +15,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // committed; the raw value crosses the apply seam only so §435's
             // `int_error` can report it first.
             UnexpandablePrimitive::OpenIn => {
-                let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
-                let scanned = result.into_result()?;
-                let result = self.scan_optional_equals_retained();
-                result.into_result()?;
-                let result = self.scan_file_name_retained();
-                let file_name = result.into_result()?;
+                let result = self.scan_restricted_integer(RestrictedIntegerClass::FourBit);
+                let scanned = result?;
+                let result = self.scan_optional_equals();
+                result?;
+                let result = self.scan_file_name();
+                let file_name = result?;
                 Ok(InputStreamRequest::Open {
                     stream: scanned.value,
                     scanned: scanned.scanned,
@@ -29,8 +29,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 })
             }
             UnexpandablePrimitive::CloseIn => {
-                let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
-                let scanned = result.into_result()?;
+                let result = self.scan_restricted_integer(RestrictedIntegerClass::FourBit);
+                let scanned = result?;
                 Ok(InputStreamRequest::Close {
                     stream: scanned.value,
                     scanned: scanned.scanned,
@@ -42,8 +42,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 // §435's four-bit selector: §482 answers an out-of-range
                 // stream with `if (n<0)or(n>15) then m:=16`, reading from the
                 // terminal, and no error is reported at all.
-                let result = self.scan_integer_retained();
-                let stream = result.into_result()?.value;
+                let result = self.scan_integer();
+                let stream = result?.value;
                 // tex.web §1225 reports a missing `to` and inserts it, then
                 // runs `get_r_token` regardless: the keyword is recovered,
                 // not required. §1225 reports it *here*, between the failed
@@ -51,8 +51,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 // target as `<to be read again>` and no `read_toks` prompt has
                 // been printed yet.
 
-                let result = self.scan_keyword_retained("to");
-                let found_to = result.into_result()?;
+                let result = self.scan_keyword("to");
+                let found_to = result?;
                 if !found_to {
                     let context = self.command.output_open_context(self.state);
                     let mut report = self.state.print_err("Missing `to' inserted");
@@ -115,15 +115,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 global: provisional_global,
             }),
         );
-        let result = self.scan_optional_equals_retained();
-        result.into_result()?;
-        let result = self.scan_file_name_retained();
-        let file_name = result.into_result()?;
+        let result = self.scan_optional_equals();
+        result?;
+        let result = self.scan_file_name();
+        let file_name = result?;
         let mut size_recovery = None;
-        let has_at = self.scan_keyword_retained("at").into_result()?;
+        let has_at = self.scan_keyword("at")?;
         let size = if has_at {
-            let result = self.scan_dimension_retained();
-            let requested = result.into_result()?;
+            let result = self.scan_dimension();
+            let requested = result?;
             // §1259's `if (s<=0)or(s>=@'1000000000)`.
             FontSizeSpec::At(
                 if requested.raw() > 0 && requested.raw() < 2048 * Scaled::UNITY {
@@ -137,11 +137,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 },
             )
         } else {
-            let result = self.scan_keyword_retained("scaled");
-            let scaled = result.into_result()?;
+            let result = self.scan_keyword("scaled");
+            let scaled = result?;
             if scaled {
-                let result = self.scan_integer_retained();
-                let requested = result.into_result()?.value;
+                let result = self.scan_integer();
+                let requested = result?.value;
                 // §1258's `if (cur_val<=0)or(cur_val>32768)`.
                 FontSizeSpec::Scale(if (1..=32_768).contains(&requested) {
                     requested
@@ -190,18 +190,18 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 global: provisional_global,
             }),
         );
-        let result = self.scan_optional_equals_retained();
-        result.into_result()?;
-        let result = self.scan_font_selector_retained();
-        let source = result.into_result()?;
+        let result = self.scan_optional_equals();
+        result?;
+        let result = self.scan_font_selector();
+        let source = result?;
         let (amount, no_ligatures) = match kind {
             GeneratedFontKind::Copy => (0, false),
             GeneratedFontKind::Letterspace => {
-                let result = self.scan_integer_retained();
-                let amount = result.into_result()?.value.clamp(-1000, 1000) as i16;
+                let result = self.scan_integer();
+                let amount = result?.value.clamp(-1000, 1000) as i16;
 
-                let result = self.scan_keyword_retained("nolig");
-                let no_ligatures = result.into_result()?;
+                let result = self.scan_keyword("nolig");
+                let no_ligatures = result?;
                 (amount, no_ligatures)
             }
         };

@@ -18,19 +18,19 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         opener: OriginId,
     ) -> Result<(), CommandError> {
         let mut restore_at_page_start = false;
-        let mode = if self.scan_keyword_retained("page").into_result()? {
+        let mode = if self.scan_keyword("page")? {
             restore_at_page_start = true;
-            let direct = self.scan_keyword_retained("direct").into_result()?;
+            let direct = self.scan_keyword("direct")?;
             if direct {
                 tex_state::PdfColorStackMode::Direct
-            } else if self.scan_keyword_retained("page").into_result()? {
+            } else if self.scan_keyword("page")? {
                 tex_state::PdfColorStackMode::Page
             } else {
                 tex_state::PdfColorStackMode::Origin
             }
-        } else if self.scan_keyword_retained("direct").into_result()? {
+        } else if self.scan_keyword("direct")? {
             tex_state::PdfColorStackMode::Direct
-        } else if self.scan_keyword_retained("page").into_result()? {
+        } else if self.scan_keyword("page")? {
             tex_state::PdfColorStackMode::Page
         } else {
             tex_state::PdfColorStackMode::Origin
@@ -62,24 +62,24 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         opener: OriginId,
     ) -> Result<(), CommandError> {
-        let scan = self.scan_integer_retained();
-        let bound = scan.into_result()?.value;
+        let scan = self.scan_integer();
+        let bound = scan?.value;
         let value = self.state.pdf_uniform_deviate(bound);
         self.push_rendered_text(&value.to_string(), opener);
         Ok(())
     }
 
     pub(super) fn expand_pdf_ximage_bbox(&mut self, opener: OriginId) -> Result<(), CommandError> {
-        let scan = self.scan_integer_retained();
-        let object = u32::try_from(scan.into_result()?.value).ok();
+        let scan = self.scan_integer();
+        let object = u32::try_from(scan?.value).ok();
         let id = object.and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok());
         let Some(id) = id.filter(|id| self.state.pdf_external_image(*id).is_some()) else {
             return Err(CommandError::pdf_navigation(
                 "pdfTeX error (ext1): cannot find referenced object.",
             ));
         };
-        let scan = self.scan_integer_retained();
-        let index = scan.into_result()?.value;
+        let scan = self.scan_integer();
+        let index = scan?.value;
         let metadata = self
             .state
             .pdf_external_image(id)
@@ -97,8 +97,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     pub(super) fn expand_pdf_xform_name(&mut self, opener: OriginId) -> Result<(), CommandError> {
-        let scan = self.scan_integer_retained();
-        let object = scan.into_result()?.value;
+        let scan = self.scan_integer();
+        let object = scan?.value;
         let resource = u32::try_from(object)
             .ok()
             .and_then(|object| self.state.pdf_form_resource(object))
@@ -108,8 +108,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     pub(super) fn expand_pdf_page_ref(&mut self, opener: OriginId) -> Result<(), CommandError> {
-        let scan = self.scan_integer_retained();
-        let page = scan.into_result()?.value;
+        let scan = self.scan_integer();
+        let page = scan?.value;
         if page <= 0 {
             return Err(CommandError::pdf_navigation(
                 "pdfTeX error (pageref): invalid page number",
@@ -124,8 +124,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     pub(super) fn expand_pdf_last_match(&mut self, opener: OriginId) -> Result<(), CommandError> {
-        let scan = self.scan_integer_retained();
-        let mut index = scan.into_result()?.value;
+        let scan = self.scan_integer();
+        let mut index = scan?.value;
         if index < 0 {
             self.pdftex_match_number_diagnostic(index);
             index = 1;
@@ -153,8 +153,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         opener: OriginId,
     ) -> Result<(), CommandError> {
-        let scan = self.scan_extended_register_index_retained();
-        let class = scan.into_result()?;
+        let scan = self.scan_extended_register_index();
+        let class = scan?;
         let rendered = self
             .state
             .page_insertion(class)

@@ -307,3 +307,7 @@ expanded target word feeds operand scanning and semantic application directly.
 The shared `with_native_assignment!` seam renders demanded scan reports before
 mutation. The old invalid-target executor adapter is deleted; its diagnostic
 borrows actual command and effect owners without an operation request.
+
+Native calls consume standard `Result` from the direct scanner APIs. Retained
+scalar unions, result projections and compatibility scanner entries are absent.
+The operation-child result adapter is deleted; callers map actual command errors.

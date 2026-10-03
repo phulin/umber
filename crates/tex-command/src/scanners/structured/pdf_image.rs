@@ -25,55 +25,55 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         loop {
             match progress.phase {
                 PdfImageScalarPhase::WidthKeyword => {
-                    let result = self.scan_keyword_retained("width");
-                    progress.phase = if result.into_result()? {
+                    let result = self.scan_keyword("width");
+                    progress.phase = if result? {
                         PdfImageScalarPhase::WidthDimension
                     } else {
                         PdfImageScalarPhase::HeightKeyword
                     };
                 }
                 PdfImageScalarPhase::WidthDimension => {
-                    let result = self.scan_dimension_retained();
-                    progress.width = Some(result.into_result()?);
+                    let result = self.scan_dimension();
+                    progress.width = Some(result?);
                     progress.phase = PdfImageScalarPhase::WidthKeyword;
                 }
                 PdfImageScalarPhase::HeightKeyword => {
-                    let result = self.scan_keyword_retained("height");
-                    progress.phase = if result.into_result()? {
+                    let result = self.scan_keyword("height");
+                    progress.phase = if result? {
                         PdfImageScalarPhase::HeightDimension
                     } else {
                         PdfImageScalarPhase::DepthKeyword
                     };
                 }
                 PdfImageScalarPhase::HeightDimension => {
-                    let result = self.scan_dimension_retained();
-                    progress.height = Some(result.into_result()?);
+                    let result = self.scan_dimension();
+                    progress.height = Some(result?);
                     progress.phase = PdfImageScalarPhase::WidthKeyword;
                 }
                 PdfImageScalarPhase::DepthKeyword => {
-                    let result = self.scan_keyword_retained("depth");
-                    progress.phase = if result.into_result()? {
+                    let result = self.scan_keyword("depth");
+                    progress.phase = if result? {
                         PdfImageScalarPhase::DepthDimension
                     } else {
                         PdfImageScalarPhase::AttributeKeyword
                     };
                 }
                 PdfImageScalarPhase::DepthDimension => {
-                    let result = self.scan_dimension_retained();
-                    progress.depth = Some(result.into_result()?);
+                    let result = self.scan_dimension();
+                    progress.depth = Some(result?);
                     progress.phase = PdfImageScalarPhase::WidthKeyword;
                 }
                 PdfImageScalarPhase::AttributeKeyword => {
-                    let result = self.scan_keyword_retained("attr");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("attr");
+                    if result? {
                         let attr = self.scan_pdf_navigation_text()?;
                         progress.attr = Some(attr.tokens);
                     }
                     progress.phase = PdfImageScalarPhase::NamedKeyword;
                 }
                 PdfImageScalarPhase::NamedKeyword => {
-                    let result = self.scan_keyword_retained("named");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("named");
+                    if result? {
                         let text = self.scan_pdf_navigation_text()?;
                         progress.page = PendingPdfImagePage::Named(text.tokens);
                         progress.phase = PdfImageScalarPhase::ColorSpaceKeyword;
@@ -82,8 +82,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                 }
                 PdfImageScalarPhase::PageKeyword => {
-                    let result = self.scan_keyword_retained("page");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("page");
+                    if result? {
                         progress.phase = PdfImageScalarPhase::PageNumber;
                     } else {
                         progress.page = PendingPdfImagePage::Number(1);
@@ -91,21 +91,21 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                 }
                 PdfImageScalarPhase::PageNumber => {
-                    let result = self.scan_integer_retained();
-                    progress.page = PendingPdfImagePage::Number(result.into_result()?.value);
+                    let result = self.scan_integer();
+                    progress.page = PendingPdfImagePage::Number(result?.value);
                     progress.phase = PdfImageScalarPhase::ColorSpaceKeyword;
                 }
                 PdfImageScalarPhase::ColorSpaceKeyword => {
-                    let result = self.scan_keyword_retained("colorspace");
-                    progress.phase = if result.into_result()? {
+                    let result = self.scan_keyword("colorspace");
+                    progress.phase = if result? {
                         PdfImageScalarPhase::ColorSpaceObject
                     } else {
                         PdfImageScalarPhase::MediaBox
                     };
                 }
                 PdfImageScalarPhase::ColorSpaceObject => {
-                    let result = self.scan_integer_retained();
-                    progress.color_space_object = result.into_result()?.value;
+                    let result = self.scan_integer();
+                    progress.color_space_object = result?.value;
                     progress.phase = PdfImageScalarPhase::MediaBox;
                 }
                 PdfImageScalarPhase::MediaBox
@@ -141,8 +141,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         ),
                         _ => unreachable!(),
                     };
-                    let result = self.scan_keyword_retained(keyword);
-                    if result.into_result()? {
+                    let result = self.scan_keyword(keyword);
+                    if result? {
                         progress.page_box = Some(selected);
                         progress.phase = PdfImageScalarPhase::FileName;
                     } else {
@@ -150,8 +150,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                 }
                 PdfImageScalarPhase::FileName => {
-                    let result = self.scan_file_name_retained();
-                    let name = result.into_result()?.packed();
+                    let result = self.scan_file_name();
+                    let name = result?.packed();
                     let page = match progress.page {
                         PendingPdfImagePage::Unset => PdfImagePageSelection::Number(1),
                         PendingPdfImagePage::Number(page) => PdfImagePageSelection::Number(page),

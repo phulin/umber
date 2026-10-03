@@ -96,9 +96,9 @@ fn numexpr_honors_precedence_and_leaves_its_relax_terminator_consumed() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let scalar_result = match processor.scan_integer_retained() {
-            crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        let scalar_result = match processor.scan_integer() {
+            Ok(value) => value,
+            Err(error) => panic!("scalar scan failed: {error:?}"),
         };
         let scanned = scalar_result;
         assert_eq!(scanned.value, 14);
@@ -167,9 +167,9 @@ fn warmed_numexpr_destination_path_allocates_zero_heap() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let scalar_result = match processor.scan_integer_retained() {
-            crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Failed(error) => panic!("scalar scan failed: {error:?}"),
+        let scalar_result = match processor.scan_integer() {
+            Ok(value) => value,
+            Err(error) => panic!("scalar scan failed: {error:?}"),
         };
         assert_eq!(scalar_result.value, 14);
 
@@ -178,9 +178,9 @@ fn warmed_numexpr_destination_path_allocates_zero_heap() {
         {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
             for _ in 1..SCANS {
-                let scalar_result = match processor.scan_integer_retained() {
-                    crate::RetainedScalarScan::Complete(value) => value,
-                    crate::RetainedScalarScan::Failed(error) => {
+                let scalar_result = match processor.scan_integer() {
+                    Ok(value) => value,
+                    Err(error) => {
                         panic!("scalar scan failed: {error:?}")
                     }
                 };

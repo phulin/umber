@@ -33,8 +33,7 @@ fn token_register_assignment_returns_attempt_local_balanced_text() {
             &mut diagnostic_effects,
         );
         let index = processor
-            .scan_profile_register_index_retained()
-            .into_result()
+            .scan_profile_register_index()
             .expect("token register index");
         let (tokens, source) = processor
             .scan_token_list_value(owner, false)

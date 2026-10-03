@@ -10,10 +10,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         attributes: Option<ScannedBalancedText>,
         action: PdfActionSpec,
     ) -> Result<PdfNavigationRequest, CommandError> {
-        let result = self.scan_keyword_retained("count");
-        let count = if result.into_result()? {
-            let result = self.scan_integer_retained();
-            result.into_result()?.value
+        let result = self.scan_keyword("count");
+        let count = if result? {
+            let result = self.scan_integer();
+            result?.value
         } else {
             0
         };
@@ -32,8 +32,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         dimensions: tex_state::PdfAnnotationDimensions,
         attributes: Option<ScannedBalancedText>,
     ) -> Result<PdfNavigationRequest, CommandError> {
-        let result = self.scan_keyword_retained("name");
-        let name = result.into_result()?;
+        let result = self.scan_keyword("name");
+        let name = result?;
         if name {
             let text = self.scan_pdf_navigation_text()?;
             return Ok(PdfNavigationRequest::Thread(PdfThreadRequest {
@@ -44,11 +44,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }));
         }
 
-        let result = self.scan_keyword_retained("num");
-        let num = result.into_result()?;
+        let result = self.scan_keyword("num");
+        let num = result?;
         let identifier = if num {
-            let result = self.scan_integer_retained();
-            let value = result.into_result()?.value;
+            let result = self.scan_integer();
+            let value = result?.value;
             PdfActionIdentifier::Number(Self::finish_pdf_positive(
                 value,
                 "thread identifier",
@@ -106,8 +106,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         loop {
             match progress.phase {
                 PdfNavigationScalarPhase::AnnotationReserve => {
-                    let result = self.scan_keyword_retained("reserveobjnum");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("reserveobjnum");
+                    if result? {
                         return Ok(PdfNavigationRequest::Annotation(
                             PdfAnnotationRequest::Reserve,
                         ));
@@ -115,23 +115,23 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     progress.phase = PdfNavigationScalarPhase::AnnotationUse;
                 }
                 PdfNavigationScalarPhase::AnnotationUse => {
-                    let result = self.scan_keyword_retained("useobjnum");
-                    progress.phase = if result.into_result()? {
+                    let result = self.scan_keyword("useobjnum");
+                    progress.phase = if result? {
                         PdfNavigationScalarPhase::AnnotationUseObject
                     } else {
                         PdfNavigationScalarPhase::WidthKeyword
                     };
                 }
                 PdfNavigationScalarPhase::AnnotationUseObject => {
-                    let result = self.scan_integer_retained();
-                    progress.use_object = Some(result.into_result()?.value);
+                    let result = self.scan_integer();
+                    progress.use_object = Some(result?.value);
                     progress.phase = PdfNavigationScalarPhase::WidthKeyword;
                 }
                 PdfNavigationScalarPhase::WidthKeyword
                 | PdfNavigationScalarPhase::FitRWidthKeyword => {
-                    let result = self.scan_keyword_retained("width");
+                    let result = self.scan_keyword("width");
                     let fitr = progress.phase == PdfNavigationScalarPhase::FitRWidthKeyword;
-                    progress.phase = if result.into_result()? {
+                    progress.phase = if result? {
                         if fitr {
                             PdfNavigationScalarPhase::FitRWidthDimension
                         } else {
@@ -145,8 +145,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::WidthDimension
                 | PdfNavigationScalarPhase::FitRWidthDimension => {
-                    let result = self.scan_dimension_retained();
-                    progress.dimensions.width = Some(result.into_result()?);
+                    let result = self.scan_dimension();
+                    progress.dimensions.width = Some(result?);
                     progress.phase =
                         if progress.phase == PdfNavigationScalarPhase::FitRWidthDimension {
                             PdfNavigationScalarPhase::FitRWidthKeyword
@@ -156,9 +156,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::HeightKeyword
                 | PdfNavigationScalarPhase::FitRHeightKeyword => {
-                    let result = self.scan_keyword_retained("height");
+                    let result = self.scan_keyword("height");
                     let fitr = progress.phase == PdfNavigationScalarPhase::FitRHeightKeyword;
-                    progress.phase = if result.into_result()? {
+                    progress.phase = if result? {
                         if fitr {
                             PdfNavigationScalarPhase::FitRHeightDimension
                         } else {
@@ -172,8 +172,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::HeightDimension
                 | PdfNavigationScalarPhase::FitRHeightDimension => {
-                    let result = self.scan_dimension_retained();
-                    progress.dimensions.height = Some(result.into_result()?);
+                    let result = self.scan_dimension();
+                    progress.dimensions.height = Some(result?);
                     progress.phase =
                         if progress.phase == PdfNavigationScalarPhase::FitRHeightDimension {
                             PdfNavigationScalarPhase::FitRWidthKeyword
@@ -183,9 +183,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::DepthKeyword
                 | PdfNavigationScalarPhase::FitRDepthKeyword => {
-                    let result = self.scan_keyword_retained("depth");
+                    let result = self.scan_keyword("depth");
                     let fitr = progress.phase == PdfNavigationScalarPhase::FitRDepthKeyword;
-                    if result.into_result()? {
+                    if result? {
                         progress.phase = if fitr {
                             PdfNavigationScalarPhase::FitRDepthDimension
                         } else {
@@ -218,8 +218,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 PdfNavigationScalarPhase::DepthDimension
                 | PdfNavigationScalarPhase::FitRDepthDimension => {
-                    let result = self.scan_dimension_retained();
-                    progress.dimensions.depth = Some(result.into_result()?);
+                    let result = self.scan_dimension();
+                    progress.dimensions.depth = Some(result?);
                     progress.phase =
                         if progress.phase == PdfNavigationScalarPhase::FitRDepthDimension {
                             PdfNavigationScalarPhase::FitRWidthKeyword
@@ -228,8 +228,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         };
                 }
                 PdfNavigationScalarPhase::AttributeKeyword => {
-                    let result = self.scan_keyword_retained("attr");
-                    let has_attr = result.into_result()?;
+                    let result = self.scan_keyword("attr");
+                    let has_attr = result?;
                     match progress.primitive {
                         UnexpandablePrimitive::PdfStartLink => {
                             if has_attr {
@@ -281,25 +281,25 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                 }
                 PdfNavigationScalarPhase::DestinationStructure => {
-                    let result = self.scan_keyword_retained("struct");
-                    progress.phase = if result.into_result()? {
+                    let result = self.scan_keyword("struct");
+                    progress.phase = if result? {
                         PdfNavigationScalarPhase::DestinationStructureValue
                     } else {
                         PdfNavigationScalarPhase::DestinationName
                     };
                 }
                 PdfNavigationScalarPhase::DestinationStructureValue => {
-                    let result = self.scan_integer_retained();
+                    let result = self.scan_integer();
                     progress.structure = Some(Self::finish_pdf_positive(
-                        result.into_result()?.value,
+                        result?.value,
                         "struct identifier",
                         false,
                     )?);
                     progress.phase = PdfNavigationScalarPhase::DestinationName;
                 }
                 PdfNavigationScalarPhase::DestinationName => {
-                    let result = self.scan_keyword_retained("name");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("name");
+                    if result? {
                         let identifier = self.scan_pdf_navigation_text()?;
                         progress.identifier = Some(PdfActionIdentifier::Name(identifier.tokens));
                         progress.phase = PdfNavigationScalarPhase::DestinationXyz;
@@ -308,8 +308,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                 }
                 PdfNavigationScalarPhase::DestinationNumber => {
-                    let result = self.scan_keyword_retained("num");
-                    if !result.into_result()? {
+                    let result = self.scan_keyword("num");
+                    if !result? {
                         return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
@@ -317,34 +317,31 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     progress.phase = PdfNavigationScalarPhase::DestinationNumberValue;
                 }
                 PdfNavigationScalarPhase::DestinationNumberValue => {
-                    let result = self.scan_integer_retained();
-                    progress.identifier =
-                        Some(PdfActionIdentifier::Number(Self::finish_pdf_positive(
-                            result.into_result()?.value,
-                            "destination identifier",
-                            true,
-                        )?));
+                    let result = self.scan_integer();
+                    progress.identifier = Some(PdfActionIdentifier::Number(
+                        Self::finish_pdf_positive(result?.value, "destination identifier", true)?,
+                    ));
                     progress.phase = PdfNavigationScalarPhase::DestinationXyz;
                 }
                 PdfNavigationScalarPhase::DestinationXyz => {
-                    let result = self.scan_keyword_retained("xyz");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("xyz");
+                    if result? {
                         progress.phase = PdfNavigationScalarPhase::DestinationZoom;
                     } else {
                         progress.phase = PdfNavigationScalarPhase::DestinationFitBh;
                     }
                 }
                 PdfNavigationScalarPhase::DestinationZoom => {
-                    let result = self.scan_keyword_retained("zoom");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("zoom");
+                    if result? {
                         progress.phase = PdfNavigationScalarPhase::DestinationZoomValue;
                     } else {
                         return self.finish_pdf_destination(progress, Kind::Xyz { zoom: None });
                     }
                 }
                 PdfNavigationScalarPhase::DestinationZoomValue => {
-                    let result = self.scan_integer_retained();
-                    let zoom = result.into_result()?.value;
+                    let result = self.scan_integer();
+                    let zoom = result?.value;
                     if zoom > 1_073_741_823 {
                         return Err(CommandError::pdf_navigation(
                             "pdfTeX error (ext1): number too big",
@@ -395,8 +392,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         ),
                         _ => unreachable!(),
                     };
-                    let result = self.scan_keyword_retained(keyword);
-                    if result.into_result()? {
+                    let result = self.scan_keyword(keyword);
+                    if result? {
                         if progress.phase == PdfNavigationScalarPhase::DestinationFitR {
                             progress.dimensions = tex_state::PdfAnnotationDimensions::RUNNING;
                             progress.phase = PdfNavigationScalarPhase::FitRWidthKeyword;

@@ -240,42 +240,40 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             if let Some(scalar) = pending.scalar_scan.take() {
                 match scalar.phase {
                     AlignmentPreambleScalarPhase::TabskipEquals => {
-                        match self.scan_optional_equals_retained() {
-                            crate::RetainedScalarScan::Complete(_) => {
+                        match self.scan_optional_equals() {
+                            Ok(_) => {
                                 pending.scalar_scan = Some(AlignmentPreambleScalar {
                                     phase: AlignmentPreambleScalarPhase::TabskipGlue,
                                     _generation: PhantomData,
                                 });
                                 continue;
                             }
-                            crate::RetainedScalarScan::Failed(error) => {
+                            Err(error) => {
                                 self.abort_alignment_preamble(pending)?;
                                 return Err(error);
                             }
                         }
                     }
-                    AlignmentPreambleScalarPhase::TabskipGlue => {
-                        match self.scan_glue_retained(false) {
-                            crate::RetainedScalarScan::Complete(value) => {
-                                pending.current_tabskip = tex_state::node::GlueValue {
-                                    spec: value,
-                                    origin: if self.scanned_glue_shared_zero {
-                                        tex_state::node::GlueSpecOrigin::SharedZero
-                                    } else {
-                                        tex_state::node::GlueSpecOrigin::Owned
-                                    },
-                                };
-                                let global = self.state.int_param(IntParam::GLOBAL_DEFS) > 0;
-                                self.state
-                                    .define_preamble_tabskip(pending.current_tabskip, global);
-                                continue;
-                            }
-                            crate::RetainedScalarScan::Failed(error) => {
-                                self.abort_alignment_preamble(pending)?;
-                                return Err(error);
-                            }
+                    AlignmentPreambleScalarPhase::TabskipGlue => match self.scan_glue(false) {
+                        Ok(value) => {
+                            pending.current_tabskip = tex_state::node::GlueValue {
+                                spec: value,
+                                origin: if self.scanned_glue_shared_zero {
+                                    tex_state::node::GlueSpecOrigin::SharedZero
+                                } else {
+                                    tex_state::node::GlueSpecOrigin::Owned
+                                },
+                            };
+                            let global = self.state.int_param(IntParam::GLOBAL_DEFS) > 0;
+                            self.state
+                                .define_preamble_tabskip(pending.current_tabskip, global);
+                            continue;
                         }
-                    }
+                        Err(error) => {
+                            self.abort_alignment_preamble(pending)?;
+                            return Err(error);
+                        }
+                    },
                 }
             }
             let mut destination = None;

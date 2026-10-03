@@ -332,7 +332,7 @@ fn macro_stack_conservation_reads_only_admitted_cursor_bounds() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn resource_capable_scalar_scans_expose_typed_products_and_keep_raw_entries_private() {
+fn resource_capable_scalar_scans_expose_direct_results_and_keep_phases_private() {
     let repository = test_support::repository_root();
     let manifest_dir = repository.join("crates/tex-command");
     let scalar = fs::read_to_string(manifest_dir.join("src/scanners/scalar.rs"))
@@ -346,26 +346,17 @@ fn resource_capable_scalar_scans_expose_typed_products_and_keep_raw_entries_priv
         .join("\n");
 
     for forbidden in [
-        "pub fn scan_optional_equals(",
-        "pub fn scan_keyword(",
-        "pub fn scan_integer(",
-        "pub fn scan_dimension(",
-        "pub fn scan_mu_dimension(",
-        "pub fn scan_glue(",
-        "pub fn scan_internal_value_or_zero(",
+        "pub fn scan_integer_operand(",
+        "pub fn scan_dimension_from_leading(",
         "pub fn scan_the_internal_value(",
-        "pub fn scan_character_number(",
-        "pub fn scan_eight_bit_register_index(",
-        "pub fn scan_profile_register_index(",
-        "pub fn scan_extended_register_index(",
     ] {
         assert!(
             !scalar.contains(forbidden),
-            "resource-capable scalar entry must stay private: {forbidden}"
+            "scanner phases stay private: {forbidden}"
         );
     }
-    assert!(!font.contains("pub fn scan_font_selector("));
-    assert!(!structured.contains("pub fn scan_file_name("));
+    assert!(font.contains("pub fn scan_font_selector("));
+    assert!(structured.contains("pub fn scan_file_name("));
 
     // Native internal consumers run synchronously under the current processor
     // loan. Their real typed result needs no retained command handoff.
@@ -374,8 +365,9 @@ fn resource_capable_scalar_scans_expose_typed_products_and_keep_raw_entries_priv
     assert!(!scalar.contains("fn scan_the_internal_value_retained("));
     assert!(!scalar.contains("fn scan_internal_value_or_zero_from_target("));
 
-    assert!(scalar.contains("pub enum RetainedScalarScan<T>"));
     for forbidden in [
+        "RetainedScalarScan",
+        "detach_retained_scalar",
         "ScalarScanFrame",
         "ScalarScanValue",
         "ScalarScanStatus",
@@ -398,17 +390,17 @@ fn resource_capable_scalar_scans_expose_typed_products_and_keep_raw_entries_priv
         "src/scanners/token_list.rs",
     ];
     let forbidden_calls = [
-        ".scan_optional_equals()",
-        ".scan_keyword(",
-        ".scan_integer()",
-        ".scan_dimension()",
-        ".scan_mu_dimension()",
-        ".scan_glue(",
-        ".scan_character_number()",
-        ".scan_eight_bit_register_index()",
-        ".scan_profile_register_index()",
-        ".scan_extended_register_index()",
-        ".scan_font_selector()",
+        ".scan_optional_equals_retained()",
+        ".scan_keyword_retained(",
+        ".scan_integer_retained()",
+        ".scan_dimension_retained()",
+        ".scan_mu_dimension_retained()",
+        ".scan_glue_retained(",
+        ".scan_character_number_retained()",
+        ".scan_eight_bit_register_index_retained()",
+        ".scan_profile_register_index_retained()",
+        ".scan_extended_register_index_retained()",
+        ".scan_font_selector_retained()",
     ];
     for path in raw_callers
         .iter()

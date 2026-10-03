@@ -49,13 +49,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         loop {
             match phase {
                 PdfGraphicsScalarPhase::LiteralShipout => {
-                    let result = self.scan_keyword_retained("shipout");
-                    let deferred = result.into_result()?;
+                    let result = self.scan_keyword("shipout");
+                    let deferred = result?;
                     phase = PdfGraphicsScalarPhase::LiteralDirect { deferred };
                 }
                 PdfGraphicsScalarPhase::LiteralDirect { deferred } => {
-                    let result = self.scan_keyword_retained("direct");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("direct");
+                    if result? {
                         return self.finish_pdf_graphics_literal(
                             tex_state::node::PdfLiteralMode::Direct,
                             deferred,
@@ -64,8 +64,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     phase = PdfGraphicsScalarPhase::LiteralPage { deferred };
                 }
                 PdfGraphicsScalarPhase::LiteralPage { deferred } => {
-                    let result = self.scan_keyword_retained("page");
-                    let page = result.into_result()?;
+                    let result = self.scan_keyword("page");
+                    let page = result?;
                     let mode = if page {
                         tex_state::node::PdfLiteralMode::Page
                     } else {
@@ -74,29 +74,29 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     return self.finish_pdf_graphics_literal(mode, deferred);
                 }
                 PdfGraphicsScalarPhase::ColorId => {
-                    let result = self.scan_integer_retained();
-                    let id = result.into_result()?.value;
+                    let result = self.scan_integer();
+                    let id = result?.value;
                     phase = PdfGraphicsScalarPhase::ColorSet { id };
                 }
                 PdfGraphicsScalarPhase::ColorSet { id } => {
-                    let result = self.scan_keyword_retained("set");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("set");
+                    if result? {
                         return self
                             .finish_pdf_color_stack_text(id, PendingPdfColorStackAction::Set);
                     }
                     phase = PdfGraphicsScalarPhase::ColorPush { id };
                 }
                 PdfGraphicsScalarPhase::ColorPush { id } => {
-                    let result = self.scan_keyword_retained("push");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("push");
+                    if result? {
                         return self
                             .finish_pdf_color_stack_text(id, PendingPdfColorStackAction::Push);
                     }
                     phase = PdfGraphicsScalarPhase::ColorPop { id };
                 }
                 PdfGraphicsScalarPhase::ColorPop { id } => {
-                    let result = self.scan_keyword_retained("pop");
-                    if result.into_result()? {
+                    let result = self.scan_keyword("pop");
+                    if result? {
                         return Ok(Some(Request::ColorStack {
                             id,
                             action: Some(Action::Pop),
@@ -105,21 +105,21 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     phase = PdfGraphicsScalarPhase::ColorCurrent { id };
                 }
                 PdfGraphicsScalarPhase::ColorCurrent { id } => {
-                    let result = self.scan_keyword_retained("current");
-                    let current = result.into_result()?;
+                    let result = self.scan_keyword("current");
+                    let current = result?;
                     return Ok(Some(Request::ColorStack {
                         id,
                         action: current.then_some(Action::Current),
                     }));
                 }
                 PdfGraphicsScalarPhase::SnapY => {
-                    let result = self.scan_glue_retained(false);
-                    let glue = result.into_result()?;
+                    let result = self.scan_glue(false);
+                    let glue = result?;
                     return Ok(Some(Request::SnapY { glue }));
                 }
                 PdfGraphicsScalarPhase::SnapYComp => {
-                    let result = self.scan_integer_retained();
-                    let ratio = result.into_result()?.value.clamp(0, 1000) as u16;
+                    let result = self.scan_integer();
+                    let ratio = result?.value.clamp(0, 1000) as u16;
                     return Ok(Some(Request::SnapYComp { ratio }));
                 }
             }

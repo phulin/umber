@@ -386,3 +386,17 @@ metadata before inserting the inaccessible target and reporting the error.
 Frozen tokens retain the section 1215 consume-without-backup rule. The scanner
 keeps its existing EOF retry. There is no target-projection enum, cached-identity
 validation, non-space command-fetch wrapper or ordinary `CurrentCommand`.
+
+## Direct scanner results
+
+Scalar and structured scans return their actual value or `CommandError` through
+Rust `Result`. The custom `RetainedScalarScan` union, `into_result`/`map`
+projections, identity detach routine, `_retained` entry wrappers and font child
+forwarder are deleted. Callers use the actual scanners directly; no aliases or
+backwards-compatible scanner methods remain.
+
+The integer, dimension, glue and filename scanners retain their existing
+resource-failure unwind points, including scratch and filename lifetime rules.
+Register selectors continue to apply their profile-specific restricted integer
+bounds and recovery. Integer and internal-value origins remain with actual
+diagnostic consumers; this change does not introduce new provenance products.

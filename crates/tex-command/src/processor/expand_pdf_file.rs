@@ -16,16 +16,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// consumed operands.
     pub(super) fn expand_pdf_file_dump(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let mut offset = 0;
-        if self.scan_keyword_retained("offset").into_result()? {
-            offset = self.scan_integer_retained().into_result()?.value;
+        if self.scan_keyword("offset")? {
+            offset = self.scan_integer()?.value;
             if offset < 0 {
                 self.pdftex_file_range_diagnostic("offset", offset);
                 offset = 0;
             }
         }
         let mut length = 0;
-        if self.scan_keyword_retained("length").into_result()? {
-            length = self.scan_integer_retained().into_result()?.value;
+        if self.scan_keyword("length")? {
+            length = self.scan_integer()?.value;
             if length < 0 {
                 self.pdftex_file_range_diagnostic("length", length);
                 length = 0;
@@ -98,7 +98,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// pdftex.web §1590's string/file MD5 conversion.
     pub(super) fn expand_pdf_md_five_sum(&mut self, opener: OriginId) -> Result<(), CommandError> {
         use md5::{Digest, Md5};
-        let file = self.scan_keyword_retained("file").into_result()?;
+        let file = self.scan_keyword("file")?;
         let tokens = self.scan_balanced_text(true)?.tokens;
         let mut bytes = self.attempt_token_list_bytes(tokens)?;
         if file {

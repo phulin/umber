@@ -52,13 +52,10 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             let index = if code == codes::COUNT_REGISTER {
                 Meaning::runtime_word_operand(word) as u16
             } else {
-                take_native_scalar!(
-                    processor.scan_profile_register_index_retained(),
-                    scan_origin
-                )
+                take_native_scalar!(processor.scan_profile_register_index(), scan_origin)
             };
-            let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
-            let value = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+            let _ = take_native_scalar!(processor.scan_optional_equals(), scan_origin);
+            let value = take_native_scalar!(processor.scan_integer(), scan_origin).value;
             let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
@@ -84,13 +81,10 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             let index = if code == codes::DIMEN_REGISTER {
                 Meaning::runtime_word_operand(word) as u16
             } else {
-                take_native_scalar!(
-                    processor.scan_profile_register_index_retained(),
-                    scan_origin
-                )
+                take_native_scalar!(processor.scan_profile_register_index(), scan_origin)
             };
-            let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
-            let value = take_native_scalar!(processor.scan_dimension_retained(), scan_origin);
+            let _ = take_native_scalar!(processor.scan_optional_equals(), scan_origin);
+            let value = take_native_scalar!(processor.scan_dimension(), scan_origin);
             let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
@@ -120,13 +114,10 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             let index = if matches!(code, codes::SKIP_REGISTER | codes::MUSKIP_REGISTER) {
                 Meaning::runtime_word_operand(word) as u16
             } else {
-                take_native_scalar!(
-                    processor.scan_profile_register_index_retained(),
-                    scan_origin
-                )
+                take_native_scalar!(processor.scan_profile_register_index(), scan_origin)
             };
-            let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
-            let value = take_native_scalar!(processor.scan_glue_retained(mu), scan_origin);
+            let _ = take_native_scalar!(processor.scan_optional_equals(), scan_origin);
+            let value = take_native_scalar!(processor.scan_glue(mu), scan_origin);
             let source_identity = processor.scanned_glue_identity();
             let source_register = processor.scanned_glue_register();
             let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
@@ -187,8 +178,8 @@ pub(super) fn execute_assignment<'state, 'host, G>(
         }
         codes::INT_PARAM => {
             let index = Meaning::runtime_word_operand(word) as u16;
-            let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
-            let value = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
+            let _ = take_native_scalar!(processor.scan_optional_equals(), scan_origin);
+            let value = take_native_scalar!(processor.scan_integer(), scan_origin).value;
             let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
@@ -213,8 +204,8 @@ pub(super) fn execute_assignment<'state, 'host, G>(
         }
         codes::DIMEN_PARAM => {
             let index = Meaning::runtime_word_operand(word) as u16;
-            let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
-            let value = take_native_scalar!(processor.scan_dimension_retained(), scan_origin);
+            let _ = take_native_scalar!(processor.scan_optional_equals(), scan_origin);
+            let value = take_native_scalar!(processor.scan_dimension(), scan_origin);
             let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
@@ -240,8 +231,8 @@ pub(super) fn execute_assignment<'state, 'host, G>(
         codes::GLUE_PARAM | codes::MU_GLUE_PARAM => {
             let index = Meaning::runtime_word_operand(word) as u16;
             let mu = code == codes::MU_GLUE_PARAM;
-            let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
-            let value = take_native_scalar!(processor.scan_glue_retained(mu), scan_origin);
+            let _ = take_native_scalar!(processor.scan_optional_equals(), scan_origin);
+            let value = take_native_scalar!(processor.scan_glue(mu), scan_origin);
             let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
@@ -346,10 +337,7 @@ pub(super) fn execute_assignment<'state, 'host, G>(
                 )
             })?;
             let index = if code == codes::PRIMITIVE_TOKS {
-                take_native_scalar!(
-                    processor.scan_profile_register_index_retained(),
-                    scan_origin
-                )
+                take_native_scalar!(processor.scan_profile_register_index(), scan_origin)
             } else {
                 Meaning::runtime_word_operand(word) as u16
             };

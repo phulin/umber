@@ -782,3 +782,8 @@ actual control-sequence or active-character identity. Its cached target
 projection enum, command-only non-space fetch wrapper and test-only metadata
 clearer are deleted. Malformed and frozen targets retain section 1215's exact
 backup, insertion and report order, including exceptional delivery metadata.
+
+Scanners expose actual direct `Result` entry points. The custom retained scalar
+result enum and conversions, identity detach function and `_retained` scanner
+forwarders are deleted. Actual scratch/filename unwinding remains in its owning
+scanner. Restricted register bounds and recovery remain unchanged.

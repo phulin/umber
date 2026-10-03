@@ -26,7 +26,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         ),
         CommandError,
     > {
-        self.scan_optional_equals_retained().into_result()?;
+        self.scan_optional_equals()?;
         let mut value = None;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
             let meaning = match meaning {
@@ -43,9 +43,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
 
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
-                    let index = processor
-                        .scan_profile_register_index_retained()
-                        .into_result()?;
+                    let index = processor.scan_profile_register_index()?;
                     let source = processor
                         .state
                         .token_register(index)

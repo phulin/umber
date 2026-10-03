@@ -263,8 +263,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             UnexpandablePrimitive::GlueToMu => (false, "glue_to_mu", true),
             _ => unreachable!("only e-TeX glue conversions reach this scanner"),
         };
-        let scan = self.scan_glue_retained(scan_mu);
-        let value = self.restore_retained_expression_child(scan)?;
+        let scan = self.scan_glue(scan_mu);
+        let value = scan?;
         self.observe(CommandObservation::Scanner(ScannerRecord {
             kind: scanner,
             value: glue_value(value),
@@ -349,18 +349,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let factor_kind = frame.factor_kind();
                     let value = match factor_kind {
                         ExpressionKind::Integer => {
-                            let result = self.scan_integer_retained();
-                            self.restore_retained_expression_child(result)
-                                .map(|value| ExpressionValue::Number(i64::from(value.value)))
+                            let result = self.scan_integer();
+                            result.map(|value| ExpressionValue::Number(i64::from(value.value)))
                         }
                         ExpressionKind::Dimension => {
-                            let result = self.scan_dimension_retained();
-                            self.restore_retained_expression_child(result)
-                                .map(|value| ExpressionValue::Number(i64::from(value.raw())))
+                            let result = self.scan_dimension();
+                            result.map(|value| ExpressionValue::Number(i64::from(value.raw())))
                         }
                         ExpressionKind::Glue => {
-                            let result = self.scan_glue_retained(false);
-                            self.restore_retained_expression_child(result).map(|value| {
+                            let result = self.scan_glue(false);
+                            result.map(|value| {
                                 ExpressionValue::Glue(ExpressionGlue::from_spec(
                                     value,
                                     self.scanned_glue_identity,
@@ -370,8 +368,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             })
                         }
                         ExpressionKind::MuGlue => {
-                            let result = self.scan_glue_retained(true);
-                            self.restore_retained_expression_child(result).map(|value| {
+                            let result = self.scan_glue(true);
+                            result.map(|value| {
                                 ExpressionValue::Glue(ExpressionGlue::from_spec(
                                     value,
                                     self.scanned_glue_identity,
@@ -431,16 +429,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             };
             frame = parent;
             phase = ExpressionPhase::Operator { factor: completed };
-        }
-    }
-
-    fn restore_retained_expression_child<T>(
-        &mut self,
-        result: crate::RetainedScalarScan<T>,
-    ) -> Result<T, CommandError> {
-        match result {
-            crate::RetainedScalarScan::Complete(value) => Ok(value),
-            crate::RetainedScalarScan::Failed(error) => Err(error),
         }
     }
 

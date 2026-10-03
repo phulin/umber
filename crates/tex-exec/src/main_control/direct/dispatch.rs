@@ -1316,7 +1316,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             (_, codes::PRIMITIVE_H_SKIP) => {
                                 return {
                                     let value = take_native_scalar!(
-                                        processor.scan_glue_retained(false),
+                                        processor.scan_glue(false),
                                         scan_origin
                                     );
                                     let shared_zero_glue = processor.scanned_glue_shared_zero();
@@ -1338,7 +1338,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             (_, codes::PRIMITIVE_KERN) => {
                                 return {
                                     let value = take_native_scalar!(
-                                        processor.scan_dimension_retained(),
+                                        processor.scan_dimension(),
                                         scan_origin
                                     );
                                     retained_semantic!(
@@ -1362,11 +1362,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::PRIMITIVE_PENALTY) => {
                                 return {
-                                    let value = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value;
+                                    let value =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value;
                                     finish_scan!(self.execute_penalty(value))
                                 };
                             }
@@ -1377,11 +1375,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
                                     return {
                                         let _ = take_native_scalar!(
-                                            processor.scan_optional_equals_retained(),
+                                            processor.scan_optional_equals(),
                                             scan_origin
                                         );
                                         let value = take_native_scalar!(
-                                            processor.scan_dimension_retained(),
+                                            processor.scan_dimension(),
                                             scan_origin
                                         );
                                         finish_scan!(self.execute_prev_depth(value))
@@ -1419,14 +1417,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                             (_, codes::PRIMITIVE_INTERACTION_MODE) => {
                                 return {
                                     let _ = take_native_scalar!(
-                                        processor.scan_optional_equals_retained(),
+                                        processor.scan_optional_equals(),
                                         scan_origin
                                     );
-                                    let value = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value;
+                                    let value =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value;
                                     let context = processor.diagnostic_context_coordinate();
                                     finish_scan!(
                                         self.execute_set_interaction_mode_value(value, context)
@@ -1437,11 +1433,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
                                     return {
                                         let _ = take_native_scalar!(
-                                            processor.scan_optional_equals_retained(),
+                                            processor.scan_optional_equals(),
                                             scan_origin
                                         );
                                         let value = take_native_scalar!(
-                                            processor.scan_integer_retained(),
+                                            processor.scan_integer(),
                                             scan_origin
                                         )
                                         .value;
@@ -1457,14 +1453,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                             (_, codes::PRIMITIVE_PREV_GRAF) => {
                                 return {
                                     let _ = take_native_scalar!(
-                                        processor.scan_optional_equals_retained(),
+                                        processor.scan_optional_equals(),
                                         scan_origin
                                     );
-                                    let value = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value;
+                                    let value =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value;
                                     finish_scan!(self.execute_prev_graf(value))
                                 };
                             }
@@ -1473,11 +1467,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     .active_macro_origin()
                                     .unwrap_or_else(|| command.origin());
                                 return {
-                                    let value = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value;
+                                    let value =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value;
                                     finish_scan!(self.execute_character_code(value, origin, false))
                                 };
                             }
@@ -1573,7 +1565,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                             {
                                 return {
                                     let value = take_native_scalar!(
-                                        processor.scan_glue_retained(false),
+                                        processor.scan_glue(false),
                                         scan_origin
                                     );
                                     let shared_zero_glue = processor.scanned_glue_shared_zero();
@@ -1654,16 +1646,14 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 );
                                 return {
                                     let _ = take_native_scalar!(
-                                        processor.scan_optional_equals_retained(),
+                                        processor.scan_optional_equals(),
                                         scan_origin
                                     );
-                                    let count = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value
-                                    .max(0)
-                                        as usize;
+                                    let count =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value
+                                            .max(0)
+                                            as usize;
                                     let mut lines = Vec::new();
                                     (lines
                                         .try_reserve_exact(count)
@@ -1671,11 +1661,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     for _ in 0..count {
                                         let indent = take_native_scalar!(
-                                            processor.scan_dimension_retained(),
+                                            processor.scan_dimension(),
                                             scan_origin
                                         );
                                         let width = take_native_scalar!(
-                                            processor.scan_dimension_retained(),
+                                            processor.scan_dimension(),
                                             scan_origin
                                         );
                                         lines.push(ParagraphShapeLine { indent, width });
@@ -1734,11 +1724,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     };
                                     return {
                                         let _ = take_native_scalar!(
-                                            processor.scan_optional_equals_retained(),
+                                            processor.scan_optional_equals(),
                                             scan_origin
                                         );
                                         let count = take_native_scalar!(
-                                            processor.scan_integer_retained(),
+                                            processor.scan_integer(),
                                             scan_origin
                                         )
                                         .value
@@ -1751,7 +1741,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         .map_err(|error| scan_error(error, scan_origin))?;
                                         for _ in 0..count {
                                             let value = take_native_scalar!(
-                                                processor.scan_integer_retained(),
+                                                processor.scan_integer(),
                                                 scan_origin
                                             )
                                             .value;
@@ -1780,11 +1770,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                                 {
                                     let _ = take_native_scalar!(
-                                        processor.scan_optional_equals_retained(),
+                                        processor.scan_optional_equals(),
                                         scan_origin
                                     );
                                     let value = take_native_scalar!(
-                                        processor.scan_dimension_retained(),
+                                        processor.scan_dimension(),
                                         scan_origin
                                     );
                                     finish_scan!(self.execute_page_dimension(dimension, value))
@@ -1800,14 +1790,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                                 {
                                     let _ = take_native_scalar!(
-                                        processor.scan_optional_equals_retained(),
+                                        processor.scan_optional_equals(),
                                         scan_origin
                                     );
-                                    let value = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value;
+                                    let value =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value;
                                     finish_scan!(self.execute_page_integer(integer, value))
                                 }
                             }
@@ -1958,7 +1946,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         if primitive == UnexpandablePrimitive::PdfRefXImage {
                                             return {
                                                 let value = take_native_scalar!(
-                                                    processor.scan_integer_retained(),
+                                                    processor.scan_integer(),
                                                     scan_origin
                                                 )
                                                 .value;
@@ -1982,11 +1970,9 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::PRIMITIVE_PDF_SET_RANDOM_SEED) => {
                                 return {
-                                    let value = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value;
+                                    let value =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value;
                                     finish_scan!(
                                         self.execute_pdf_set_random_seed(value.saturating_abs())
                                     )
@@ -2328,24 +2314,22 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::PRIMITIVE_FONT_DIMEN) => {
                                 return {
-                                    let number = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value;
+                                    let number =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value;
                                     let font = take_native_scalar!(
-                                        processor.scan_font_selector_retained(),
+                                        processor.scan_font_selector(),
                                         scan_origin
                                     );
                                     let recovery_context = (!processor
                                         .font_dimen_writable(font, number))
                                     .then(|| processor.error_context());
                                     let _ = take_native_scalar!(
-                                        processor.scan_optional_equals_retained(),
+                                        processor.scan_optional_equals(),
                                         scan_origin
                                     );
                                     let value = take_native_scalar!(
-                                        processor.scan_dimension_retained(),
+                                        processor.scan_dimension(),
                                         scan_origin
                                     );
                                     {
@@ -2373,15 +2357,15 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 {
                                     {
                                         let font = take_native_scalar!(
-                                            processor.scan_font_selector_retained(),
+                                            processor.scan_font_selector(),
                                             scan_origin
                                         );
                                         let _ = take_native_scalar!(
-                                            processor.scan_optional_equals_retained(),
+                                            processor.scan_optional_equals(),
                                             scan_origin
                                         );
                                         let value = take_native_scalar!(
-                                            processor.scan_integer_retained(),
+                                            processor.scan_integer(),
                                             scan_origin
                                         )
                                         .value;
@@ -2406,20 +2390,17 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::PRIMITIVE_OPEN_OUT) => {
                                 let stream = take_native_scalar!(
-                                    processor.scan_restricted_integer_retained(
-                                        RestrictedIntegerClass::FourBit
-                                    ),
+                                    processor
+                                        .scan_restricted_integer(RestrictedIntegerClass::FourBit),
                                     scan_origin
                                 )
                                 .value as u8;
                                 let _ = take_native_scalar!(
-                                    processor.scan_optional_equals_retained(),
+                                    processor.scan_optional_equals(),
                                     scan_origin
                                 );
-                                let file_name = take_native_scalar!(
-                                    processor.scan_file_name_retained(),
-                                    scan_origin
-                                );
+                                let file_name =
+                                    take_native_scalar!(processor.scan_file_name(), scan_origin);
                                 return finish_scan!(
                                     self.execute_deferred_open_out(stream, file_name.packed())
                                 );
@@ -2438,30 +2419,24 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // both DVI and PDF mode.
                                 return {
                                     let font = take_native_scalar!(
-                                        processor.scan_font_selector_retained(),
+                                        processor.scan_font_selector(),
                                         scan_origin
                                     );
                                     let _ = take_native_scalar!(
-                                        processor.scan_optional_equals_retained(),
+                                        processor.scan_optional_equals(),
                                         scan_origin
                                     );
-                                    let stretch = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value;
-                                    let shrink = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value;
-                                    let step = take_native_scalar!(
-                                        processor.scan_integer_retained(),
-                                        scan_origin
-                                    )
-                                    .value;
+                                    let stretch =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value;
+                                    let shrink =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value;
+                                    let step =
+                                        take_native_scalar!(processor.scan_integer(), scan_origin)
+                                            .value;
                                     let auto_expand = take_native_scalar!(
-                                        processor.scan_keyword_retained("autoexpand"),
+                                        processor.scan_keyword("autoexpand"),
                                         scan_origin
                                     );
                                     let mut spec = tex_typeset::expansion::FontExpansionSpec::new(
@@ -2583,7 +2558,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
                                     return {
                                         let value = take_native_scalar!(
-                                            processor.scan_integer_retained(),
+                                            processor.scan_integer(),
                                             scan_origin
                                         )
                                         .value;
@@ -2684,11 +2659,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 {
                                     {
                                         let font = take_native_scalar!(
-                                            processor.scan_font_selector_retained(),
+                                            processor.scan_font_selector(),
                                             scan_origin
                                         );
                                         let character = take_native_scalar!(
-                                            processor.scan_restricted_integer_retained(
+                                            processor.scan_restricted_integer(
                                                 RestrictedIntegerClass::CharacterCode
                                             ),
                                             scan_origin
@@ -2697,11 +2672,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         let character = u8::try_from(character)
                                             .expect("pdfTeX character scanner is byte bounded");
                                         let _ = take_native_scalar!(
-                                            processor.scan_optional_equals_retained(),
+                                            processor.scan_optional_equals(),
                                             scan_origin
                                         );
                                         let value = take_native_scalar!(
-                                            processor.scan_integer_retained(),
+                                            processor.scan_integer(),
                                             scan_origin
                                         )
                                         .value;
@@ -2730,7 +2705,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 return {
                                     {
                                         let font = take_native_scalar!(
-                                            processor.scan_font_selector_retained(),
+                                            processor.scan_font_selector(),
                                             scan_origin
                                         );
                                         {
@@ -3416,12 +3391,13 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     0
                                 } else {
                                     take_native_scalar!(
-                                        processor.scan_extended_register_index_retained(),
+                                        processor.scan_extended_register_index(),
                                         scan_origin
                                     )
                                 };
-                                let scan = processor.scan_balanced_text_retained(true);
-                                let tokens = retain_operation_child(processor, scan)
+                                let scan = processor.scan_balanced_text(true);
+                                let tokens = scan
+                                    .map_err(command_error)
                                     .map_err(|error| scan_error(error, scan_origin))?
                                     .tokens;
                                 return retained_semantic!(

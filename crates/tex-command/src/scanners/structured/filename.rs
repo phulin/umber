@@ -3,16 +3,11 @@ use super::*;
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX's `scan_file_name`, returning a typed boundary instead of an input
     /// cursor or a backed-up raw command.
-    fn scan_file_name(&mut self) -> Result<ScannedFileName, CommandError> {
+    pub fn scan_file_name(&mut self) -> Result<ScannedFileName, CommandError> {
         self.command.begin_file_name()?;
         let result = self.scan_file_name_inner();
         self.command.end_file_name();
         result
-    }
-
-    pub fn scan_file_name_retained(&mut self) -> crate::RetainedScalarScan<ScannedFileName> {
-        let result = self.scan_file_name();
-        self.detach_retained_scalar(result)
     }
 
     fn scan_file_name_inner(&mut self) -> Result<ScannedFileName, CommandError> {

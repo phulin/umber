@@ -114,20 +114,20 @@ pub(super) fn scan_code_table_operands<G, Facts: tex_command::CommandHostFacts<G
     processor: &mut CommandProcessor<'_, '_, G, Facts>,
 ) -> Result<(char, i32), ExecError> {
     let character =
-        match processor.scan_restricted_integer_retained(RestrictedIntegerClass::CharacterCode) {
-            tex_command::RetainedScalarScan::Complete(value) => value,
-            tex_command::RetainedScalarScan::Failed(error) => return Err(command_error(error)),
+        match processor.scan_restricted_integer(RestrictedIntegerClass::CharacterCode) {
+            Ok(value) => value,
+            Err(error) => return Err(command_error(error)),
         }
         .value;
     let character =
         char::from_u32(character as u32).expect("scan_char_num returns a valid character");
-    let _ = match processor.scan_optional_equals_retained() {
-        tex_command::RetainedScalarScan::Complete(value) => value,
-        tex_command::RetainedScalarScan::Failed(error) => return Err(command_error(error)),
+    let _ = match processor.scan_optional_equals() {
+        Ok(value) => value,
+        Err(error) => return Err(command_error(error)),
     };
-    let value = match processor.scan_integer_retained() {
-        tex_command::RetainedScalarScan::Complete(value) => value,
-        tex_command::RetainedScalarScan::Failed(error) => return Err(command_error(error)),
+    let value = match processor.scan_integer() {
+        Ok(value) => value,
+        Err(error) => return Err(command_error(error)),
     }
     .value;
     Ok((character, value))
@@ -314,14 +314,4 @@ pub(super) fn prepare_command_trace<G, Facts: tex_command::CommandHostFacts<G>>(
     let mode_prefix = (tracing_can_consume_prefix && shown_mode != Some(mode))
         .then(|| mode_text_for_command_trace(mode).into());
     processor.set_command_trace_mode_prefix(mode_prefix);
-}
-
-pub(super) fn retain_operation_child<G, T, Facts: tex_command::CommandHostFacts<G>>(
-    _processor: &mut CommandProcessor<'_, '_, G, Facts>,
-    scan: tex_command::RetainedScalarScan<T>,
-) -> Result<T, ExecError> {
-    match scan {
-        tex_command::RetainedScalarScan::Complete(value) => Ok(value),
-        tex_command::RetainedScalarScan::Failed(error) => Err(command_error(error)),
-    }
 }

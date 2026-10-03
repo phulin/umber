@@ -86,8 +86,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         opener: OriginId,
         roman: bool,
     ) -> Result<(), CommandError> {
-        let scan = self.scan_integer_retained();
-        let value = scan.into_result()?.value;
+        let scan = self.scan_integer();
+        let value = scan?.value;
         let text = if roman {
             roman_numeral(value)
         } else {
@@ -142,8 +142,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// `scan_font_ident` is the only routine that turns a command into a
     /// font, including its invalid-identifier recovery to `nullfont`.
     pub(super) fn expand_fontname(&mut self, opener: OriginId) -> Result<(), CommandError> {
-        let scan = self.scan_font_selector_retained();
-        let font = scan.into_result()?;
+        let scan = self.scan_font_selector();
+        let font = scan?;
         let mut name = self.state.font_name(font);
         let size = self.state.font_size(font);
         if size != self.state.font_design_size(font) {
@@ -160,8 +160,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     pub(super) fn expand_pdf_font_size(&mut self, opener: OriginId) -> Result<(), CommandError> {
-        let scan = self.scan_font_selector_retained();
-        let font = scan.into_result()?;
+        let scan = self.scan_font_selector();
+        let font = scan?;
         let size = format_scaled(self.state.tracked_font_size(font));
         self.push_rendered_text(&size, opener);
         Ok(())
@@ -171,7 +171,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// this enquiry reports the selected font's external name without
     /// reserving any PDF resource identity.
     pub(super) fn expand_pdf_font_name(&mut self, opener: OriginId) -> Result<(), CommandError> {
-        let font = self.scan_font_selector_retained().into_result()?;
+        let font = self.scan_font_selector()?;
         let name = self.state.font_name(font);
         self.push_rendered_text(&name, opener);
         Ok(())
@@ -183,7 +183,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         opener: OriginId,
     ) -> Result<(), CommandError> {
-        let font = self.scan_font_selector_retained().into_result()?;
+        let font = self.scan_font_selector()?;
         let object = self
             .state
             .pdf_font_resource(font)
@@ -197,8 +197,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         opener: OriginId,
         primitive: ExpandablePrimitive,
     ) -> Result<(), CommandError> {
-        let scan = self.scan_extended_register_index_retained();
-        let index = scan.into_result()?;
+        let scan = self.scan_extended_register_index();
+        let index = scan?;
         let side = match primitive {
             ExpandablePrimitive::LeftMarginKern => tex_state::node::MarginKernSide::Left,
             ExpandablePrimitive::RightMarginKern => tex_state::node::MarginKernSide::Right,
@@ -229,8 +229,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<(), CommandError> {
         // e-TeX 2.6 `etex.ch` [26.1178] uses the same
         // `scan_register_num` as numbered marks and sparse registers.
-        let scan = self.scan_extended_register_index_retained();
-        let class = scan.into_result()?;
+        let scan = self.scan_extended_register_index();
+        let class = scan?;
         // e-TeX 2.6 etex.ch [25.386] makes class zero an exact alias for
         // TeX82's `cur_mark`, including its null-versus-empty pointer state.
         let tokens = self

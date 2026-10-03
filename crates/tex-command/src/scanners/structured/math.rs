@@ -42,8 +42,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             MathFieldRestrictedKind::MathCharacter => RestrictedIntegerClass::FifteenBit,
             MathFieldRestrictedKind::Delimiter => RestrictedIntegerClass::TwentySevenBit,
         };
-        let result = self.scan_restricted_integer_retained(class);
-        let scanned = result.into_result()?;
+        let result = self.scan_restricted_integer(class);
+        let scanned = result?;
         let (code, provenance) = match kind {
             MathFieldRestrictedKind::Character => {
                 let ch = char::from_u32(scanned.value as u32)
@@ -283,8 +283,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     /// Scans TeX82 §436's `scan_fifteen_bit_int` math-character number.
     pub fn scan_math_character(&mut self) -> Result<ScannedMathCharacter, CommandError> {
-        let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FifteenBit);
-        let scanned = result.into_result()?;
+        let result = self.scan_restricted_integer(RestrictedIntegerClass::FifteenBit);
+        let scanned = result?;
         Ok(ScannedMathCharacter {
             code: scanned.value as u16,
             recovered: scanned.recovered,
@@ -304,8 +304,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// §1160. Every other delimiter position goes through
     /// [`Self::scan_delimiter`].
     pub fn scan_delimiter_number(&mut self) -> Result<ScannedMathDelimiter, CommandError> {
-        let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::TwentySevenBit);
-        let scanned = result.into_result()?;
+        let result = self.scan_restricted_integer(RestrictedIntegerClass::TwentySevenBit);
+        let scanned = result?;
         Ok(ScannedMathDelimiter {
             code: scanned.value as u32,
             recovered: scanned.recovered,
@@ -445,8 +445,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         size: MathFamilySize,
     ) -> Result<ScannedMathFamily, CommandError> {
-        let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
-        let scanned = result.into_result()?;
+        let result = self.scan_restricted_integer(RestrictedIntegerClass::FourBit);
+        let scanned = result?;
         Ok(ScannedMathFamily {
             size,
             family: scanned.value as u8,
@@ -455,14 +455,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 primary: scanned.provenance.primary,
             },
         })
-    }
-
-    pub fn scan_math_family_retained(
-        &mut self,
-        size: MathFamilySize,
-    ) -> crate::RetainedScalarScan<ScannedMathFamily> {
-        let result = self.scan_math_family(size);
-        self.detach_retained_scalar(result)
     }
 
     /// Collects the command-owned scalar prefix of TeX82's generalized
@@ -483,8 +475,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         };
         let thickness = match kind {
             MathFractionKind::Above => {
-                let result = self.scan_dimension_retained();
-                Some(result.into_result()?)
+                let result = self.scan_dimension();
+                Some(result?)
             }
             MathFractionKind::Atop => Some(Scaled::from_raw(0)),
             MathFractionKind::Over => None,
@@ -503,15 +495,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         glue: bool,
     ) -> Result<ScannedMathMuMaterial, CommandError> {
         if glue {
-            let result = self.scan_glue_retained(true);
-            let spec = result.into_result()?;
+            let result = self.scan_glue(true);
+            let spec = result?;
             Ok(ScannedMathMuMaterial::Glue {
                 spec,
                 shared_zero: self.scanned_glue_shared_zero,
             })
         } else {
-            let result = self.scan_mu_dimension_retained();
-            Ok(ScannedMathMuMaterial::Kern(result.into_result()?))
+            let result = self.scan_mu_dimension();
+            Ok(ScannedMathMuMaterial::Kern(result?))
         }
     }
 

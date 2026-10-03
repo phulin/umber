@@ -55,11 +55,11 @@ impl<G> DirectDispatch<'_, '_, G> {
 
         let scan_origin = self.current_origin;
 
-        let scan = processor.scan_math_family_retained(size);
-        let family = (retain_operation_child(processor, scan))
-            .map_err(|error| scan_error(error, scan_origin))?;
-        let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
-        let font = take_native_scalar!(processor.scan_font_selector_retained(), scan_origin);
+        let scan = processor.scan_math_family(size);
+        let family =
+            (scan.map_err(command_error)).map_err(|error| scan_error(error, scan_origin))?;
+        let _ = take_native_scalar!(processor.scan_optional_equals(), scan_origin);
+        let font = take_native_scalar!(processor.scan_font_selector(), scan_origin);
         {
             let (direct_arg0, direct_arg1, direct_arg2) = (family, font, global);
             finish_scan!(self.execute_math_family(direct_arg0, direct_arg1, direct_arg2))

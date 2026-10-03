@@ -178,7 +178,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
                     if kind == HyphenationDataKind::Exceptions =>
                 {
-                    let ch = self.scan_character_number_retained().into_result()?;
+                    let ch = self.scan_character_number()?;
                     match self.exception_word_character(progress.pattern_language, ch)? {
                         Some(normalized) => Some(normalized),
                         None => continue,

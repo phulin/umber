@@ -76,37 +76,6 @@ pub struct ScannedScalar<T> {
     pub provenance: ScalarProvenance,
 }
 
-/// Result of an executor-facing scalar scan.
-///
-/// Resource acquisition unwinds the ordinary scanner call. The host retries
-/// the complete checkpoint, so no scanner capability crosses this boundary.
-#[must_use]
-#[derive(Debug)]
-pub enum RetainedScalarScan<T> {
-    Complete(T),
-    Failed(CommandError),
-}
-
-impl<T> RetainedScalarScan<T> {
-    /// Convert the cold result of a synchronous scalar scan into the ordinary
-    /// command error boundary.  Resource failures have already unwound the
-    /// scanner call and are retried from the host checkpoint; no scanner
-    /// continuation is retained here.
-    pub(crate) fn into_result(self) -> Result<T, CommandError> {
-        match self {
-            Self::Complete(value) => Ok(value),
-            Self::Failed(error) => Err(error),
-        }
-    }
-
-    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> RetainedScalarScan<U> {
-        match self {
-            Self::Complete(value) => RetainedScalarScan::Complete(map(value)),
-            Self::Failed(error) => RetainedScalarScan::Failed(error),
-        }
-    }
-}
-
 /// A value accepted by TeX's internal-quantity scanner.
 #[derive(Debug, Eq, PartialEq)]
 pub enum InternalValue {
@@ -316,40 +285,6 @@ struct ScannedUnits {
 }
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
-    fn scan_font_selector_child(&mut self) -> Result<FontId, CommandError> {
-        match self.scan_font_selector_retained() {
-            RetainedScalarScan::Complete(font) => Ok(font),
-            RetainedScalarScan::Failed(error) => Err(error),
-        }
-    }
-
-    pub(crate) fn detach_retained_scalar<T>(
-        &mut self,
-        result: Result<T, CommandError>,
-    ) -> RetainedScalarScan<T> {
-        match result {
-            Ok(value) => RetainedScalarScan::Complete(value),
-            Err(error) => RetainedScalarScan::Failed(error),
-        }
-    }
-
-    pub fn scan_optional_equals_retained(&mut self) -> RetainedScalarScan<bool> {
-        let result = self.scan_optional_equals();
-        self.detach_retained_scalar(result)
-    }
-
-    pub fn scan_keyword_retained(&mut self, keyword: &str) -> RetainedScalarScan<bool> {
-        let result = self.scan_keyword(keyword);
-        self.detach_retained_scalar(result)
-    }
-
-    pub fn scan_integer_retained(&mut self) -> RetainedScalarScan<ScannedScalar<i32>> {
-        match self.scan_integer_operand() {
-            Ok(value) => RetainedScalarScan::Complete(value),
-            Err(error) => RetainedScalarScan::Failed(self.finish_scalar_error(error)),
-        }
-    }
-
     /// Scans the integer value needed by the recursive conditional lane. The
     /// scalar-only result keeps the full retained result out of the caller
     /// while preserving the same resource-failure cleanup as the public
@@ -360,21 +295,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             Ok(value) => Ok(value.value),
             Err(error) => Err(self.finish_scalar_error(error)),
         }
-    }
-
-    pub fn scan_dimension_retained(&mut self) -> RetainedScalarScan<Scaled> {
-        let result = self.scan_dimension();
-        self.detach_retained_scalar(result)
-    }
-
-    pub fn scan_mu_dimension_retained(&mut self) -> RetainedScalarScan<Scaled> {
-        let result = self.scan_mu_dimension();
-        self.detach_retained_scalar(result)
-    }
-
-    pub fn scan_glue_retained(&mut self, mu: bool) -> RetainedScalarScan<GlueSpec> {
-        let result = self.scan_glue(mu);
-        self.detach_retained_scalar(result)
     }
 
     #[cold]
@@ -396,7 +316,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
-    fn scan_optional_equals(&mut self) -> Result<bool, CommandError> {
+    pub fn scan_optional_equals(&mut self) -> Result<bool, CommandError> {
         let mut equals = false;
         let result = self.consume_expanded_words(
             &mut |processor, spelling, meaning, _control_sequence, exceptional| {
@@ -457,7 +377,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// matches under any category code, and `cur_chr-"a"+"A"` accepts the
     /// uppercase form of tex.web's all-lowercase keywords.
     #[inline(always)]
-    fn scan_keyword(&mut self, keyword: &str) -> Result<bool, CommandError> {
+    pub fn scan_keyword(&mut self, keyword: &str) -> Result<bool, CommandError> {
         if !keyword.is_ascii() || keyword.len() > KEYWORD_PREFIX_INLINE_CAPACITY {
             return Err(CommandError::input_invariant());
         }
@@ -507,7 +427,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     /// Scans an integer or an internal integer quantity.
-    fn scan_integer(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
+    pub fn scan_integer(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
         let result = self.scan_integer_operand();
         result.map_err(|error| self.finish_scalar_error(error))
     }
@@ -560,14 +480,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     /// Scans a dimension or an internal dimension quantity.
-    fn scan_dimension(&mut self) -> Result<Scaled, CommandError> {
+    pub fn scan_dimension(&mut self) -> Result<Scaled, CommandError> {
         Ok(self.scan_dimension_with_order(false, false)?.0)
     }
 
     /// Scans a dimension requiring TeX's `mu` unit. This is public only at
     /// the command-scanner boundary; replay receives the completed scaled
     /// value and never performs unit recognition itself.
-    fn scan_mu_dimension(&mut self) -> Result<Scaled, CommandError> {
+    pub fn scan_mu_dimension(&mut self) -> Result<Scaled, CommandError> {
         Ok(self.scan_dimension_with_order(false, true)?.0)
     }
 
@@ -754,7 +674,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     /// Scans a normal or mu glue specification.
-    fn scan_glue(&mut self, mu: bool) -> Result<GlueSpec, CommandError> {
+    pub fn scan_glue(&mut self, mu: bool) -> Result<GlueSpec, CommandError> {
         self.scanned_glue_identity = None;
         self.scanned_glue_register = None;
         self.scanned_glue_shared_zero = false;
@@ -854,7 +774,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// This operation owns the operand: §465 consumes an invalid target,
     /// reports `you_cant`,
     /// and publishes integer zero for both `\the` and `\showthe`.
-    pub(crate) fn scan_internal_value_or_zero(
+    pub fn scan_internal_value_or_zero(
         &mut self,
     ) -> Result<ScannedScalar<InternalValue>, CommandError> {
         let mut scanned = None;
@@ -901,13 +821,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             Ok(std::ops::ControlFlow::Break(()))
         })?;
         scanned.ok_or_else(CommandError::input_invariant)
-    }
-
-    pub fn scan_internal_value_or_zero_retained(
-        &mut self,
-    ) -> RetainedScalarScan<ScannedScalar<InternalValue>> {
-        let result = self.scan_internal_value_or_zero();
-        self.detach_retained_scalar(result)
     }
 
     /// Runs TeX82 §465's `scan_something_internal(tok_val,false)` on a target
@@ -1826,7 +1739,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // `current_font_parameter`).
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
                 let number = self.scan_integer()?.value;
-                let font = self.scan_font_selector_child()?;
+                let font = self.scan_font_selector()?;
                 self.internal_font_dimen(number, font)
             }
             // e-TeX 2.6 etex.ch [17.3413--3453]'s four font-character
@@ -1840,7 +1753,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 | UnexpandablePrimitive::FontCharDp
                 | UnexpandablePrimitive::FontCharIc),
             ) => {
-                let font = self.scan_font_selector_child()?;
+                let font = self.scan_font_selector()?;
                 let character = self.scan_character_number()?;
                 self.internal_font_character(primitive, font, character)
             }
@@ -1855,7 +1768,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             Meaning::UnexpandablePrimitive(
                 primitive @ (UnexpandablePrimitive::HyphenChar | UnexpandablePrimitive::SkewChar),
             ) => {
-                let font = self.scan_font_selector_child()?;
+                let font = self.scan_font_selector()?;
                 let value = match primitive {
                     UnexpandablePrimitive::HyphenChar => self.state.font_hyphen_char(font),
                     UnexpandablePrimitive::SkewChar => self.state.font_skew_char(font),
@@ -1878,7 +1791,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 | UnexpandablePrimitive::PdfKnbcCode
                 | UnexpandablePrimitive::PdfKnacCode),
             ) => {
-                let font = self.scan_font_selector_child()?;
+                let font = self.scan_font_selector()?;
                 let character = self.scan_character_number()?;
                 self.internal_pdf_font_code(primitive, font, character)
             }
@@ -2246,7 +2159,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 | UnexpandablePrimitive::ScriptScriptFont,
             ) => {
                 self.back_consumed_word(spelling, exceptional)?;
-                let font = self.scan_font_selector_child()?;
+                let font = self.scan_font_selector()?;
                 self.font_identity(font)
             }
             // This deliberately names every non-internal Meaning variant.
@@ -2394,7 +2307,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ///
     /// The bound and its recovery live in [`RestrictedIntegerClass`]; this
     /// wrapper only converts the recovered code into Umber's character type.
-    fn scan_character_number(&mut self) -> Result<char, CommandError> {
+    pub fn scan_character_number(&mut self) -> Result<char, CommandError> {
         let integer = self.scan_integer()?;
         let scanned =
             self.finish_restricted_integer(RestrictedIntegerClass::CharacterCode, integer)?;
@@ -2402,11 +2315,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .ok()
             .and_then(char::from_u32)
             .expect("a recovered character code is a character"))
-    }
-
-    pub fn scan_character_number_retained(&mut self) -> RetainedScalarScan<char> {
-        let result = self.scan_character_number();
-        self.detach_retained_scalar(result)
     }
 
     /// Scans TeX82 §433's `scan_eight_bit_int` register index.
@@ -2418,7 +2326,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// rather than truncating or addressing an extended bank. e-TeX replaces
     /// those register scans with `scan_register_num` at [26.415], [26.420],
     /// and [26.427].
-    fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
+    pub fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
         let integer = self.scan_integer()?;
         let scanned = self.finish_restricted_integer(RestrictedIntegerClass::EightBit, integer)?;
         Ok(scanned.value as u16)
@@ -2429,7 +2337,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX82 §1237 uses `scan_eight_bit_int`. e-TeX 2.6 change [49.1237]
     /// replaces it with `scan_register_num`, accepting sparse registers up to
     /// 32767 in extended mode; pdfTeX inherits that behavior.
-    fn scan_profile_register_index(&mut self) -> Result<u16, CommandError> {
+    pub fn scan_profile_register_index(&mut self) -> Result<u16, CommandError> {
         if self.profile().capabilities().supports_etex() {
             self.scan_extended_register_index()
         } else {
@@ -2442,30 +2350,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Extension primitives using this scanner are absent from TeX82.
     /// e-TeX and pdfTeX accept `0..=32767`, with invalid selectors diagnosed
     /// and recovered to zero.
-    fn scan_extended_register_index(&mut self) -> Result<u16, CommandError> {
+    pub fn scan_extended_register_index(&mut self) -> Result<u16, CommandError> {
         let integer = self.scan_integer()?;
         let scanned = self.finish_restricted_integer(RestrictedIntegerClass::Register, integer)?;
         Ok(scanned.value as u16)
-    }
-
-    pub fn scan_profile_register_index_retained(&mut self) -> RetainedScalarScan<u16> {
-        let class = if self.profile().capabilities().supports_etex() {
-            RestrictedIntegerClass::Register
-        } else {
-            RestrictedIntegerClass::EightBit
-        };
-        self.scan_restricted_integer_retained(class)
-            .map(|scanned| scanned.value as u16)
-    }
-
-    pub fn scan_eight_bit_register_index_retained(&mut self) -> RetainedScalarScan<u16> {
-        self.scan_restricted_integer_retained(RestrictedIntegerClass::EightBit)
-            .map(|scanned| scanned.value as u16)
-    }
-
-    pub fn scan_extended_register_index_retained(&mut self) -> RetainedScalarScan<u16> {
-        self.scan_restricted_integer_retained(RestrictedIntegerClass::Register)
-            .map(|scanned| scanned.value as u16)
     }
 }
 

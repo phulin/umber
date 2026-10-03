@@ -21,7 +21,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// family index and then that size bank's font. Anything else is "Missing
     /// font identifier", whose `back_error` leaves the rejected command for
     /// its normal delivery and takes `null_font`.
-    fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
+    pub fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
         let mut font = None;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
             let meaning = match meaning {
@@ -73,10 +73,5 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             Ok(std::ops::ControlFlow::Break(()))
         })?;
         font.ok_or_else(CommandError::input_invariant)
-    }
-
-    pub fn scan_font_selector_retained(&mut self) -> crate::RetainedScalarScan<FontId> {
-        let result = self.scan_font_selector();
-        self.detach_retained_scalar(result)
     }
 }

@@ -556,7 +556,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     #[inline(never)]
     fn expand_ifcase_body(&mut self, condition: ConditionId) -> Result<(), CommandError> {
-        let selected = self.scan_integer_retained().into_result()?.value;
+        let selected = self.scan_integer()?.value;
         self.complete_ifcase(condition, selected)
     }
 
@@ -603,9 +603,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(never)]
     fn evaluate_ifdim_operand(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
         let absolute = kind == ConditionalKind::IfPdfAbsDim;
-        let left = self.scan_dimension_retained().into_result()?.raw() as i64;
+        let left = self.scan_dimension()?.raw() as i64;
         let relation = self.scan_if_relation(kind.canonical_name())?;
-        let right = self.scan_dimension_retained().into_result()?.raw() as i64;
+        let right = self.scan_dimension()?.raw() as i64;
         Ok(relation.compare(
             if absolute { left.abs() } else { left },
             if absolute { right.abs() } else { right },
@@ -614,7 +614,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     #[inline(never)]
     fn evaluate_ifbox_operand(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
-        let index = self.scan_profile_register_index_retained().into_result()?;
+        let index = self.scan_profile_register_index()?;
         let box_kind = self.state.box_kind(index);
         Ok(match kind {
             ConditionalKind::IfVoid => box_kind.is_none(),
@@ -626,9 +626,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     #[inline(never)]
     fn evaluate_ifeof_operand(&mut self) -> Result<bool, CommandError> {
-        let scanned = self
-            .scan_restricted_integer_retained(RestrictedIntegerClass::FourBit)
-            .into_result()?;
+        let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FourBit)?;
         if scanned.recovered {
             self.record_bad_number();
         }
@@ -639,10 +637,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     #[inline(never)]
     fn evaluate_iffontchar_operand(&mut self) -> Result<bool, CommandError> {
-        let font = self.scan_font_selector_retained().into_result()?;
+        let font = self.scan_font_selector()?;
         let character = self
-            .scan_restricted_integer_retained(RestrictedIntegerClass::CharacterCode)
-            .into_result()?
+            .scan_restricted_integer(RestrictedIntegerClass::CharacterCode)?
             .value;
         Ok(u8::try_from(character)
             .ok()
