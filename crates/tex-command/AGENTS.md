@@ -148,7 +148,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   decoded meaning is materialized only at a consuming boundary.
   Command-sensitive boundaries materialize this pair from the reader's facts
   and already-resolved meaning. Ordinary macro activation and unexpanded body
-  collection construct no command record. The same native value crosses raw,
+  collection construct no command record. The executor-owned main-control
+  consumer also executes admitted relax words within the canonical reader,
+  without a command record or post-fetch continuation. The same native value crosses raw,
   expanded, scanner and execution boundaries; observation and diagnosis project
   their genuine consuming shape without a second command representation.
   Exact source geometry remains behind the spelling's
@@ -733,3 +735,8 @@ that status before clearing it. Synthetic warning serials, `ScannerState`,
 `RecoveryContext`, and unreachable warning-only checkpoint rejection are deleted.
 Alignment keeps its real partial builder, while definition/absorption statuses
 carry no unused builder identities.
+
+- `src/processor/expand/main_control.rs`: the executor-owned native terminal
+  consumer contract and its canonical-reader adapter. Selection precedes literal
+  brace accounting; accepted terminals continue without command construction.
+  Lexical inspection explicitly requests the actual terminal record.

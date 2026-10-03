@@ -21,6 +21,8 @@ mod apply_text;
 mod characters;
 mod command_codes;
 mod dispatch;
+mod native;
+use native::NativeMainControl;
 mod scan_alignment_delivery;
 mod scan_alignment_events;
 mod scan_alignment_peek;

@@ -3,10 +3,13 @@
 mod collect;
 mod consume;
 mod input;
+mod main_control;
 mod once;
 mod primitive;
 mod resident;
 mod scalar;
+pub use main_control::MainControlConsumer;
+use main_control::MainControlWords;
 mod skipping;
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
@@ -40,6 +43,14 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G> {
         _control_sequence: Option<tex_state::interner::Symbol>,
     ) -> Result<std::ops::ControlFlow<()>, CommandError> {
         unreachable!("this consumer requests a delivery record")
+    }
+
+    fn accepts_native_terminal(
+        &mut self,
+        _processor: &mut Processor,
+        _meaning: &tex_state::meaning::MeaningWord<G>,
+    ) -> bool {
+        true
     }
 
     fn before_action(&mut self, _processor: &mut Processor) {}
@@ -936,46 +947,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.expanded_next_with_action(destination, initial_action)
     }
 
-    /// TeX's raw character lookahead is the other actual main-control fetch label.
-    #[inline(never)]
-    fn main_action_lookahead(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        if destination.is_none() {
-            match self.raw_next_hot(destination)? {
-                DeliveryStatus::Command => {}
-                status => return Ok(status),
-            }
-        }
-        let command = destination
-            .as_ref()
-            .ok_or_else(CommandError::input_invariant)?;
-        let is_character = command.is_main_loop_character();
-        if is_character {
-            return Ok(DeliveryStatus::Command);
-        }
-        let action = classify_hot_command(command);
-        if matches!(action, ExpandedCommandAction::EndTemplate) {
-            if matches!(
-                command.alignment_adjustment(),
-                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-            ) {
-                return Ok(DeliveryStatus::AlignmentEndTemplate);
-            }
-            destination.take();
-            self.insert_frozen_endv()?;
-            return self.expanded_next_hot(destination, None);
-        }
-        if is_character || matches!(action, ExpandedCommandAction::Return) {
-            if self.is_observed() {
-                self.observe_expanded_delivery(command);
-            }
-            return Ok(DeliveryStatus::Command);
-        }
-        self.expanded_next_hot(destination, Some(action))
-    }
-
     #[cold]
     #[inline(never)]
     pub(super) fn alignment_expanded_next(
@@ -994,7 +965,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        match self.main_action_lookahead(destination)? {
+        match self.consume_expanded_with_mode::<false, false>(
+            destination,
+            None,
+            ExpandedReaderRole::MainLoopLookahead,
+            &mut DeliveredCommand,
+        )? {
             DeliveryStatus::PendingExpanded => Ok(DeliveryStatus::Command),
             result => Ok(result),
         }
@@ -1462,63 +1438,27 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    /// Main control's expanded fetch uses the canonical word loop and one
-    /// expansion episode. Its only role-specific cut is a raw end-template.
+    /// Runs the actual main-control terminal consumer in the canonical reader.
+    /// Unconsumed words and genuine replay/EOF boundaries return to the driver.
     #[inline(always)]
-    pub fn main_control_expanded_into(
+    pub fn main_control_until(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
+        main_loop_lookahead: bool,
+        consumer: &mut impl MainControlConsumer<Self, G>,
     ) -> Result<DeliveryStatus, CommandError> {
-        debug_assert!(destination.is_none());
+        let role = if main_loop_lookahead {
+            ExpandedReaderRole::MainLoopLookahead
+        } else {
+            ExpandedReaderRole::MainControl
+        };
         loop {
-            let expanded = self.expanded_next_hot_with_mode::<false, false>(
+            let result = self.consume_expanded_with_mode::<false, false>(
                 destination,
                 None,
-                ExpandedReaderRole::MainControl,
-            );
-            match expanded? {
-                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
-                    return Ok(DeliveryStatus::Command);
-                }
-                DeliveryStatus::AlignmentEndTemplate => {
-                    let command = destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?;
-                    self.begin_scalar_alignment_v_template(&command)?;
-                }
-                result => {
-                    debug_assert!(matches!(
-                        result,
-                        DeliveryStatus::End
-                            | DeliveryStatus::Command
-                            | DeliveryStatus::ReplayCompleted(_)
-                    ));
-                    return Ok(result);
-                }
-            }
-        }
-    }
-
-    /// Delivers one command through TeX82 §1038's `main_loop_lookahead`.
-    ///
-    /// `main_control`'s inner character loop (§1034) never returns to
-    /// `big_switch`'s `get_x_token` between adjacent characters. §1038 fetches
-    /// the next command with a bare `get_next` -- "set only `cur_cmd` and
-    /// `cur_chr`, for speed" -- and jumps straight back into the loop when
-    /// that raw command is `letter`, `other_char`, or `char_given`. Only a
-    /// raw command outside that set reaches `x_token`, which is the sole
-    /// reason a run of ordinary characters produces one raw delivery each and
-    /// no expanded delivery at all.
-    ///
-    /// `char_num` is deliberately *not* in the raw set: §1038 accepts it only
-    /// after `x_token`, because `\char` can be reached by expansion.
-    /// Delivers main-loop lookahead into caller-provided command storage.
-    pub fn main_loop_lookahead_into(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        loop {
-            let result = self.main_action_lookahead(destination)?;
+                role,
+                &mut MainControlWords(consumer),
+            )?;
             match result {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination
@@ -1529,14 +1469,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
                     return Ok(DeliveryStatus::Command);
                 }
-                DeliveryStatus::End
-                | DeliveryStatus::Command
-                | DeliveryStatus::ReplayCompleted(_) => {
-                    return Ok(result);
-                }
-                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
-                    unreachable!("main-loop lookahead has no character consumer")
-                }
+                result => return Ok(result),
             }
         }
     }

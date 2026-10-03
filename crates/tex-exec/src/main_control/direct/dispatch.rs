@@ -235,11 +235,20 @@ impl<G> DirectDispatch<'_, '_, G> {
                             });
                         prepare_command_trace(processor, mode, shown_mode);
                     }
-                    let delivery = if main_loop_active {
-                        processor.main_loop_lookahead_into(&mut command_slot)
-                    } else {
-                        processor.main_control_expanded_into(&mut command_slot)
+                    let mut native = NativeMainControl {
+                        retain_commands: retain_commands
+                            && initial_prefix.is_none()
+                            && !main_loop_active,
+                        remaining_operations: self.remaining_operations,
+                        completed_operations: &mut self.completed_operations,
+                        current_origin: &mut self.current_origin,
+                        scan_origin: &mut scan_origin,
                     };
+                    let delivery = processor.main_control_until(
+                        &mut command_slot,
+                        main_loop_active,
+                        &mut native,
+                    );
                     match (delivery.map_err(command_error))
                         .map_err(|error| scan_error(error, scan_origin))?
                     {
@@ -1062,22 +1071,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         execution.modes.current_list().pending_hchars().is_some()
                                     },
                                 );
-                                // §1045 needs only a demanded character flush.
-                                if !pending_hchars
-                                    && retain_commands
-                                    && !processor.has_pending_reports()
-                                    && self.completed_operations + 1 < self.remaining_operations
-                                {
-                                    processor.with_execution_owners(
-                                        |_, _, _, _, _, execution, _, _, _| {
-                                            execution.main_loop_active = false;
-                                        },
-                                    );
-                                    self.completed_operations += 1;
-                                    self.current_origin = None;
-                                    command_slot = None;
-                                    continue 'processor;
-                                }
                                 retained_semantic!(
                                     receipts,
                                     |context,

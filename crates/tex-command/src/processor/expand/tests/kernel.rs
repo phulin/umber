@@ -107,7 +107,7 @@ fn nested_readers(
         } else {
             loop {
                 let result = if main_control {
-                    processor.main_control_expanded_into(&mut destination)
+                    processor.main_control_until(&mut destination, false, &mut ())
                 } else {
                     processor.get_x_token_into(&mut destination)
                 };
@@ -403,7 +403,7 @@ fn native_main_lookahead_preserves_mixed_expansion_and_observed_fuel_cuts() {
             } else {
                 let mut destination = None;
                 loop {
-                    match processor.main_loop_lookahead_into(&mut destination) {
+                    match processor.main_control_until(&mut destination, true, &mut ()) {
                         Ok(crate::DeliveryStatus::Command) => output.push(
                             destination
                                 .take()

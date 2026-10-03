@@ -61,7 +61,7 @@ fn expandable_main_control_delivery_uses_one_caller_owned_command_slot() {
         let ownership_before = crate::command::command_ownership_counters();
         assert_eq!(
             processor
-                .main_control_expanded_into(&mut destination)
+                .main_control_until(&mut destination, false, &mut ())
                 .expect("main_control delivery"),
             crate::DeliveryStatus::Command
         );
@@ -138,7 +138,7 @@ fn source_macro_main_control_materializes_only_when_observed() {
             let mut destination = None;
             assert_eq!(
                 processor
-                    .main_control_expanded_into(&mut destination)
+                    .main_control_until(&mut destination, false, &mut ())
                     .expect("source macro main_control"),
                 crate::DeliveryStatus::Command
             );
@@ -262,7 +262,7 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                                 Ok(std::ops::ControlFlow::Break(()))
                             })
                         } else if main_control {
-                            processor.main_control_expanded_into(&mut destination)
+                            processor.main_control_until(&mut destination, false, &mut ())
                         } else {
                             processor.get_x_token_into(&mut destination)
                         };
@@ -347,7 +347,7 @@ fn empty_macro_main_control_reaches_end_without_an_expanded_command() {
         let mut destination = None;
         assert_eq!(
             processor
-                .main_control_expanded_into(&mut destination)
+                .main_control_until(&mut destination, false, &mut ())
                 .expect("empty macro main_control"),
             crate::DeliveryStatus::End
         );
@@ -380,7 +380,7 @@ fn unexpandable_main_control_classifies_once_and_reuses_one_slot() {
         let classifications_before = super::super::expanded_classifications();
         assert_eq!(
             processor
-                .main_control_expanded_into(&mut destination)
+                .main_control_until(&mut destination, false, &mut ())
                 .expect("main_control delivery"),
             crate::DeliveryStatus::Command
         );
@@ -427,7 +427,7 @@ fn raw_main_loop_exit_preserves_the_existing_expanded_work_boundary() {
 
         assert_eq!(
             processor
-                .main_loop_lookahead_into(&mut destination)
+                .main_control_until(&mut destination, true, &mut ())
                 .expect("raw main-loop exit"),
             crate::DeliveryStatus::Command
         );
@@ -443,6 +443,109 @@ fn raw_main_loop_exit_preserves_the_existing_expanded_work_boundary() {
         assert_eq!(
             fuel.work().expanded_deliveries - work_before.expanded_deliveries,
             0
+        );
+    });
+}
+
+#[test]
+fn native_main_control_continues_across_macro_bodies_without_command_records() {
+    struct RelaxCount(usize);
+    impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
+        crate::MainControlConsumer<crate::CommandProcessor<'state, 'host, G, Facts>, G>
+        for RelaxCount
+    {
+        fn accepts_native_terminal(
+            &mut self,
+            _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
+            meaning: &MeaningWord<G>,
+        ) -> bool {
+            matches!(meaning, MeaningWord::Static(Meaning::RELAX_WORD))
+        }
+
+        fn consume_native_terminal(
+            &mut self,
+            _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
+            _: tex_state::token::TracedTokenWord,
+            _: &MeaningWord<G>,
+            _: Option<tex_state::interner::Symbol>,
+        ) -> std::ops::ControlFlow<()> {
+            self.0 += 1;
+            std::ops::ControlFlow::Continue(())
+        }
+    }
+
+    crate::test_harness::with_universe(|universe| {
+        let relax = universe.intern("relax").expect("relax symbol");
+        universe
+            .assign_meaning(
+                relax,
+                MeaningWord::Static(Meaning::RELAX_WORD),
+                AssignmentScope::Global,
+            )
+            .expect("relax meaning");
+        let body = [TokenWord::pack(Token::Cs(relax.symbol())); 2];
+        let definition = universe
+            .allocate_definition(&[], &body)
+            .expect("definition");
+        let name = universe.intern("m").expect("macro name");
+        universe
+            .assign_meaning(
+                name,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition.reference()),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                Token::Cs(name.symbol()),
+                Token::Cs(name.symbol()),
+                Token::Cs(name.symbol()),
+                Token::Cs(name.symbol()),
+                Token::Char {
+                    ch: 'Z',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(13).expect("exact fuel");
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        let before = crate::command::command_ownership_counters();
+        let mut destination = None;
+        let mut consumed = RelaxCount(0);
+        assert_eq!(
+            processor
+                .main_control_until(&mut destination, false, &mut consumed)
+                .expect("native continuation"),
+            crate::DeliveryStatus::Command
+        );
+        assert_eq!(consumed.0, 8);
+        assert_eq!(processor.fuel.burned(), 13);
+        assert_eq!(
+            destination
+                .expect("actual unconsumed terminal")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'Z',
+                cat: Catcode::Letter
+            }
+        );
+        let after = crate::command::command_ownership_counters();
+        assert_eq!(
+            after.resolved_writes - before.resolved_writes,
+            1,
+            "only the unconsumed terminal needs a command record"
         );
     });
 }

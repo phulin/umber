@@ -266,7 +266,7 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
             );
             assert_eq!(
                 processor
-                    .main_control_expanded_into(&mut destination)
+                    .main_control_until(&mut destination, false, &mut ())
                     .expect("main-control expanded delivery"),
                 crate::DeliveryStatus::Command
             );

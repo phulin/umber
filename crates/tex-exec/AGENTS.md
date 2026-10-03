@@ -62,7 +62,11 @@ not allocate a vector merely to publish one already-complete node.
   the final typed operand in that same processor; target selection and invalid-target
   diagnostics remain in the actual switch arm. Scalar scans consume typed values
   without generic frame publication/projection. Fetch/reswitch borrows the one
-  initialized command slot, clearing its tag only at successful continuation and
+  initialized command slot at remaining semantic ownership boundaries. Ordinary
+  relax words execute through the executor-owned terminal consumer inside the
+  canonical reader; the old post-fetch relax continuation is deleted. The
+  consumer borrows actual driver counters and preserves pre-fetched raw
+  character lookahead. Remaining commands clear their tag at successful continuation and
   copying only values needed across real input overwrites
   and cold ownership boundaries. Native observation receipts have one demanded
   owner per processor loan; ordinary commands do not create/drop absent receipts. Register scans likewise stay in their native
@@ -280,3 +284,8 @@ Working a canonical-command semantic or DVI divergence that touches main-control
 Native execution errors box missing-font, missing-image and World payloads only
 when raised. Resource failures move the same command-owned need/cause packet
 through executor and session; successful results construct no failure payload.
+
+- `src/main_control/direct/native.rs`: the main-control terminal consumer,
+  borrowing actual driver operation counts and diagnostic origins. Ordinary
+  relax words continue inside the canonical expanded reader; tracing, leaders,
+  character lookahead, flushing and budget cuts retain their actual boundaries.

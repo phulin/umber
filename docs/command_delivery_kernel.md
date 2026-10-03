@@ -673,3 +673,20 @@ state, source ranges, diagnostic locations, and origin creation retain their
 existing grammar and ownership. Full checkpoints capture the same source
 cursor and backing; all emission callbacks and transformed-name locals end
 with their synchronous call.
+
+## Main-control continuation
+
+The executor lends its terminal consumer to the canonical expanded reader.
+Selection uses the live meaning and actual execution owners before a terminal
+command record is constructed. An accepted terminal executes synchronously and
+continues reading in that same invocation. Literal brace accounting still
+precedes its execution. Source, resident, observed and recovery deliveries keep
+one grammar and one expansion implementation.
+
+The first executor continuation is TeX82 §1045's relax arm when there are no
+pending characters. It updates the actual operation count and leaves the
+ligature loop without returning a command product to the large reswitch.
+Tracing, observation, leaders, prefixes, character lookahead, replay and the
+caller's operation budget remain actual admission boundaries. The former
+post-fetch relax continuation is deleted. Other stomach arms still require
+migration into this consumer; this does not complete command-object removal.

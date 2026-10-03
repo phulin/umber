@@ -60,7 +60,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }) {
             Some(DeliveryStatus::Command)
         } else if supplied {
-            self.consume_supplied_command::<OBSERVED>(destination, initial_action)?
+            self.consume_supplied_command::<OBSERVED>(destination, initial_action, role)?
         } else {
             None
         };
@@ -141,6 +141,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             MeaningWord::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED));
                         if Consumer::NATIVE_TERMINAL &&
                             (protected || matches!(native_action, ExpandedCommandAction::Return))
+                            && terminal.accepts_native_terminal(processor, &meaning)
                         {
                             processor.command.roots.alignment.account_literal_catcode(resolution.literal_catcode());
                             terminal.before_action(processor);
@@ -309,9 +310,29 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         action: Option<ExpandedCommandAction>,
+        role: ExpandedReaderRole,
     ) -> Result<Option<DeliveryStatus>, CommandError> {
         let mut command = destination.take().expect("supplied expansion command");
+        // TeX82 §1038 also accepts the already-fetched character boundary
+        // from source batching. It stays raw and emits no expanded observation.
+        if role == ExpandedReaderRole::MainLoopLookahead && command.is_main_loop_character() {
+            *destination = Some(command);
+            return Ok(Some(DeliveryStatus::Command));
+        }
         let action = action.unwrap_or_else(|| classify_hot_command(&command));
+        if matches!(
+            role,
+            ExpandedReaderRole::MainControl | ExpandedReaderRole::MainLoopLookahead
+        ) && matches!(action, ExpandedCommandAction::EndTemplate)
+            && !matches!(
+                command.alignment_adjustment(),
+                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+            )
+        {
+            self.insert_frozen_endv()?;
+            return Ok(None);
+        }
+
         if let ExpandedCommandAction::Expand(dispatch) = action {
             self.execute_expansion_action(&mut command, dispatch)?;
             return Ok(None);

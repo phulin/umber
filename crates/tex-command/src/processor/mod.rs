@@ -6,6 +6,7 @@ mod backup;
 pub(crate) mod delivery_mode;
 mod end_input;
 pub(crate) mod expand;
+pub use expand::MainControlConsumer;
 mod expand_convert;
 mod expand_input;
 mod expand_pdf;
