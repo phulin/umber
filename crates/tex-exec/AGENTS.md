@@ -301,3 +301,9 @@ context, modes, diagnostic effects, fuel and boxes to its semantic routine;
 TeX82 §1101 performs no page build or page-output capture. Its whole-executor
 application wrapper and the second-processor streams-scanner module are
 deleted. Restricted horizontal mark migration keeps its existing page region.
+
+Arithmetic runs in `direct/scan_arithmetic.rs` on the actual reader loan: its
+expanded target word feeds operand scanning and semantic application directly.
+The shared `with_native_assignment!` seam renders demanded scan reports before
+mutation. The old invalid-target executor adapter is deleted; its diagnostic
+borrows actual command and effect owners without an operation request.

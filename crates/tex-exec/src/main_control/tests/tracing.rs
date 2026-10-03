@@ -1132,3 +1132,26 @@ fn native_group_exit_restores_command_tracing_before_aftergroup_delivery() {
         });
     }
 }
+
+#[test]
+fn arithmetic_enabling_command_tracing_reenters_before_the_next_terminal() {
+    // TeX82 sections 299/1030: arithmetic can update an integer parameter.
+    // show_cur_cmd_chr must use that live value for the next big-switch fetch.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingonline=1\advance\tracingcommands by1 \relax\relax\end",
+        );
+        run_to_end(&mut control, stores);
+        let log = pending_sink_text(stores, false);
+        assert!(
+            log.contains("{vertical mode: \\relax}\n{\\relax}\n{\\end}"),
+            "{log:?}"
+        );
+        assert!(
+            !log.contains("{\\advance}"),
+            "arithmetic executes before tracing is enabled"
+        );
+    });
+}

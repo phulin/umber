@@ -27,8 +27,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         CommandError,
     > {
         self.scan_optional_equals_retained().into_result()?;
-        let mut tokens = None;
-        let mut source = None;
+        let mut value = None;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
             let meaning = match meaning {
                 MeaningWord::Static(word) => Meaning::from_runtime_word(*word),
@@ -47,26 +46,29 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let index = processor
                         .scan_profile_register_index_retained()
                         .into_result()?;
-                    source = processor
+                    let source = processor
                         .state
                         .token_register(index)
                         .expect("scanner produced an admitted token-register index")
                         .clone();
+                    value = Some((None, source));
                     return Ok(std::ops::ControlFlow::Break(()));
                 }
                 Meaning::ToksRegister(index) => {
-                    source = processor
+                    let source = processor
                         .state
                         .token_register(index)
                         .expect("meaning contains an admitted token-register index")
                         .clone();
+                    value = Some((None, source));
                     return Ok(std::ops::ControlFlow::Break(()));
                 }
                 Meaning::TokParam(index) => {
-                    source = processor
+                    let source = processor
                         .state
                         .token_parameter(TokParam::new(index))
                         .expect("meaning contains an admitted token-parameter index");
+                    value = Some((None, source));
                     return Ok(std::ops::ControlFlow::Break(()));
                 }
                 Meaning::CharToken {
@@ -110,10 +112,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .attempt
                     .discard_token_list(collected)
                     .map_err(crate::scan_toks::attempt_command_error)?;
+                value = Some((None, None));
                 return Ok(std::ops::ControlFlow::Break(()));
             }
             if !enclose_collected {
-                tokens = Some(collected);
+                value = Some((Some(collected), None));
                 return Ok(std::ops::ControlFlow::Break(()));
             }
             let writer = processor
@@ -154,16 +157,19 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     ),
                 )
                 .map_err(crate::scan_toks::attempt_command_error)?;
-            tokens = Some(
-                processor
-                    .command
-                    .attempt
-                    .finish_token_buffer(writer)
-                    .map_err(crate::scan_toks::attempt_command_error)?,
-            );
+            value = Some((
+                Some(
+                    processor
+                        .command
+                        .attempt
+                        .finish_token_buffer(writer)
+                        .map_err(crate::scan_toks::attempt_command_error)?,
+                ),
+                None,
+            ));
             Ok(std::ops::ControlFlow::Break(()))
         })?;
-        Ok((tokens, source))
+        value.ok_or_else(CommandError::input_invariant)
     }
 }
 

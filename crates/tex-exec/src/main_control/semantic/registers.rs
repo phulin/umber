@@ -209,20 +209,21 @@ pub(in crate::main_control) fn execute_arithmetic<G>(
 
 pub(in crate::main_control) fn execute_invalid_arithmetic_target<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    primitive: &mut UnexpandablePrimitive,
-    target: &mut tex_command::PrintCommand<G>,
+    command: &mut tex_command::CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    primitive: UnexpandablePrimitive,
+    target: tex_command::PrintCommand<G>,
 ) -> Result<ReplayStep, ExecError> {
     {
         // TeX82 §1236 prints this error and returns from
         // `do_register_command`; §1269's common `done` path still gets
         // to replay a pending `\afterassignment` token.
-        let target = tex_command::print_cmd_chr_text(&*stores, target.clone());
+        let target = tex_command::print_cmd_chr_text(&*stores, target);
         let primitive = stores
-            .primitive_name(Meaning::UnexpandablePrimitive(*primitive))
+            .primitive_name(Meaning::UnexpandablePrimitive(primitive))
             .expect("installed arithmetic primitive has a canonical name")
             .to_owned();
-        let context = command.state.output_open_context(&*stores);
+        let context = command.output_open_context(&*stores);
         let mut report = stores.print_err("You can't use `");
         report
             .print(&target)
@@ -230,7 +231,7 @@ pub(in crate::main_control) fn execute_invalid_arithmetic_target<G>(
             .print_esc(&primitive);
         report.help(&["I'm forgetting what you said and not changing anything."]);
         report.context(context);
-        report.error().defer_recovery(command.diagnostic_effects)?;
+        report.error().defer_recovery(effects)?;
         Ok(ReplayStep::Continue)
     }
 }

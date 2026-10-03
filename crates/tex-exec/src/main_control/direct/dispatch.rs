@@ -1249,7 +1249,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::PRIMITIVE_FUTURE_LET
                                 | codes::PRIMITIVE_TOKS
                                 | codes::TOKS_REGISTER
-                                | codes::TOK_PARAM),
+                                | codes::TOK_PARAM
+                                | codes::PRIMITIVE_ADVANCE
+                                | codes::PRIMITIVE_MULTIPLY
+                                | codes::PRIMITIVE_DIVIDE),
                             ) => {
                                 let word = command.static_word().expect("native assignment word");
                                 let completed = native_assignments::execute_assignment(
@@ -2742,153 +2745,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         }
                                     }
                                 };
-                            }
-                            (
-                                _,
-                                codes::PRIMITIVE_ADVANCE
-                                | codes::PRIMITIVE_MULTIPLY
-                                | codes::PRIMITIVE_DIVIDE,
-                            ) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                                    primitive @ (UnexpandablePrimitive::Advance
-                                    | UnexpandablePrimitive::Multiply
-                                    | UnexpandablePrimitive::Divide),
-                                )) = command.meaning()
-                                else {
-                                    unreachable!(
-                                        "packed command selected its native operand family"
-                                    )
-                                };
-                                let mut target_slot = None;
-                                processor
-                                    .get_x_token_into(&mut target_slot)
-                                    .map_err(command_error)
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                let target_command = target_slot
-                                    .as_ref()
-                                    .ok_or(ExecError::UnsupportedAssignmentTarget)
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                let target = match target_command.meaning() {
-                                    tex_state::meaning::ResolvedMeaning::Macro { .. } => {
-                                        return finish_scan!(
-                                            self.execute_invalid_arithmetic_target(
-                                                primitive,
-                                                tex_command::PrintCommand::from_current(
-                                                    target_command
-                                                )
-                                            )
-                                        );
-                                    }
-                                    tex_state::meaning::ResolvedMeaning::Static(meaning) => {
-                                        match meaning {
-                                            Meaning::UnexpandablePrimitive(
-                                                UnexpandablePrimitive::Count,
-                                            ) => ArithmeticTarget::IntegerRegister(
-                                                take_native_scalar!(
-                                                    processor
-                                                        .scan_profile_register_index_retained(),
-                                                    scan_origin
-                                                ),
-                                            ),
-                                            Meaning::UnexpandablePrimitive(
-                                                UnexpandablePrimitive::Dimen,
-                                            ) => ArithmeticTarget::DimensionRegister(
-                                                take_native_scalar!(
-                                                    processor
-                                                        .scan_profile_register_index_retained(),
-                                                    scan_origin
-                                                ),
-                                            ),
-                                            Meaning::UnexpandablePrimitive(
-                                                UnexpandablePrimitive::Skip,
-                                            ) => ArithmeticTarget::GlueRegister {
-                                                index: take_native_scalar!(
-                                                    processor
-                                                        .scan_profile_register_index_retained(),
-                                                    scan_origin
-                                                ),
-                                                mu: false,
-                                            },
-                                            Meaning::UnexpandablePrimitive(
-                                                UnexpandablePrimitive::Muskip,
-                                            ) => ArithmeticTarget::GlueRegister {
-                                                index: take_native_scalar!(
-                                                    processor
-                                                        .scan_profile_register_index_retained(),
-                                                    scan_origin
-                                                ),
-                                                mu: true,
-                                            },
-                                            Meaning::CountRegister(index) => {
-                                                ArithmeticTarget::IntegerRegister(index)
-                                            }
-                                            Meaning::DimenRegister(index) => {
-                                                ArithmeticTarget::DimensionRegister(index)
-                                            }
-                                            Meaning::SkipRegister(index) => {
-                                                ArithmeticTarget::GlueRegister { index, mu: false }
-                                            }
-                                            Meaning::MuskipRegister(index) => {
-                                                ArithmeticTarget::GlueRegister { index, mu: true }
-                                            }
-                                            Meaning::IntParam(index) => {
-                                                ArithmeticTarget::IntegerParameter(index)
-                                            }
-                                            Meaning::DimenParam(index) => {
-                                                ArithmeticTarget::DimensionParameter(index)
-                                            }
-                                            Meaning::GlueParam(index) => {
-                                                ArithmeticTarget::GlueParameter { index, mu: false }
-                                            }
-                                            Meaning::MuGlueParam(index) => {
-                                                ArithmeticTarget::GlueParameter { index, mu: true }
-                                            }
-                                            _ => {
-                                                return finish_scan!(
-                                                    self.execute_invalid_arithmetic_target(
-                                                        primitive,
-                                                        tex_command::PrintCommand::from_current(
-                                                            target_command
-                                                        )
-                                                    )
-                                                );
-                                            }
-                                        }
-                                    }
-                                };
-
-                                let operand = scan_arithmetic::scan_arithmetic_operand(
-                                    processor,
-                                    target,
-                                    primitive,
-                                    scan_origin,
-                                )?;
-                                let step = retained_assignment!(
-                                    receipts,
-                                    |native_context,
-                                     native_state,
-                                     native_effects,
-                                     _native_fuel,
-                                     _native_observer,
-                                     native_execution| {
-                                        semantic::execute_arithmetic(
-                                            native_context,
-                                            native_effects,
-                                            native_state,
-                                            receipts,
-                                            primitive,
-                                            target,
-                                            operand,
-                                            global,
-                                        )
-                                    }
-                                )?;
-                                self.schedule_assignment_token()?;
-                                Ok(step)
                             }
                             (_, codes::PRIMITIVE_CHAR_DEF | codes::PRIMITIVE_MATH_CHAR_DEF) => {
                                 let global = effective_global(

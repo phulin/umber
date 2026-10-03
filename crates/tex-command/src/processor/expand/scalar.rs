@@ -60,7 +60,7 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
 }
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
-    pub(crate) fn consume_expanded_words(
+    pub fn consume_expanded_words(
         &mut self,
         consume: &mut ScalarConsumer<'_, Self, G>,
     ) -> Result<(), CommandError> {

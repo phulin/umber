@@ -109,7 +109,12 @@ impl NativeMainControl<'_> {
             || processor.has_pending_reports()
             || (matches!(
                 code,
-                codes::CHAR_END_GROUP | codes::PRIMITIVE_END_GROUP | codes::INT_PARAM
+                codes::CHAR_END_GROUP
+                    | codes::PRIMITIVE_END_GROUP
+                    | codes::INT_PARAM
+                    | codes::PRIMITIVE_ADVANCE
+                    | codes::PRIMITIVE_MULTIPLY
+                    | codes::PRIMITIVE_DIVIDE
             ) && (processor.int_param(IntParam::TRACING_COMMANDS) > 0
                 || processor.int_param(IntParam::TRACING_IFS) > 0))
         {

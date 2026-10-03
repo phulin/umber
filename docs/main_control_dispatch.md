@@ -351,3 +351,24 @@ through the reader's shared backup seam, carrying a delivered record only when
 exceptional alignment, tracing or recovery has requested it. The opening-brace
 backup and absorbing transition retain their original order; ordinary probes
 construct no `CurrentCommand` and add no second input loop.
+
+## Reader-owned arithmetic
+
+Arithmetic dispatch and target selection execute in the canonical reader.
+The target selector consumes one actual expanded word through the existing
+native-word scanner seam, then scans and applies its actual arithmetic operand
+before returning a semantic result. The selected target and operand are the
+existing typed register/value selectors. No delivered command, arithmetic
+request, second input loop or operation continuation is introduced.
+
+Native, prefixed and observed calls share this implementation. Invalid targets
+materialize only their actual diagnostic spelling and meaning and report through
+the existing command/effect owners. TeX82 section 1236 consumes that rejected
+target; section 1269 still inserts a pending afterassignment token once. Scanned
+reports precede mutation or invalid-target reporting through the same demanded
+report seam as the other native assignments. The old main-switch body and
+invalid-target executor adapter are deleted.
+
+Token-value completion keeps its actual optional result until the reader
+returns: an absent terminal is an input error, whereas a scanned empty braced
+list is a completed null value. EOF cannot silently assign a null list.

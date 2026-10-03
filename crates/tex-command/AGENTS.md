@@ -771,3 +771,8 @@ retain only their checked target and published definition.
 Token-list RHS selection consumes native expanded words through the shared
 reader. Ordinary probes construct no `CurrentCommand`; actual exceptional
 backup metadata stays with its existing delivery owner.
+
+The existing `consume_expanded_words` scanner seam lends native expanded words
+to executor-owned arithmetic target grammar. Invalid-target printing constructs
+`PrintCommand` from the demanded native meaning and control-sequence identity;
+ordinary arithmetic selection constructs no delivered command.

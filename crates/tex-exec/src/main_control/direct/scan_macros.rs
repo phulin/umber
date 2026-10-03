@@ -91,3 +91,38 @@ macro_rules! direct_apply_relax {
         )
     }};
 }
+
+// Apply actual assignment operands after demanded scan reports.
+macro_rules! with_native_assignment {
+    ($processor:ident, $observation_receipts:ident, $pending_diagnostics:expr; $receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident, $observer:ident, $execution:ident| $apply:expr) => {{
+        if $processor.has_pending_reports() {
+            let mut diagnostics = ($pending_diagnostics)
+                .map(std::mem::take)
+                .unwrap_or_default();
+            diagnostics.extend(
+                $processor
+                    .take_semantic_diagnostics()
+                    .into_iter()
+                    .map(PendingDiagnostic::Command),
+            );
+            $processor.with_execution_owners(
+                |context, command, effects, _, _, execution, _, _, _| {
+                    super::super::host_boundaries::report_scan_on_owners(
+                        context,
+                        command,
+                        execution,
+                        effects,
+                        diagnostics,
+                    )
+                },
+            )?;
+        }
+        let $receipts = &mut *$observation_receipts;
+        $processor.with_execution_owners(
+            |$context, $state, $effects, $fuel, $observer, $execution, _, _, _| {
+                $execution.main_loop_active = false;
+                $apply
+            },
+        )
+    }};
+}

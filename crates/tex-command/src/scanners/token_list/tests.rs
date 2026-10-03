@@ -53,3 +53,41 @@ fn token_register_assignment_returns_attempt_local_balanced_text() {
         );
     });
 }
+
+#[test]
+fn missing_token_value_is_an_error_but_empty_braced_text_is_null() {
+    for words in [
+        &[][..],
+        &[
+            token('{', Catcode::BeginGroup),
+            token('}', Catcode::EndGroup),
+        ][..],
+    ] {
+        crate::test_harness::with_universe(|universe| {
+            let owner = universe.intern("toks").expect("owner").symbol();
+            let mut command = CommandState::default();
+            crate::test_harness::push(&mut command, words.iter().copied());
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let result = processor.scan_token_list_value(owner, false);
+            if words.is_empty() {
+                assert!(result.is_err(), "EOF cannot become a token assignment");
+            } else {
+                let (tokens, source) = result.expect("complete empty braced value");
+                assert!(
+                    tokens.is_none() && source.is_none(),
+                    "new empty text is null"
+                );
+            }
+        });
+    }
+}

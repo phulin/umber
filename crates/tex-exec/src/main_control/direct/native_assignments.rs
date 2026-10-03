@@ -25,6 +25,9 @@ pub(super) fn accepts_assignment(code: u64) -> bool {
             | codes::PRIMITIVE_TOKS
             | codes::TOKS_REGISTER
             | codes::TOK_PARAM
+            | codes::PRIMITIVE_ADVANCE
+            | codes::PRIMITIVE_MULTIPLY
+            | codes::PRIMITIVE_DIVIDE
     )
 }
 
@@ -44,37 +47,6 @@ pub(super) fn execute_assignment<'state, 'host, G>(
         processor.int_param(IntParam::GLOBAL_DEFS),
         global || matches!(code, codes::PRIMITIVE_GDEF | codes::PRIMITIVE_XDEF),
     );
-    macro_rules! apply_assignment {
-        ($receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident, $observer:ident, $execution:ident| $apply:expr) => {{
-            if processor.has_pending_reports() {
-                let mut diagnostics = pending_diagnostics.map(std::mem::take).unwrap_or_default();
-                diagnostics.extend(
-                    processor
-                        .take_semantic_diagnostics()
-                        .into_iter()
-                        .map(PendingDiagnostic::Command),
-                );
-                processor.with_execution_owners(
-                    |context, command, effects, _, _, execution, _, _, _| {
-                        super::super::host_boundaries::report_scan_on_owners(
-                            context,
-                            command,
-                            execution,
-                            effects,
-                            diagnostics,
-                        )
-                    },
-                )?;
-            }
-            let $receipts = &mut *observation_receipts;
-            processor.with_execution_owners(
-                |$context, $state, $effects, $fuel, $observer, $execution, _, _, _| {
-                    $execution.main_loop_active = false;
-                    $apply
-                },
-            )
-        }};
-    }
     match code {
         codes::PRIMITIVE_COUNT | codes::COUNT_REGISTER => {
             let index = if code == codes::COUNT_REGISTER {
@@ -87,7 +59,7 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             };
             let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
             let value = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
-            let step = apply_assignment!(
+            let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
                  _native_state,
@@ -119,7 +91,7 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             };
             let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
             let value = take_native_scalar!(processor.scan_dimension_retained(), scan_origin);
-            let step = apply_assignment!(
+            let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
                  _native_state,
@@ -157,7 +129,7 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             let value = take_native_scalar!(processor.scan_glue_retained(mu), scan_origin);
             let source_identity = processor.scanned_glue_identity();
             let source_register = processor.scanned_glue_register();
-            let step = apply_assignment!(
+            let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
                  _native_state,
@@ -217,7 +189,7 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             let index = Meaning::runtime_word_operand(word) as u16;
             let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
             let value = take_native_scalar!(processor.scan_integer_retained(), scan_origin).value;
-            let step = apply_assignment!(
+            let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
                  native_state,
@@ -243,7 +215,7 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             let index = Meaning::runtime_word_operand(word) as u16;
             let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
             let value = take_native_scalar!(processor.scan_dimension_retained(), scan_origin);
-            let step = apply_assignment!(
+            let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
                  native_state,
@@ -270,7 +242,7 @@ pub(super) fn execute_assignment<'state, 'host, G>(
             let mu = code == codes::MU_GLUE_PARAM;
             let _ = take_native_scalar!(processor.scan_optional_equals_retained(), scan_origin);
             let value = take_native_scalar!(processor.scan_glue_retained(mu), scan_origin);
-            let step = apply_assignment!(
+            let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |native_context,
                  native_state,
@@ -303,7 +275,7 @@ pub(super) fn execute_assignment<'state, 'host, G>(
                 ))
                 .map_err(command_error)
                 .map_err(|error| scan_error(error, scan_origin))?;
-            let step = apply_assignment!(
+            let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |context, _state, effects, fuel, observer, native_execution| {
                     if native_execution
@@ -339,7 +311,7 @@ pub(super) fn execute_assignment<'state, 'host, G>(
                 .scan_let_assignment(code == codes::PRIMITIVE_FUTURE_LET)
                 .map_err(command_error)
                 .map_err(|error| scan_error(error, scan_origin))?;
-            let step = apply_assignment!(
+            let step = with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |context, _state, effects, fuel, _observer, native_execution| {
                     if native_execution
@@ -386,7 +358,7 @@ pub(super) fn execute_assignment<'state, 'host, G>(
                 .scan_token_list_value(owner, parameter && index == TokParam::OUTPUT.raw())
                 .map_err(command_error)
                 .map_err(|error| scan_error(error, scan_origin))?;
-            apply_assignment!(
+            with_native_assignment!(processor, observation_receipts, pending_diagnostics;
                 receipts,
                 |context, state, effects, _fuel, _observer, execution| {
                     let tokens = match source {
@@ -397,6 +369,21 @@ pub(super) fn execute_assignment<'state, 'host, G>(
                         context, effects, state, receipts, index, tokens, global, parameter,
                     )
                 }
+            )
+        }
+        codes::PRIMITIVE_ADVANCE | codes::PRIMITIVE_MULTIPLY | codes::PRIMITIVE_DIVIDE => {
+            let primitive = match code {
+                codes::PRIMITIVE_ADVANCE => UnexpandablePrimitive::Advance,
+                codes::PRIMITIVE_MULTIPLY => UnexpandablePrimitive::Multiply,
+                _ => UnexpandablePrimitive::Divide,
+            };
+            scan_arithmetic::execute_arithmetic(
+                processor,
+                primitive,
+                global,
+                scan_origin,
+                observation_receipts,
+                pending_diagnostics,
             )
         }
         _ => unreachable!("native assignment selection"),

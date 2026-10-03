@@ -385,6 +385,18 @@ pub struct PrintCommand<G> {
 }
 
 impl<G> PrintCommand<G> {
+    /// Materializes only the spelling and meaning demanded by a diagnostic.
+    #[must_use]
+    pub fn from_native(
+        meaning: &tex_state::meaning::MeaningWord<G>,
+        control_sequence: Option<tex_state::interner::Symbol>,
+    ) -> Self {
+        Self {
+            meaning: meaning.resolve(),
+            control_sequence,
+        }
+    }
+
     #[must_use]
     pub fn from_current(command: &CurrentCommand<G>) -> Self {
         Self {

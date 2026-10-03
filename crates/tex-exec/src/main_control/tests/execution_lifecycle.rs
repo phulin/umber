@@ -457,6 +457,9 @@ fn native_terminal_continuation_preserves_the_actual_operation_budget() {
         br"\def\m{\edef\n{}\gdef\p{}}\m\m\m\count0=9 \relax%",
         br"\def\m{\toks2={x}\everypar={y}}\m\m\m\count0=9 \relax%",
         br"\def\m{\toks2={}\output={}}\m\m\m\count0=9 \relax%",
+        br"\def\m{\advance\count2 by1 \multiply\count2 by2 }\m\m\m\count0=9 \relax%",
+        br"\def\m{\advance\dimen2 by1pt \divide\dimen2 by2 }\m\m\m\count0=9 \relax%",
+        br"\def\m{\advance\skip2 by1pt \multiply\thinmuskip by2 }\m\m\m\count0=9 \relax%",
     ] {
         for budget in [1, 2, 3, 4, 6, 7] {
             crate::test_harness::with_nonstop_plain_universe(|stores| {

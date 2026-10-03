@@ -15,7 +15,6 @@ mod apply_page_state;
 mod apply_paragraph;
 mod apply_pdf;
 mod apply_recovery;
-mod apply_registers;
 mod apply_streams;
 mod apply_text;
 mod characters;
