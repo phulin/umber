@@ -144,3 +144,28 @@ loan. Their retired outer apply methods and unused command-machine construction
 are deleted. These selected arms preserve the single authoritative dispatcher;
 main-control fetching still returns command records until the whole switch is
 moved into native consumption.
+
+The production switch's retained processor loans the complete actual execution
+owner. Mode, trace labels, box state and pointer-source bookkeeping are queried
+through that owner at their consuming arm. Its mode is read again for each
+command; a mode-changing semantic call cannot leave the next expansion or
+switch using an earlier sample. Cold component fact providers remain only for
+calls that genuinely borrow those components independently.
+
+Horizontal glue and setlanguage consume their scanner values directly through
+that loan. Their source-free helpers receive context, modes, effects and fuel;
+they construct no command machine and have no executor adapter. Horizontal
+glue's former internal paragraph-start branch is deleted: the sole mode switch
+already owns §1090's vertical backup and paragraph entry before that arm.
+
+## Native consumption contract
+
+The complete native switch must run synchronously inside the canonical reader's terminal
+consumer, using borrowed spelling, native meaning and control-sequence identity
+as its parameters. The retained processor remains the input and fuel authority
+for operand scans. The switch's semantic helper lends only actual owners;
+ordinary completion continues input directly. Prefix flags belong to that
+in-flight TeX operation and cannot become a driver checkpoint cut. Replacement
+fetches enter the same reswitch without backup or an intervening command record.
+World dialogue, prepared shipout, output-page ownership and driver checkpoint
+cuts return their actual typed results after the relevant loans end.

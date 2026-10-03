@@ -101,6 +101,7 @@ impl<Processor, G> ExpandedReaderConsumer<Processor, G> for DeliveredCommand {
 enum ExpandedReaderRole {
     Scanner,
     MainControl,
+    MainLoopLookahead,
 }
 
 #[derive(Clone, Copy)]

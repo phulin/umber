@@ -199,35 +199,19 @@ pub(in crate::main_control) fn execute_text_direction<G>(
 pub(in crate::main_control) fn execute_horizontal_skip<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    value: &mut GlueSpec,
-    shared_zero_glue: &mut bool,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    value: GlueSpec,
+    shared_zero_glue: bool,
 ) -> Result<ReplayStep, ExecError> {
     {
-        if matches!(
-            modes.current_mode(),
-            Mode::Vertical | Mode::InternalVertical
-        ) {
-            start_paragraph(
-                command.state,
-                modes,
-                stores,
-                command.diagnostic_effects,
-                true,
-            )?;
-        }
-        crate::box_runtime::flush_pending_hchars_with_fuel(
-            modes,
-            stores,
-            command.diagnostic_effects,
-            command.fuel,
-        )?;
+        crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, effects, fuel)?;
         modes.current_list_mutation().push(
             stores,
             Node::Glue {
-                spec: *value,
+                spec: value,
                 kind: GlueKind::Normal,
-                origin: if *shared_zero_glue {
+                origin: if shared_zero_glue {
                     tex_state::node::GlueSpecOrigin::SharedZero
                 } else {
                     tex_state::node::GlueSpecOrigin::Owned

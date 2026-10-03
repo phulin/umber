@@ -40,33 +40,6 @@ impl<G> DirectDispatch<'_, '_, G> {
         self.finish_host(applied)
     }
 
-    pub(super) fn execute_horizontal_skip(
-        &mut self,
-        mut value: GlueSpec,
-        mut shared_zero_glue: bool,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, modes, _, _, command, _, _, _, _, _, _, _| {
-                semantic::execute_horizontal_skip(
-                    stores,
-                    modes,
-                    command,
-                    &mut value,
-                    &mut shared_zero_glue,
-                )
-            },
-        )
-    }
-
     pub(super) fn execute_penalty(&mut self, mut amount: i32) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 

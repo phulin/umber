@@ -42,8 +42,9 @@ pub(in crate::main_control) fn execute_paragraph_indent<G>(
 pub(in crate::main_control) fn execute_set_language<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    language: &mut i32,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    language: i32,
 ) -> Result<ReplayStep, ExecError> {
     {
         // TeX82 §1377, verbatim:
@@ -61,7 +62,7 @@ pub(in crate::main_control) fn execute_set_language<G>(
         // `1..=255` survives. The pending character run is flushed
         // first, before `clang` moves, so it hyphenates under the
         // language that was current while it was being built.
-        let clang = u8::try_from(*language).unwrap_or(0);
+        let clang = u8::try_from(language).unwrap_or(0);
         let left_hyphen_min =
             crate::box_runtime::norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
         let right_hyphen_min =
@@ -69,8 +70,8 @@ pub(in crate::main_control) fn execute_set_language<G>(
         crate::box_runtime::append_whatsit(
             modes,
             stores,
-            command.diagnostic_effects,
-            command.fuel,
+            effects,
+            fuel,
             Whatsit::Language {
                 language: clang,
                 left_hyphen_min,

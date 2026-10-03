@@ -106,6 +106,28 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         })
     }
 
+    /// Executes the terminal consumer at TeX82 §1038's raw character
+    /// lookahead. Only noncharacters enter x_token; adjacent characters own
+    /// their raw delivery alone, including when observation is requested.
+    pub fn consume_main_loop_lookahead(
+        &mut self,
+        consume: &mut ScalarConsumer<'_, Self, G>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let mut destination = None;
+        self.consume_expanded_with_mode::<false, false>(
+            &mut destination,
+            None,
+            ExpandedReaderRole::MainLoopLookahead,
+            &mut ScalarWords { consume },
+        )
+        .map(|status| match status {
+            DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                DeliveryStatus::Command
+            }
+            status => status,
+        })
+    }
+
     /// Ordinary synchronous consumers back up spelling; exceptional deliveries
     /// preserve their actual alignment correction and observed command identity.
     pub(crate) fn back_consumed_word(

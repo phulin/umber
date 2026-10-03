@@ -344,18 +344,125 @@ fn reused_raw_destination_is_cleared_at_eof_and_fuel_failure() {
 }
 
 #[test]
+fn native_main_lookahead_preserves_mixed_expansion_and_observed_fuel_cuts() {
+    fn run(
+        native: bool,
+        observed: bool,
+        limit: u64,
+    ) -> (Vec<Token>, u64, bool, Vec<(CommandDeliveryBoundary, u64)>) {
+        crate::test_harness::with_universe(|universe| {
+            let macro_token = install_identity(universe, "identity", &[Token::Param(1)]);
+            let noexpand = install_static(
+                universe,
+                "noexpand",
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand),
+            );
+            let given = install_static(universe, "given", Meaning::CharGiven('G'));
+            let relax = install_static(universe, "relax", Meaning::Relax);
+            let mut command = CommandState::default();
+            crate::test_harness::push(
+                &mut command,
+                [
+                    letter('A'),
+                    given,
+                    macro_token,
+                    letter('B'),
+                    Token::Char {
+                        ch: ' ',
+                        cat: Catcode::Space,
+                    },
+                    noexpand,
+                    macro_token,
+                    relax,
+                    letter('C'),
+                ],
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(limit).expect("fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut observer = RecordingObserver::default();
+            let mut context = universe.command_context().expect("context");
+            let processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut processor = if observed {
+                processor.with_observer(&mut observer)
+            } else {
+                processor
+            };
+            let mut output = Vec::new();
+            let result = if native {
+                processor.consume_main_loop_lookahead(&mut |_, spelling, _, _, _| {
+                    output.push(spelling.semantic_token());
+                    Ok(std::ops::ControlFlow::Continue(()))
+                })
+            } else {
+                let mut destination = None;
+                loop {
+                    match processor.main_loop_lookahead_into(&mut destination) {
+                        Ok(crate::DeliveryStatus::Command) => output.push(
+                            destination
+                                .take()
+                                .expect("command")
+                                .spelling()
+                                .semantic_token(),
+                        ),
+                        result => break result,
+                    }
+                }
+            };
+            let exhausted = match result {
+                Ok(crate::DeliveryStatus::End) => false,
+                Err(crate::CommandError::FuelExhausted(_)) => true,
+                result => panic!("unexpected lookahead boundary: {result:?}"),
+            };
+            assert_eq!(processor.command.transient.active_expansion_depth, 0);
+            assert_eq!(processor.expansion_depth, 0);
+            let burned = processor.fuel.burned();
+            drop(processor);
+            let deliveries = observer
+                .0
+                .into_iter()
+                .filter_map(|record| {
+                    let CommandObservation::Command(record) = record else {
+                        return None;
+                    };
+                    Some((record.boundary, record.provenance.delivery_sequence))
+                })
+                .collect();
+            (output, burned, exhausted, deliveries)
+        })
+    }
+    for observed in [false, true] {
+        for limit in (1..=20).chain([100]) {
+            assert_eq!(
+                run(true, observed, limit),
+                run(false, observed, limit),
+                "observed {observed}, fuel {limit}"
+            );
+        }
+    }
+}
+
+#[test]
 fn native_primitive_and_terminal_runs_construct_no_commands() {
     struct Observer;
     impl CommandObserver for Observer {
         fn committed(&mut self, _: CommandObservation) {}
     }
-    for (observed, main_control, raw_spelling) in [
-        (false, false, false),
-        (true, false, false),
-        (false, true, false),
-        (true, true, false),
-        (false, false, true),
-        (true, false, true),
+    for (observed, main_control, raw_spelling, lookahead) in [
+        (false, false, false, false),
+        (true, false, false, false),
+        (false, true, false, false),
+        (true, true, false, false),
+        (false, false, true, false),
+        (true, false, true, false),
+        (false, false, false, true),
+        (true, false, false, true),
     ] {
         for count in [1, 4096] {
             crate::test_harness::with_universe(|universe| {
@@ -376,7 +483,7 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
                 let mut command = CommandState::default();
                 crate::test_harness::push(
                     &mut command,
-                    if raw_spelling {
+                    if raw_spelling || lookahead {
                         vec![letter; count]
                     } else {
                         [iftrue, letter, fi]
@@ -423,6 +530,13 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
                         assert_eq!(word.semantic_token(), letter);
                         delivered += 1;
                     }
+                } else if lookahead {
+                    assert_eq!(
+                        processor
+                            .consume_main_loop_lookahead(&mut consume)
+                            .expect("native raw main lookahead"),
+                        crate::DeliveryStatus::End,
+                    );
                 } else if main_control {
                     assert_eq!(
                         processor
@@ -443,7 +557,7 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
                     count as u64
                         * if !observed {
                             0
-                        } else if raw_spelling {
+                        } else if raw_spelling || lookahead {
                             1
                         } else {
                             3
@@ -452,7 +566,7 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
                 );
                 assert_eq!(
                     processor.fuel.burned(),
-                    count as u64 * if raw_spelling { 1 } else { 3 } + 1
+                    count as u64 * if raw_spelling || lookahead { 1 } else { 3 } + 1
                 );
             });
         }

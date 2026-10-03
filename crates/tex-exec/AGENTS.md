@@ -54,8 +54,8 @@ not allocate a vector merely to publish one already-complete node.
   `dispatch.rs`, with synchronous `scan_*` routines and concrete `apply_*`
   methods organized by native command responsibility. `scan_macros.rs` releases
   actual scanner loans at cold owner and publication boundaries. The native
-  fetch/reswitch loop retains its actual processor and context through RELAX, ordinary groups,
-  integer/dimension/glue/token registers and parameters, arithmetic, definitions, let assignments, raw aftergroup/afterassignment operands, kerns and vertical glue, consuming scanner products at their actual destination and respecting the caller's remaining budget. An existing pending
+  fetch/reswitch loop borrows the complete actual execution owner, refreshing its mode for each command and querying box/trace/pointer state at the consuming arm. It retains its actual processor and context through RELAX, ordinary groups,
+  integer/dimension/glue/token registers and parameters, arithmetic, definitions, let assignments, raw aftergroup/afterassignment operands, kerns, horizontal/vertical glue and setlanguage, consuming scanner products at their actual destination and respecting the caller's remaining budget. Horizontal glue and setlanguage lend their actual context, modes, effects and fuel directly; their former whole-executor adapters are deleted. An existing pending
   character buffer is flushed through the actual mutable mode loan. Actual diagnostic,
   observer/tracked, page/output, afterassignment and budget demands release the
   loan at the actual owner boundary; no command settlement tail exists. `scan_arithmetic.rs` scans concrete

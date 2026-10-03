@@ -50,7 +50,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         // Finish this actual processor/context loan before semantic application.
         macro_rules! finish_scan {
             ($call:expr) => {
-                direct_finish_scan!(self, owned_processor, admitted_context, host_facts, $call)
+                direct_finish_scan!(self, owned_processor, admitted_context, $call)
             };
         }
 
@@ -70,7 +70,15 @@ impl<G> DirectDispatch<'_, '_, G> {
         let command = destination
             .take()
             .expect("command status initializes destination");
-        report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
+        report_main_control_command_trace(
+            processor,
+            mode,
+            &command,
+            boxes.pending_leader.is_some(),
+            boxes.output_routine_opening_pending,
+            boxes.pending_shipout.is_some(),
+            shown_mode,
+        );
         match command.meaning() {
             ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::EndGroup,
@@ -154,7 +162,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         // Finish this actual processor/context loan before semantic application.
         macro_rules! finish_scan {
             ($call:expr) => {
-                direct_finish_scan!(self, owned_processor, admitted_context, host_facts, $call)
+                direct_finish_scan!(self, owned_processor, admitted_context, $call)
             };
         }
 
@@ -200,7 +208,15 @@ impl<G> DirectDispatch<'_, '_, G> {
                         )
                     );
                 if !continues_main_loop {
-                    report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
+                    report_main_control_command_trace(
+                        processor,
+                        mode,
+                        &command,
+                        boxes.pending_leader.is_some(),
+                        boxes.output_routine_opening_pending,
+                        boxes.pending_shipout.is_some(),
+                        shown_mode,
+                    );
                 }
                 // TeX82 §1132 dispatches every right brace seen with an active
                 // `align_group` through the missing-\cr recovery, independent of

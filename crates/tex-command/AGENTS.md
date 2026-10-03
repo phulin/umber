@@ -215,7 +215,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   delimiter diagnostics and input-name recovery consume native spelling at
   their actual exceptional boundary. Delivered/observed callers use this same
   engine from their existing command's invocation facts.
-- `src/processor/expand/scalar.rs`: synchronous continuing scalar consumers borrow native spelling and meaning directly; exceptional observation/recovery lends its demanded record. Accepted words construct no command.
+- `src/processor/expand/scalar.rs`: synchronous continuing scalar and main-control consumers borrow native spelling and meaning directly; exceptional observation/recovery lends its demanded record. Accepted words construct no command. The main-loop lookahead role preserves §1038's raw character delivery and expands only noncharacters in the same reader. Mixed macro/noexpand tests compare every bounded fuel cut and observed delivery order against destination-directed lookahead.
 - `src/processor/expand/once.rs`: TeX82 §368's single-expansion consumer of
   the same reader. It creates source names while reading its operand, restores
   normal delivery before nesting, activates ordinary macros without a command,

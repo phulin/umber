@@ -262,11 +262,14 @@ pub(super) fn report_command_trace<G, Facts: tex_command::CommandHostFacts<G>>(
 /// `scan_box` from the already-traced `leader_ship` case, so its `\hbox`,
 /// `\vbox`, or `\vtop` never returns to §1030's `reswitch`. Split replay
 /// retains `pending_shipout` across that internal fetch.
+#[allow(clippy::too_many_arguments)] // actual demanded trace facts, not a copied box owner
 pub(super) fn report_main_control_command_trace<G, Facts: tex_command::CommandHostFacts<G>>(
     processor: &mut CommandProcessor<'_, '_, G, Facts>,
     mode: Mode,
     command: &tex_command::CurrentCommand<G>,
-    boxes: &ReplayBoxes<G>,
+    pending_leader: bool,
+    output_routine_opening_pending: bool,
+    pending_shipout: bool,
     shown_mode: &mut Option<Mode>,
 ) {
     // Expansion can invoke §299 itself for e-TeX's `\tracingifs`. Its mode
@@ -274,7 +277,7 @@ pub(super) fn report_main_control_command_trace<G, Facts: tex_command::CommandHo
     if processor.command_trace_printed() {
         *shown_mode = Some(mode);
     }
-    let output_routine_opening = boxes.output_routine_opening_pending
+    let output_routine_opening = output_routine_opening_pending
         && matches!(
             command.meaning(),
             ResolvedMeaning::Static(Meaning::CharToken {
@@ -282,7 +285,7 @@ pub(super) fn report_main_control_command_trace<G, Facts: tex_command::CommandHo
                 ..
             })
         );
-    let shipout_box_constructor = boxes.pending_shipout.is_some()
+    let shipout_box_constructor = pending_shipout
         && matches!(
             command.meaning(),
             ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
@@ -291,7 +294,7 @@ pub(super) fn report_main_control_command_trace<G, Facts: tex_command::CommandHo
                     | UnexpandablePrimitive::VTop
             ))
         );
-    if boxes.pending_leader.is_none() && !output_routine_opening && !shipout_box_constructor {
+    if !pending_leader && !output_routine_opening && !shipout_box_constructor {
         report_command_trace(processor, mode, command, shown_mode);
     }
 }

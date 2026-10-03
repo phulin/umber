@@ -13,7 +13,7 @@ macro_rules! take_native_scalar {
 }
 
 macro_rules! direct_finish_scan {
-    ($this:ident, $processor:ident, $admission:ident, $facts:ident, $call:expr) => {{
+    ($this:ident, $processor:ident, $admission:ident, $call:expr) => {{
         $this.cursor = Some($processor.delivery_cursor());
         $this.diagnostics.extend(
             $processor

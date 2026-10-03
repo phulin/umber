@@ -48,7 +48,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         // Finish this actual processor/context loan before semantic application.
         macro_rules! finish_scan {
             ($call:expr) => {
-                direct_finish_scan!(self, owned_processor, admitted_context, host_facts, $call)
+                direct_finish_scan!(self, owned_processor, admitted_context, $call)
             };
         }
 
@@ -119,7 +119,7 @@ impl<G> DirectDispatch<'_, '_, G> {
         // Finish this actual processor/context loan before semantic application.
         macro_rules! finish_scan {
             ($call:expr) => {
-                direct_finish_scan!(self, owned_processor, admitted_context, host_facts, $call)
+                direct_finish_scan!(self, owned_processor, admitted_context, $call)
             };
         }
 

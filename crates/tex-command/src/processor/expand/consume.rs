@@ -412,7 +412,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             expanded = true;
                             return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                         }
-                        if role == ExpandedReaderRole::MainControl
+                        if matches!(role, ExpandedReaderRole::MainControl | ExpandedReaderRole::MainLoopLookahead)
                             && !expanded
                             && matches!(action, ExpandedCommandAction::EndTemplate)
                             && !matches!(
@@ -424,7 +424,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             processor.insert_frozen_endv()?;
                             return Ok(ControlFlow::Continue(()));
                         }
-                        if Consumer::RAW_TOKEN {
+                        if Consumer::RAW_TOKEN || (role == ExpandedReaderRole::MainLoopLookahead
+                            && !expanded && command.is_main_loop_character()) {
                             DeliveryStatus::Command
                         } else {
                             processor
