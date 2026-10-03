@@ -811,7 +811,7 @@ pub(super) struct OperationReceiptStart {
 /// Explicit live-observer boundary for detached shipout geometry.
 pub(super) struct MainControlShipoutGeometrySink<'a, G> {
     pub(super) command: &'a CommandState<G>,
-    pub(super) observations: &'a mut ObservationSlot,
+    pub(super) observations: Option<&'a mut dyn CommandObserver>,
 }
 
 /// Explicit operation-local boundary for TeX82 §§649--676 packing geometry.
@@ -822,12 +822,12 @@ pub(super) struct MainControlShipoutGeometrySink<'a, G> {
 pub(super) struct MainControlPackGeometrySink<'a> {
     pub(super) line: u32,
     pub(super) source: Option<tex_command::SourceId>,
-    pub(super) observations: &'a mut ObservationSlot,
+    pub(super) observations: Option<&'a mut dyn CommandObserver>,
 }
 
 pub(super) fn pack_geometry_sink<'a, G>(
     command: &CommandState<G>,
-    observations: &'a mut ObservationSlot,
+    observations: Option<&'a mut dyn CommandObserver>,
 ) -> MainControlPackGeometrySink<'a> {
     MainControlPackGeometrySink {
         line: command.current_file_line_number(),

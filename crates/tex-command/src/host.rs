@@ -1510,6 +1510,27 @@ impl<'a, G> CommandHostContext<'a, G> {
 }
 
 impl<'a, G, Facts: CommandHostFacts<G>> CommandHostContext<'a, G, Facts> {
+    /// Synchronous reborrowing of the actual execution host owners.
+    #[inline(always)]
+    pub(crate) fn with_owners<R>(
+        &mut self,
+        use_owners: impl FnOnce(
+            &mut Facts,
+            &mut CommandHostCapabilities,
+            Option<&mut dyn ResourceProvider<G>>,
+            Option<&mut Option<ResourceNeed>>,
+        ) -> R,
+    ) -> R {
+        use_owners(
+            &mut self.facts,
+            self.capabilities,
+            self.resource_provider
+                .as_mut()
+                .map(|provider| &mut **provider as &mut dyn ResourceProvider<G>),
+            self.attempted_resource.as_deref_mut(),
+        )
+    }
+
     // Nested replay is a cold borrow boundary. Erasure here keeps repeated
     // reborrows on the same implementation without nesting concrete loan types.
     pub(crate) fn reborrow(&mut self) -> CommandHostContext<'_, G, &mut dyn CommandHostFacts<G>> {

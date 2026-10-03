@@ -92,7 +92,8 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
             // paragraph pack report, so retain that delivered scalar in
             // `BoxEndGroup` instead of re-reading a now-empty input stack.
             diagnostic_context.current_line = *current_line;
-            let mut geometry = pack_geometry_sink(command.state, command.observations);
+            let mut geometry =
+                pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,
@@ -147,7 +148,8 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
         // the exception: `package` saved it above before `unsave`.
         let node = if box_kind.horizontal() {
             let diagnostic_context = command_pack_context(command);
-            let mut geometry = pack_geometry_sink(command.state, command.observations);
+            let mut geometry =
+                pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
             Node::HList(crate::box_runtime::hpack_with_overfull_rule(
                 stores,
                 command.diagnostic_effects,
@@ -162,7 +164,10 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
                     let diagnostic_context = command_pack_context(command);
                     let mut params = crate::packing_params::vpack_params(stores);
                     params.box_max_depth = box_max_depth;
-                    let mut geometry = pack_geometry_sink(command.state, command.observations);
+                    let mut geometry = pack_geometry_sink(
+                        command.state,
+                        reborrow_observer(&mut command.observations),
+                    );
                     crate::packing_params::vpack(
                         stores,
                         command.diagnostic_effects,
@@ -178,7 +183,10 @@ pub(in crate::main_control) fn execute_box_end_group<G>(
                     let diagnostic_context = command_pack_context(command);
                     let mut params = crate::packing_params::vpack_params(stores);
                     params.box_max_depth = box_max_depth;
-                    let mut geometry = pack_geometry_sink(command.state, command.observations);
+                    let mut geometry = pack_geometry_sink(
+                        command.state,
+                        reborrow_observer(&mut command.observations),
+                    );
                     crate::packing_params::vtop(
                         stores,
                         command.diagnostic_effects,
@@ -506,7 +514,10 @@ pub(in crate::main_control) fn execute_set_box<G>(
                     }
                     let diagnostic_context =
                         command_diagnostic_context(command.state, command.output_routine_active);
-                    let mut geometry = pack_geometry_sink(command.state, command.observations);
+                    let mut geometry = pack_geometry_sink(
+                        command.state,
+                        reborrow_observer(&mut command.observations),
+                    );
                     let node = crate::box_runtime::split_vbox_register(
                         stores,
                         command.diagnostic_effects,

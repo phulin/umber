@@ -38,7 +38,8 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
         // synthetic `endv` has no source line of its own. TeX82 §§1131/661
         // nevertheless report the delimiter line as this paragraph's end.
         error_context.current_line = i32::try_from(delimiter_line).unwrap_or(i32::MAX);
-        let mut geometry = pack_geometry_sink(command.state, command.observations);
+        let mut geometry =
+            pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
         crate::paragraph_end::end_paragraph_with_context(
             modes,
             stores,
@@ -54,7 +55,8 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
             .checked_add(1)
             .ok_or(ExecError::ArithmeticOverflow)?;
     } else {
-        let mut geometry = pack_geometry_sink(command.state, command.observations);
+        let mut geometry =
+            pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
         capture_replay_alignment_cell(
             active,
             modes,
@@ -106,7 +108,8 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
             recovered,
             AlignmentRequestResult::ExtraTabRecovered
         ));
-        let mut geometry = pack_geometry_sink(command.state, command.observations);
+        let mut geometry =
+            pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
         finish_replay_alignment_row(
             active,
             modes,
@@ -152,7 +155,8 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
         })?;
     match delimiter {
         AlignmentCellDelimiter::Row => {
-            let mut geometry = pack_geometry_sink(command.state, command.observations);
+            let mut geometry =
+                pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
             finish_replay_alignment_row(
                 active,
                 modes,

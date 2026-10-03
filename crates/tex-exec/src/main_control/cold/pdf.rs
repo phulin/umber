@@ -1503,12 +1503,12 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         // after those effects have happened, so publish the committed prefix
         // before its nested command episode contributes observations.
         if let Some(observations) = command.observations.as_mut() {
-            observations.extend(
-                stores.world().effect_records()[effect_cursor.get()..]
-                    .iter()
-                    .filter_map(stream_effect_observation)
-                    .map(CommandObservation::Effect),
-            );
+            for effect in stores.world().effect_records()[effect_cursor.get()..]
+                .iter()
+                .filter_map(stream_effect_observation)
+            {
+                observations.committed(CommandObservation::Effect(effect));
+            }
         }
         effect_cursor.set(stores.world().effect_records().len());
         let detached = (|| {

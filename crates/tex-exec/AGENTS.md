@@ -55,7 +55,7 @@ not allocate a vector merely to publish one already-complete node.
   methods organized by native command responsibility. `scan_macros.rs` releases
   actual scanner loans at cold owner and publication boundaries. The native
   fetch/reswitch loop retains its actual processor and context through RELAX, ordinary groups,
-  integer/dimension/glue/token registers and parameters, arithmetic, definitions and let assignments, consuming scanner products at their actual destination and respecting the caller's remaining budget. An existing pending
+  integer/dimension/glue/token registers and parameters, arithmetic, definitions, let assignments, raw aftergroup/afterassignment operands, kerns and vertical glue, consuming scanner products at their actual destination and respecting the caller's remaining budget. An existing pending
   character buffer is flushed through the actual mutable mode loan. Actual diagnostic,
   observer/tracked, page/output, afterassignment and budget demands release the
   loan at the actual owner boundary; no command settlement tail exists. `scan_arithmetic.rs` scans concrete
@@ -82,6 +82,8 @@ not allocate a vector merely to publish one already-complete node.
   union, readiness phase, context dereference facade, compatibility executor, or universal payload exists. Input stream scanners return a move-only final definition owner for read assignment; no attempt-definition promotion remains.
 - `src/main_control/semantic_owners.rs`: actual semantic-owner admission and
   ordered diagnostic, mutation, effect, artifact, and paragraph publication.
+  Semantic helpers carry actual optional observer and resource-decline loans;
+  the concrete operation observation buffer remains with its outer owner.
   Native context-consuming arms complete directly; observation publication is demanded by its actual instrumentation owner. Observation allocates evidence only when requested; deferred page-output
   evidence has an optional owner created by observed output routines. Provider loans return
   before propagation of semantic failure.

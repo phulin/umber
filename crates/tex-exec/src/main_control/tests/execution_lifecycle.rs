@@ -356,7 +356,10 @@ fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
 fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
-        register_source(&mut control, br"H\ifhmode T\fi\ifvmode V\fi Q%");
+        register_source(
+            &mut control,
+            br"H\ifhmode T\fi\ifvmode V\fi K\ifdim\lastkern=1pt Y\fi Q%",
+        );
         let mut effects = DiagnosticEffects::new();
         let mut context = stores.command_context().expect("context");
         let mut processor = command_processor(
@@ -379,26 +382,48 @@ fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
                     panic!("expected the selected native character");
                 };
                 consumed.push(ch);
-                processor.apply_completed_command(|_, _, _, _, _, execution| match ch {
-                    'H' => {
-                        execution.main_loop_active = true;
-                        execution.boxes.recovery_simple_group_pending = true;
-                        execution
-                            .modes
-                            .push(Mode::RestrictedHorizontal)
-                            .expect("enter mode");
-                    }
-                    'T' => {
-                        assert!(execution.main_loop_active);
-                        assert!(execution.boxes.recovery_simple_group_pending);
-                        execution.main_loop_active = false;
-                        execution.boxes.recovery_simple_group_pending = false;
-                        assert_eq!(execution.modes.current_mode(), Mode::RestrictedHorizontal);
-                        execution.modes.pop().expect("leave mode");
-                    }
-                    'V' | 'Q' => assert_eq!(execution.modes.current_mode(), Mode::Vertical),
-                    _ => panic!("conditional expansion consumed the wrong mode: {ch}"),
-                });
+                processor.with_execution_owners(
+                    |context,
+                     _state,
+                     effects,
+                     fuel,
+                     _observer,
+                     execution,
+                     _capabilities,
+                     _provider,
+                     _declined| match ch {
+                        'H' => {
+                            execution.main_loop_active = true;
+                            execution.boxes.recovery_simple_group_pending = true;
+                            execution
+                                .modes
+                                .push(Mode::RestrictedHorizontal)
+                                .expect("enter mode");
+                        }
+                        'T' => {
+                            assert!(execution.main_loop_active);
+                            assert!(execution.boxes.recovery_simple_group_pending);
+                            execution.main_loop_active = false;
+                            execution.boxes.recovery_simple_group_pending = false;
+                            assert_eq!(execution.modes.current_mode(), Mode::RestrictedHorizontal);
+                            execution.modes.pop().expect("leave mode");
+                        }
+                        'K' => {
+                            semantic::execute_kern(
+                                context,
+                                &mut execution.modes,
+                                effects,
+                                fuel,
+                                Scaled::from_raw(Scaled::UNITY),
+                            )
+                            .expect("source-free kern semantic in the native reader");
+                        }
+                        'V' | 'Y' | 'Q' => {
+                            assert_eq!(execution.modes.current_mode(), Mode::Vertical)
+                        }
+                        _ => panic!("conditional expansion consumed the wrong mode: {ch}"),
+                    },
+                );
                 Ok(if ch == 'Q' {
                     std::ops::ControlFlow::Break(())
                 } else {
@@ -407,7 +432,7 @@ fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
             })
             .expect("native main-control consumption");
         assert_eq!(result, tex_command::DeliveryStatus::Command);
-        assert_eq!(consumed, "HTVQ");
+        assert_eq!(consumed, "HTVKYQ");
         drop(processor);
         assert_eq!(control.execution.modes.current_mode(), Mode::Vertical);
         assert!(!control.execution.main_loop_active);

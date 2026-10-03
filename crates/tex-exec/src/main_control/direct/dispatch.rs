@@ -172,8 +172,16 @@ impl<G> DirectDispatch<'_, '_, G> {
                         } else {
                             self.control.execution.main_loop_active = false;
                             let $receipts = &mut observation_receipts;
-                            let mut completed = owned_processor.apply_completed_command(
-                                |$context, $state, $effects, $fuel, $observer, execution| {
+                            let mut completed = owned_processor.with_execution_owners(
+                                |$context,
+                                 $state,
+                                 $effects,
+                                 $fuel,
+                                 $observer,
+                                 execution,
+                                 _,
+                                 _,
+                                 _| {
                                     let $modes = &mut *execution.modes;
                                     $apply
                                 },
@@ -837,8 +845,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                             }
                             (_, codes::PRIMITIVE_END_GROUP)
-                                if processor.apply_completed_command(
-                                    |context, _, _, _, _observer, _execution| {
+                                if processor.with_execution_owners(
+                                    |context, _, _, _, _observer, _execution, _, _, _| {
                                         context.innermost_group_kind()
                                     },
                                 ) == Some(GroupKind::SemiSimple) =>
@@ -857,8 +865,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             )
                                         )
                                     } else {
-                                        processor.apply_completed_command(
-                                            |context, _, effects, fuel, _, execution| {
+                                        processor.with_execution_owners(
+                                            |context, _, effects, fuel, _, execution, _, _, _| {
                                                 if execution.modes.current_list().pending_hchars().is_some() {
                                                     crate::box_runtime::flush_pending_hchars_with_fuel(
                                                         execution.modes, context, effects, fuel,
@@ -967,8 +975,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 Ok(step)
                             }
                             (_, codes::RELAX) => {
-                                let pending_hchars = processor.apply_completed_command(
-                                    |_, _, _, _, _, execution| {
+                                let pending_hchars = processor.with_execution_owners(
+                                    |_, _, _, _, _, execution, _, _, _| {
                                         execution.modes.current_list().pending_hchars().is_some()
                                     },
                                 );
@@ -1003,8 +1011,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // TeX82 §1068 dispatches a right brace from the current `cur_group`.
                                 // An ancestor simple group must not make a nested box's body closer look
                                 // like an ordinary group closer.
-                                if processor.apply_completed_command(
-                                    |context, _, _, _, _observer, _execution| {
+                                if processor.with_execution_owners(
+                                    |context, _, _, _, _observer, _execution, _, _, _| {
                                         context.innermost_group_kind()
                                     },
                                 ) == Some(GroupKind::Simple)
@@ -1023,8 +1031,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                                 )
                                             )
                                         } else {
-                                            processor.apply_completed_command(
-                                                |context, _, effects, fuel, _, execution| {
+                                            processor.with_execution_owners(
+                                                |context, _, effects, fuel, _, execution, _, _, _| {
                                                     if execution.modes.current_list().pending_hchars().is_some() {
                                                     crate::box_runtime::flush_pending_hchars_with_fuel(
                                                         execution.modes, context, effects, fuel,
@@ -1053,8 +1061,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // so each pair really does bracket a save-stack level and its closer must
                                 // not fall through to the ordinary or box brace arms below.
                                 if let Some(kind @ (GroupKind::Math | GroupKind::MathChoice)) =
-                                    processor.apply_completed_command(
-                                        |context, _, _, _, _observer, _execution| {
+                                    processor.with_execution_owners(
+                                        |context, _, _, _, _observer, _execution, _, _, _| {
                                             context.innermost_group_kind()
                                         },
                                     )
@@ -1064,8 +1072,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         finish_scan!(self.execute_end_math_group(direct_arg0))
                                     };
                                 }
-                                if processor.apply_completed_command(
-                                    |context, _, _, _, _observer, _execution| {
+                                if processor.with_execution_owners(
+                                    |context, _, _, _, _observer, _execution, _, _, _| {
                                         context.innermost_group_kind()
                                     },
                                 ) == Some(GroupKind::Disc)
@@ -1083,8 +1091,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // `unsave`, losing both the nested group's local restores and the
                                 // `\aftergroup` tokens §282 backs up when it pops.
                                 if let Some(box_state) = boxes.active_boxes.last()
-                                    && processor.apply_completed_command(
-                                        |context, _, _, _, _observer, _execution| {
+                                    && processor.with_execution_owners(
+                                        |context, _, _, _, _observer, _execution, _, _, _| {
                                             context.innermost_group_kind()
                                         },
                                     ) == Some(box_state.group_kind)
@@ -1120,8 +1128,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // token list. A box body nested in that list owns its closing brace first;
                                 // only the live output group can close the enclosing output routine.
                                 if boxes.output_routine_active
-                                    && processor.apply_completed_command(
-                                        |context, _, _, _, _observer, _execution| {
+                                    && processor.with_execution_owners(
+                                        |context, _, _, _, _observer, _execution, _, _, _| {
                                             context.innermost_group_kind()
                                         },
                                     ) == Some(GroupKind::Output)
@@ -1136,8 +1144,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     return finish_scan!(self.execute_end_output_routine());
                                 }
                                 let (direct_arg0,) = (
-                                    match processor.apply_completed_command(
-                                        |context, _, _, _, _observer, _execution| {
+                                    match processor.with_execution_owners(
+                                        |context, _, _, _, _observer, _execution, _, _, _| {
                                             context.innermost_group_kind()
                                         },
                                     ) {
@@ -1461,7 +1469,14 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         scan_origin
                                     )
                                     .value;
-                                    finish_scan!(self.execute_kern(value))
+                                    retained_semantic!(
+                                        receipts,
+                                        |context, _state, effects, fuel, _observer, modes| {
+                                            semantic::execute_kern(
+                                                context, modes, effects, fuel, value,
+                                            )
+                                        }
+                                    )
                                 };
                             }
                             (_, codes::PRIMITIVE_PENALTY) => {
@@ -1683,8 +1698,18 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     )
                                     .value;
                                     let shared_zero_glue = processor.scanned_glue_shared_zero();
-                                    finish_scan!(
-                                        self.execute_vertical_skip(value, shared_zero_glue)
+                                    retained_semantic!(
+                                        receipts,
+                                        |context, _state, effects, fuel, _observer, modes| {
+                                            semantic::execute_vertical_skip(
+                                                context,
+                                                modes,
+                                                effects,
+                                                fuel,
+                                                value,
+                                                shared_zero_glue,
+                                            )
+                                        }
                                     )
                                 };
                             }
@@ -1708,8 +1733,14 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 };
                                 {
                                     return {
-                                        let (direct_arg0,) = (primitive,);
-                                        finish_scan!(self.execute_fixed_vertical_glue(direct_arg0))
+                                        retained_semantic!(
+                                            receipts,
+                                            |context, _state, effects, fuel, _observer, modes| {
+                                                semantic::execute_fixed_vertical_glue(
+                                                    context, modes, effects, fuel, primitive,
+                                                )
+                                            }
+                                        )
                                     };
                                 }
                             }
@@ -3075,35 +3106,42 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     return finish_scan!(self.execute_continue());
                                 }
                             }
-                            (_, codes::PRIMITIVE_AFTER_GROUP) => {
-                                let mut destination = None;
-                                (processor
-                                    .get_token_into(&mut destination)
-                                    .map_err(command_error))
-                                .map_err(|error| scan_error(error, scan_origin))?;
-                                let command = (destination.ok_or(ExecError::MissingToken {
-                                    context: "\\aftergroup",
-                                }))
-                                .map_err(|error| scan_error(error, scan_origin))?;
-                                return {
-                                    let (direct_arg0,) = (command.spelling(),);
-                                    finish_scan!(self.execute_after_group(direct_arg0))
+                            (
+                                _,
+                                codes::PRIMITIVE_AFTER_GROUP | codes::PRIMITIVE_AFTER_ASSIGNMENT,
+                            ) => {
+                                let after_group =
+                                    command_code == Some(codes::PRIMITIVE_AFTER_GROUP);
+                                let context = if after_group {
+                                    "\\aftergroup"
+                                } else {
+                                    "\\afterassignment"
                                 };
-                            }
-                            (_, codes::PRIMITIVE_AFTER_ASSIGNMENT) => {
-                                let mut destination = None;
-                                (processor
-                                    .get_token_into(&mut destination)
-                                    .map_err(command_error))
-                                .map_err(|error| scan_error(error, scan_origin))?;
-                                let command = (destination.ok_or(ExecError::MissingToken {
-                                    context: "\\afterassignment",
-                                }))
-                                .map_err(|error| scan_error(error, scan_origin))?;
-                                return {
-                                    let (direct_arg0,) = (command.spelling(),);
-                                    finish_scan!(self.execute_after_assignment(direct_arg0))
-                                };
+                                let mut spelling = processor
+                                    .get_token_spelling()
+                                    .map_err(command_error)
+                                    .map_err(|error| scan_error(error, scan_origin))?
+                                    .ok_or_else(|| {
+                                        scan_error(ExecError::MissingToken { context }, scan_origin)
+                                    })?;
+                                retained_semantic!(
+                                    receipts,
+                                    |context, state, _effects, _fuel, _observer, _modes| {
+                                        if after_group {
+                                            semantic::execute_after_group(
+                                                context,
+                                                state,
+                                                &mut spelling,
+                                            )
+                                        } else {
+                                            semantic::execute_after_assignment(
+                                                context,
+                                                state,
+                                                &mut spelling,
+                                            )
+                                        }
+                                    }
+                                )
                             }
                             (_, codes::PRIMITIVE_MESSAGE | codes::PRIMITIVE_ERR_MESSAGE) => {
                                 let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
@@ -3620,8 +3658,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         finish_scan!(self.execute_illegal_h_align(direct_arg0))
                                     };
                                 } else if mode == Mode::DisplayMath {
-                                    if processor.apply_completed_command(
-                                        |context, _, _, _, _observer, _execution| {
+                                    if processor.with_execution_owners(
+                                        |context, _, _, _, _observer, _execution, _, _, _| {
                                             context.innermost_group_kind()
                                         },
                                     ) != Some(GroupKind::MathShift)
@@ -3658,8 +3696,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::PRIMITIVE_V_ALIGN) => {
                                 if matches!(mode, Mode::Math | Mode::DisplayMath)
-                                    && processor.apply_completed_command(
-                                        |context, _, _, _, _observer, _execution| {
+                                    && processor.with_execution_owners(
+                                        |context, _, _, _, _observer, _execution, _, _, _| {
                                             context.innermost_group_kind()
                                         },
                                     ) != Some(GroupKind::MathShift)
@@ -3708,8 +3746,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                             }
                             (_, codes::CHAR_MATH_SHIFT)
                                 if matches!(mode, Mode::Math | Mode::DisplayMath)
-                                    && processor.apply_completed_command(
-                                        |context, _, _, _, _observer, _execution| {
+                                    && processor.with_execution_owners(
+                                        |context, _, _, _, _observer, _execution, _, _, _| {
                                             context.innermost_group_kind()
                                         },
                                     ) != Some(GroupKind::MathShift) =>
@@ -3751,8 +3789,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     finish_scan!(self.execute_math_shift(direct_arg0))
                                 }
                                 Mode::Math
-                                    if processor.apply_completed_command(
-                                        |_, _, _, _, _, execution| {
+                                    if processor.with_execution_owners(
+                                        |_, _, _, _, _, execution, _, _, _| {
                                             execution.modes.current_list().display_eq_no().is_some()
                                         },
                                     ) =>
@@ -3885,8 +3923,8 @@ impl<G> DirectDispatch<'_, '_, G> {
                                             .map_err(command_error))
                                         .map_err(|error| scan_error(error, scan_origin))?;
                                         processor
-                                            .apply_completed_command(
-                                                |_, state, _, _, _, _execution| {
+                                            .with_execution_owners(
+                                                |_, state, _, _, _, _execution, _, _, _| {
                                                     state.discard_attempt_tokens(discarded.tokens)
                                                 },
                                             )

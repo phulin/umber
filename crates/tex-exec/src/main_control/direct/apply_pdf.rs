@@ -478,12 +478,16 @@ impl<G> DirectDispatch<'_, '_, G> {
             fuel: self.control.fuel.fuel_mut(),
             capabilities: &mut self.control.capabilities,
             resource_provider: self.provider.take(),
-            declined_resource_attempt: &mut self.control.declined_resource_attempt,
+            declined_resource_attempt: Some(&mut self.control.declined_resource_attempt),
             host_facts: CommandMachineHostFacts::Detached {
                 pdf_ignore_depth: self.control.execution.pdf_ignore_depth,
                 telemetry: &mut self.control.execution.episode_telemetry,
             },
-            observations: &mut self.control.operation_observations,
+            observations: self
+                .control
+                .operation_observations
+                .as_mut()
+                .map(|buffer| buffer as &mut dyn CommandObserver),
             assignment_receipts: None,
             diagnostic_effects: self.effects,
             shown_mode: &mut self.control.execution.shown_mode,

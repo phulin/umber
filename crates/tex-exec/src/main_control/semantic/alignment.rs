@@ -325,7 +325,8 @@ pub(in crate::main_control) fn execute_alignment_finish<G>(
             .as_mut()
             .expect("active replay alignment was checked");
         let error_context = command.state.output_open_context(&*stores);
-        let mut geometry = pack_geometry_sink(command.state, command.observations);
+        let mut geometry =
+            pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
         finish_replay_alignment(
             active,
             modes,
@@ -492,7 +493,8 @@ pub(in crate::main_control) fn execute_no_align_end_group<G>(
         // (`umber2-usol`).
         let diagnostic_context =
             command_diagnostic_context(command.state, command.output_routine_active);
-        let mut geometry = pack_geometry_sink(command.state, command.observations);
+        let mut geometry =
+            pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
         crate::paragraph_end::end_paragraph_with_fuel(
             modes,
             stores,

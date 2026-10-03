@@ -577,9 +577,9 @@ struct CommandMachine<'a, 'provider, G> {
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     resource_provider: Option<&'provider mut dyn ResourceProvider<G>>,
-    declined_resource_attempt: &'a mut Option<ResourceNeed>,
+    declined_resource_attempt: Option<&'a mut Option<ResourceNeed>>,
     host_facts: CommandMachineHostFacts<'a, G>,
-    observations: &'a mut ObservationSlot,
+    observations: Option<&'a mut dyn CommandObserver>,
     assignment_receipts: Option<&'a mut Vec<MutationRecord>>,
     diagnostic_effects: &'a mut DiagnosticEffects,
     shown_mode: &'a mut Option<Mode>,
@@ -677,6 +677,14 @@ struct PendingShowCompletion {
     context: String,
 }
 
+fn reborrow_observer<'loan>(
+    observer: &'loan mut Option<&mut dyn CommandObserver>,
+) -> Option<&'loan mut dyn CommandObserver> {
+    observer
+        .as_mut()
+        .map(|observer| &mut **observer as &mut dyn CommandObserver)
+}
+
 impl<G> CommandMachine<'_, '_, G> {
     fn with_processor_for_modes<R>(
         &mut self,
@@ -700,15 +708,15 @@ impl<G> CommandMachine<'_, '_, G> {
         } = self;
         match host_facts {
             CommandMachineHostFacts::Live(facts) => {
-                let observer = observations
-                    .as_mut()
-                    .map(|buffer| buffer as &mut dyn CommandObserver);
+                let observer = reborrow_observer(observations);
                 let host = match resource_provider.as_deref_mut() {
                     Some(provider) => CommandHostContext::with_facts_and_resource_provider(
                         capabilities,
                         facts as &mut dyn tex_command::CommandHostFacts<G>,
                         provider,
-                        declined_resource_attempt,
+                        declined_resource_attempt
+                            .as_deref_mut()
+                            .expect("provider owns its decline loan"),
                     ),
                     None => CommandHostContext::with_facts(
                         capabilities,
@@ -724,9 +732,7 @@ impl<G> CommandMachine<'_, '_, G> {
                 pdf_ignore_depth,
                 telemetry,
             } => {
-                let observer = observations
-                    .as_mut()
-                    .map(|buffer| buffer as &mut dyn CommandObserver);
+                let observer = reborrow_observer(observations);
                 let mut facts = ExecutorHostFacts {
                     modes,
                     pdf_ignore_depth: *pdf_ignore_depth,
@@ -737,7 +743,9 @@ impl<G> CommandMachine<'_, '_, G> {
                         capabilities,
                         &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
                         provider,
-                        declined_resource_attempt,
+                        declined_resource_attempt
+                            .as_deref_mut()
+                            .expect("provider owns its decline loan"),
                     ),
                     None => CommandHostContext::with_facts(
                         capabilities,
@@ -777,15 +785,15 @@ impl<G> CommandMachine<'_, '_, G> {
         } = self;
         match host_facts {
             CommandMachineHostFacts::Live(facts) => {
-                let observer = observations
-                    .as_mut()
-                    .map(|buffer| buffer as &mut dyn CommandObserver);
+                let observer = reborrow_observer(observations);
                 let host = match resource_provider.as_deref_mut() {
                     Some(provider) => CommandHostContext::with_facts_and_resource_provider(
                         capabilities,
                         facts as &mut dyn tex_command::CommandHostFacts<G>,
                         provider,
-                        declined_resource_attempt,
+                        declined_resource_attempt
+                            .as_deref_mut()
+                            .expect("provider owns its decline loan"),
                     ),
                     None => CommandHostContext::with_facts(
                         capabilities,
@@ -801,9 +809,7 @@ impl<G> CommandMachine<'_, '_, G> {
                 pdf_ignore_depth,
                 telemetry,
             } => {
-                let observer = observations
-                    .as_mut()
-                    .map(|buffer| buffer as &mut dyn CommandObserver);
+                let observer = reborrow_observer(observations);
                 let mut facts = ExecutorHostFacts {
                     modes,
                     pdf_ignore_depth: *pdf_ignore_depth,
@@ -814,7 +820,9 @@ impl<G> CommandMachine<'_, '_, G> {
                         capabilities,
                         &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
                         provider,
-                        declined_resource_attempt,
+                        declined_resource_attempt
+                            .as_deref_mut()
+                            .expect("provider owns its decline loan"),
                     ),
                     None => CommandHostContext::with_facts(
                         capabilities,
@@ -833,10 +841,7 @@ impl<G> CommandMachine<'_, '_, G> {
     }
 
     fn publish_named_token_list_pushes(&mut self, context: &mut tex_state::CommandContext<'_, G>) {
-        let observer = self
-            .observations
-            .as_mut()
-            .map(|buffer| buffer as &mut dyn CommandObserver);
+        let observer = reborrow_observer(&mut self.observations);
         self.state
             .publish_named_token_list_pushes(context, self.diagnostic_effects, observer);
     }
@@ -854,16 +859,15 @@ impl<G> CommandMachine<'_, '_, G> {
         context: &'episode mut tex_state::CommandContext<'admission, G>,
     ) -> CommandProcessor<'episode, 'admission, G, &'episode mut dyn tex_command::CommandHostFacts<G>>
     {
-        let observer = self
-            .observations
-            .as_mut()
-            .map(|buffer| buffer as &mut dyn CommandObserver);
+        let observer = reborrow_observer(&mut self.observations);
         let host = match self.resource_provider.as_deref_mut() {
             Some(provider) => CommandHostContext::with_facts_and_resource_provider(
                 self.capabilities,
                 &mut self.host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 provider,
-                self.declined_resource_attempt,
+                self.declined_resource_attempt
+                    .as_deref_mut()
+                    .expect("provider owns its decline loan"),
             ),
             None => CommandHostContext::with_facts(
                 self.capabilities,
@@ -885,7 +889,7 @@ impl<G> CommandMachine<'_, '_, G> {
     fn shipout_geometry_sink(&mut self) -> MainControlShipoutGeometrySink<'_, G> {
         MainControlShipoutGeometrySink {
             command: self.state,
-            observations: self.observations,
+            observations: reborrow_observer(&mut self.observations),
         }
     }
 
@@ -1955,13 +1959,16 @@ impl<G> MainControl<G> {
             fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
             resource_provider,
-            declined_resource_attempt: &mut self.declined_resource_attempt,
+            declined_resource_attempt: Some(&mut self.declined_resource_attempt),
             host_facts: CommandMachineHostFacts::Live(ExecutorHostFacts {
                 modes: &self.execution.modes,
                 pdf_ignore_depth: self.execution.pdf_ignore_depth,
                 telemetry: &mut self.execution.episode_telemetry,
             }),
-            observations: &mut self.operation_observations,
+            observations: self
+                .operation_observations
+                .as_mut()
+                .map(|buffer| buffer as &mut dyn CommandObserver),
             assignment_receipts: None,
             diagnostic_effects,
             shown_mode: &mut self.execution.shown_mode,
@@ -2760,7 +2767,12 @@ impl<G> MainControl<G> {
         let accent_origin = scanned.accent_provenance.primary;
         let etex_extended = self.command_profile() == CommandProfile::ETEX26;
         let mut context = stores.command_context().expect("live generation");
-        let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
+        let mut geometry = pack_geometry_sink(
+            &self.command,
+            self.operation_observations
+                .as_mut()
+                .map(|buffer| buffer as &mut dyn CommandObserver),
+        );
         apply_accent_nodes(
             &mut self.execution.modes,
             &mut context,
@@ -2906,8 +2918,12 @@ impl<G> MainControl<G> {
                 let error_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
                     self.command.output_open_context(&context),
                 );
-                let mut geometry =
-                    pack_geometry_sink(&self.command, &mut self.operation_observations);
+                let mut geometry = pack_geometry_sink(
+                    &self.command,
+                    self.operation_observations
+                        .as_mut()
+                        .map(|buffer| buffer as &mut dyn CommandObserver),
+                );
                 crate::page_output::select_pending_page_output(
                     &mut context,
                     diagnostic_effects,
@@ -2935,13 +2951,16 @@ impl<G> MainControl<G> {
                         fuel: self.fuel.fuel_mut(),
                         capabilities: &mut self.capabilities,
                         resource_provider: None,
-                        declined_resource_attempt: &mut self.declined_resource_attempt,
+                        declined_resource_attempt: Some(&mut self.declined_resource_attempt),
                         host_facts: CommandMachineHostFacts::Live(ExecutorHostFacts {
                             modes: &self.execution.modes,
                             pdf_ignore_depth: self.execution.pdf_ignore_depth,
                             telemetry: &mut self.execution.episode_telemetry,
                         }),
-                        observations: &mut self.operation_observations,
+                        observations: self
+                            .operation_observations
+                            .as_mut()
+                            .map(|buffer| buffer as &mut dyn CommandObserver),
                         assignment_receipts: None,
                         diagnostic_effects,
                         shown_mode: &mut self.execution.shown_mode,
@@ -3888,7 +3907,12 @@ impl<G> MainControl<G> {
                 false,
                 self.command.output_open_context(&context),
             );
-            let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
+            let mut geometry = pack_geometry_sink(
+                &self.command,
+                self.operation_observations
+                    .as_mut()
+                    .map(|buffer| buffer as &mut dyn CommandObserver),
+            );
             let paragraph = crate::paragraph_end::interrupt_paragraph_for_display(
                 &mut self.execution.modes,
                 &mut context,
@@ -3986,7 +4010,12 @@ impl<G> MainControl<G> {
             self.fuel.fuel_mut(),
         )?;
         let insert_penalties = self.execution.modes.current_mode() == Mode::Horizontal;
-        let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
+        let mut geometry = pack_geometry_sink(
+            &self.command,
+            self.operation_observations
+                .as_mut()
+                .map(|buffer| buffer as &mut dyn CommandObserver),
+        );
         let (nodes, _) = crate::math::finish_inline_math_list_node(
             &mut context,
             diagnostic_effects,
@@ -4066,7 +4095,12 @@ impl<G> MainControl<G> {
             false,
             diagnostic_text,
         );
-        let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
+        let mut geometry = pack_geometry_sink(
+            &self.command,
+            self.operation_observations
+                .as_mut()
+                .map(|buffer| buffer as &mut dyn CommandObserver),
+        );
         let finished = crate::math::display::finish_eq_no(
             &mut context,
             diagnostic_effects,
@@ -4209,7 +4243,12 @@ impl<G> MainControl<G> {
                     context: "display interrupt",
                 })?;
         let (active_directions, prototype) = interrupt.into_parts();
-        let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
+        let mut geometry = pack_geometry_sink(
+            &self.command,
+            self.operation_observations
+                .as_mut()
+                .map(|buffer| buffer as &mut dyn CommandObserver),
+        );
         crate::math::display::finish_display_math(
             &mut self.execution.modes,
             &mut context,

@@ -1,46 +1,6 @@
 //! Apply scanned groups values directly.
 use super::*;
 impl<G> DirectDispatch<'_, '_, G> {
-    pub(super) fn execute_after_group(
-        &mut self,
-        mut operand0: tex_state::token::TracedTokenWord,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, _, _, _, command, _, _, _, _, _, _, _| {
-                semantic::execute_after_group(stores, command, &mut operand0)
-            },
-        )
-    }
-
-    pub(super) fn execute_after_assignment(
-        &mut self,
-        mut operand0: tex_state::token::TracedTokenWord,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, _, _, _, command, _, _, _, _, _, _, _| {
-                semantic::execute_after_assignment(stores, command, &mut operand0)
-            },
-        )
-    }
-
     pub(super) fn execute_begin_simple_group(&mut self) -> Result<ReplayStep, ExecError> {
         self.report_scan()?;
 
@@ -150,7 +110,7 @@ pub(super) fn finish_native_group_leave<G, Facts: tex_command::CommandHostFacts<
     error_context: &'static str,
 ) -> Result<ReplayStep, ExecError> {
     let (level, frame) =
-        processor.apply_completed_command(|context, _, _, _, _observer, _execution| {
+        processor.with_execution_owners(|context, _, _, _, _observer, _execution, _, _, _| {
             let frames = context.group_frames();
             (frames.len(), frames.last().copied())
         });
@@ -165,7 +125,7 @@ pub(super) fn finish_native_group_leave<G, Facts: tex_command::CommandHostFacts<
     let frame = result.map_err(|_| ExecError::MissingToken {
         context: error_context,
     })?;
-    processor.apply_completed_command(|context, _, effects, _, _observer, _execution| {
+    processor.with_execution_owners(|context, _, effects, _, _observer, _execution, _, _, _| {
         context.trace_group_leave(
             effects,
             frame.kind(),

@@ -349,7 +349,14 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
     impl CommandObserver for Observer {
         fn committed(&mut self, _: CommandObservation) {}
     }
-    for (observed, main_control) in [(false, false), (true, false), (false, true), (true, true)] {
+    for (observed, main_control, raw_spelling) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (true, true, false),
+        (false, false, true),
+        (true, false, true),
+    ] {
         for count in [1, 4096] {
             crate::test_harness::with_universe(|universe| {
                 let iftrue = install_static(
@@ -369,7 +376,15 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
                 let mut command = CommandState::default();
                 crate::test_harness::push(
                     &mut command,
-                    [iftrue, letter, fi].into_iter().cycle().take(count * 3),
+                    if raw_spelling {
+                        vec![letter; count]
+                    } else {
+                        [iftrue, letter, fi]
+                            .into_iter()
+                            .cycle()
+                            .take(count * 3)
+                            .collect()
+                    },
                 );
                 let mut capabilities = CommandHostCapabilities::default();
                 let mut fuel = crate::CommandFuelLedger::default();
@@ -401,7 +416,14 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
                         delivered += 1;
                         Ok(std::ops::ControlFlow::Continue(()))
                     };
-                if main_control {
+                if raw_spelling {
+                    while let Some(word) =
+                        processor.get_token_spelling().expect("native raw spelling")
+                    {
+                        assert_eq!(word.semantic_token(), letter);
+                        delivered += 1;
+                    }
+                } else if main_control {
                     assert_eq!(
                         processor
                             .consume_main_control(&mut consume)
@@ -418,10 +440,20 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
                 let after = crate::command::command_ownership_counters();
                 assert_eq!(
                     after.resolved_writes - before.resolved_writes,
-                    count as u64 * if observed { 3 } else { 0 },
+                    count as u64
+                        * if !observed {
+                            0
+                        } else if raw_spelling {
+                            1
+                        } else {
+                            3
+                        },
                     "native expansion and actual terminal consumption need no command; observation does",
                 );
-                assert_eq!(processor.fuel.burned(), count as u64 * 3 + 1);
+                assert_eq!(
+                    processor.fuel.burned(),
+                    count as u64 * if raw_spelling { 1 } else { 3 } + 1
+                );
             });
         }
     }

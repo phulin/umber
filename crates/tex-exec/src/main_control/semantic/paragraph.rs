@@ -153,7 +153,8 @@ pub(in crate::main_control) fn execute_paragraph<G>(
             let mut diagnostic_context =
                 command_diagnostic_context(command.state, command.output_routine_active);
             diagnostic_context.current_line = *current_line;
-            let mut geometry = pack_geometry_sink(command.state, command.observations);
+            let mut geometry =
+                pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,

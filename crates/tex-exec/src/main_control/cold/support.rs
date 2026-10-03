@@ -713,7 +713,8 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             }
             let diagnostic_context =
                 command_diagnostic_context(command.state, command.output_routine_active);
-            let mut geometry = pack_geometry_sink(command.state, command.observations);
+            let mut geometry =
+                pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
             let node = crate::box_runtime::split_vbox_register(
                 stores,
                 command.diagnostic_effects,
@@ -1050,7 +1051,8 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
             Mode::Horizontal => {
                 let diagnostic_context =
                     command_diagnostic_context(command.state, command.output_routine_active);
-                let mut geometry = pack_geometry_sink(command.state, command.observations);
+                let mut geometry =
+                    pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
@@ -1383,7 +1385,8 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     let diagnostic_context =
         command_diagnostic_context(command.state, command.output_routine_active);
     let pack_context = diagnostic_context.packing();
-    let mut geometry = pack_geometry_sink(command.state, command.observations);
+    let mut geometry =
+        pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
     crate::paragraph_end::end_paragraph_with_fuel(
         modes,
         stores,
@@ -1412,7 +1415,8 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         box_max_depth: Scaled::MAX_DIMEN,
         ..crate::packing_params::vpack_params(stores)
     };
-    let mut geometry = pack_geometry_sink(command.state, command.observations);
+    let mut geometry =
+        pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
     let packed = crate::packing_params::vpack(
         stores,
         command.diagnostic_effects,

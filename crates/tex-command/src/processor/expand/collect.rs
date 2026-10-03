@@ -10,6 +10,12 @@ use tex_state::interner::Symbol;
 use tex_state::token::{Catcode, TracedTokenWord};
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
+    /// TeX82 §365's raw token operand, without a command product. Observation
+    /// and recovery retain their demanded record inside the canonical reader.
+    pub fn get_token_spelling(&mut self) -> Result<Option<TracedTokenWord>, CommandError> {
+        self.consume_token_spelling(&mut |_, spelling, _| Ok(spelling))
+    }
+
     /// Gives a raw-token consumer final spelling, borrowing a command only at a
     /// real semantic settlement or recovery boundary.
     pub(crate) fn consume_token_spelling<R>(

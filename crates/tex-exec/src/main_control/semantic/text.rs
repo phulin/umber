@@ -42,24 +42,25 @@ pub(in crate::main_control) fn execute_fixed_horizontal_glue<G>(
 pub(in crate::main_control) fn execute_fixed_vertical_glue<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    primitive: &mut UnexpandablePrimitive,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    primitive: UnexpandablePrimitive,
 ) -> Result<ReplayStep, ExecError> {
     {
         // See the vertical-skip handler: same §1054/§1057
         // `append_glue`, no paragraph start, no page build.
-        let spec = crate::box_runtime::fixed_infinite_glue(*primitive);
+        let spec = crate::box_runtime::fixed_infinite_glue(primitive);
         crate::box_runtime::append_node_to_current_list(
             modes,
             stores,
-            command.diagnostic_effects,
+            effects,
             Node::Glue {
                 origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec,
                 kind: GlueKind::Normal,
                 leader: None,
             },
-            command.fuel,
+            fuel,
         )?;
         Ok(ReplayStep::Continue)
     }
@@ -241,9 +242,10 @@ pub(in crate::main_control) fn execute_horizontal_skip<G>(
 pub(in crate::main_control) fn execute_vertical_skip<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    value: &mut GlueSpec,
-    shared_zero_glue: &mut bool,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    value: GlueSpec,
+    shared_zero_glue: bool,
 ) -> Result<ReplayStep, ExecError> {
     {
         // TeX82 §1054's `vmode+vskip: append_glue` (§1057): unlike
@@ -257,18 +259,18 @@ pub(in crate::main_control) fn execute_vertical_skip<G>(
         crate::box_runtime::append_node_to_current_list(
             modes,
             stores,
-            command.diagnostic_effects,
+            effects,
             Node::Glue {
-                spec: *value,
+                spec: value,
                 kind: GlueKind::Normal,
-                origin: if *shared_zero_glue {
+                origin: if shared_zero_glue {
                     tex_state::node::GlueSpecOrigin::SharedZero
                 } else {
                     tex_state::node::GlueSpecOrigin::Owned
                 },
                 leader: None,
             },
-            command.fuel,
+            fuel,
         )?;
         Ok(ReplayStep::Continue)
     }
@@ -277,8 +279,9 @@ pub(in crate::main_control) fn execute_vertical_skip<G>(
 pub(in crate::main_control) fn execute_kern<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    amount: &mut Scaled,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    amount: Scaled,
 ) -> Result<ReplayStep, ExecError> {
     {
         // TeX82 §1057's `any_mode(kern),mmode+mkern: append_kern`
@@ -290,17 +293,12 @@ pub(in crate::main_control) fn execute_kern<G>(
         // vertical list is represented by the page contribution queue,
         // so it still uses the shared contribution splice (contrast
         // `\penalty`, §1103, which also calls `build_page` there).
-        crate::box_runtime::flush_pending_hchars_with_fuel(
-            modes,
-            stores,
-            command.diagnostic_effects,
-            command.fuel,
-        )?;
+        crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, effects, fuel)?;
         crate::vertical::append_vertical_contribution(
             modes,
             stores,
             Node::Kern {
-                amount: *amount,
+                amount,
                 kind: KernKind::Explicit,
             },
         );

@@ -268,7 +268,7 @@ only at its demanded cold string consumer.
 `CommandProcessor` retains the concrete type of the live `CommandHostFacts`
 provider. Initial processors contain only the zero-sized initial facts. The
 executor can lend its complete actual execution owner mutably; a native consumer can change its mode, box and driver fields
-through `apply_completed_command`, and subsequent conditionals query the same
+through `with_execution_owners`, and subsequent conditionals query the same
 live stack. Main control owns `CommandState` directly, without an interpreter
 wrapper, and both session construction and checkpoint forks initialize their
 actual owners exactly once. Cold query helpers may borrow the stack immutably, and genuine
@@ -278,3 +278,13 @@ checkpoint. `consume_main_control` uses the canonical expanded reader with its
 actual main-control role and returns only real stop, replay and EOF boundaries.
 The existing execution switch still uses command delivery while its individual
 semantic-owner borrows are migrated into native consumption.
+
+The native execution projection also lends the actual capabilities, optional
+resource provider and its attempted-resource owner. Source-free semantic helpers
+carry an optional observer loan instead of borrowing the concrete operation
+buffer. Geometry and nested scanners use that same observer; checkpoints retain
+neither loan. Raw aftergroup and afterassignment operands use
+`get_token_spelling`, consuming their actual token directly in the canonical
+reader. Their save-stack or pending-assignment owner consumes that spelling in
+the retained executor loan, without constructing a command or another semantic
+machine for the operand.

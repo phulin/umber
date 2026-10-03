@@ -633,7 +633,7 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
     /// demanded evidence can commit without reconstructing an execution machine.
     /// No processor or native owner leaves this exclusive borrow.
     #[inline(always)] // a pure owner projection must not construct a callback handoff
-    pub fn apply_completed_command<R>(
+    pub fn with_execution_owners<R>(
         &mut self,
         apply: impl FnOnce(
             &mut CommandContext<'admission, G>,
@@ -642,18 +642,27 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
             &mut CommandFuel,
             Option<&mut dyn CommandObserver>,
             &mut Facts,
+            &mut crate::CommandHostCapabilities,
+            Option<&mut dyn crate::ResourceProvider<G>>,
+            Option<&mut Option<crate::ResourceNeed>>,
         ) -> R,
     ) -> R {
-        apply(
-            self.state,
-            self.command,
-            self.diagnostic_effects,
-            self.fuel,
-            self.observer
-                .as_mut()
-                .map(|observer| &mut **observer as &mut dyn CommandObserver),
-            &mut self.host.facts,
-        )
+        self.host
+            .with_owners(|facts, capabilities, provider, attempted_resource| {
+                apply(
+                    self.state,
+                    self.command,
+                    self.diagnostic_effects,
+                    self.fuel,
+                    self.observer
+                        .as_mut()
+                        .map(|observer| &mut **observer as &mut dyn CommandObserver),
+                    facts,
+                    capabilities,
+                    provider,
+                    attempted_resource,
+                )
+            })
     }
 
     /// TeX82 §1269: insert the pending token at the assignment's completion.

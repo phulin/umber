@@ -3,11 +3,11 @@ use super::super::*;
 
 pub(in crate::main_control) fn execute_after_group<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
+    command: &mut CommandState<G>,
     token: &mut tex_state::token::TracedTokenWord,
 ) -> Result<ReplayStep, ExecError> {
     {
-        match command.state.save_aftergroup(stores, *token) {
+        match command.save_aftergroup(stores, *token) {
             // TeX82 §280's `save_for_after` consumes the operand at every
             // level, but creates an `insert_token` save word only when
             // `cur_level > level_one`. `NoOpenGroup` is therefore the
@@ -24,12 +24,11 @@ pub(in crate::main_control) fn execute_after_group<G>(
 
 pub(in crate::main_control) fn execute_after_assignment<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
+    command: &mut CommandState<G>,
     token: &mut tex_state::token::TracedTokenWord,
 ) -> Result<ReplayStep, ExecError> {
     {
         command
-            .state
             .set_afterassignment(&*stores, *token)
             .expect("afterassignment uses the synchronized command generation");
         Ok(ReplayStep::Continue)
@@ -95,15 +94,7 @@ pub(in crate::main_control) fn execute_end_output_routine<G>(
     {
         let output_context = command.state.output_open_context(&*stores);
         let unbalanced = {
-            let mut processor = command_processor(
-                command.state,
-                command.fuel,
-                command.capabilities,
-                &mut command.host_facts,
-                command.observations,
-                command.diagnostic_effects,
-                stores,
-            );
+            let mut processor = command.processor(stores);
             let result = processor
                 .finish_selected_output_routine()
                 .map_err(command_error);
@@ -134,7 +125,8 @@ pub(in crate::main_control) fn execute_end_output_routine<G>(
         // non-horizontal modes and pops a null paragraph without a line.
         let diagnostic_context =
             command_diagnostic_context(command.state, command.output_routine_active);
-        let mut geometry = pack_geometry_sink(command.state, command.observations);
+        let mut geometry =
+            pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
         crate::paragraph_end::end_paragraph_with_fuel(
             modes,
             stores,

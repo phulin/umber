@@ -30,7 +30,8 @@ pub(in crate::main_control) fn execute_v_split<G>(
         let start = isolated_append.then(|| stores.begin_page_node_region());
         let diagnostic_context =
             command_diagnostic_context(command.state, command.output_routine_active);
-        let mut geometry = pack_geometry_sink(command.state, command.observations);
+        let mut geometry =
+            pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
         let node = crate::box_runtime::split_vbox_register(
             stores,
             command.diagnostic_effects,

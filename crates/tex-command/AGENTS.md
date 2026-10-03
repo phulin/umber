@@ -113,7 +113,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   facts are zero-sized. A completed consumer can lend the real mutable execution
   owner alongside its context; only genuine cold replay reborrows erase the
   provider type. No runtime initial/borrowed enum or fact cache enters command
-  state or a replay round.
+  state or a replay round. Native semantic callbacks use `with_execution_owners`
+  to lend the actual capabilities, observer, provider and matching decline owner;
+  no copied host or substitute ledger is installed.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine
   semantics that survive loading an older format, capabilities, stable
@@ -164,6 +166,11 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   one/4,096-round gate counts row accesses, row decodes, final macro-owner
   acquisitions, whole-meaning/command copies, and warmed allocations without
   adding production state or an alternate delivery path.
+- `src/processor/expand/collect.rs`: raw collection and `get_token_spelling`
+  consume tokens in the canonical reader. Raw operand consumers receive actual
+  spelling; ordinary unobserved operands construct no command. Observation,
+  outer recovery, alignment and source control-sequence creation keep their
+  original semantic positions.
 - `src/processor/expand/tests/kernel.rs`: nested reader resumption, every
   bounded fuel cut under observed/unobserved delivery, observer attachment
   between calls, live meaning resolution after backup, and clearing a reused

@@ -127,3 +127,20 @@ existing aggregate contract. Group topology remains the sole native TeX save
 stack, and mode roots remain the same `ModeNest`. Moving a field into its
 execution owner changes no root, retention lifetime, capture eligibility or
 rollback rule. Formats serialize semantic state, never either borrow interface.
+
+Native semantic calls borrow the real command host alongside input and execution
+state. `with_execution_owners` lends capabilities, the optional resource
+provider and its matching attempted-resource slot, and the current observer.
+There is no copied host, surrogate decline ledger, or observer buffer made for
+that call. Semantic helpers accept that observer loan directly; the concrete
+operation buffer remains only with its actual outer observation owner. Nested
+scanners reborrow the same observer and host capabilities. The projection is
+always inlined so these references do not create an execution handoff.
+
+Aftergroup and afterassignment consume raw spelling into their actual native
+owners. Kerns and vertical glue lend only the admitted context, mode, diagnostic
+and fuel owners used by their semantic functions, then continue the same reader
+loan. Their retired outer apply methods and unused command-machine construction
+are deleted. These selected arms preserve the single authoritative dispatcher;
+main-control fetching still returns command records until the whole switch is
+moved into native consumption.
