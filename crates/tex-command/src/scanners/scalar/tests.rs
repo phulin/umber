@@ -5,27 +5,6 @@ use tex_state::token::{Catcode, Token};
 
 use crate::{CommandHostCapabilities, CommandState, processor::DeliveryStatus};
 
-#[test]
-fn scalar_call_frame_separates_compact_status_value_and_error() {
-    assert_eq!(std::mem::size_of::<super::ScalarCallStatus>(), 1);
-    assert!(
-        std::mem::size_of::<super::ScalarCallFrame<super::ScannedScalar<i32>>>()
-            <= std::mem::size_of::<Option<crate::CommandError>>()
-                + std::mem::size_of::<Option<super::ScannedScalar<i32>>>()
-                + std::mem::align_of::<crate::CommandError>()
-    );
-
-    let mut call = super::ScalarCallFrame::default();
-    call.put_complete(super::ScannedScalar {
-        value: 17,
-        provenance: super::ScalarProvenance {
-            primary: tex_state::token::OriginId::UNKNOWN,
-        },
-    });
-    assert!(call.error.is_none());
-    assert_eq!(call.take_complete().value, 17);
-}
-
 fn other(ch: char) -> Token {
     Token::Char {
         ch,

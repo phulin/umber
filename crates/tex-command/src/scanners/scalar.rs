@@ -87,119 +87,6 @@ pub enum RetainedScalarScan<T> {
     Failed(CommandError),
 }
 
-/// Compact outcome of a scalar call whose payload remains in its caller's
-/// bounded frame.
-///
-/// Keeping the status separate from [`CommandError`] prevents every
-/// successful nested scalar scan from moving the error-sized return carrier.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ScalarCallStatus {
-    Complete,
-    Failed,
-}
-
-/// Caller-owned destination for one synchronous scalar result.
-///
-/// The value and error have disjoint slots so a successful call moves only
-/// `T`. A real failure or suspension moves the error once at that cold edge.
-/// The frame is call-local and retains no allocation or append arena.
-pub(crate) struct ScalarCallFrame<T> {
-    value: Option<T>,
-    error: Option<CommandError>,
-}
-
-impl<T> Default for ScalarCallFrame<T> {
-    fn default() -> Self {
-        Self {
-            value: None,
-            error: None,
-        }
-    }
-}
-
-impl<T> ScalarCallFrame<T> {
-    pub(crate) fn put_complete(&mut self, value: T) {
-        debug_assert!(self.value.is_none() && self.error.is_none());
-        self.value = Some(value);
-    }
-
-    pub(crate) fn put_error(&mut self, error: CommandError) {
-        debug_assert!(self.value.is_none() && self.error.is_none());
-        self.error = Some(error);
-    }
-
-    pub(crate) fn take_complete(&mut self) -> T {
-        debug_assert!(self.error.is_none());
-        self.value
-            .take()
-            .expect("complete scalar call stores its value")
-    }
-
-    pub(crate) fn take_error(&mut self) -> CommandError {
-        debug_assert!(self.value.is_none());
-        self.error
-            .take()
-            .expect("failed scalar call stores its error")
-    }
-}
-
-/// Extracts a compact scalar call inside a legacy `Result`-returning scanner.
-/// Only a real cold error moves [`CommandError`] into the caller's return.
-macro_rules! scalar_value_or_return {
-    ($call:ident, $status:expr) => {{
-        match $status {
-            ScalarCallStatus::Complete => $call.take_complete(),
-            ScalarCallStatus::Failed => {
-                return Err($call.take_error());
-            }
-        }
-    }};
-}
-
-/// Settles a nested scanner result in its actual typed call destination.
-///
-/// The match remains at the producing call site so the successful ABI never
-/// materializes an error-sized return carrier at a second boundary.
-macro_rules! publish_scalar_result {
-    ($processor:expr, $call:ident, $result:expr $(,)?) => {{
-        match $result {
-            Ok(value) => {
-                $call.put_complete(value);
-                ScalarCallStatus::Complete
-            }
-            Err(error) => {
-                let mut terminal_error = None;
-                let status = $processor.finish_scalar_error(error, &mut terminal_error);
-                $call.put_error(
-                    terminal_error
-                        .take()
-                        .expect("failed scalar call stores its error"),
-                );
-                status
-            }
-        }
-    }};
-}
-
-/// Finishes a legacy `Result`-returning scalar entry point in place.
-///
-/// Unlike a generic value-taking helper, this expansion does not introduce a
-/// second `Result<T, CommandError>` handoff on the successful path.
-macro_rules! finish_scalar_result {
-    ($processor:expr, $result:expr $(,)?) => {{
-        match $result {
-            Ok(value) => Ok(value),
-            Err(error) => {
-                let mut terminal_error = None;
-                $processor.finish_scalar_error(error, &mut terminal_error);
-                Err(terminal_error
-                    .take()
-                    .expect("failed scalar call stores its error"))
-            }
-        }
-    }};
-}
-
 impl<T> RetainedScalarScan<T> {
     /// Convert the cold result of a synchronous scalar scan into the ordinary
     /// command error boundary.  Resource failures have already unwound the
@@ -459,7 +346,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_integer_retained(&mut self) -> RetainedScalarScan<ScannedScalar<i32>> {
         match self.scan_integer_operand() {
             Ok(value) => RetainedScalarScan::Complete(value),
-            Err(error) => self.finish_retained_integer_error(error),
+            Err(error) => RetainedScalarScan::Failed(self.finish_scalar_error(error)),
         }
     }
 
@@ -471,12 +358,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(crate) fn scan_integer_value_for_condition(&mut self) -> Result<i32, CommandError> {
         match self.scan_integer_operand() {
             Ok(value) => Ok(value.value),
-            Err(error) => {
-                if error.is_resource_suspension() {
-                    let _ = self.command.scratch.unwind_resource_failure();
-                }
-                Err(error)
-            }
+            Err(error) => Err(self.finish_scalar_error(error)),
         }
     }
 
@@ -495,49 +377,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.detach_retained_scalar(result)
     }
 
-    /// Preserves the ordinary scalar error cleanup for the compact retained
-    /// integer entry without allocating its success-path call frame.
     #[cold]
-    #[inline(never)]
-    fn finish_retained_integer_error(
-        &mut self,
-        error: CommandError,
-    ) -> RetainedScalarScan<ScannedScalar<i32>> {
+    fn finish_scalar_error(&mut self, error: CommandError) -> CommandError {
         if error.is_resource_suspension() {
             let _ = self.command.scratch.unwind_resource_failure();
         }
-        RetainedScalarScan::Failed(error)
-    }
-
-    fn finish_scalar_error(
-        &mut self,
-        error: CommandError,
-        terminal_error: &mut Option<CommandError>,
-    ) -> ScalarCallStatus {
-        // Resource failures leave the scanner immediately.  The enclosing
-        // host checkpoint retries the complete command, so keeping a typed
-        // scalar phase here would retain a second copy of the parser stack.
-        // The processor drop hook clears any transient child/control rows.
-        if error.is_resource_suspension() {
-            let _ = self.command.scratch.unwind_resource_failure();
-        }
-        *terminal_error = Some(error);
-        ScalarCallStatus::Failed
-    }
-
-    fn finish_scalar_destination_error<T>(
-        &mut self,
-        error: CommandError,
-        destination: &mut ScalarCallFrame<T>,
-    ) -> ScalarCallStatus {
-        let mut terminal_error = None;
-        let status = self.finish_scalar_error(error, &mut terminal_error);
-        destination.put_error(
-            terminal_error
-                .take()
-                .expect("failed scalar call stores its error"),
-        );
-        status
+        error
     }
 
     /// Finishes a value-returning structured scanner at the ordinary error
@@ -547,22 +392,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         result: Result<T, CommandError>,
     ) -> Result<T, CommandError> {
-        finish_scalar_result!(self, result)
+        result.map_err(|error| self.finish_scalar_error(error))
     }
 
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
     fn scan_optional_equals(&mut self) -> Result<bool, CommandError> {
-        let mut call = ScalarCallFrame::default();
-        match self.scan_optional_equals_into_call(&mut call) {
-            ScalarCallStatus::Complete => Ok(call.take_complete()),
-            ScalarCallStatus::Failed => Err(call.take_error()),
-        }
-    }
-
-    fn scan_optional_equals_into_call(
-        &mut self,
-        call: &mut ScalarCallFrame<bool>,
-    ) -> ScalarCallStatus {
         let mut equals = false;
         let result = self.consume_expanded_words(
             &mut |processor, spelling, meaning, _control_sequence, exceptional| {
@@ -580,13 +414,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
             },
         );
-        match result {
-            Ok(()) => {
-                call.put_complete(equals);
-                ScalarCallStatus::Complete
-            }
-            Err(error) => self.finish_scalar_destination_error(error, call),
-        }
+        result.map_err(|error| self.finish_scalar_error(error))?;
+        Ok(equals)
     }
 
     /// TeX82 §407's `scan_keyword`, which tex.web writes as
@@ -629,27 +458,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// uppercase form of tex.web's all-lowercase keywords.
     #[inline(always)]
     fn scan_keyword(&mut self, keyword: &str) -> Result<bool, CommandError> {
-        let mut call = ScalarCallFrame::default();
-        match self.scan_keyword_into_call(keyword, &mut call) {
-            ScalarCallStatus::Complete => Ok(call.take_complete()),
-            ScalarCallStatus::Failed => Err(call.take_error()),
-        }
-    }
-
-    fn scan_keyword_into_call(
-        &mut self,
-        keyword: &str,
-        call: &mut ScalarCallFrame<bool>,
-    ) -> ScalarCallStatus {
-        macro_rules! fail {
-            ($error:expr) => {{
-                call.put_error($error);
-                return ScalarCallStatus::Failed;
-            }};
-        }
-
         if !keyword.is_ascii() || keyword.len() > KEYWORD_PREFIX_INLINE_CAPACITY {
-            fail!(CommandError::input_invariant());
+            return Err(CommandError::input_invariant());
         }
         // `link(backup_head)`: only the prefix needed by a failed match.
         let mut matched = smallvec::SmallVec::<
@@ -683,7 +493,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             )
         };
         if let Err(error) = result {
-            return self.finish_scalar_destination_error(error, call);
+            return Err(self.finish_scalar_error(error));
         }
         let matched_keyword = matched.len() == keyword.len();
         if !matched_keyword && !matched.is_empty() {
@@ -693,14 +503,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
         // `flush_list(link(backup_head))`: a complete match consumes its
         // tokens outright.
-        call.put_complete(matched_keyword);
-        ScalarCallStatus::Complete
+        Ok(matched_keyword)
     }
 
     /// Scans an integer or an internal integer quantity.
-    fn scan_integer(&mut self, call: &mut ScalarCallFrame<ScannedScalar<i32>>) -> ScalarCallStatus {
+    fn scan_integer(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
         let result = self.scan_integer_operand();
-        publish_scalar_result!(self, call, result)
+        result.map_err(|error| self.finish_scalar_error(error))
     }
 
     fn finish_integer(
@@ -768,7 +577,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         mu: bool,
     ) -> Result<(Scaled, Order), CommandError> {
         let result = self.scan_dimension_from_leading(false, allow_infinite, mu);
-        finish_scalar_result!(self, result)
+        result.map_err(|error| self.finish_scalar_error(error))
     }
 
     fn scan_dimension_after_integer(
@@ -778,8 +587,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         mu: bool,
     ) -> Result<(Scaled, Order), CommandError> {
         self.integer_terminator_character = None;
-        let mut integer_call = ScalarCallFrame::default();
-        let integer = scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call));
+
+        let integer = self.scan_integer()?;
         let decimal = is_point_character(self.integer_terminator_character);
         if decimal {
             self.consume_token_spelling(&mut |_, _, _| Ok(()))?;
@@ -950,7 +759,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.scanned_glue_register = None;
         self.scanned_glue_shared_zero = false;
         let result = self.scan_glue_from_leading(mu, false);
-        finish_scalar_result!(self, result)
+        result.map_err(|error| self.finish_scalar_error(error))
     }
 
     fn scan_glue_width(&mut self, mu: bool, negative: bool) -> Result<GlueSpec, CommandError> {
@@ -2016,10 +1825,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // named font's dimension (not just the current font, unlike
             // `current_font_parameter`).
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
-                let mut integer_call = ScalarCallFrame::default();
-                let number =
-                    scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call))
-                        .value;
+                let number = self.scan_integer()?.value;
                 let font = self.scan_font_selector_child()?;
                 self.internal_font_dimen(number, font)
             }
@@ -2126,10 +1932,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 | UnexpandablePrimitive::ParShapeIndent
                 | UnexpandablePrimitive::ParShapeDimen),
             ) => {
-                let mut integer_call = ScalarCallFrame::default();
-                let number =
-                    scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call))
-                        .value;
+                let number = self.scan_integer()?.value;
                 let (line, width) = match primitive {
                     UnexpandablePrimitive::ParShapeLength => (number, true),
                     UnexpandablePrimitive::ParShapeIndent => (number, false),
@@ -2159,10 +1962,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     UnexpandablePrimitive::DisplayWidowPenalties => PenaltyArrayKind::DisplayWidow,
                     _ => unreachable!("outer match restricts penalty-array primitives"),
                 };
-                let mut integer_call = ScalarCallFrame::default();
-                let index =
-                    scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call))
-                        .value;
+
+                let index = self.scan_integer()?.value;
                 InternalValue::Integer(self.state.penalty_array_value(kind, index))
             }
             // e-TeX 2.6 etex.ch [17.5363--5404] extracts one component from
@@ -2594,8 +2395,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// The bound and its recovery live in [`RestrictedIntegerClass`]; this
     /// wrapper only converts the recovered code into Umber's character type.
     fn scan_character_number(&mut self) -> Result<char, CommandError> {
-        let mut integer_call = ScalarCallFrame::default();
-        let integer = scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call));
+        let integer = self.scan_integer()?;
         let scanned =
             self.finish_restricted_integer(RestrictedIntegerClass::CharacterCode, integer)?;
         Ok(u32::try_from(scanned.value)
@@ -2619,8 +2419,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// those register scans with `scan_register_num` at [26.415], [26.420],
     /// and [26.427].
     fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
-        let mut integer_call = ScalarCallFrame::default();
-        let integer = scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call));
+        let integer = self.scan_integer()?;
         let scanned = self.finish_restricted_integer(RestrictedIntegerClass::EightBit, integer)?;
         Ok(scanned.value as u16)
     }
@@ -2644,8 +2443,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// e-TeX and pdfTeX accept `0..=32767`, with invalid selectors diagnosed
     /// and recovered to zero.
     fn scan_extended_register_index(&mut self) -> Result<u16, CommandError> {
-        let mut integer_call = ScalarCallFrame::default();
-        let integer = scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call));
+        let integer = self.scan_integer()?;
         let scanned = self.finish_restricted_integer(RestrictedIntegerClass::Register, integer)?;
         Ok(scanned.value as u16)
     }

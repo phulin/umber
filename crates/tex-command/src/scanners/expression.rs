@@ -225,15 +225,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<InternalValue, CommandError> {
         let kind = ExpressionKind::of_primitive(primitive)
             .expect("only e-TeX expression primitives reach scan_expr");
-        let mut call = crate::scanners::scalar::ScalarCallFrame::default();
-        let status =
-            self.with_expansion_depth(|processor| Ok(processor.scan_expression(kind, &mut call)))?;
-        let (mut value, overflow) = match status {
-            crate::scanners::scalar::ScalarCallStatus::Complete => call.take_complete(),
-            crate::scanners::scalar::ScalarCallStatus::Failed => {
-                return Err(call.take_error());
-            }
-        };
+        let (mut value, overflow) =
+            self.with_expansion_depth(|processor| processor.scan_expression(kind))?;
         if overflow {
             self.expression_arithmetic_error()?;
             value = kind.zero();
@@ -289,14 +282,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn scan_expression(
         &mut self,
         kind: ExpressionKind,
-        call: &mut crate::scanners::scalar::ScalarCallFrame<(ExpressionValue<G>, bool)>,
-    ) -> crate::scanners::scalar::ScalarCallStatus {
-        use crate::scanners::scalar::ScalarCallStatus;
-
+    ) -> Result<(ExpressionValue<G>, bool), CommandError> {
         macro_rules! fail {
             ($error:expr) => {{
-                call.put_error($error);
-                return ScalarCallStatus::Failed;
+                return Err($error);
             }};
         }
 
@@ -313,7 +302,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         let delivery = match self.request_expanded_token(&mut first) {
                             Ok(delivery) => delivery,
                             Err(error) => {
-                                return self.suspend_expression(error, stack_mark, call);
+                                return Err(self.expression_scan_error(error, stack_mark));
                             }
                         };
                         match delivery {
@@ -395,7 +384,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     match value {
                         Ok(value) => value,
                         Err(error) => {
-                            return self.suspend_expression(error, stack_mark, call);
+                            return Err(self.expression_scan_error(error, stack_mark));
                         }
                     }
                 }
@@ -406,7 +395,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let mut operator = match self.scan_expression_operator(parenthesized) {
                 Ok(operator) => operator,
                 Err(error) => {
-                    return self.suspend_expression(error, stack_mark, call);
+                    return Err(self.expression_scan_error(error, stack_mark));
                 }
             };
             let factor = if frame.factor_negative {
@@ -438,8 +427,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 if let Err(error) = self.command.scratch.truncate_expression_stack(stack_mark) {
                     fail!(crate::scan_toks::scratch_command_error(error));
                 }
-                call.put_complete((completed, overflow));
-                return ScalarCallStatus::Complete;
+                return Ok((completed, overflow));
             };
             frame = parent;
             phase = ExpressionPhase::Operator { factor: completed };
@@ -456,19 +444,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    fn suspend_expression(
+    fn expression_scan_error(
         &mut self,
         mut error: CommandError,
         stack_mark: usize,
-        call: &mut crate::scanners::scalar::ScalarCallFrame<(ExpressionValue<G>, bool)>,
-    ) -> crate::scanners::scalar::ScalarCallStatus {
-        use crate::scanners::scalar::ScalarCallStatus;
-
+    ) -> CommandError {
         if let Err(truncate_error) = self.command.scratch.truncate_expression_stack(stack_mark) {
             error = crate::scan_toks::scratch_command_error(truncate_error);
         }
-        call.put_error(error);
-        ScalarCallStatus::Failed
+        error
     }
 
     fn scan_expression_operator(

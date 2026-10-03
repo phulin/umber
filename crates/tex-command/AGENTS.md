@@ -41,8 +41,9 @@ with their real consumers.
 
 Executor-facing scalar scans return their actual typed product or error. Generic
 scalar result unions, publication frames and projection/status APIs are absent.
-Nested scalar calls retain their own typed value/error slots only at actual
-call boundaries that avoid copying cold error payloads on successful reads.
+Nested scalar calls return their actual value or error directly. Large command
+error payloads are boxed when raised; no scalar call frame, status handoff or
+optional error slot is constructed for successful scans.
 
 Expansion continues inside the shared reader until its actual consumer returns
 a command or completion; there is no expansion-candidate carrier. Macro
