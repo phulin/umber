@@ -323,7 +323,8 @@ arguments require no tagged owner or per-argument destructor.
 
 The canonical matcher writes every argument into that final region. Up to four
 immutable definition words write directly into the pooled traced spelling, which
-costs less than acquiring and dropping a source owner for a tiny span. A singleton
+costs less than acquiring and dropping a source owner for a tiny span. A single
+definition word uses one direct write; only two to four words use bulk extension. A singleton
 from another argument also writes directly. A larger contiguous resident span
 retains its actual source; contiguous writes extend it. A fragmented write
 materializes only its actual argument at the consuming write. Source aliases

@@ -168,6 +168,15 @@ impl<G> ArgumentArena<G> {
         len: u32,
     ) -> Result<(), ScratchError> {
         let slot = self.pending_slot(id);
+        if len == 1 && self.regions[id.index()].source_slots & (1 << slot) == 0 {
+            return self.append_owned(
+                id,
+                TracedTokenWord::from_parts(
+                    body.word(start as usize).expect("admitted word"),
+                    tex_state::token::OriginId::UNKNOWN,
+                ),
+            );
+        }
         let region = &mut self.regions[id.index()];
         if len <= 4 && region.source_slots & (1 << slot) == 0 {
             region.words.extend(
