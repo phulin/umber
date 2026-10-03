@@ -1,6 +1,4 @@
-use super::{
-    HorizontalFlushScratch, LigatureWorkCell, LigatureWorkList, flush_pending_hchar_run_with_fuel,
-};
+use super::{HorizontalFlushScratch, flush_pending_hchar_run_with_fuel};
 
 #[test]
 fn shaping_scratch_clear_preserves_warm_capacity_without_logical_contents() {
@@ -68,33 +66,6 @@ fn shaping_scratch_clear_preserves_warm_capacity_without_logical_contents() {
 }
 
 #[test]
-fn ligature_work_clear_preserves_capacity_without_stale_links() {
-    let mut work = LigatureWorkList::with_capacity(8);
-    work.push_back(LigatureWorkCell::Boundary(super::LigatureBoundaryCell {
-        code: None,
-        lig_kern_start: None,
-        leading_auto_kern: tex_state::scaled::Scaled::from_raw(0),
-    }));
-    work.push_back(LigatureWorkCell::Boundary(super::LigatureBoundaryCell {
-        code: Some(b'f'),
-        lig_kern_start: None,
-        leading_auto_kern: tex_state::scaled::Scaled::from_raw(0),
-    }));
-    let capacity = work.nodes.capacity();
-    let provenance_capacity = work.provenance.capacity();
-    work.append_source('f', tex_state::token::OriginId::UNKNOWN);
-
-    work.clear();
-
-    assert!(work.nodes.is_empty());
-    assert!(work.head.is_none());
-    assert!(work.tail.is_none());
-    assert_eq!(work.nodes.capacity(), capacity);
-    assert_eq!(work.provenance.capacity(), provenance_capacity);
-    assert!(work.provenance.is_empty());
-}
-
-#[test]
 fn direct_tfm_failure_rolls_back_output_and_clears_reusable_work() {
     crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
@@ -143,34 +114,5 @@ fn direct_tfm_failure_rolls_back_output_and_clears_reusable_work() {
         .expect("retry after rollback uses the cleared work list");
         assert!(nest.current_list().pending_hchars().is_none());
         assert_eq!(nest.current_list().nodes(&stores).len(), 1);
-    });
-}
-
-#[test]
-fn physical_replacement_span_stops_before_next_glyph_but_keeps_boundary_kern() {
-    crate::test_harness::with_nonstop_plain_universe(|universe| {
-        let stores = universe.command_context().expect("test state");
-        let mut work = LigatureWorkList::default();
-        for ch in ['a', 'b', 'c'] {
-            let provenance = work.append_source(ch, tex_state::token::OriginId::UNKNOWN);
-            let glyph = super::LigatureGlyphCell::new(
-                &stores,
-                tex_state::font::NULL_FONT,
-                ch,
-                provenance,
-                false,
-                false,
-                false,
-            );
-            work.push_back(LigatureWorkCell::Glyph(glyph));
-            work.push_back(LigatureWorkCell::Kern {
-                amount: tex_state::scaled::Scaled::from_raw(1),
-                kind: super::KernKind::Font,
-            });
-        }
-        let first = work.head.expect("first glyph");
-        assert_eq!(work.physical_nodes_through_boundary(first, 0, 1, 1), 2);
-        assert_eq!(work.physical_nodes_through_boundary(first, 0, 1, 2), 4);
-        assert_eq!(work.physical_nodes_through_boundary(first, 0, 1, 3), 6);
     });
 }

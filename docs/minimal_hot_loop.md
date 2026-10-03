@@ -452,3 +452,31 @@ Full-book targets, in order:
      instruction cache.
 
 These are informative targets, not forecasts or implementation closure gates.
+
+### Forward-only TFM text processing
+
+TeX82 §§1034–1040 settle the left character before advancing to the next
+pair. The native TFM engine follows that ownership: it reads the pending
+source run one character at a time, retains the current left/right cells,
+and uses a stack only when a ligature instruction retains or inserts a
+right character. Settled glyphs and kerns go directly to the final node sink.
+Character existence is queried only when false-boundary recovery actually
+needs it. The former linked work graph, previous/next coordinates, detached nodes,
+tombstones and full-run glyph staging are deleted.
+
+Hyphenation's TeX82 §§915–917 physical replacement measurements require
+looking at the completed main suffix while replaying an alternative. That
+actual reconstitution sink requests a flat completed-output tape from the
+same engine. Ordinary text and child branch sinks request no tape. This is
+an output ownership requirement, not a second processing algorithm or a
+font eligibility path. Nested loans preserve the parent's completed tape
+and provenance and restore only the child's scratch suffix on every exit.
+Fuel is still charged for each native pair transition, including retained
+ligature instructions; final output remains inside the existing rollback
+transaction.
+
+The pending source vector and scratch provenance tape still duplicate source
+characters. Removing that copy requires lending the actual source slice to
+reconstitution callbacks; the graph deletion does not claim that ownership
+change is already complete. Full main-control command-slot elimination also
+remains separate unfinished work.

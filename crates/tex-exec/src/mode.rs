@@ -710,7 +710,7 @@ impl ModeListMutation<'_> {
             &mut CommandContext<'_, G>,
             &[PendingHChar],
             &mut crate::box_runtime::hmode::OpenTypeShapingScratch,
-            &mut crate::box_runtime::hmode::LigatureWorkList,
+            &mut crate::box_runtime::hmode::TfmScratch,
             &mut PageMaterialActiveListBuilder,
         ) -> Result<(), ExecError>,
     ) -> Result<(), ExecError> {
@@ -1207,7 +1207,7 @@ pub struct PendingHChar {
 pub(crate) struct HorizontalModeScratch {
     pending_source: Vec<PendingHChar>,
     shaping: crate::box_runtime::hmode::OpenTypeShapingScratch,
-    tfm_work: crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: crate::box_runtime::hmode::TfmScratch,
     work_lent: bool,
 }
 
@@ -1238,7 +1238,7 @@ impl HorizontalModeScratch {
         &mut self,
     ) -> (
         &mut crate::box_runtime::hmode::OpenTypeShapingScratch,
-        &mut crate::box_runtime::hmode::LigatureWorkList,
+        &mut crate::box_runtime::hmode::TfmScratch,
     ) {
         self.work_lent = true;
         (&mut self.shaping, &mut self.tfm_work)
@@ -1253,7 +1253,7 @@ impl HorizontalModeScratch {
         crate::box_runtime::hmode::reshape_open_type_runs_list(stores, source, &mut self.shaping)
     }
 
-    pub(crate) fn tfm_work_mut(&mut self) -> &mut crate::box_runtime::hmode::LigatureWorkList {
+    pub(crate) fn tfm_work_mut(&mut self) -> &mut crate::box_runtime::hmode::TfmScratch {
         self.work_lent = true;
         &mut self.tfm_work
     }

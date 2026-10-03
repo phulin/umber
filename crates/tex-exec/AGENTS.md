@@ -142,6 +142,13 @@ not allocate a vector merely to publish one already-complete node.
 - `src/assignments/tests.rs`: focused typed-owner controls for token assignment
   pre/post images across global replacement and local undo-backed writes.
 - `src/box_runtime/`: source-free box-register, material, packing, migration, horizontal contribution, shaping, spacing, indentation, whatsit, leader, and list-commit operations. `vsplit/tests.rs` covers TeX82 §976 shrink normalization and unchanged-source ownership.
+- `src/box_runtime/hmode/tfm.rs`: the sole forward-only TFM pair loop. It
+  streams settled glyphs and kerns directly to the final sink and retains only
+  characters required by ligature instructions. `tfm/scratch.rs` owns that
+  stack, provenance spans, and the demand-only flat completed suffix for
+  hyphenation reconstitution; previous/next work graphs and tombstones are
+  absent. `tfm/tests.rs` checks physical-boundary ownership. Nested branch
+  loans preserve parent scratch and truncate child suffixes on every exit.
 - `src/paragraph_end.rs` and `src/paragraph_end/`: typed paragraph completion,
   one-time admitted linear borrowed-range post-line inspection,
   consumed semantic-source windows for generated line ownership,

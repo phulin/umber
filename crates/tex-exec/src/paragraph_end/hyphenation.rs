@@ -65,7 +65,7 @@ impl HyphenationScanNode {
 struct HyphenationWalk<'walk, 'projection> {
     out: &'walk mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
     out_segments: &'walk mut Vec<tex_state::page_node_arena::FreshGeneratedSegment>,
-    tfm_work: &'walk mut crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &'walk mut crate::box_runtime::hmode::TfmScratch,
     fuel: &'walk mut tex_command::CommandFuel,
     projection: &'walk mut HyphenationProjection<'projection>,
     output_len: usize,
@@ -226,7 +226,7 @@ fn hyphenated_hlist_with_projections<G>(
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     source: HyphenationSource,
     initial_context: HyphenationContext,
-    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
 ) -> Result<
@@ -400,7 +400,7 @@ fn project_physical_hlist<G>(
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     semantic: tex_state::page_node_arena::PageListId,
     post_overrides: &[(usize, tex_state::page_node_arena::PageListId)],
-    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     let operation = stores.page_node_cursor();
@@ -471,7 +471,7 @@ fn project_physical_chunk_prefix<G>(
     physical: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
     physical_segments: &mut Vec<tex_state::page_node_arena::PageListId>,
     retained_start: &mut usize,
-    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<tex_state::page_node_arena::PageListChunkCursor, ExecError> {
     let previous = stores
@@ -674,7 +674,7 @@ fn hyphenate_candidate_after_glue<G>(
     candidate: HyphenationCandidate,
     out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
     out_segments: &mut Vec<tex_state::page_node_arena::FreshGeneratedSegment>,
-    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -1100,7 +1100,7 @@ fn reconstitute_branch<G>(
     no_left_boundary: bool,
     right_boundary: LigatureRightBoundary,
     fuel: &mut tex_command::CommandFuel,
-    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
 ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     if source.is_empty() {
         return Ok(tex_state::page_node_arena::PageListId::empty());
@@ -1297,7 +1297,7 @@ fn pre_break_branch<G>(
     fallback: PendingHRunChar,
     source: &[PendingHChar],
     fuel: &mut tex_command::CommandFuel,
-    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
 ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     if source.is_empty() {
         return Ok(tex_state::page_node_arena::PageListId::empty());
@@ -1336,7 +1336,7 @@ fn pre_break_branch<G>(
 fn singleton_glyph_branch<G>(
     stores: &mut CommandContext<'_, G>,
     glyph: crate::box_runtime::hmode::LigatureGlyphCell,
-    tfm_work: &crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &crate::box_runtime::hmode::TfmScratch,
 ) -> tex_state::page_node_arena::PageListId {
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
@@ -1367,7 +1367,7 @@ fn glyph_kern_branch<G>(
     glyph: crate::box_runtime::hmode::LigatureGlyphCell,
     amount: Scaled,
     kind: KernKind,
-    tfm_work: &crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &crate::box_runtime::hmode::TfmScratch,
 ) -> tex_state::page_node_arena::PageListId {
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
@@ -1392,7 +1392,7 @@ struct PhysicalMeasureSink {
 }
 
 impl PhysicalMeasureSink {
-    fn observe(&mut self, work: &crate::box_runtime::hmode::LigatureWorkList) {
+    fn observe(&mut self, work: &crate::box_runtime::hmode::TfmScratch) {
         if self.synchronization.is_none()
             && self.position >= self.initial_end
             && work.physical_boundary_present(
@@ -1435,7 +1435,7 @@ impl FinalHNodeSink for PhysicalMeasureSink {
         _stores: &mut CommandContext<'_, G>,
         _current: usize,
         glyph: crate::box_runtime::hmode::LigatureGlyphCell,
-        work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        work: &mut crate::box_runtime::hmode::TfmScratch,
         _diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
         _fuel: &mut tex_command::CommandFuel,
     ) -> Result<(), tex_command::CommandError> {
@@ -1455,7 +1455,7 @@ impl FinalHNodeSink for PhysicalMeasureSink {
         _current: usize,
         _amount: Scaled,
         _kind: KernKind,
-        work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        work: &mut crate::box_runtime::hmode::TfmScratch,
         _diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
         _fuel: &mut tex_command::CommandFuel,
     ) -> Result<(), tex_command::CommandError> {
@@ -1563,7 +1563,7 @@ fn physical_post_branch<G>(
     right_boundary: LigatureRightBoundary,
     nodes: usize,
     fuel: &mut tex_command::CommandFuel,
-    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
 ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     if source.is_empty() || nodes == 0 {
         return Ok(tex_state::page_node_arena::PageListId::empty());
@@ -1607,7 +1607,7 @@ fn physical_projection_for_glyph<G>(
     current: usize,
     right_boundary: LigatureRightBoundary,
     fuel: &mut tex_command::CommandFuel,
-    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
 ) -> Result<(u8, tex_state::page_node_arena::PageListId), ExecError> {
     let minor_pending = pending_word_range(word, position..word.len());
     let mut probe = PhysicalMeasureSink {
@@ -1706,7 +1706,7 @@ impl<'output, 'word, 'projection, 'vectors>
         position: usize,
         full_branch_start: Option<usize>,
         fuel: &mut tex_command::CommandFuel,
-        tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
     ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
         let previous = self.word[position - 1];
         // TeX82 §§913--915 start this alternative at `l`, the start of the
@@ -1777,7 +1777,7 @@ impl<'output, 'word, 'projection, 'vectors>
             KernKind,
         )>,
         fuel: &mut tex_command::CommandFuel,
-        tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
     ) -> Result<(), ExecError> {
         let position = self
             .positions
@@ -1842,7 +1842,7 @@ impl<'output, 'word, 'projection, 'vectors>
         current: usize,
         glyph: crate::box_runtime::hmode::LigatureGlyphCell,
         fuel: &mut tex_command::CommandFuel,
-        tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
     ) -> Result<usize, ExecError> {
         self.suspend_main(stores);
         let position = self.positions[self.position_index];
@@ -1906,6 +1906,8 @@ impl<'output, 'word, 'projection, 'vectors>
 }
 
 impl FinalHNodeSink for HyphenationReconstitutionCursor<'_, '_, '_, '_> {
+    const REQUIRES_PHYSICAL_SUFFIX: bool = true;
+
     fn glyph<G>(&mut self, stores: &mut CommandContext<'_, G>, glyph: PendingHRunChar) {
         let mut sink = crate::box_runtime::hmode::PageNodeSink {
             output: self.output,
@@ -1919,7 +1921,7 @@ impl FinalHNodeSink for HyphenationReconstitutionCursor<'_, '_, '_, '_> {
         stores: &mut CommandContext<'_, G>,
         current: usize,
         glyph: crate::box_runtime::hmode::LigatureGlyphCell,
-        work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        work: &mut crate::box_runtime::hmode::TfmScratch,
         diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
         fuel: &mut tex_command::CommandFuel,
     ) -> Result<(), tex_command::CommandError> {
@@ -1990,7 +1992,7 @@ impl FinalHNodeSink for HyphenationReconstitutionCursor<'_, '_, '_, '_> {
         _current: usize,
         amount: Scaled,
         kind: KernKind,
-        work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        work: &mut crate::box_runtime::hmode::TfmScratch,
         diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
         fuel: &mut tex_command::CommandFuel,
     ) -> Result<(), tex_command::CommandError> {
@@ -2059,7 +2061,7 @@ fn append_hyphenated_word<G>(
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
-    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    tfm_work: &mut crate::box_runtime::hmode::TfmScratch,
 ) -> Result<(), ExecError> {
     let pending = pending_word_range(word, 0..word.len());
     let mut cursor = HyphenationReconstitutionCursor {
