@@ -565,21 +565,19 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .primitive_token(name)
             .ok_or_else(|| CommandError::input_invariant())
     }
-    /// Restores a command and composes the report §82 will render.
+    /// Composes the report §82 renders after the caller backs up its operand.
     ///
     /// TeX82's `back_error` is `back_input` *then* `error`, so the context is
     /// captured with the backed-up level already on the stack -- which is
     /// exactly what makes the display's `<to be read again>` line name the
     /// offending token.
-    pub(crate) fn back_error_reporting(
+    pub(crate) fn report_backed_error(
         &mut self,
-        command: CurrentCommand<G>,
+        site: tex_state::diagnostic::DiagnosticSite,
         diagnostic: u64,
         message: String,
         help: &'static [&'static str],
     ) -> Result<(), CommandError> {
-        let site = self.capture_diagnostic_site(Some(&command));
-        self.back_input(command)?;
         let context = self.command.output_open_context(self.state);
         let site = Some(self.complete_diagnostic_site(site));
         self.command
@@ -595,7 +593,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             });
         Ok(())
     }
-    /// The plain-`error` sibling of [`Self::back_error_reporting`], for a
+    /// The plain-`error` sibling of [`Self::report_backed_error`], for a
     /// §82 call that backs nothing up.
     pub(crate) fn report_recoverable(
         &mut self,

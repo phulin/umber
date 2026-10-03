@@ -246,66 +246,83 @@ fn ifcsname_collects_in_the_shared_delivery_lane() {
 }
 
 #[test]
-fn csname_chardef_uses_missing_endcsname_recovery() {
-    crate::test_harness::with_universe(|universe| {
-        let csname = install_static(
-            universe,
-            "csname",
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName),
-        );
-        let endcsname = install_static(
-            universe,
-            "endcsname",
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName),
-        );
-        let chardef = universe.intern("csname-chardef").expect("chardef name");
-        universe
-            .assign_meaning(
-                chardef,
-                MeaningWord::from_static(Meaning::CharGiven('A')),
-                AssignmentScope::Global,
-            )
-            .expect("chardef meaning");
-        let empty = universe.intern("").expect("empty control sequence");
-        let mut command = CommandState::default();
-        crate::test_harness::push(
-            &mut command,
-            [
-                csname,
-                Token::Cs(chardef.symbol()),
-                endcsname,
-                Token::Char {
-                    ch: 'X',
-                    cat: Catcode::Letter,
-                },
-            ],
-        );
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
+fn csname_rejects_control_sequences_with_character_meanings() {
+    // TeX82 §372 stops on cur_cs, including a let alias for a literal character.
+    for meaning in [
+        Meaning::CharGiven('A'),
+        Meaning::CharToken {
+            ch: 'A',
+            cat: Catcode::Letter,
+        },
+    ] {
+        crate::test_harness::with_universe(|universe| {
+            let csname = install_static(
+                universe,
+                "csname",
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName),
+            );
+            let endcsname = install_static(
+                universe,
+                "endcsname",
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName),
+            );
+            let chardef = universe.intern("csname-chardef").expect("chardef name");
+            universe
+                .assign_meaning(
+                    chardef,
+                    MeaningWord::from_static(meaning),
+                    AssignmentScope::Global,
+                )
+                .expect("chardef meaning");
+            let empty = universe.intern("").expect("empty control sequence");
+            let mut command = CommandState::default();
+            crate::test_harness::push(
+                &mut command,
+                [
+                    csname,
+                    Token::Cs(chardef.symbol()),
+                    endcsname,
+                    Token::Char {
+                        ch: 'X',
+                        cat: Catcode::Letter,
+                    },
+                ],
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
 
-        let result = crate::test_harness::expect_expanded_command(&mut processor);
-        assert_eq!(
-            result.spelling().semantic_token(),
-            Token::Cs(empty.symbol())
-        );
-        assert_eq!(result.meaning(), Meaning::Relax);
-        drop(processor);
-        let diagnostics = command.take_semantic_diagnostics();
-        assert!(matches!(
-            diagnostics.as_slice(),
-            [crate::CommandSemanticDiagnostic::Recoverable { message, .. }]
-                if message.ends_with("endcsname inserted")
-        ));
-    });
+            let result = crate::test_harness::expect_expanded_command(&mut processor);
+            assert_eq!(
+                result.spelling().semantic_token(),
+                Token::Cs(empty.symbol())
+            );
+            assert_eq!(result.meaning(), Meaning::Relax);
+            assert_eq!(
+                processor
+                    .get_token_spelling()
+                    .expect("backed-up operand")
+                    .expect("token")
+                    .semantic_token(),
+                Token::Cs(chardef.symbol())
+            );
+            drop(processor);
+            let diagnostics = command.take_semantic_diagnostics();
+            assert!(matches!(
+                diagnostics.as_slice(),
+                [crate::CommandSemanticDiagnostic::Recoverable { message, .. }]
+                    if message.ends_with("endcsname inserted")
+            ));
+        });
+    }
 }
 
 #[test]

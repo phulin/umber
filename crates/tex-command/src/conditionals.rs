@@ -8,7 +8,6 @@ use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
-use crate::command::CurrentCommand;
 use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, transient_replay};
 use crate::processor::CommandProcessor;
 use crate::processor::status::{
@@ -590,7 +589,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn evaluate_ifnum_operand(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
         let absolute = kind == ConditionalKind::IfPdfAbsNum;
         let left = self.scan_integer_value_for_condition()?;
-        let relation = self.scan_if_relation_hot(kind.canonical_name())?;
+        let relation = self.scan_if_relation(kind.canonical_name())?;
         let right = self.scan_integer_value_for_condition()?;
         let left = i64::from(left);
         let right = i64::from(right);
@@ -688,8 +687,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             );
             message.push_str("'.");
             self.observe_command_diagnostic("illegal_unless_operand", &next);
-            self.back_error_reporting(
-                next,
+            let site = self.capture_diagnostic_site(Some(&next));
+            self.back_input(next)?;
+            self.report_backed_error(
+                site,
                 ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC,
                 message,
                 &["Continue, and I'll forget that it ever happened."],
@@ -1053,70 +1054,48 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// "Missing = inserted for \ifnum"/"\ifdim" and calls `back_error` (back
     /// up the offending token, then continue as though `=` had been found),
     /// so the second operand is still scanned and the comparison completes.
+    #[inline(never)]
     fn scan_if_relation(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
         let mut relation = None;
-        if self.request_expanded_token(&mut relation)? != crate::DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
-        }
-        let relation = relation.expect("command status initializes destination");
-        match static_meaning(&relation.meaning()) {
-            Some(Meaning::CharToken { ch: '<', .. }) => Ok(IfRelation::Less),
-            Some(Meaning::CharToken { ch: '=', .. }) => Ok(IfRelation::Equal),
-            Some(Meaning::CharToken { ch: '>', .. }) => Ok(IfRelation::Greater),
-            _ => {
-                // §503's `print_cmd_chr(if_test,this_if)` names the
-                // conditional whose relation is missing, so the message ends
-                // in the escaped primitive rather than a bare word.
-                let name = crate::processor::expand_render::print_esc_text(self.state, conditional);
-                let message = format!("Missing = inserted for {name}");
-                self.back_error_reporting(
-                    relation,
-                    MISSING_RELATION_DIAGNOSTIC,
-                    message,
-                    &["I was expecting to see `<', `=', or `>'. Didn't."],
-                )?;
-                Ok(IfRelation::Equal)
-            }
-        }
-    }
-
-    /// Compact counterpart of [`Self::scan_if_relation`] for the recursive
-    /// integer lane. Relation characters need only their static meaning; the
-    /// rich command is formed solely when TeX must report and back up a
-    /// missing relation token.
-    #[inline(never)]
-    fn scan_if_relation_hot(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
-        let mut relation: Option<CurrentCommand<G>> = None;
-        if self.request_expanded_token(&mut relation)? != crate::DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
-        }
-        let relation = relation.expect("command status initializes hot destination");
-        match relation.static_meaning() {
-            Some(Meaning::CharToken { ch: '<', .. }) => Ok(IfRelation::Less),
-            Some(Meaning::CharToken { ch: '=', .. }) => Ok(IfRelation::Equal),
-            Some(Meaning::CharToken { ch: '>', .. }) => Ok(IfRelation::Greater),
-            _ => self.back_missing_relation_hot(relation, conditional),
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn back_missing_relation_hot(
-        &mut self,
-        relation: CurrentCommand<G>,
-        conditional: &str,
-    ) -> Result<IfRelation, CommandError> {
-        // §503's `print_cmd_chr(if_test,this_if)` names the conditional whose
-        // relation is missing, so the message ends in the escaped primitive.
-        let name = crate::processor::expand_render::print_esc_text(self.state, conditional);
-        let message = format!("Missing = inserted for {name}");
-        self.back_error_reporting(
-            relation,
-            MISSING_RELATION_DIAGNOSTIC,
-            message,
-            &["I was expecting to see `<', `=', or `>'. Didn't."],
-        )?;
-        Ok(IfRelation::Equal)
+        self.consume_expanded_words(&mut |processor,
+                                          spelling,
+                                          meaning,
+                                          control_sequence,
+                                          exceptional| {
+            let character = match meaning {
+                tex_state::meaning::MeaningWord::Static(word) => {
+                    Meaning::runtime_word_character(*word)
+                }
+                _ => None,
+            };
+            relation = Some(match character {
+                Some(('<', _)) => IfRelation::Less,
+                Some(('=', _)) => IfRelation::Equal,
+                Some(('>', _)) => IfRelation::Greater,
+                _ => {
+                    let site = processor.capture_consumed_site(
+                        spelling,
+                        meaning,
+                        control_sequence,
+                        exceptional,
+                    );
+                    let name = crate::processor::expand_render::print_esc_text(
+                        processor.state,
+                        conditional,
+                    );
+                    processor.back_consumed_word(spelling, exceptional)?;
+                    processor.report_backed_error(
+                        site,
+                        MISSING_RELATION_DIAGNOSTIC,
+                        format!("Missing = inserted for {name}"),
+                        &["I was expecting to see `<', `=', or `>'. Didn't."],
+                    )?;
+                    IfRelation::Equal
+                }
+            });
+            Ok(std::ops::ControlFlow::Break(()))
+        })?;
+        relation.ok_or_else(CommandError::input_invariant)
     }
 
     fn record_bad_number(&mut self) {

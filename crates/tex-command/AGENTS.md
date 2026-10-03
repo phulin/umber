@@ -175,6 +175,13 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   one/4,096-round gate counts row accesses, row decodes, final macro-owner
   acquisitions, whole-meaning/command copies, and warmed allocations without
   adding production state or an alternate delivery path.
+- `src/processor/expand_structural.rs` and `src/conditionals.rs`: name
+  characters and numeric relations consume native meanings directly in the
+  shared reader. The name collector retains bulk resident-character admission
+  and rejects control-sequence aliases under TeX82 §372. A single outlined
+  relation scanner serves ordinary and recursive conditions; no compact
+  command-scanning duplicate exists. Missing delimiters capture their actual
+  diagnostic site and back up before the report receives that site.
 - `src/processor/expand/collect.rs`: raw collection and `get_token_spelling`
   consume tokens in the canonical reader. Raw operand consumers receive actual
   spelling and demand-only native meaning in one continuing reader; ordinary
@@ -249,6 +256,13 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   normal delivery before nesting, activates ordinary macros without a command,
   and returns after one expansion or one unexpandable-token backup. Matcher
   failure unwinds before the deferred first operand is replayed.
+- `src/processor/expand_structural.rs` and `src/conditionals.rs`: name
+  characters and numeric relations consume native meanings directly in the
+  shared reader. The name collector retains bulk resident-character admission
+  and rejects control-sequence aliases under TeX82 §372. A single outlined
+  relation scanner serves ordinary and recursive conditions; no compact
+  command-scanning duplicate exists. Missing delimiters capture their actual
+  diagnostic site and back up before the report receives that site.
 - `src/processor/expand/collect.rs`: raw-spelling consumers for macro matching,
   deferred operands and unexpanded replacement words. They share input and
   exceptional settlement, append through the existing collector grammar, and

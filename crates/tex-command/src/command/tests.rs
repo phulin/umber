@@ -101,15 +101,15 @@ fn compact_character_projections_distinguish_tokens_from_chardef_values() {
         ch: 'x',
         cat: Catcode::Letter,
     });
-    assert_eq!(literal.character_token(), Some('x'));
+    assert_eq!(literal.character().map(|(ch, _)| ch), Some('x'));
     assert_eq!(literal.character_value(), Some('x'));
 
     let defined = native_command(Meaning::CharGiven('A'));
-    assert_eq!(defined.character_token(), None);
+    assert_eq!(defined.character().map(|(ch, _)| ch), None);
     assert_eq!(defined.character_value(), Some('A'));
 
     let relax = native_command(Meaning::Relax);
-    assert_eq!(relax.character_token(), None);
+    assert_eq!(relax.character().map(|(ch, _)| ch), None);
     assert_eq!(relax.character_value(), None);
 }
 

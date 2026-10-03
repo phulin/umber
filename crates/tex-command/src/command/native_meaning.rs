@@ -89,11 +89,6 @@ impl<G> CurrentCommand<G> {
         self.character().map(|(_, cat)| cat)
     }
 
-    /// Literal character spelling excludes the numeric `\chardef` value.
-    pub(crate) fn character_token(&self) -> Option<char> {
-        self.character().map(|(ch, _)| ch)
-    }
-
     /// TeX82 §26's numeric character value also includes `\chardef`.
     #[cfg(test)]
     pub(crate) fn character_value(&self) -> Option<char> {

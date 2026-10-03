@@ -100,6 +100,23 @@ comparing complete preloaded and partitioned output byte for byte.
 
 ## Native execution owner
 
+### Name and conditional relation consumption
+
+`\csname` and numeric conditional relation probes consume native words in the
+shared expanded reader. The name collector keeps its final string and appends
+resident character runs directly; it creates no per-character command. TeX82
+§372 stops at a control sequence even when `\let` gave that sequence a character
+meaning. `\endcsname` completes the name, and another control sequence is backed
+up before the missing-terminator report captures its input context.
+
+The single relation scanner handles `\ifnum` and `\ifdim`, including their
+recursive calls. It returns the actual comparison selector and keeps no command
+slot or separate compact scanner. A missing relation captures diagnostic facts
+at its consuming boundary, backs the offending spelling with its actual
+alignment correction, then reports the inserted equals sign. The common report
+routine accepts that real diagnostic site after backup, rather than a command
+record that it would immediately unpack and discard.
+
 ### Raw binding operands
 
 The canonical raw reader lends spelling and, when its consumer requests it,

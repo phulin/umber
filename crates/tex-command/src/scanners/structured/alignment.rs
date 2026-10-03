@@ -347,8 +347,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 previous_align_state: None,
                             },),
                         );
-                        self.back_error_reporting(
-                            command,
+                        let site = self.capture_diagnostic_site(Some(&command));
+                        self.back_input(command)?;
+                        self.report_backed_error(
+                            site,
                             MISSING_PARAMETER_DIAGNOSTIC,
                             "Missing # inserted in alignment preamble".to_owned(),
                             &[

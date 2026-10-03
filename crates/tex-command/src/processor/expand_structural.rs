@@ -1,6 +1,6 @@
 //! Structural TeX expansion primitives.
 
-use tex_state::meaning::ExpandablePrimitive;
+use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::CommandError;
@@ -98,44 +98,54 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // scans remain true to ifincsname and unwind to their caller.
         let previous = std::mem::replace(&mut self.is_in_csname, true);
         let result = (|| {
-            let mut destination = None;
-            loop {
-                if !self.is_observed() && self.consume_csname_run(&mut name)? {
-                    continue;
-                }
-                let status = self.request_expanded_token(&mut destination)?;
-                match status {
-                    DeliveryStatus::End => return Err(CommandError::input_invariant()),
-                    DeliveryStatus::Command => {}
-                    _ => unreachable!("ordinary expanded delivery returns only commands"),
-                }
-                let command = destination
-                    .as_ref()
-                    .expect("command status initializes destination");
-                if command.expandable_primitive() == Some(ExpandablePrimitive::EndCsName) {
-                    break;
-                }
-                if let Some(ch) = command.character_token() {
-                    name.push(ch);
-                    destination.take();
-                    continue;
-                }
-                let rendered = print_esc_text(self.state, "endcsname");
-                let command = destination
-                    .take()
-                    .expect("csname recovery consumes the delivered command");
-                self.back_error_reporting(
-                    command,
-                    MISSING_ENDCSNAME_DIAGNOSTIC,
-                    format!("Missing {rendered} inserted"),
-                    &[
-                        "The control sequence marked <to be read again> should",
-                        "not appear between \\csname and \\endcsname.",
-                    ],
-                )?;
-                break;
+            let mut completed = false;
+            while !self.is_observed() && self.consume_csname_run(&mut name)? {}
+            self.consume_expanded_words(
+                &mut |processor, spelling, meaning, control_sequence, exceptional| {
+                    if let tex_state::meaning::MeaningWord::Static(word) = meaning {
+                        if Meaning::from_runtime_word(*word)
+                            == Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName)
+                        {
+                            completed = true;
+                            return Ok(std::ops::ControlFlow::Break(()));
+                        }
+                        if control_sequence.is_none()
+                            && let Some((ch, _)) = Meaning::runtime_word_character(*word)
+                        {
+                            name.push(ch);
+                            while !processor.is_observed()
+                                && processor.consume_csname_run(&mut name)?
+                            {
+                            }
+                            return Ok(std::ops::ControlFlow::Continue(()));
+                        }
+                    }
+                    let site = processor.capture_consumed_site(
+                        spelling,
+                        meaning,
+                        control_sequence,
+                        exceptional,
+                    );
+                    let rendered = print_esc_text(processor.state, "endcsname");
+                    processor.back_consumed_word(spelling, exceptional)?;
+                    processor.report_backed_error(
+                        site,
+                        MISSING_ENDCSNAME_DIAGNOSTIC,
+                        format!("Missing {rendered} inserted"),
+                        &[
+                            "The control sequence marked <to be read again> should",
+                            "not appear between \\csname and \\endcsname.",
+                        ],
+                    )?;
+                    completed = true;
+                    Ok(std::ops::ControlFlow::Break(()))
+                },
+            )?;
+            if completed {
+                Ok(name)
+            } else {
+                Err(CommandError::input_invariant())
             }
-            Ok(name)
         })();
         if let Ok(name) = &result {
             self.command
