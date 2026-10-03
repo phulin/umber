@@ -74,7 +74,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   the host replays from a full checkpoint.
 - `src/execution_scratch.rs`, `src/execution_scratch/tests.rs`: reusable
   bounded expression frames and admission/sinks for ordinary resident runs.
-  Definition and csname collectors consume those runs directly. One stack-local admission cursor is borrowed through the resident reader; suppression restricts it in place without copying its configuration. Admission
+  Definition and csname collectors consume those runs directly. One stack-local admission cursor transfers into the resident reader; suppression restricts it in place without copying its configuration. Admission
   borrows the final sink’s scanner cursor, settles each accepted word and writes it in one traversal;
   no accepted-prefix rescan or separate span-copy pass remains. Execution scratch owns
   no duplicate scan depth, macro argument payload, or publication capability.
@@ -95,6 +95,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   the caller-owned output sink and settles each accepted word inside plain
   run admission and final writing; it owns brace depth and a three-state outer-group candidate, with no per-word count or unused paragraph flag. A resource miss unwinds this cursor and the host replays from a full
   checkpoint rather than promoting scanner state into retained scratch.
+- Macro matching saves only its actual prior scanner status, with no installed-status episode packet or activation-class product. Empty delimiters produce no literal view; observed transitions and overlap projections are demanded at their consumer.
 - Ordinary expansion has no parked-expansion owner. The shared reader exposes
   token facts; unobserved macros activate from resolved invocation facts without
   constructing a command. `CurrentCommand` is the one request-local
@@ -414,7 +415,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   genuine TeX fetch label, not a first-read preflight or eligibility handoff.
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
-  prior-state restoration; scanner families do not open-code that lifecycle.
+  prior-state restoration. Macro matching instead saves only the actual prior status through the same native status owner and derives its demanded observed exit from the existing macro identity.
 - `src/processor/next.rs`: public raw-delivery entry points plus
   demand-only resident-command observation after all dense borrows end. The
   fused state machine in `expand.rs` delegates cold source retirement, outer
@@ -535,12 +536,12 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   `src/macro_call/diagnostics.rs`, and `src/macro_call/tests.rs`: native macro
   activation, the canonical argument grammar, and actual tracing/recovery
   diagnostics. The matcher borrows definition-owned parameter patterns and
-  delimiter failure links. Calls construct no `MacroPlan` or failure table.
+  delimiter failure links. Empty delimiters have no borrowed literal view, and calls construct no activation-class product, `MacroPlan` or failure table.
   Ordinary words enter the grammar directly without a command projection;
   actual cold settlement and error backup own the demanded command. One scratch
   writer retains argument holdback and source origins until activation transfers
   them to the input stack; focused tests cover scalar recovery, overlap, group
-  trimming, nested replay, and source-origin forwarding. Ordinary parameterless activation never enters the scanner/matcher call frame; only the actual pattern or exceptional invocation owns that frame and its cleanup.
+  trimming, nested replay, and source-origin forwarding. Ordinary parameterless activation never enters the scanner/matcher call frame; only the actual pattern or exceptional invocation owns the call frame. Matching restores its prior status and releases untransferred argument owners at their actual return.
 - `src/conditionals.rs`: private independent condition-stack machine; also
   renders e-TeX 2.6's `\tracingifs` `{...}` trace lines at conditional entry
   and at each `\or`/`\else`/`\fi` delimiter resolution, printed directly

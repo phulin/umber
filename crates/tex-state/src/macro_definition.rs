@@ -55,16 +55,6 @@ impl<'a> MacroDelimiter<'a> {
         self.words
     }
 
-    #[must_use]
-    pub fn len(self) -> usize {
-        self.words.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(self) -> bool {
-        self.words.is_empty()
-    }
-
     /// Next reusable prefix after a mismatch at the held-prefix boundary.
     /// The caller owns brace, paragraph, recovery, and source-origin semantics.
     #[must_use]
@@ -126,19 +116,27 @@ impl MacroParameterPattern {
             None
         }
     }
-    /// Borrows one delimiter directly from the retained definition words.
+    /// Borrows a nonempty literal delimiter. Undelimited parameters have no view.
     #[must_use]
-    pub fn delimiter<'a>(&'a self, parameter: usize, words: &'a [TokenWord]) -> MacroDelimiter<'a> {
+    #[inline]
+    pub fn delimiter<'a>(
+        &'a self,
+        parameter: usize,
+        words: &'a [TokenWord],
+    ) -> Option<MacroDelimiter<'a>> {
         let (start, end) = self.delimiter_bounds(parameter, words.len());
-        let base = self.delimiter_bounds(0, words.len()).0;
-        MacroDelimiter {
+        if start == end {
+            return None;
+        }
+        Some(MacroDelimiter {
             words: &words[start..end],
             failure: if end - start > 1 {
+                let base = self.delimiter_bounds(0, words.len()).0;
                 &self.failure[start - base..end - base]
             } else {
                 &[]
             },
-        }
+        })
     }
 
     pub(crate) fn failure_len(&self) -> usize {

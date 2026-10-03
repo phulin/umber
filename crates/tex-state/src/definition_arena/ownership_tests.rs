@@ -427,6 +427,7 @@ fn abandoned_publication_tombstones_but_full_frame_and_cold_view_keep_physical_c
             frame
                 .parameter_pattern()
                 .delimiter(0, frame.parameter_words())
+                .expect("literal delimiter")
                 .words(),
             &parameter[1..]
         );
@@ -435,6 +436,7 @@ fn abandoned_publication_tombstones_but_full_frame_and_cold_view_keep_physical_c
             frame
                 .parameter_pattern()
                 .delimiter(0, frame.parameter_words())
+                .expect("literal delimiter")
                 .overlap(1, word('x')),
             1,
             "sealed overlap table remains usable after slot retirement"

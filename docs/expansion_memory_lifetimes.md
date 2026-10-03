@@ -145,8 +145,9 @@ there is no cached paragraph flag or counter maintained for every accepted word.
 The macro parameter loop owns its one local argument cursor. Both argument
 grammars borrow it and mutate the final range in place, returning only success
 or error. There is no completed-cursor product or intermediate outer-group
-projection. The final vector's length change supplies the run count; successful
-writing maintains no second per-word counter beside that vector.
+projection. Admission counts the accepted run once; its consuming write updates
+the actual final range and virtual raw-word accounting. No accepted-prefix grammar
+rescan or invocation-wide parameter-copy stage exists.
 
 Expanded replacement collection lends its actual destination, parameter grammar
 and scanner episode to that same reader. Ordinary unobserved macro activation
@@ -184,14 +185,14 @@ immutable definition payload. Held delimiter words are already in the final
 region: mismatches reveal them, a successful delimiter truncates them, and
 outer-brace trimming narrows the span. Publication copies only range metadata.
 There is no scratch argument vector, pending serial, transfer API, or argument
-payload materializer.
+deferred payload materializer.
 
 Raw `get_token` never expands another macro. Alignment interception only
 pushes a template; outer/EOF recovery only inserts ordinary backup/frozen
 input. The matcher remains synchronous even if recovery clears scanner status.
 One optional capture region therefore owns cleanup across all Result exits,
 including conservation failure after completed matching. The result epilogue
-restores the shared scanner episode and releases every untransferred capture.
+restores the actual prior scanner status and releases every untransferred capture.
 
 Macro-body retirement releases its region after all parameter rows above it
 retire. A child capture owns a distinct region, so parent retirement cannot
@@ -343,7 +344,7 @@ values into immediately consumed temporaries nor visits normal ranges to drop
 owners they never had. Returned word and source-lane capacity stays with the
 engine.
 
-The resident-run reader borrows one stack-local admission cursor. Frame suppression
+The resident-run reader owns the one transferred stack-local admission cursor. Frame suppression
 restricts that actual cursor in place; it does not copy or reconstruct its
 configuration. A single match on the actual resident storage lends its definition
 body or parameter range directly to the sink. There are no parallel source-kind,
@@ -356,6 +357,17 @@ arguments and captured words. Full checkpoints and formats exclude active
 macro frames and captures. Their cold restore clears the actual transient
 owners while preserving reusable pool capacity. Production main control still
 returns `CurrentCommand`; removing that handoff is a separate unfinished change.
+
+Macro activation uses the admitted definition directly. No intermediate activation
+class is constructed; a contextual check is demanded by parameterless activation
+or an empty replacement whose input row might be elided. The matcher saves only
+the actual prior scanner status. Its installed matching status is already owned
+by live TeX state, and its macro identity remains an invocation fact. Observed
+exit transitions derive that status only at their consuming boundary, including
+after recovery cleared live status. Other scanner scopes retain the existing episode mechanism, including collectors
+that must reassert their installation after recovery. Empty parameter
+delimiters have no literal delimiter view or overlap-table projection; the same
+canonical argument grammar selects undelimited scanning from absence.
 
 Scanner status is the one actual TeX state, with status-specific diagnostic
 owners. Macro matching retains its control-sequence identity; definition and

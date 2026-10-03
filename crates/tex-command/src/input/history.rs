@@ -1047,7 +1047,7 @@ impl<G> crate::CommandState<G> {
         &mut self,
         writer: &mut impl crate::execution_scratch::PlainRunSink<G>,
         fuel: &mut crate::fuel::CommandFuel,
-        admission: &mut crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
+        mut admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<ResidentRun, crate::CommandError> {
         let InputStack {
             rows, arguments, ..
@@ -1086,7 +1086,7 @@ impl<G> crate::CommandState<G> {
                         arguments,
                         &body.body,
                         frame.position() as usize..frame.position() as usize + bound,
-                        admission,
+                        &mut admission,
                     )
                     .map_err(|_| crate::CommandError::input_invariant())?;
                 let parameter_next = count < bound && span[count].out_parameter_slot().is_some();
@@ -1105,7 +1105,7 @@ impl<G> crate::CommandState<G> {
                         *region,
                         *slot - 1,
                         start..start + bound,
-                        admission,
+                        &mut admission,
                     )
                     .map_err(|_| crate::CommandError::input_invariant())?;
                 (count, false)

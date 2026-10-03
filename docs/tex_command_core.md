@@ -1503,7 +1503,10 @@ retirement and actual lease release implement TeX's `param_stack` and
 
 `ScannerStatus` is the actual live scanner state. Each non-normal context
 retains its real TeX diagnostic target, or the alignment builder needed to
-render partial preamble input. A scoped installation restores the actual prior
+render partial preamble input. Macro matching saves only its actual prior status,
+using its existing invocation identity at demanded observed exits; it constructs
+no installed/prior/observed episode packet. Other scanner scopes retain the
+existing reassertable episode mechanism. A scoped installation restores the actual prior
 status; synthetic warning serials, a parallel warning column and a recovery
 package duplicating the status are deleted. Recovery copies the actual status
 before clearing it. The detached

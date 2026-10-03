@@ -13,6 +13,8 @@ and `allocate_reserved_token_list`: complete source validation and destination
 reservation precede streaming into the native token arena. These methods do not
 expose substores or introduce another arena.
 
+Definition-owned parameter programs expose literal delimiter views only for nonempty delimiters. Undelimited parameters have no view, and overlap metadata is projected only for a multiword literal delimiter.
+
 ## File Map
 
 - `AGENTS.md`: Local guidance for agents working in the `tex-state` crate.

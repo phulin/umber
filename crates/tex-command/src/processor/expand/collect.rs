@@ -169,7 +169,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut sink = DefinitionReplacementSink { writer, cursor };
         let run = self
             .command
-            .consume_plain_resident_run(&mut sink, self.fuel, &mut admission)?;
+            .consume_plain_resident_run(&mut sink, self.fuel, admission)?;
         Ok(run.at_transition)
     }
 

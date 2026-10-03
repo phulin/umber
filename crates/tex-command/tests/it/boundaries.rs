@@ -429,7 +429,7 @@ fn resource_capable_scalar_scans_expose_typed_products_and_keep_raw_entries_priv
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn scanner_status_lifetimes_have_one_processor_episode_mechanism() {
+fn scanner_status_lifetimes_use_native_restore_or_reassertable_episode() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command/src");
     let status = fs::read_to_string(manifest_dir.join("processor/status.rs"))
         .expect("read scanner-status implementation");
@@ -437,12 +437,7 @@ fn scanner_status_lifetimes_have_one_processor_episode_mechanism() {
     assert!(status.contains("fn finish_scanner_episode("));
     assert!(status.contains("fn resume_scanner_episode_after_recovery("));
 
-    for relative in [
-        "scan_toks.rs",
-        "macro_call.rs",
-        "conditionals.rs",
-        "processor/expand.rs",
-    ] {
+    for relative in ["scan_toks.rs", "conditionals.rs", "processor/expand.rs"] {
         let source = fs::read_to_string(manifest_dir.join(relative))
             .unwrap_or_else(|error| panic!("read {relative}: {error}"));
         assert!(
@@ -461,6 +456,22 @@ fn scanner_status_lifetimes_have_one_processor_episode_mechanism() {
             path.display()
         );
     }
+
+    let macro_call =
+        fs::read_to_string(manifest_dir.join("macro_call.rs")).expect("read macro_call");
+    for retired in [
+        "MacroActivationClass",
+        ".begin_scanner_episode(",
+        ".finish_scanner_episode(",
+    ] {
+        assert!(
+            !macro_call.contains(retired),
+            "macro matching restores native status without {retired}"
+        );
+    }
+    assert!(macro_call.contains(".begin_scanner_status("));
+    assert!(macro_call.contains(".restore_scanner_status("));
+    assert!(macro_call.contains(".restore_scanner_status_with_observation("));
 
     let scan_toks = fs::read_to_string(manifest_dir.join("scan_toks.rs")).expect("read scan_toks");
     assert!(scan_toks.contains("let config = ScanToksConfig::parse(mode);"));

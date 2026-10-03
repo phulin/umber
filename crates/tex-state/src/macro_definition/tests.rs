@@ -53,7 +53,7 @@ fn sealed_failure_links_retain_the_longest_literal_suffix() {
                 .chain((0..len).map(|index| alphabet[(bits >> index) & 1]))
                 .collect();
             let pattern = MacroParameterPattern::from_words(&words).expect("parameter program");
-            let delimiter = pattern.delimiter(0, &words);
+            let delimiter = pattern.delimiter(0, &words).expect("literal delimiter");
             for prefix in 0..len {
                 for current in alphabet {
                     if current == delimiter.words()[prefix] {
@@ -100,8 +100,8 @@ fn sealed_delimiters_keep_catcodes_and_parameter_boundaries() {
         letter,
     ];
     let pattern = MacroParameterPattern::from_words(&words).expect("parameter program");
-    let first = pattern.delimiter(0, &words);
-    let second = pattern.delimiter(1, &words);
+    let first = pattern.delimiter(0, &words).expect("literal delimiter");
+    let second = pattern.delimiter(1, &words).expect("literal delimiter");
     assert_eq!(first.words(), &[letter, other, letter]);
     assert_eq!(first.overlap(2, other), 0);
     assert_eq!(second.words(), &[other, other, letter]);

@@ -134,8 +134,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         delimiter: MacroDelimiter<'_>,
         paragraph_token: Option<TokenWord>,
     ) -> Result<(), CommandError> {
-        debug_assert!(!delimiter.is_empty());
-
         loop {
             // Delimiters are inactive inside a balanced group, and at depth
             // zero with no pending delimiter prefix a word other than the
@@ -199,10 +197,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .delimiter_prefix_len(tokens)
                         .map_err(|_| CommandError::input_invariant())?;
                     if tokens.brace_depth() == 0
-                        && prefix_len < delimiter.len()
+                        && prefix_len < delimiter.words().len()
                         && spelling == delimiter.words()[prefix_len]
                     {
-                        if prefix_len + 1 == delimiter.len() {
+                        if prefix_len + 1 == delimiter.words().len() {
                             // `#{` consumes the opening brace as parameter text. Raw
                             // delivery has accounted for it, but no replacement-body
                             // replay exists yet to provide the balancing delivery.
@@ -341,7 +339,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             admission.restrict_to_characters();
         }
         self.command
-            .consume_plain_resident_run(tokens, self.fuel, &mut admission)
+            .consume_plain_resident_run(tokens, self.fuel, admission)
     }
 
     fn check_argument_paragraph(

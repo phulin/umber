@@ -8,7 +8,7 @@ use tex_state::{DefinitionRef, ResidentMacroBody};
 use crate::command::CurrentCommand;
 use crate::execution_scratch::ArgumentRunAdmission;
 use crate::input::{ArgumentCursor, MatchedArguments};
-use crate::processor::status::{MatchingContext, ScannerStatus, ScannerStatusVisibility};
+use crate::processor::status::{MatchingContext, ScannerStatus};
 use crate::{CommandError, CommandProcessor};
 
 use crate::observation::{
@@ -17,19 +17,6 @@ use crate::observation::{
 
 const EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0395;
 pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
-
-/// Activation shape of one already-admitted immutable macro definition.
-///
-/// The exceptional variant is selected by live observation, tracing, scanner,
-/// recovery, alignment, or replay-completion state. It deliberately retains
-/// the canonical scalar boundary instead of teaching the hot path those
-/// semantics.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MacroActivationClass {
-    Simple,
-    Matching,
-    Exceptional,
-}
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -56,22 +43,16 @@ fn macro_activation_counters() -> MacroActivationCounters {
     MACRO_ACTIVATION_COUNTERS.with(core::cell::Cell::get)
 }
 
-fn record_macro_activation_class(activation: MacroActivationClass) {
-    #[cfg(not(test))]
-    let _ = activation;
-    #[cfg(test)]
+#[cfg(test)]
+fn record_macro_activation(parameterless: bool, exceptional: bool) {
     MACRO_ACTIVATION_COUNTERS.with(|slot| {
         let mut counters = slot.get();
-        match activation {
-            MacroActivationClass::Simple => {
-                counters.simple = counters.simple.saturating_add(1);
-            }
-            MacroActivationClass::Matching => {
-                counters.matching = counters.matching.saturating_add(1);
-            }
-            MacroActivationClass::Exceptional => {
-                counters.exceptional = counters.exceptional.saturating_add(1);
-            }
+        if exceptional {
+            counters.exceptional = counters.exceptional.saturating_add(1);
+        } else if parameterless {
+            counters.simple = counters.simple.saturating_add(1);
+        } else {
+            counters.matching = counters.matching.saturating_add(1);
         }
         slot.set(counters);
     });
@@ -150,11 +131,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .state
             .admit_macro_definition(definition)
             .ok_or_else(CommandError::input_invariant)?;
-        let (activation, body) = match admitted {
+        let (body, elide_empty_replacement) = match admitted {
             tex_state::AdmittedMacroDefinition::SimpleMacro { body } => {
-                let activation = self.classify_macro_activation(true, body.is_none());
-                if activation == MacroActivationClass::Simple {
-                    record_macro_activation_class(activation);
+                let exceptional = self.macro_activation_needs_context(body.is_none());
+                #[cfg(test)]
+                record_macro_activation(true, exceptional);
+                if !exceptional {
                     return self.activate_simple_macro(macro_name, call_site, body);
                 }
                 let body = match body {
@@ -164,26 +146,32 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .admit_macro_body(definition)
                         .ok_or_else(CommandError::input_invariant)?,
                 };
-                (activation, body)
+                (body, false)
             }
             tex_state::AdmittedMacroDefinition::MatchingMacro { body } => {
-                (self.classify_macro_activation(false, body.is_empty()), body)
+                let elide_empty_replacement =
+                    body.is_empty() && !self.macro_activation_needs_context(true);
+                #[cfg(test)]
+                record_macro_activation(
+                    false,
+                    self.macro_activation_needs_context(body.is_empty()),
+                );
+                (body, elide_empty_replacement)
             }
         };
-        record_macro_activation_class(activation);
         self.match_macro_definition(
             flags,
             definition,
             macro_name,
             call_site,
-            activation,
+            elide_empty_replacement,
             body,
             report_prefix_mismatch,
         )
     }
 
-    // The scanner and its cleanup frame exist only for a real matcher or an
-    // exceptional activation, never for an ordinary parameterless macro.
+    // Only a real matcher installs scanner status. It saves the actual prior
+    // status directly, without an installed-status episode packet.
     #[inline(never)]
     #[allow(clippy::too_many_arguments)] // actual admitted definition and invocation facts
     fn match_macro_definition(
@@ -192,7 +180,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         definition: tex_state::DefinitionRef<G>,
         macro_name: tex_state::interner::Symbol,
         call_site: OriginId,
-        activation: MacroActivationClass,
+        elide_empty_replacement: bool,
         body: tex_state::ResidentMacroBody<G>,
         report_prefix_mismatch: impl FnOnce(&mut Self),
     ) -> Result<bool, CommandError> {
@@ -213,9 +201,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .then(|| self.command.input.levels.arguments.begin_match())
             .transpose()
             .map_err(|_| CommandError::input_invariant())?;
-        let episode = if needs_matching {
+        let prior_status = if needs_matching {
             let status = ScannerStatus::Matching(MatchingContext { macro_name });
-            Some(self.begin_scanner_episode(status, ScannerStatusVisibility::Observed))
+            let prior = self.command.begin_scanner_status(status);
+            if self.is_observed() {
+                self.observe_scanner_status_transition(prior, status);
+            }
+            Some(prior)
         } else {
             None
         };
@@ -247,7 +239,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // finished stored replay -- before `begin_token_list(..., macro)`.
             // Those retirements must precede this body's input push. The pending
             // frame stays canonical if an older active frame retires beneath it.
-            if activation == MacroActivationClass::Matching && body.is_empty() {
+            if elide_empty_replacement {
                 self.conserve_input_stack()?;
                 self.command
                     .record_empty_matching_macro_activation(parameter_count);
@@ -290,8 +282,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         })();
         // Every Result path settles the one local scan and unfinished owner,
         // including failures conserving depleted parents after a complete match.
-        if let Some(episode) = episode {
-            self.finish_scanner_episode(episode);
+        if let Some(prior) = prior_status {
+            if self.is_observed() {
+                self.restore_scanner_status_with_observation(
+                    ScannerStatus::Matching(MatchingContext { macro_name }),
+                    prior,
+                );
+            } else {
+                self.command.restore_scanner_status(prior);
+            }
         }
         self.command.input.levels.arguments.abort_capture();
         result
@@ -344,26 +343,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         );
     }
 
-    fn classify_macro_activation(
-        &self,
-        parameterless: bool,
-        replacement_is_empty: bool,
-    ) -> MacroActivationClass {
-        // Settlement has already consumed token-local suppression and outer
-        // facts: suppression leaves a Relax command, while scanner+outer
-        // recovery leaves a space. Neither can be a valid macro dispatch, so
-        // this aggregate check is intentionally persistent-only.
-        let persistent_settlement = self.command.delivery_mode.requires_persistent_settlement();
-        let exceptional = persistent_settlement
+    #[inline(always)]
+    fn macro_activation_needs_context(&self, replacement_is_empty: bool) -> bool {
+        self.command.delivery_mode.requires_persistent_settlement()
             || self.state.int_param(IntParam::TRACING_MACROS) > 0
-            || (replacement_is_empty && self.empty_macro_needs_completion_descendant());
-        if exceptional {
-            MacroActivationClass::Exceptional
-        } else if parameterless {
-            MacroActivationClass::Simple
-        } else {
-            MacroActivationClass::Matching
-        }
+            || (replacement_is_empty && self.empty_macro_needs_completion_descendant())
     }
 
     /// True when §390 will retire the owner of a replay-completion fence and
@@ -466,10 +450,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .parameter_pattern()
                 .delimiter(parameter, body.parameter_words());
             let mut argument = self.command.input.levels.arguments.begin_argument(matching);
-            if delimiter.is_empty() {
-                self.scan_undelimited_argument(&mut argument, flags, paragraph_token)?;
-            } else {
+            if let Some(delimiter) = delimiter {
                 self.scan_delimited_argument(&mut argument, flags, delimiter, paragraph_token)?;
+            } else {
+                self.scan_undelimited_argument(&mut argument, flags, paragraph_token)?;
             }
             if self.state.int_param(IntParam::TRACING_MACROS) > 0 {
                 self.trace_macro_argument(body, parameter, &argument)?;
@@ -482,7 +466,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     transition: "splice",
                     purpose: "macro_delimiter_match",
                     tokens: delimiter
-                        .words()
+                        .map_or(&[][..], MacroDelimiter::words)
                         .iter()
                         .copied()
                         .map(|word| {
