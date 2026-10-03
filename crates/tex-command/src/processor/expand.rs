@@ -360,7 +360,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.charge_command_action()?;
             let consumed = loop {
                 if let Some(result) = self.consume_resident_input(
-                    &mut |_, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
+                    &mut |_, _, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
                     finish,
                 )? {
                     break result;
@@ -625,7 +625,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn main_character_run(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
-        consume: &mut impl MainCharacterConsumer<G>,
+        consume: &mut impl MainCharacterConsumer<G, Facts>,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         let mut consumed_characters = false;
@@ -648,7 +648,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 _ => crate::fuel::RawDeliveryKind::StoredToken,
             };
             let selected = self.consume_resident_input(
-                &mut |state, fuel, effects, _, word, origin| {
+                &mut |state, fuel, effects, _, execution, word, origin| {
                     let Token::Char {
                         ch,
                         cat: Catcode::Letter | Catcode::Other,
@@ -666,6 +666,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         state,
                         fuel,
                         effects,
+                        execution,
                         MainCharacterInput::Scalar { ch, origin },
                     );
                     if admission.continue_run() {
@@ -1484,7 +1485,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// settles scalar input through the same owner when the borrowed prefix is
     /// unavailable.  The source row is selected once by `main_character_run`;
     /// this entry never probes it and re-enters a second delivery loop.
-    pub fn main_loop_source_step_into<C: MainCharacterConsumer<G>>(
+    pub fn main_loop_source_step_into<C: MainCharacterConsumer<G, Facts>>(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         consume: &mut C,

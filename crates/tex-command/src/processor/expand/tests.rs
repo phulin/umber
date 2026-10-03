@@ -51,12 +51,13 @@ struct RecordingCharacterConsumer {
     stop_after: Option<usize>,
 }
 
-impl<G> crate::MainCharacterConsumer<G> for RecordingCharacterConsumer {
+impl<G, Facts> crate::MainCharacterConsumer<G, Facts> for RecordingCharacterConsumer {
     fn admit<'state, 'admission, 'fuel, 'effects, 'run>(
         &mut self,
         state: &'state mut tex_state::CommandContext<'admission, G>,
         _fuel: &'fuel mut crate::CommandFuel,
         _diagnostic_effects: &'effects mut tex_state::diagnostic::DiagnosticEffects,
+        _execution: &mut Facts,
         input: crate::MainCharacterInput<'run>,
     ) -> crate::CharacterRunAdmission {
         match input {

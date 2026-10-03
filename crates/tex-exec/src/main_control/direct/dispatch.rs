@@ -13,68 +13,6 @@ impl<G> DirectDispatch<'_, '_, G> {
             .command_context()
             .expect("direct scanner admission");
         {
-            let mode = self.control.execution.modes.current_mode();
-            let main_loop_active = self.control.execution.main_loop_active;
-            let mut source_command = None;
-            if command_slot.is_none()
-                && main_loop_active
-                && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
-                && self.control.execution.active_alignment.is_none()
-                && self.control.operation_observations.is_none()
-                && !admitted_context.tracked_region_is_active()
-                && !self.control.execution.page_region_succession_pending
-            {
-                let etex_extended = self.control.command_profile() == CommandProfile::ETEX26;
-                let mut forbidden_facts = CommandMachineHostFacts::Forbidden;
-                let mut source_processor = command_processor(
-                    &mut self.control.command,
-                    self.control.fuel.fuel_mut(),
-                    &mut self.control.capabilities,
-                    &mut forbidden_facts,
-                    &mut self.control.operation_observations,
-                    self.effects,
-                    &mut admitted_context,
-                );
-                let mut run_error = None;
-                let mut borrowed_applied = false;
-                let mut count = 0;
-                let mut continues = true;
-                let status = {
-                    let mut consume = characters::MainSourceAdmission {
-                        modes: &mut self.control.execution.modes,
-                        etex_extended,
-                        run_error: &mut run_error,
-                        borrowed_applied: &mut borrowed_applied,
-                        count: &mut count,
-                        continues: &mut continues,
-                    };
-                    source_processor.main_loop_source_step_into(&mut source_command, &mut consume)
-                };
-                self.cursor = Some(source_processor.delivery_cursor());
-                self.diagnostics.extend(
-                    source_processor
-                        .take_semantic_diagnostics()
-                        .into_iter()
-                        .map(PendingDiagnostic::Command),
-                );
-                drop(source_processor);
-                if let Some(error) = run_error {
-                    return Err(error);
-                }
-                match status.map_err(command_error)? {
-                    tex_command::DeliveryStatus::CharacterRun if borrowed_applied || count != 0 => {
-                        self.control.execution.main_loop_active = continues;
-                        drop(admitted_context);
-                        self.report_scan()?;
-                        return Ok(ReplayStep::Continue);
-                    }
-                    tex_command::DeliveryStatus::CharacterRunBoundary
-                    | tex_command::DeliveryStatus::CharacterRun => {}
-                    _ => unreachable!(
-                        "shared character consumer returns a run or its scalar boundary"
-                    ),
-                }
-            }
             let output_routine_active = self.control.execution.boxes.output_routine_active;
             let retain_commands = self.control.operation_observations.is_none()
                 && self.control.execution.active_alignment.is_none()
@@ -108,6 +46,62 @@ impl<G> DirectDispatch<'_, '_, G> {
                 owned_processor.resume_delivery_cursor(cursor);
             }
             let mut observation_receipts = owned_processor.is_observed().then(Vec::new);
+            let mut source_admission = command_slot.is_none()
+                && !owned_processor.is_observed()
+                && owned_processor.with_execution_owners(
+                    |context, _, _, _, _, execution, _, _, _| {
+                        execution.main_loop_active
+                            && matches!(
+                                execution.modes.current_mode(),
+                                Mode::Horizontal | Mode::RestrictedHorizontal
+                            )
+                            && execution.active_alignment.is_none()
+                            && !context.tracked_region_is_active()
+                            && !execution.page_region_succession_pending
+                    },
+                );
+            if source_admission {
+                let etex_extended = owned_processor.profile() == CommandProfile::ETEX26;
+                let mut consume = characters::MainSourceAdmission {
+                    etex_extended,
+                    error: None,
+                    applied: false,
+                };
+                let status =
+                    owned_processor.main_loop_source_step_into(&mut command_slot, &mut consume);
+                if consume.error.is_some() || status.is_err() {
+                    self.cursor = Some(owned_processor.delivery_cursor());
+                    self.diagnostics.extend(
+                        owned_processor
+                            .take_semantic_diagnostics()
+                            .into_iter()
+                            .map(PendingDiagnostic::Command),
+                    );
+                    return Err(consume.error.unwrap_or_else(|| {
+                        command_error(status.expect_err("source admission failed"))
+                    }));
+                }
+                match status.expect("source admission succeeded") {
+                    tex_command::DeliveryStatus::CharacterRun if consume.applied => {
+                        self.cursor = Some(owned_processor.delivery_cursor());
+                        self.diagnostics.extend(
+                            owned_processor
+                                .take_semantic_diagnostics()
+                                .into_iter()
+                                .map(PendingDiagnostic::Command),
+                        );
+                        drop(owned_processor);
+                        drop(admitted_context);
+                        self.report_scan()?;
+                        return Ok(ReplayStep::Continue);
+                    }
+                    tex_command::DeliveryStatus::CharacterRunBoundary
+                    | tex_command::DeliveryStatus::CharacterRun => {}
+                    _ => unreachable!(
+                        "shared character consumer returns a run or its scalar boundary"
+                    ),
+                }
+            }
             'processor: loop {
                 let (mode, main_loop_active) =
                     owned_processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
@@ -229,10 +223,7 @@ impl<G> DirectDispatch<'_, '_, G> {
 
                 let diagnostics = &mut self.diagnostics;
                 let mut scan_origin = self.current_origin;
-                if command_slot.is_none() {
-                    if source_command.is_some() {
-                        command_slot = source_command.take();
-                    }
+                if command_slot.is_none() || source_admission {
                     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
                     // `get_x_token`; §1034's inner character loop instead re-enters at
                     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
@@ -266,6 +257,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                         tex_command::DeliveryStatus::Command => {}
                         _ => unreachable!("main-control delivery has no alignment event"),
                     };
+                    source_admission = false;
                     let command = command_slot
                         .as_ref()
                         .expect("command status initializes destination");

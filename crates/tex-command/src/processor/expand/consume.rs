@@ -68,7 +68,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let scanner = self.command.delivery_mode.scanner_active();
                 self.pending_diagnostic_location = None;
                 let selected = self.consume_resident_input(
-                    &mut |state, fuel, _, alignment, word, _| {
+                    &mut |state, fuel, _, alignment, _, word, _| {
                         let effect = match word.literal_catcode() {
                             Some(tex_state::token::Catcode::BeginGroup) => SkippedWord::Brace(1),
                             Some(tex_state::token::Catcode::EndGroup) => SkippedWord::Brace(-1),

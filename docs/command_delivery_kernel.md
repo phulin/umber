@@ -82,6 +82,15 @@ final range enters the invocation owner. Argument sinks derive their accepted
 count from the final vector's length change rather than incrementing a second
 counter for every write.
 
+Main control opens one processor for source-character admission and its scalar
+boundary. The character consumer borrows the actual execution owner through
+that processor, alongside the already admitted state, effects and fuel. It does
+not open a temporary processor with forbidden host facts or lend modes from a
+second owner path. A lexical boundary writes the existing destination and
+continues through main-loop lookahead with the same processor and delivery
+cursor; an applied character run returns at its existing driver budget boundary.
+Tracing, tracking, alignment, and checkpoint cuts retain their existing demand.
+
 Main control's expanded fetch enters this same word loop and one expansion
 episode before reading its first token. There is no first-read preflight or
 separate first-macro activation path. Main control and scanners differ only at

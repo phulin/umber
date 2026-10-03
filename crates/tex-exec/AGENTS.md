@@ -56,7 +56,7 @@ not allocate a vector merely to publish one already-complete node.
   actual scanner loans at cold owner and publication boundaries. The native
   fetch/reswitch loop borrows the complete actual execution owner, refreshing its mode for each command and querying box/trace/pointer state at the consuming arm. It retains its actual processor and context through RELAX, ordinary groups,
   integer/dimension/glue/token registers and parameters, arithmetic, definitions, let assignments, raw aftergroup/afterassignment operands, kerns, horizontal/vertical glue and setlanguage, consuming scanner products at their actual destination and respecting the caller's remaining budget. Horizontal glue and setlanguage lend their actual context, modes, effects and fuel directly; their former whole-executor adapters are deleted. An existing pending
-  character buffer is flushed through the actual mutable mode loan. Actual diagnostic,
+  character buffer is flushed through the actual mutable mode loan. Source-character admission borrows execution through that same processor; its scalar boundary keeps the existing destination and cursor, without opening a temporary forbidden-facts processor. Actual diagnostic,
   observer/tracked, page/output, afterassignment and budget demands release the
   loan at the actual owner boundary; no command settlement tail exists. `scan_arithmetic.rs` scans concrete
   the final typed operand in that same processor; target selection and invalid-target

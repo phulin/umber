@@ -49,6 +49,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut crate::fuel::CommandFuel,
             &mut tex_state::diagnostic::DiagnosticEffects,
             &mut crate::processor::alignment::AlignmentDeliveryState<G>,
+            &mut Facts,
             TokenWord,
             OriginId,
         ) -> ControlFlow<R, bool>,
@@ -93,6 +94,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         self.fuel,
                         self.diagnostic_effects,
                         &mut self.command.roots.alignment,
+                        &mut self.host.facts,
                         word,
                         origin,
                     ) {

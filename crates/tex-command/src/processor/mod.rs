@@ -131,12 +131,14 @@ pub enum MainCharacterInput<'run> {
 /// Implementations are monomorphized into the command loop. The ordinary
 /// source path invokes [`Self::admit`] once for a borrowed suffix; scalar
 /// fallback invokes it only at the exceptional character boundary.
-pub trait MainCharacterConsumer<G> {
+/// Each callback borrows the same actual host owner as native delivery.
+pub trait MainCharacterConsumer<G, Facts> {
     fn admit<'state, 'admission, 'fuel, 'effects, 'run>(
         &mut self,
         state: &'state mut tex_state::CommandContext<'admission, G>,
         fuel: &'fuel mut crate::CommandFuel,
         diagnostic_effects: &'effects mut tex_state::diagnostic::DiagnosticEffects,
+        execution: &mut Facts,
         input: MainCharacterInput<'run>,
     ) -> CharacterRunAdmission;
 }

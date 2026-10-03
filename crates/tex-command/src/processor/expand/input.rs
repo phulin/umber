@@ -87,7 +87,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// cold/source boundary remain on the scalar transition below.
     #[cold]
     #[inline(never)]
-    pub(super) fn advance_source_character_step<C: MainCharacterConsumer<G>>(
+    pub(super) fn advance_source_character_step<C: MainCharacterConsumer<G, Facts>>(
         &mut self,
         resident_index: usize,
         consume: &mut C,
@@ -96,6 +96,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let state = &mut *self.state;
         let fuel = &mut *self.fuel;
         let diagnostic_effects = &mut *self.diagnostic_effects;
+        let execution = &mut self.host.facts;
         let InputLevel::Source(source) = &mut command_state.roots.input.levels.rows[resident_index]
         else {
             return Err(CommandError::input_invariant());
@@ -123,6 +124,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 state,
                 fuel,
                 diagnostic_effects,
+                execution,
                 MainCharacterInput::Borrowed(run),
             );
             let count =
@@ -145,6 +147,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     state,
                     fuel,
                     diagnostic_effects,
+                    execution,
                     MainCharacterInput::Scalar { ch, origin },
                 );
                 if scalar.count() != 1 {
@@ -191,6 +194,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         state,
                         fuel,
                         diagnostic_effects,
+                        execution,
                         MainCharacterInput::Scalar { ch, origin },
                     )
                     .continue_run())
