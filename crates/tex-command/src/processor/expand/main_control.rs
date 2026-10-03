@@ -51,6 +51,7 @@ impl<Processor, G, Consumer: MainControlConsumer<Processor, G>> ExpandedReaderCo
 {
     const NATIVE_TERMINAL: bool = true;
 
+    #[inline(always)] // pure forwarding must fold into the canonical word loop
     fn accepts_native_terminal(
         &mut self,
         processor: &mut Processor,
@@ -59,6 +60,7 @@ impl<Processor, G, Consumer: MainControlConsumer<Processor, G>> ExpandedReaderCo
         self.0.accepts_native_terminal(processor, meaning)
     }
 
+    #[inline(always)] // no per-word call or Result packet at the owner projection
     fn native_terminal(
         &mut self,
         processor: &mut Processor,

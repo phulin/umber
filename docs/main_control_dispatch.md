@@ -170,6 +170,10 @@ fetches enter the same reswitch without backup or an intervening command record.
 World dialogue, prepared shipout, output-page ownership and driver checkpoint
 cuts return their actual typed results after the relevant loans end.
 
+The terminal selector and consumer adapters are inline owner projections.
+Their forwarding calls must fold into the reader; extending semantic support
+must not introduce per-terminal function calls or result packing at this seam.
+
 ## Native font and code-table owners
 
 Font selection, font dimensions and character controls, generated-font
