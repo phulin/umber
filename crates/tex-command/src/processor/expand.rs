@@ -296,7 +296,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<DeliveryStatus, CommandError> {
         let status = self.consume_input::<false, _>(
             self.create_source_control_sequences,
-            &mut |_, _, _, _, _, _, _| Ok(std::ops::ControlFlow::Continue(false)),
+            &mut |_, _, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
             &mut |processor, word, origin, suppress, site, kind| {
                 processor
                     .finish_delivered_word::<OBSERVED>(
@@ -355,7 +355,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             bool,
             crate::fuel::RawDeliveryKind,
             super::delivery_mode::DeliveryMode,
-        ) -> Result<std::ops::ControlFlow<R, bool>, CommandError>,
+        ) -> std::ops::ControlFlow<R, bool>,
         finish: &mut impl FnMut(
             &mut Self,
             TokenWord,
@@ -376,16 +376,19 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let consumed = loop {
                 let resident = if CONTINUING {
                     self.consume_resident_input(
-                        &mut |state, fuel, _, alignment, _, word, _, suppress, kind, mode| {
+                        &mut |fuel| {
                             if !prepaid.get() {
                                 fuel.charge()?;
                                 prepaid.set(true);
                             }
-                            let result = admit(state, fuel, alignment, word, suppress, kind, mode)?;
+                            Ok(())
+                        },
+                        &mut |state, fuel, _, alignment, _, word, _, suppress, kind, mode| {
+                            let result = admit(state, fuel, alignment, word, suppress, kind, mode);
                             if matches!(result, std::ops::ControlFlow::Continue(true)) {
                                 prepaid.set(false);
                             }
-                            Ok(result.map_break(std::ops::ControlFlow::Break))
+                            result.map_break(std::ops::ControlFlow::Break)
                         },
                         &mut |processor, word, origin, suppress, site, kind| {
                             if !prepaid.get() {
@@ -397,9 +400,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     )?
                 } else {
                     self.consume_resident_input(
-                        &mut |_, _, _, _, _, _, _, _, _, _| {
-                            Ok(std::ops::ControlFlow::Continue(false))
-                        },
+                        &mut |_| Ok(()),
+                        &mut |_, _, _, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
                         finish,
                     )?
                 };
@@ -705,16 +707,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 _ => crate::fuel::RawDeliveryKind::StoredToken,
             };
             let selected = self.consume_resident_input(
+                &mut |_| Ok(()),
                 &mut |state, fuel, effects, _, execution, word, origin, _, _, _| {
                     let Token::Char {
                         ch,
                         cat: Catcode::Letter | Catcode::Other,
                     } = word.semantic_token()
                     else {
-                        return Ok(std::ops::ControlFlow::Continue(false));
+                        return std::ops::ControlFlow::Continue(false);
                     };
                     if !allows_characters || !fuel.try_charge() {
-                        return Ok(std::ops::ControlFlow::Continue(false));
+                        return std::ops::ControlFlow::Continue(false);
                     }
                     consumed_characters = true;
                     #[cfg(feature = "profiling")]
@@ -727,9 +730,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         MainCharacterInput::Scalar { ch, origin },
                     );
                     if admission.continue_run() {
-                        Ok(std::ops::ControlFlow::Continue(true))
+                        std::ops::ControlFlow::Continue(true)
                     } else {
-                        Ok(std::ops::ControlFlow::Break(DeliveryStatus::CharacterRun))
+                        std::ops::ControlFlow::Break(DeliveryStatus::CharacterRun)
                     }
                 },
                 &mut |processor, word, origin, suppress, site, kind| {

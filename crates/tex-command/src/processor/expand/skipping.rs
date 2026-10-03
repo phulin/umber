@@ -79,7 +79,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.create_source_control_sequences,
             &mut |state, fuel, alignment, word, suppress, kind, mode| {
                 if OBSERVED || mode.requires_persistent_settlement() || suppress {
-                    return Ok(ControlFlow::Continue(false));
+                    return ControlFlow::Continue(false);
                 }
                 let literal = word.literal_catcode();
                 let stop = if literal.is_some_and(|cat| cat != Catcode::Active) {
@@ -88,7 +88,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let mut meaning = MeaningWord::Static(Meaning::UNDEFINED_WORD);
                     state.write_packed_token_command_into(word, &mut meaning);
                     if meaning.is_outer() {
-                        return Ok(ControlFlow::Continue(false));
+                        return ControlFlow::Continue(false);
                     }
                     consume_meaning(&meaning, &nested)
                 };
@@ -97,7 +97,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 fuel.record_raw_run(mode.scanner_active(), kind, 1);
                 #[cfg(not(feature = "profiling"))]
                 let _ = (fuel, kind);
-                Ok(stop.map_or(ControlFlow::Continue(true), ControlFlow::Break))
+                stop.map_or(ControlFlow::Continue(true), ControlFlow::Break)
             },
             &mut |processor, word, origin, suppress, site, kind| {
                 let literal = word.literal_catcode();

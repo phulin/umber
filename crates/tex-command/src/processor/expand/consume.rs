@@ -74,7 +74,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
         let status = self.consume_input::<false, _>(
             self.create_source_control_sequences,
-            &mut |_, _, _, _, _, _, _| Ok(ControlFlow::Continue(false)),
+            &mut |_, _, _, _, _, _, _| ControlFlow::Continue(false),
             &mut {
                 // This is the actual reading/interpretation back edge. Keeping
                 // its invocation in the reader avoids a per-token result call;

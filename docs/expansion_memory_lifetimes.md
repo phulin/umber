@@ -386,7 +386,7 @@ status before clearing it. Scoped episodes retain only that installed status,
 the actual prior status and observation demand. Full checkpoint admission
 rejects an active status directly, without a redundant warning-state check.
 
-# Continuing conditional skips
+## Continuing conditional skips
 
 TeX82 §494 consumes skipped text inside the canonical raw input reader until
 an unmatched conditional delimiter completes the skip. Source words and
@@ -407,7 +407,8 @@ transitions. A continuing resident consumer spends that reservation on its
 first word and charges before advancing each subsequent word. A call-local
 boolean records whether the next word is already charged. Frame exhaustion
 and parameter substitution retry under that reservation, so neither transition
-adds a charge. Admission may fail before cursor advancement. Call-local
+adds a charge. Fuel reservation may fail before cursor advancement. Native admission then
+consumes the charged word without constructing a per-word error result. Call-local
 reservation and nesting facts unwind on failure and never enter checkpoints.
 Continuing reservation bookkeeping is selected statically for this consumer.
 Ordinary single-word consumers compile the reservation and its callback

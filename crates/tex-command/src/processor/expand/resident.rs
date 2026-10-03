@@ -44,6 +44,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(always)]
     pub(super) fn consume_resident_input<R>(
         &mut self,
+        reserve: &mut impl FnMut(&mut crate::fuel::CommandFuel) -> Result<(), CommandError>,
         admit: &mut impl FnMut(
             &mut tex_state::CommandContext<'_, G>,
             &mut crate::fuel::CommandFuel,
@@ -55,7 +56,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             bool,
             crate::fuel::RawDeliveryKind,
             crate::processor::delivery_mode::DeliveryMode,
-        ) -> Result<ControlFlow<R, bool>, CommandError>,
+        ) -> ControlFlow<R, bool>,
         finish: &mut impl FnMut(
             &mut Self,
             TokenWord,
@@ -100,7 +101,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         // exactly once before attempting substitution.
                         return Ok(None);
                     }
-                    let admitted = admit(
+                    reserve(self.fuel)?;
+                    frame.advance_resident();
+                    match admit(
                         self.state,
                         self.fuel,
                         self.diagnostic_effects,
@@ -111,9 +114,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         suppress,
                         kind,
                         self.command.delivery_mode,
-                    )?;
-                    frame.advance_resident();
-                    match admitted {
+                    ) {
                         ControlFlow::Continue(true) => {}
                         ControlFlow::Continue(false) => break (word, origin),
                         ControlFlow::Break(result) => return Ok(Some(result)),

@@ -48,7 +48,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.create_source_control_sequences = true;
         self.consume_input::<false, _>(
             true,
-            &mut |_, _, _, _, _, _, _| Ok(ControlFlow::Continue(false)),
+            &mut |_, _, _, _, _, _, _| ControlFlow::Continue(false),
             &mut |processor, word, origin, suppress, site, kind| {
                 let literal = word.literal_catcode();
                 let mut meaning = None;
@@ -189,7 +189,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
             let selected = self.consume_input::<false, _>(
                 true,
-                &mut |_, _, _, _, _, _, _| Ok(ControlFlow::Continue(false)),
+                &mut |_, _, _, _, _, _, _| ControlFlow::Continue(false),
                 &mut |processor, word, origin, suppress, site, kind| {
                     let literal = word.literal_catcode();
                     // Literal spelling already supplies all collection facts. Active
