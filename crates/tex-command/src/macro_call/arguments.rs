@@ -32,7 +32,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         word: TracedTokenWord,
         command: Option<&CurrentCommand<G>>,
-    ) -> Result<ArgumentCursor, CommandError> {
+    ) -> Result<(), CommandError> {
         self.back_macro_argument_word(word, command)?;
         self.insert_macro_argument_recovery_par()?;
         self.report_extra_right_brace_argument();
@@ -46,19 +46,19 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     pub(super) fn scan_undelimited_argument(
         &mut self,
-        matching: &MatchedArguments,
+        tokens: &mut ArgumentCursor,
         flags: MeaningFlags,
         paragraph_token: Option<TokenWord>,
-    ) -> Result<ArgumentCursor, CommandError> {
+    ) -> Result<(), CommandError> {
         // §394 keeps the opening brace until completion, so runaway context
         // still sees the unmatched group. One grammar handles its first word
         // and interior words directly from their final spelling.
-        let mut tokens = self.command.input.levels.arguments.begin_argument(matching);
         loop {
             if !self.is_observed() {
-                let run = self.consume_argument_run(&mut tokens, paragraph_token, None)?;
+                let run = self.consume_argument_run(tokens, paragraph_token, None)?;
                 if run.consumed != 0 && tokens.brace_depth() == 0 {
-                    return self.strip_argument_outer_group(tokens);
+                    strip_argument_outer_group(tokens)?;
+                    return Ok(());
                 }
                 if run.at_transition && self.settle_resident_run_boundary()? {
                     continue;
@@ -83,7 +83,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .input
                                 .levels
                                 .arguments
-                                .match_words(&tokens)
+                                .match_words(tokens)
                                 .map_err(|_| CommandError::input_invariant())?
                                 .collect::<Vec<_>>();
                             processor.set_runaway_partial(
@@ -109,33 +109,33 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         command,
                         paragraph_token,
                         flags,
-                        Some(&tokens),
+                        Some(tokens),
                     )?;
                     processor
                         .command
                         .input
                         .levels
                         .arguments
-                        .append_argument_word(&mut tokens, word)
+                        .append_argument_word(tokens, word)
                         .map_err(|_| CommandError::input_invariant())?;
                     Ok(true)
                 })?
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
             if appended && tokens.brace_depth() == 0 {
-                return self.strip_argument_outer_group(tokens);
+                strip_argument_outer_group(tokens)?;
+                return Ok(());
             }
         }
     }
 
     pub(super) fn scan_delimited_argument(
         &mut self,
-        matching: &MatchedArguments,
+        tokens: &mut ArgumentCursor,
         flags: MeaningFlags,
         delimiter: MacroDelimiter<'_>,
         paragraph_token: Option<TokenWord>,
-    ) -> Result<ArgumentCursor, CommandError> {
+    ) -> Result<(), CommandError> {
         debug_assert!(!delimiter.is_empty());
-        let mut tokens = self.command.input.levels.arguments.begin_argument(matching);
 
         loop {
             // Delimiters are inactive inside a balanced group, and at depth
@@ -149,13 +149,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .input
                     .levels
                     .arguments
-                    .delimiter_prefix_len(&tokens)
+                    .delimiter_prefix_len(tokens)
                     .map_err(|_| CommandError::input_invariant())?
                     == 0
             {
                 let stop_word = delimiter.words()[0];
-                let run =
-                    self.consume_argument_run(&mut tokens, paragraph_token, Some(stop_word))?;
+                let run = self.consume_argument_run(tokens, paragraph_token, Some(stop_word))?;
                 if run.at_transition && self.settle_resident_run_boundary()? {
                     continue;
                 }
@@ -173,7 +172,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .input
                             .levels
                             .arguments
-                            .match_words(&tokens)
+                            .match_words(tokens)
                             .map_err(|_| CommandError::input_invariant())?
                             .collect::<Vec<_>>();
                         partial.extend(
@@ -182,7 +181,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .input
                                 .levels
                                 .arguments
-                                .delimiter_prefix_words(&tokens)
+                                .delimiter_prefix_words(tokens)
                                 .map_err(|_| CommandError::input_invariant())?,
                         );
                         processor.set_runaway_partial(
@@ -198,7 +197,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .input
                         .levels
                         .arguments
-                        .delimiter_prefix_len(&tokens)
+                        .delimiter_prefix_len(tokens)
                         .map_err(|_| CommandError::input_invariant())?;
                     if tokens.brace_depth() == 0
                         && prefix_len < delimiter.len()
@@ -209,14 +208,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .input
                             .levels
                             .arguments
-                            .append_delimiter_word(&mut tokens, word)
+                            .append_delimiter_word(tokens, word)
                             .map_err(|_| CommandError::input_invariant())?;
                         if processor
                             .command
                             .input
                             .levels
                             .arguments
-                            .delimiter_prefix_len(&tokens)
+                            .delimiter_prefix_len(tokens)
                             .map_err(|_| CommandError::input_invariant())?
                             == delimiter.len()
                         {
@@ -231,7 +230,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .input
                                 .levels
                                 .arguments
-                                .truncate_delimiter_suffix(&mut tokens)
+                                .truncate_delimiter_suffix(tokens)
                                 .map_err(|_| CommandError::input_invariant())?;
                             return Ok(true);
                         }
@@ -256,7 +255,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                     .input
                                     .levels
                                     .arguments
-                                    .delimiter_prefix_word(&tokens, index)
+                                    .delimiter_prefix_word(tokens, index)
                                     .map_err(|_| CommandError::input_invariant())?;
                                 observe!(
                                     processor,
@@ -273,7 +272,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .input
                             .levels
                             .arguments
-                            .reveal_delimiter_words(&mut tokens, committed as u32)
+                            .reveal_delimiter_words(tokens, committed as u32)
                             .map_err(|_| CommandError::input_invariant())?;
                         if retained != 0 {
                             // The current spelling is the final word of the retained
@@ -284,7 +283,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .input
                                 .levels
                                 .arguments
-                                .append_delimiter_word(&mut tokens, word)
+                                .append_delimiter_word(tokens, word)
                                 .map_err(|_| CommandError::input_invariant())?;
                             return Ok(false);
                         }
@@ -305,20 +304,21 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         command,
                         paragraph_token,
                         flags,
-                        Some(&tokens),
+                        Some(tokens),
                     )?;
                     processor
                         .command
                         .input
                         .levels
                         .arguments
-                        .append_argument_word(&mut tokens, word)
+                        .append_argument_word(tokens, word)
                         .map_err(|_| CommandError::input_invariant())?;
                     Ok(false)
                 })?
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
             if completed {
-                return self.strip_argument_outer_group(tokens);
+                strip_argument_outer_group(tokens)?;
+                return Ok(());
             }
         }
     }
@@ -414,16 +414,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
         Ok(())
     }
+}
 
-    fn strip_argument_outer_group(
-        &mut self,
-        mut buffer: ArgumentCursor,
-    ) -> Result<ArgumentCursor, CommandError> {
-        if buffer.removable_outer_group() {
-            buffer
-                .strip_outer_group()
-                .map_err(|_| CommandError::input_invariant())?;
-        }
-        Ok(buffer)
+// TeX82 §394 strips a single enclosing group at this actual completion,
+// borrowing the caller's cursor without producing another cursor value.
+fn strip_argument_outer_group(buffer: &mut ArgumentCursor) -> Result<(), CommandError> {
+    if buffer.removable_outer_group() {
+        buffer
+            .strip_outer_group()
+            .map_err(|_| CommandError::input_invariant())?;
     }
+    Ok(())
 }

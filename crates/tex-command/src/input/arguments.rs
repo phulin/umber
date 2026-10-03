@@ -344,6 +344,7 @@ impl ArgumentArena {
     }
 
     /// Source rows borrow a body-owned region; capture owns a distinct slot.
+    #[inline(always)]
     fn consume_region<G>(
         &mut self,
         writer: &mut ArgumentCursor,
@@ -363,16 +364,15 @@ impl ArgumentArena {
             (&upper[0].words, &mut lower[destination].words)
         };
         let words = &from[range];
-        let mut count = 0;
+        let start = to.len();
         for &word in words {
             if !admission.admits(word.token_word(), writer) {
                 break;
             }
             to.push(word);
-            count += 1;
         }
         writer.visible_end = to.len() as u32;
-        Ok(count)
+        Ok(to.len() - start)
     }
 }
 
@@ -386,6 +386,7 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
     fn settle_admitted_word(&mut self, brace_delta: i8) {
         self.cursor.settle_argument_delta(brace_delta);
     }
+    #[inline(always)]
     fn consume_region_span(
         &mut self,
         arena: &mut ArgumentArena,
@@ -395,6 +396,7 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
     ) -> Result<usize, ScratchError> {
         arena.consume_region(self, source, range, admission)
     }
+    #[inline(always)]
     fn consume_token_span(
         &mut self,
         arena: &mut ArgumentArena,
@@ -405,7 +407,7 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
             return Err(ScratchError::InvalidCoordinate);
         }
         let destination = arena.region_mut(self.region);
-        let mut count = 0;
+        let start = destination.len();
         for &word in words {
             if !admission.admits(word, self) {
                 break;
@@ -414,10 +416,9 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
                 word,
                 tex_state::token::OriginId::UNKNOWN,
             ));
-            count += 1;
         }
         self.visible_end = destination.len() as u32;
-        Ok(count)
+        Ok(destination.len() - start)
     }
 }
 

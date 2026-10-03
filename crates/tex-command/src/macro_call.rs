@@ -473,11 +473,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let delimiter = body
                 .parameter_pattern()
                 .delimiter(parameter, body.parameter_words());
-            let argument = if delimiter.is_empty() {
-                self.scan_undelimited_argument(matching, flags, paragraph_token)?
+            let mut argument = self.command.input.levels.arguments.begin_argument(matching);
+            if delimiter.is_empty() {
+                self.scan_undelimited_argument(&mut argument, flags, paragraph_token)?;
             } else {
-                self.scan_delimited_argument(matching, flags, delimiter, paragraph_token)?
-            };
+                self.scan_delimited_argument(&mut argument, flags, delimiter, paragraph_token)?;
+            }
             let marker = body.parameter_pattern().marker_index(parameter).map_or(
                 Ok('#'),
                 |index| match body

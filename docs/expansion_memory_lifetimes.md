@@ -142,6 +142,12 @@ The local scanner cursor owns only brace depth and the outer-group candidate
 state used by §394. Paragraph rejection runs at its actual matcher boundary;
 there is no cached paragraph flag or counter maintained for every accepted word.
 
+The macro parameter loop owns its one local argument cursor. Both argument
+grammars borrow it and mutate the final range in place, returning only success
+or error. There is no completed-cursor product or intermediate outer-group
+projection. The final vector's length change supplies the run count; successful
+writing maintains no second per-word counter beside that vector.
+
 Expanded replacement collection lends its actual destination, parameter grammar
 and scanner episode to that same reader. Ordinary unobserved macro activation
 and ordinary replacement consumption construct no command; only observation

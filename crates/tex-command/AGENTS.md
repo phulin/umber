@@ -561,6 +561,10 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 - `src/macro_call.rs`, `src/input/levels.rs`, and `src/input/arguments.rs`:
   activation retains the final definition body and transfers the invocation's
   already-written argument region, including its at most nine final ranges.
+  The parameter loop creates each actual argument cursor and lends it to either
+  scanner, which returns only completion or failure. No cursor result is copied
+  out and immediately consumed. Argument sinks derive their accepted count from
+  the final vector's length change, with no parallel per-word counter.
   A `MacroBody` row borrows the sealed replacement; body retirement subtracts
   the region's native parameter count and returns the whole owner. There is no
   copied parameter vector or frame parameter-base/count cache.

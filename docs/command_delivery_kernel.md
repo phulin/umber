@@ -74,6 +74,14 @@ prefix. A source, parameter, recovery or fuel boundary keeps its existing
 canonical scalar continuation. Definition and csname sinks use this same run
 contract, without a second grammar or intermediate token collection.
 
+Macro matching creates each argument cursor in the consuming parameter loop.
+Delimited and undelimited scanners borrow that cursor and return only completion
+or failure. They do not return a cursor product which the caller immediately
+copies and consumes. Outer-group stripping mutates that same cursor before its
+final range enters the invocation owner. Argument sinks derive their accepted
+count from the final vector's length change rather than incrementing a second
+counter for every write.
+
 Main control's expanded fetch enters this same word loop and one expansion
 episode before reading its first token. There is no first-read preflight or
 separate first-macro activation path. Main control and scanners differ only at
