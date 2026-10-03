@@ -38,7 +38,7 @@ expose substores or introduce another arena.
   executor diagnostic settlement and native-loop effect cuts, font metrics and detached artifact recipes,
   generated-font lookup, grouped box transfer, page marks, hyphenation,
   detached paragraph-shape and e-TeX penalty-array projections with journaled
-  assignment, and bounded assignment-diagnostic rendering,
+  assignment whose encoded words stream directly into the existing publication lane without an intermediate vector, and bounded assignment-diagnostic rendering,
   including e-TeX's assignment-free forced-online diagnostic scope,
   PDF traversal/form/color operations, output-stream normalization,
   definitions, token/glue allocation, and dependency-aware mutations without

@@ -941,13 +941,26 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 let (character, value) = (scan_code_table_operands(processor))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                 return {
-                                    let (direct_arg0, direct_arg1, direct_arg2) =
-                                        (character, value, global);
-                                    finish_scan!(self.execute_catcode(
-                                        direct_arg0,
-                                        direct_arg1,
-                                        direct_arg2
-                                    ))
+                                    {
+                                        let step = retained_assignment!(
+                                            receipts,
+                                            |context, state, effects, fuel, _observer, execution| {
+                                                if execution.modes.current_list().pending_hchars().is_some() {
+                                                    crate::box_runtime::flush_pending_hchars_with_fuel(
+                                                        &mut execution.modes,
+                                                        context,
+                                                        effects,
+                                                        fuel,
+                                                    )?;
+                                                }
+                                                definition_assignments::apply_catcode(
+                                                    character, value, global, context, state, effects, receipts,
+                                                )
+                                            }
+                                        )?;
+                                        self.schedule_assignment_token()?;
+                                        Ok(step)
+                                    }
                                 };
                             }
                             (
@@ -1883,8 +1896,45 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     global,
                                 );
                                 return {
-                                    let (direct_arg0,) = (global,);
-                                    finish_scan!(self.scan_paragraph_shape_assignment(direct_arg0))
+                                    let _ = take_native_scalar!(
+                                        processor.scan_optional_equals_retained(),
+                                        scan_origin
+                                    );
+                                    let count = take_native_scalar!(
+                                        processor.scan_integer_retained(),
+                                        scan_origin
+                                    )
+                                    .value
+                                    .max(0)
+                                        as usize;
+                                    let mut lines = Vec::new();
+                                    (lines
+                                        .try_reserve_exact(count)
+                                        .map_err(|_| ExecError::ArithmeticOverflow))
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                    for _ in 0..count {
+                                        let indent = take_native_scalar!(
+                                            processor.scan_dimension_retained(),
+                                            scan_origin
+                                        )
+                                        .value;
+                                        let width = take_native_scalar!(
+                                            processor.scan_dimension_retained(),
+                                            scan_origin
+                                        )
+                                        .value;
+                                        lines.push(ParagraphShapeLine { indent, width });
+                                    }
+                                    {
+                                        let step = retained_assignment!(
+                                            receipts,
+                                            |context, _state, effects, _fuel, _observer, _execution| {
+                                                semantic::execute_paragraph_shape(context, effects, &lines, global)
+                                            }
+                                        )?;
+                                        self.schedule_assignment_token()?;
+                                        Ok(step)
+                                    }
                                 };
                             }
                             (
@@ -1928,11 +1978,40 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         ),
                                     };
                                     return {
-                                        let (direct_arg0, direct_arg1) = (kind, global);
-                                        finish_scan!(self.scan_penalty_array_assignment(
-                                            direct_arg0,
-                                            direct_arg1
-                                        ))
+                                        let _ = take_native_scalar!(
+                                            processor.scan_optional_equals_retained(),
+                                            scan_origin
+                                        );
+                                        let count = take_native_scalar!(
+                                            processor.scan_integer_retained(),
+                                            scan_origin
+                                        )
+                                        .value
+                                        .max(0)
+                                            as usize;
+                                        let mut values = Vec::new();
+                                        (values
+                                            .try_reserve_exact(count)
+                                            .map_err(|_| ExecError::ArithmeticOverflow))
+                                        .map_err(|error| scan_error(error, scan_origin))?;
+                                        for _ in 0..count {
+                                            let value = take_native_scalar!(
+                                                processor.scan_integer_retained(),
+                                                scan_origin
+                                            )
+                                            .value;
+                                            values.push(value);
+                                        }
+                                        {
+                                            let step = retained_assignment!(
+                                                receipts,
+                                                |context, _state, effects, _fuel, _observer, _execution| {
+                                                    semantic::execute_penalty_array(context, effects, receipts, kind, &values, global)
+                                                }
+                                            )?;
+                                            self.schedule_assignment_token()?;
+                                            Ok(step)
+                                        }
                                     };
                                 }
                             }
@@ -3327,18 +3406,24 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         .map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     return {
-                                        let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) = (
-                                            primitive,
-                                            definition.target,
-                                            definition.value,
-                                            global,
-                                        );
-                                        finish_scan!(self.execute_character_definition(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2,
-                                            direct_arg3
-                                        ))
+                                        {
+                                            let step = retained_assignment!(
+                                                receipts,
+                                                |context, _state, effects, _fuel, _observer, _execution| {
+                                                    semantic::execute_character_definition(
+                                                        context,
+                                                        effects,
+                                                        receipts,
+                                                        primitive,
+                                                        definition.target,
+                                                        definition.value,
+                                                        global,
+                                                    )
+                                                }
+                                            )?;
+                                            self.schedule_assignment_token()?;
+                                            Ok(step)
+                                        }
                                     };
                                 }
                             }
@@ -3375,18 +3460,25 @@ impl<G> DirectDispatch<'_, '_, G> {
                                         .map_err(command_error))
                                     .map_err(|error| scan_error(error, scan_origin))?;
                                     return {
-                                        let (direct_arg0, direct_arg1, direct_arg2, direct_arg3) = (
-                                            primitive,
-                                            definition.target,
-                                            definition.index,
-                                            global,
-                                        );
-                                        finish_scan!(self.execute_register_definition(
-                                            direct_arg0,
-                                            direct_arg1,
-                                            direct_arg2,
-                                            direct_arg3
-                                        ))
+                                        {
+                                            let step = retained_assignment!(
+                                                receipts,
+                                                |context, state, effects, _fuel, _observer, _execution| {
+                                                    semantic::execute_register_definition(
+                                                        context,
+                                                        state,
+                                                        effects,
+                                                        receipts,
+                                                        primitive,
+                                                        definition.target,
+                                                        definition.index,
+                                                        global,
+                                                    )
+                                                }
+                                            )?;
+                                            self.schedule_assignment_token()?;
+                                            Ok(step)
+                                        }
                                     };
                                 }
                             }

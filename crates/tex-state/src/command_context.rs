@@ -3728,23 +3728,28 @@ impl<'a, G> CommandContext<'a, G> {
         let root = if lines.is_empty() {
             None
         } else {
-            let words = lines
-                .iter()
-                .flat_map(|line| {
+            let word_count = lines
+                .len()
+                .checked_mul(8)
+                .ok_or(DurableAllocationError::CapacityOverflow)?;
+            let words = (0..word_count).map(|offset| {
+                let line = &lines[offset / 8];
+                let value = if offset & 4 == 0 {
                     line.indent
-                        .raw()
-                        .to_le_bytes()
-                        .into_iter()
-                        .chain(line.width.raw().to_le_bytes())
-                        .map(|byte| {
-                            TokenWord::pack(crate::token::Token::Char {
-                                ch: char::from(byte),
-                                cat: crate::token::Catcode::Invalid,
-                            })
-                        })
+                } else {
+                    line.width
+                };
+                let byte = value.raw().to_le_bytes()[offset & 3];
+                TokenWord::pack(crate::token::Token::Char {
+                    ch: char::from(byte),
+                    cat: crate::token::Catcode::Invalid,
                 })
-                .collect::<Vec<_>>();
-            Some(self.allocate_token_list(&words)?)
+            });
+            let root = self.admitted.allocate_reserved_token_list(words)?;
+            self.resident
+                .engine_usage
+                .observe_transient_memory(0, word_count.saturating_add(1));
+            Some(root)
         };
         self.assign_token_parameter(parameter, root, scope)
             .expect("paragraph-shape parameter is admitted");
@@ -3808,17 +3813,22 @@ impl<'a, G> CommandContext<'a, G> {
         let root = if values.is_empty() {
             None
         } else {
-            let words = values
-                .iter()
-                .flat_map(|value| value.to_le_bytes())
-                .map(|byte| {
-                    TokenWord::pack(crate::token::Token::Char {
-                        ch: char::from(byte),
-                        cat: crate::token::Catcode::Invalid,
-                    })
+            let word_count = values
+                .len()
+                .checked_mul(4)
+                .ok_or(DurableAllocationError::CapacityOverflow)?;
+            let words = (0..word_count).map(|offset| {
+                let byte = values[offset / 4].to_le_bytes()[offset & 3];
+                TokenWord::pack(crate::token::Token::Char {
+                    ch: char::from(byte),
+                    cat: crate::token::Catcode::Invalid,
                 })
-                .collect::<Vec<_>>();
-            Some(self.allocate_token_list(&words)?)
+            });
+            let root = self.admitted.allocate_reserved_token_list(words)?;
+            self.resident
+                .engine_usage
+                .observe_transient_memory(0, word_count.saturating_add(1));
+            Some(root)
         };
         self.assign_token_parameter(parameter, root, scope)
             .expect("penalty-array parameter is admitted");

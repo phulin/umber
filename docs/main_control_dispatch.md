@@ -191,3 +191,26 @@ that boundary is not an eligibility classification for a second interpreter.
 This removes the source-free adapters needed by a future native reader-owned
 main switch. Production main control still retains `CurrentCommand` across
 its fetch/switch boundary; the complete removal of that handoff is unfinished.
+
+## Native shorthand and shape assignment owners
+
+Character and register shorthands scan their provisional binding and restricted
+operand in their selected switch arm, then lend the actual context, diagnostic
+effects, profile state and demanded receipts to the concrete assignment. The
+provisional binding retains TeX82 §1224's scope and scan order. Catcode assignment
+lends those same owners and flushes pending horizontal characters through the
+actual mode/fuel loan before changing the table.
+
+Paragraph shapes and e-TeX penalty arrays scan once in that same processor. Their
+completed scalar arrays are consumed by the durable assignment owner; there is
+no second scanner episode, command machine or immediately consumed operand
+packet. The durable owner streams the encoded words directly into its existing
+publication lane, without a temporary encoded-word vector. The old penalty array
+is decoded only when assignment tracing requests it, before replacement. Native
+group saves and checkpoint first-touch history continue to own the installed
+root through the existing eqtb mutation policy.
+
+The scalar array scan and its durable encoding remain distinct representations.
+Replacing that encoding with a native scalar-array owner, and removing the main
+`CurrentCommand` handoff, remain unfinished; deleting the assignment adapters
+does not establish either claim.

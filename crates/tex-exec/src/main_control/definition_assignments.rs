@@ -157,24 +157,20 @@ pub(super) fn apply_catcode<G>(
     raw_value: i32,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
+    state: &CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<ReplayStep, ExecError> {
     let value = recover_code_table_value(
         UnexpandablePrimitive::CatCode,
         raw_value,
         stores,
-        command.state,
-        command.diagnostic_effects,
+        state,
+        effects,
     )?;
     let catcode = catcode_from_value(value)?;
-    let committed = commit_catcode(
-        character,
-        catcode,
-        global,
-        stores,
-        command.diagnostic_effects,
-    );
-    if committed && command.observes_mutations() {
+    let committed = commit_catcode(character, catcode, global, stores, effects);
+    if committed && let Some(receipts) = receipts.as_mut() {
         let record = MutationRecord {
             target: MutationTarget::Catcode,
             key: ObservationValue::Character(u32::from(character)),
@@ -185,7 +181,7 @@ pub(super) fn apply_catcode<G>(
             ),
             global,
         };
-        command.retain_assignment_mutation(record);
+        receipts.push(record);
     }
     Ok(ReplayStep::Continue)
 }
