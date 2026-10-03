@@ -507,3 +507,67 @@ fn native_terminal_continuation_preserves_the_actual_operation_budget() {
         }
     }
 }
+
+#[test]
+fn native_terminals_after_text_refresh_delivery_and_preserve_group_restoration() {
+    // TeX82 §§1030/1038/1045 and §§1061/1068: terminal dispatch leaves
+    // character lookahead before the next fetch, with text owned by its
+    // existing semantic consumer. Section 1269 inserts afterassignment once.
+    for (operation, tail) in [
+        (r"\relax ", "xyz"),
+        (r"\f ", "xyz"),
+        (r"{\count2=7}", "xyz"),
+        (r"\begingroup\count2=7\endgroup ", "xyz"),
+        (r"\let\alias=\probe ", "xyz"),
+        (r"\afterassignment\probe\count2=1 ", "yz"),
+    ] {
+        for budget in [1, 2, 64] {
+            crate::test_harness::with_nonstop_plain_universe(|stores| {
+                let mut control = MainControl::tex82_initex(stores);
+                register_cmr10_as(&mut control, stores, "cmr10.tfm");
+                let source = format!(
+                    "\\font\\f=cmr10 \\f\\def\\probe{{x}}\\count2=0 \\setbox0=\\hbox{{abc{operation}{tail}}}\\setbox1=\\hbox{{abcxyz}}\\ifdim\\wd0=\\wd1\\global\\count1=1 \\fi\\end"
+                );
+                register_source(&mut control, source.as_bytes());
+                let mut effects = DiagnosticEffects::new();
+                let mut provider = None;
+                let mut finished = false;
+                for _ in 0..256 {
+                    let mut completed = 0;
+                    let step = control
+                        .execute_control_chunk(
+                            stores,
+                            None,
+                            None,
+                            &mut effects,
+                            false,
+                            &mut provider,
+                            budget,
+                            &mut completed,
+                        )
+                        .expect("text and native terminals execute across budget cuts");
+                    if matches!(step, ReplayStep::End | ReplayStep::EndOfInput) {
+                        finished = true;
+                        break;
+                    }
+                }
+                assert!(finished, "operation={operation}, budget={budget}");
+                assert_eq!(
+                    admitted!(stores, |context| context.count(1).expect("width result")),
+                    1,
+                    "all six characters survive exactly once: operation={operation}, budget={budget}"
+                );
+                assert_eq!(
+                    admitted!(stores, |context| context.execution_group_depth()),
+                    0
+                );
+                assert_eq!(
+                    admitted!(stores, |context| context
+                        .count(2)
+                        .expect("restored register")),
+                    0
+                );
+            });
+        }
+    }
+}

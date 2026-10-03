@@ -317,3 +317,9 @@ comparison and central admitted state write. Only demanded mutation receipts
 decode that word; no resolved-meaning assignment API remains.
 
 Completed restricted scanner requests carry their actual value and required provenance, with no discarded original-value or recovery flags. Missing-delimiter status remains with its real diagnostic consumer.
+
+Native terminal consumption also admits commands after text. Relax and group
+exit use their real pending-character flush; assignments keep their own scan
+and flush ordering. Actual text transitions return a semantic completion so
+the retained processor refreshes its fetch role and mode without a command
+record or a second delivery loop.

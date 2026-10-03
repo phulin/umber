@@ -24,6 +24,9 @@ impl NativeMainControl<'_> {
         control_sequence: Option<tex_state::interner::Symbol>,
     ) -> std::ops::ControlFlow<()> {
         *self.scan_origin = Some(spelling.origin());
+        let leaving_text = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+            execution.main_loop_active || execution.modes.current_list().pending_hchars().is_some()
+        });
         let code = match meaning {
             tex_state::meaning::MeaningWord::Font(_) => codes::FONT,
             tex_state::meaning::MeaningWord::Static(word) => {
@@ -34,6 +37,18 @@ impl NativeMainControl<'_> {
             }
         };
         let result = match code {
+            codes::RELAX => processor.with_execution_owners(
+                |context, _, effects, fuel, _, execution, _, _, _| {
+                    execution.main_loop_active = false;
+                    let pending = execution.modes.current_list().pending_hchars().is_some();
+                    semantic::execute_relax(
+                        context,
+                        pending.then_some(&mut execution.modes),
+                        effects,
+                        fuel,
+                    )
+                },
+            ),
             codes::FONT => {
                 let tex_state::meaning::MeaningWord::Font(font) = meaning else {
                     unreachable!("native font operand")
@@ -69,16 +84,28 @@ impl NativeMainControl<'_> {
                     },
                 )
             }
-            codes::CHAR_END_GROUP => apply_groups::finish_native_group_leave(
-                processor,
-                GroupKind::Simple,
-                "ordinary simple group",
-            ),
-            codes::PRIMITIVE_END_GROUP => apply_groups::finish_native_group_leave(
-                processor,
-                GroupKind::SemiSimple,
-                "semi simple group",
-            ),
+            codes::CHAR_END_GROUP | codes::PRIMITIVE_END_GROUP => {
+                let (kind, error_context) = if code == codes::CHAR_END_GROUP {
+                    (GroupKind::Simple, "ordinary simple group")
+                } else {
+                    (GroupKind::SemiSimple, "semi simple group")
+                };
+                processor
+                    .with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
+                        if execution.modes.current_list().pending_hchars().is_some() {
+                            crate::box_runtime::flush_pending_hchars_with_fuel(
+                                &mut execution.modes,
+                                context,
+                                effects,
+                                fuel,
+                            )?;
+                        }
+                        Ok(())
+                    })
+                    .and_then(|()| {
+                        apply_groups::finish_native_group_leave(processor, kind, error_context)
+                    })
+            }
             code => {
                 let tex_state::meaning::MeaningWord::Static(word) = meaning else {
                     unreachable!("native assignment meaning")
@@ -104,7 +131,8 @@ impl NativeMainControl<'_> {
         };
         // Unsave can restore tracing parameters and can deliver aftergroup
         // diagnostics. Re-enter main control before another word in either case.
-        if *self.completed_operations + 1 >= self.remaining_operations
+        if leaving_text
+            || *self.completed_operations + 1 >= self.remaining_operations
             || result.is_err()
             || processor.has_pending_reports()
             || (matches!(
@@ -192,6 +220,17 @@ impl<'state, 'host, G>
             meaning,
             tex_state::meaning::MeaningWord::Static(Meaning::RELAX_WORD)
         ) {
+            if processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                execution.main_loop_active
+                    || execution.modes.current_list().pending_hchars().is_some()
+            }) {
+                return self.consume_substantive_terminal(
+                    processor,
+                    spelling,
+                    meaning,
+                    control_sequence,
+                );
+            }
             // TeX82 §1045: relax has no list effect after leaving main_loop.
             if *self.completed_operations + 1 >= self.remaining_operations {
                 self.completion = Some(Ok(ReplayStep::Continue));

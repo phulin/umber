@@ -519,3 +519,19 @@ resource-failure unwind points, including scratch and filename lifetime rules.
 Register selectors continue to apply their profile-specific restricted integer
 bounds and recovery. Integer and internal-value origins remain with actual
 diagnostic consumers; this change does not introduce new provenance products.
+
+## Native terminals after text
+
+The canonical reader consumes ordinary relax, font, group and assignment words
+even when the previous command left the character loop active. It uses the
+actual pending character list and current loop state, rather than a separate
+eligibility cache. Relax and group exit flush that list at their existing TeX
+semantic boundary; assignment scanners preserve their own operand/report/flush
+ordering. No early generic flush is added.
+
+After consuming a terminal reached from text, the reader returns its actual
+semantic completion. Main control refreshes the fetch role and mode through
+the same retained processor and context before reading another word. This
+prevents a stale character-lookahead role without constructing a delivered
+command, opening another processor or adding a successful settlement stage.
+Native terminals outside text retain their existing in-reader continuation.

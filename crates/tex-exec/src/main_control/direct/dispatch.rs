@@ -242,13 +242,11 @@ impl<G> DirectDispatch<'_, '_, G> {
                     let continue_native = retain_commands
                         && self.completed_operations < self.remaining_operations
                         && initial_prefix.is_none()
-                        && !main_loop_active
                         && tracing_commands <= 0
                         && tracing_ifs <= 0
                         && !processor.command_trace_printed()
                         && processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
                             execution.boxes.pending_leader.is_none()
-                                && execution.modes.current_list().pending_hchars().is_none()
                         });
                     if continue_native {
                         self.current_origin = None;
