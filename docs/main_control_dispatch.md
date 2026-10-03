@@ -318,3 +318,36 @@ more switch families move into it; it creates no command record, operation
 carrier or second interpreter. Eligibility remains inline and the actual handler
 returns only its consumer control flow, with real semantic completion retained
 only at a budget, diagnostic or error boundary.
+
+## Reader-owned bindings and token lists
+
+Definitions, expanded definitions, let/futurelet and token register/parameter
+assignments use the same reader-owned assignment switch as scalar assignments.
+The packed word supplies the actual selector; native scope flags and the resolved
+control-sequence identity are borrowed directly. Prefixed and observed execution
+call that same implementation, and their former main-switch bodies are deleted.
+
+Token assignment scanning returns its actual collected or retained token owner.
+The register target is scanned in its consuming switch arm. There are no
+register/parameter assignment packets or nested right-hand-side packet, and no
+pointer-presence flag or token-list read used only to derive it. A copied source
+keeps its physical pointer, including a present empty list; a newly collected
+empty list is null. Only a newly collected nonempty output routine receives
+TeX82 section 1226's enclosing brace pair. Existing pointer-identity and output
+routine tests are the semantic checks for these decisions.
+
+Macro definition scans retain their checked target and published definition,
+without an unused diagnostic provenance field. Scanner diagnostics are rendered
+before the actual mutation, and mutation receipts retain their one observation
+owner through a demanded diagnostic exit. Native completion inserts the actual
+afterassignment token before continuing the same reader.
+
+## Direct token-value consumption
+
+The token-list RHS probe uses the existing canonical expanded-word consumer.
+Spaces and relax words continue in that reader. Internal list values supply
+actual retained owners directly. Collected text backs up the actual spelling
+through the reader's shared backup seam, carrying a delivered record only when
+exceptional alignment, tracing or recovery has requested it. The opening-brace
+backup and absorbing transition retain their original order; ordinary probes
+construct no `CurrentCommand` and add no second input loop.

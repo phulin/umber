@@ -931,15 +931,15 @@ ordering. The replay adapter then interns and assigns that completed glue value
 through `Universe`; it never leaves an operand for later main control or scans
 inside an alignment preamble.
 
-Token-register assignments use the same ownership rule through
-`CommandProcessor::scan_token_register_assignment`: it scans the bounded
-eight-bit register integer and optional equals sign, then probes the RHS as
-TeX82 does. An internal token-list value (`\toks<n>`, a token-register
-shorthand, or a token parameter) is copied directly; otherwise the rejected
-token is backed up and unexpanded `scan_toks` collects balanced text. The
-bounded-index scanner observation or optional-equals backup and absorbing
-scanner-status transition therefore precede replay's committed register
-mutation, which is emitted only after `Universe` applies the frozen list.
+Token-register and parameter assignments select their target in the consuming
+native assignment arm. `CommandProcessor::scan_token_list_value` consumes
+optional equals and probes the RHS as TeX82 does. An internal token-list value
+(`\toks<n>`, a token-register shorthand, or a token parameter) retains its
+actual pointer; otherwise the rejected token is backed up and unexpanded
+`scan_toks` collects balanced text. The target scan, optional-equals backup and
+absorbing scanner-status transition precede the committed mutation. Ordinary
+execution consumes these actual owners inside the canonical reader, while
+prefixed and observed dispatch call that same assignment implementation.
 
 TeX82 `\let` and `\futurelet` likewise cross replay as completed typed
 meaning assignments. `CommandProcessor` owns their raw target and source

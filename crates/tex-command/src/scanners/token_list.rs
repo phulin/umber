@@ -1,77 +1,24 @@
-//! Executor-facing token-list assignment scans.
-//!
-//! The command processor owns all operand consumption for these assignments:
-//! register numbers, the optional equals sign, and `scan_toks` collection.
-//! Replay receives only the frozen completed request and can therefore apply
-//! the aggregate mutation without acquiring a second input path.
+//! Token-list operand grammar on the canonical command processor.
+//! Target selection stays in its consuming assignment arm. Collected and
+//! retained lists return their actual owners without assignment packets.
 
 use tex_state::env::banks::TokParam;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, MeaningWord, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_toks::ScanToksMode;
-use crate::{AttemptTokenListId, CommandError, CommandProcessor, processor::DeliveryStatus};
-
-/// A completed TeX token-register assignment operand.
-///
-/// The register number follows the active profile: TeX82's eight-bit bound or
-/// e-TeX's 15-bit sparse-register bound. The token list is already frozen by
-/// the command-owned collector or copied from an internal token-list value.
-#[derive(Debug, Eq, PartialEq)]
-pub struct ScannedTokenRegisterAssignment<G> {
-    pub index: u16,
-    pub tokens: Option<AttemptTokenListId>,
-    pub source: Option<tex_state::TokenListId<G>>,
-}
-
-/// A completed TeX token-parameter assignment operand.
-///
-/// `None` is tex.web's null token-list pointer. `Some` deliberately does not
-/// imply a nonempty list: §1226 copies a present source pointer even when its
-/// list is empty, while a newly scanned empty braced list becomes null.
-#[derive(Debug, Eq, PartialEq)]
-pub struct ScannedTokenParameterAssignment<G> {
-    pub tokens: Option<AttemptTokenListId>,
-    pub source: Option<tex_state::TokenListId<G>>,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct ScannedTokenListRightHandSide<G> {
-    tokens: Option<AttemptTokenListId>,
-    source: Option<tex_state::TokenListId<G>>,
-    pointer_present: bool,
-}
+use crate::{AttemptTokenListId, CommandError, CommandProcessor};
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
-    /// Scans the operand sequence of TeX82's `\toks` assignment.
-    ///
-    /// This follows TeX82 §§403/470's register scan, optional equals, and
-    /// internal-token-list branch before unexpanded `scan_toks`; e-TeX 2.6
-    /// [49.1226] widens the target scan to `scan_register_num`. A non-internal
-    /// RHS is backed up before the collector begins, preserving
-    /// `scan_left_brace` recovery.
-    pub fn scan_token_register_assignment(
+    /// Scans optional equals and a token-list value into its actual owner.
+    /// Copied lists retain their physical pointer even when empty. Newly
+    /// collected empty text is null; only nonempty collected output text
+    /// receives the enclosing brace pair required by TeX82 section 1226.
+    pub fn scan_token_list_value(
         &mut self,
         owner: Symbol,
-    ) -> Result<ScannedTokenRegisterAssignment<G>, CommandError> {
-        let index = self.scan_profile_register_index_retained().into_result()?;
-        self.scan_optional_equals_retained().into_result()?;
-        let value = self.scan_token_list_right_hand_side(owner, false)?;
-        Ok(ScannedTokenRegisterAssignment {
-            index,
-            tokens: value.tokens,
-            source: value.source,
-        })
-    }
-
-    /// Scans the right-hand side of an already selected token register.
-    ///
-    /// Register shorthands installed by `\toksdef` share TeX82's exact
-    /// optional-equals and internal-token-list behavior with `\toks<n>`.
-    pub fn scan_token_register_value(
-        &mut self,
-        owner: Symbol,
+        enclose_collected: bool,
     ) -> Result<
         (
             Option<AttemptTokenListId>,
@@ -80,219 +27,143 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         CommandError,
     > {
         self.scan_optional_equals_retained().into_result()?;
-        let value = self.scan_token_list_right_hand_side(owner, false)?;
-        Ok((value.tokens, value.source))
-    }
-
-    /// Scans a token-parameter assignment such as `\everypar={...}`.
-    ///
-    /// The delimiting braces are `scan_toks`'s own (tex.web §473: "this left
-    /// brace will not be part of the token list, nor will the matching right
-    /// brace that comes at the end"), so the stored value is the balanced text
-    /// between them. tex.web §1226 then adds *one* enclosing brace pair back,
-    /// and only for `output_routine_loc`: "For safety's sake, we place an
-    /// enclosing pair of braces around an `\output` list." Every other
-    /// token-list parameter -- `\everypar`, `\everymath`, `\everycr`,
-    /// `\errhelp`, ... -- keeps the bare balanced text, exactly like a `\toks`
-    /// register. §1226 also tests emptiness *before* enclosing, so `\output={}`
-    /// reverts to the empty default rather than storing a brace pair.
-    ///
-    /// The command processor owns both that representation choice and
-    /// optional-equals consumption, so replay receives one frozen value.
-    pub fn scan_token_parameter_assignment(
-        &mut self,
-        parameter: TokParam,
-        owner: Symbol,
-    ) -> Result<ScannedTokenParameterAssignment<G>, CommandError> {
-        self.scan_optional_equals_retained().into_result()?;
-        let right_hand_side =
-            self.scan_token_list_right_hand_side(owner, parameter == TokParam::OUTPUT)?;
-        Ok(ScannedTokenParameterAssignment {
-            tokens: right_hand_side
-                .pointer_present
-                .then_some(right_hand_side.tokens)
-                .flatten(),
-            source: right_hand_side.source,
-        })
-    }
-
-    fn scan_token_list_right_hand_side(
-        &mut self,
-        owner: Symbol,
-        enclose_collected: bool,
-    ) -> Result<ScannedTokenListRightHandSide<G>, CommandError> {
-        let command = loop {
-            let mut command = None;
-            if self.request_expanded_token(&mut command)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            let command = command.expect("command delivery initializes destination");
-            if !matches!(
-                static_meaning(command.meaning()),
+        let mut tokens = None;
+        let mut source = None;
+        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
+            let meaning = match meaning {
+                MeaningWord::Static(word) => Meaning::from_runtime_word(*word),
+                _ => Meaning::Undefined,
+            };
+            let collected = match meaning {
                 Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                } | Meaning::Relax
-            ) {
-                break command;
-            }
-        };
-        let collected = match static_meaning(command.meaning()) {
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
-                // e-TeX 2.6 [49.1227] widens this RHS enquiry alongside
-                // [49.1226]'s assignment target; both select the same sparse
-                // token-register namespace.
-                let result = self.scan_profile_register_index_retained();
-                let index = result.into_result()?;
-                return Ok(self.token_register_rhs(index));
-            }
-            Meaning::ToksRegister(index) => {
-                let tokens = self
-                    .state
-                    .token_register(index)
-                    .expect("meaning contains an admitted token-register index");
-                return Ok(ScannedTokenListRightHandSide {
-                    tokens: None,
-                    source: tokens.clone(),
-                    pointer_present: tokens
-                        .is_some_and(|tokens| !self.state.token_list(tokens).is_empty()),
-                });
-            }
-            Meaning::TokParam(index) => {
-                return Ok(
-                    match self
+                }
+                | Meaning::Relax => {
+                    return Ok(std::ops::ControlFlow::Continue(()));
+                }
+
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
+                    let index = processor
+                        .scan_profile_register_index_retained()
+                        .into_result()?;
+                    source = processor
                         .state
-                        .token_parameter(tex_state::env::banks::TokParam::new(index))
-                        .expect("meaning contains an admitted token-parameter index")
-                    {
-                        Some(tokens) => ScannedTokenListRightHandSide {
-                            tokens: None,
-                            source: Some(tokens),
-                            pointer_present: true,
-                        },
-                        None => ScannedTokenListRightHandSide {
-                            tokens: None,
-                            source: None,
-                            pointer_present: false,
-                        },
-                    },
-                );
-            }
-            Meaning::CharToken {
-                cat: Catcode::BeginGroup,
-                ..
-            } => {
-                // TeX82 has already delivered the required opening brace to
-                // choose the non-internal branch. Back it up once, then let
-                // `scan_toks` install absorbing status before it redelivers
-                // that exact token. Re-scanning it through `scan_left_brace`
-                // would add a second raw delivery before that transition.
-                let primary = command.origin();
-                self.back_input(command)?;
-                self.scan_toks(ScanToksMode::GeneralAfterOpening {
-                    expanded: false,
-                    primary,
-                    owner: Some(owner),
-                })?
-                .replacement_text
-            }
-            _ => {
-                self.back_input(command)?;
-                self.scan_toks(ScanToksMode::GeneralFor {
-                    expanded: false,
-                    owner,
-                })?
-                .replacement_text
-            }
-        };
-        if self
-            .command
-            .attempt
-            .token_words(&collected)
-            .map_err(crate::scan_toks::attempt_command_error)?
-            .is_empty()
-        {
-            self.command
+                        .token_register(index)
+                        .expect("scanner produced an admitted token-register index")
+                        .clone();
+                    return Ok(std::ops::ControlFlow::Break(()));
+                }
+                Meaning::ToksRegister(index) => {
+                    source = processor
+                        .state
+                        .token_register(index)
+                        .expect("meaning contains an admitted token-register index")
+                        .clone();
+                    return Ok(std::ops::ControlFlow::Break(()));
+                }
+                Meaning::TokParam(index) => {
+                    source = processor
+                        .state
+                        .token_parameter(TokParam::new(index))
+                        .expect("meaning contains an admitted token-parameter index");
+                    return Ok(std::ops::ControlFlow::Break(()));
+                }
+                Meaning::CharToken {
+                    cat: Catcode::BeginGroup,
+                    ..
+                } => {
+                    // TeX82 has already delivered the required opening brace to
+                    // choose the non-internal branch. Back it up once, then let
+                    // `scan_toks` install absorbing status before it redelivers
+                    // that exact token. Re-scanning it through `scan_left_brace`
+                    // would add a second raw delivery before that transition.
+                    let primary = spelling.origin();
+                    processor.back_consumed_word(spelling, exceptional)?;
+                    processor
+                        .scan_toks(ScanToksMode::GeneralAfterOpening {
+                            expanded: false,
+                            primary,
+                            owner: Some(owner),
+                        })?
+                        .replacement_text
+                }
+                _ => {
+                    processor.back_consumed_word(spelling, exceptional)?;
+                    processor
+                        .scan_toks(ScanToksMode::GeneralFor {
+                            expanded: false,
+                            owner,
+                        })?
+                        .replacement_text
+                }
+            };
+            if processor
+                .command
                 .attempt
-                .discard_token_list(collected)
+                .token_words(&collected)
+                .map_err(crate::scan_toks::attempt_command_error)?
+                .is_empty()
+            {
+                processor
+                    .command
+                    .attempt
+                    .discard_token_list(collected)
+                    .map_err(crate::scan_toks::attempt_command_error)?;
+                return Ok(std::ops::ControlFlow::Break(()));
+            }
+            if !enclose_collected {
+                tokens = Some(collected);
+                return Ok(std::ops::ControlFlow::Break(()));
+            }
+            let writer = processor
+                .command
+                .attempt
+                .allocate_token_buffer()
                 .map_err(crate::scan_toks::attempt_command_error)?;
-            return Ok(ScannedTokenListRightHandSide {
-                tokens: None,
-                source: None,
-                pointer_present: false,
-            });
-        }
-        if !enclose_collected {
-            return Ok(ScannedTokenListRightHandSide {
-                tokens: Some(collected),
-                source: None,
-                pointer_present: true,
-            });
-        }
-        let writer = self
-            .command
-            .attempt
-            .allocate_token_buffer()
-            .map_err(crate::scan_toks::attempt_command_error)?;
-        self.command
-            .attempt
-            .push_buffer_token(
-                &writer,
-                TracedTokenWord::pack(
-                    Token::Char {
-                        ch: '{',
-                        cat: Catcode::BeginGroup,
-                    },
-                    OriginId::UNKNOWN,
-                ),
-            )
-            .map_err(crate::scan_toks::attempt_command_error)?;
-        self.command
-            .attempt
-            .consume_token_list_into_buffer(collected, &writer)
-            .map_err(crate::scan_toks::attempt_command_error)?;
-        self.command
-            .attempt
-            .push_buffer_token(
-                &writer,
-                TracedTokenWord::pack(
-                    Token::Char {
-                        ch: '}',
-                        cat: Catcode::EndGroup,
-                    },
-                    OriginId::UNKNOWN,
-                ),
-            )
-            .map_err(crate::scan_toks::attempt_command_error)?;
-        Ok(ScannedTokenListRightHandSide {
-            tokens: Some(
-                self.command
+            processor
+                .command
+                .attempt
+                .push_buffer_token(
+                    &writer,
+                    TracedTokenWord::pack(
+                        Token::Char {
+                            ch: '{',
+                            cat: Catcode::BeginGroup,
+                        },
+                        OriginId::UNKNOWN,
+                    ),
+                )
+                .map_err(crate::scan_toks::attempt_command_error)?;
+            processor
+                .command
+                .attempt
+                .consume_token_list_into_buffer(collected, &writer)
+                .map_err(crate::scan_toks::attempt_command_error)?;
+            processor
+                .command
+                .attempt
+                .push_buffer_token(
+                    &writer,
+                    TracedTokenWord::pack(
+                        Token::Char {
+                            ch: '}',
+                            cat: Catcode::EndGroup,
+                        },
+                        OriginId::UNKNOWN,
+                    ),
+                )
+                .map_err(crate::scan_toks::attempt_command_error)?;
+            tokens = Some(
+                processor
+                    .command
                     .attempt
                     .finish_token_buffer(writer)
                     .map_err(crate::scan_toks::attempt_command_error)?,
-            ),
-            source: None,
-            pointer_present: true,
-        })
-    }
-
-    fn token_register_rhs(&self, index: u16) -> ScannedTokenListRightHandSide<G> {
-        let tokens = self
-            .state
-            .token_register(index)
-            .expect("scanner produced an admitted token-register index");
-        ScannedTokenListRightHandSide {
-            tokens: None,
-            source: tokens.clone(),
-            pointer_present: tokens.is_some_and(|tokens| !self.state.token_list(tokens).is_empty()),
-        }
-    }
-}
-
-fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
-    match meaning {
-        ResolvedMeaning::Static(meaning) => meaning,
-        ResolvedMeaning::Macro { .. } => Meaning::Undefined,
+            );
+            Ok(std::ops::ControlFlow::Break(()))
+        })?;
+        Ok((tokens, source))
     }
 }
 

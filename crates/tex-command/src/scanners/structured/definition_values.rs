@@ -62,7 +62,6 @@ pub struct ScannedMacroDefinition<G> {
     /// single-builder parameter/replacement scan.
     pub target: Symbol,
     pub definition: tex_state::PublishedDefinition<G>,
-    pub provenance: StructuredProvenance,
 }
 
 /// A completed TeX82 §1224 `\\chardef` or `\\mathchardef` operand.

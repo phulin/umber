@@ -32,19 +32,19 @@ fn token_register_assignment_returns_attempt_local_balanced_text() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let scanned = processor
-            .scan_token_register_assignment(owner)
+        let index = processor
+            .scan_profile_register_index_retained()
+            .into_result()
+            .expect("token register index");
+        let (tokens, source) = processor
+            .scan_token_list_value(owner, false)
             .expect("token assignment");
-        assert_eq!(scanned.index, 7);
-        assert!(scanned.source.is_none());
+        assert_eq!(index, 7);
+        assert!(source.is_none());
         assert_eq!(
             processor
                 .command
-                .attempt_token_words(
-                    &scanned
-                        .tokens
-                        .expect("new balanced text has attempt-local storage"),
-                )
+                .attempt_token_words(&tokens.expect("new balanced text has attempt-local storage"),)
                 .expect("attempt list")
                 .iter()
                 .map(|word| word.semantic_token())

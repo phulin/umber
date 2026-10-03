@@ -21,6 +21,7 @@ impl NativeMainControl<'_> {
         processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
         spelling: tex_state::token::TracedTokenWord,
         meaning: &tex_state::meaning::MeaningWord<G>,
+        control_sequence: Option<tex_state::interner::Symbol>,
     ) -> std::ops::ControlFlow<()> {
         *self.scan_origin = Some(spelling.origin());
         let code = match meaning {
@@ -80,13 +81,15 @@ impl NativeMainControl<'_> {
             ),
             code => {
                 let tex_state::meaning::MeaningWord::Static(word) = meaning else {
-                    unreachable!("scalar assignment meaning")
+                    unreachable!("native assignment meaning")
                 };
-                native_assignments::execute_scalar_assignment(
+                native_assignments::execute_assignment(
                     processor,
                     *word,
                     code,
                     false,
+                    MeaningFlags::EMPTY,
+                    control_sequence,
                     *self.scan_origin,
                     &mut None,
                     None,
@@ -114,6 +117,8 @@ impl NativeMainControl<'_> {
             return std::ops::ControlFlow::Break(());
         }
         *self.completed_operations += 1;
+        // A consumed terminal cannot supply the origin of a later expansion failure.
+        *self.scan_origin = None;
         std::ops::ControlFlow::Continue(())
     }
 }
@@ -166,7 +171,7 @@ impl<'state, 'host, G>
                     context.innermost_group_kind() == Some(GroupKind::SemiSimple)
                 })
             }
-            code => native_assignments::accepts_scalar_assignment(code),
+            code => native_assignments::accepts_assignment(code),
         }
     }
 
@@ -176,7 +181,7 @@ impl<'state, 'host, G>
         processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
         spelling: tex_state::token::TracedTokenWord,
         meaning: &tex_state::meaning::MeaningWord<G>,
-        _: Option<tex_state::interner::Symbol>,
+        control_sequence: Option<tex_state::interner::Symbol>,
     ) -> std::ops::ControlFlow<()> {
         if matches!(
             meaning,
@@ -190,6 +195,6 @@ impl<'state, 'host, G>
             *self.completed_operations += 1;
             return std::ops::ControlFlow::Continue(());
         }
-        self.consume_substantive_terminal(processor, spelling, meaning)
+        self.consume_substantive_terminal(processor, spelling, meaning, control_sequence)
     }
 }

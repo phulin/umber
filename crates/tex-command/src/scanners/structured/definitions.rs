@@ -107,17 +107,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let target = self.scan_definition_target()?;
         let scanned =
             self.scan_toks_buffers(ScanToksMode::MacroDefinitionFor { expanded, target })?;
-        let provenance = StructuredProvenance {
-            primary: scanned.primary,
-        };
         let definition = scanned
             .definition()
             .ok_or_else(|| CommandError::input_invariant())?;
-        Ok(ScannedMacroDefinition {
-            target,
-            definition,
-            provenance,
-        })
+        Ok(ScannedMacroDefinition { target, definition })
     }
 
     /// Scans TeX82 §1221's raw `\let` operand sequence.

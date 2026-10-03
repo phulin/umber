@@ -51,7 +51,7 @@ not allocate a vector merely to publish one already-complete node.
   actual owner once, including checkpoint forks. The execution owner implements
   live host fact queries; component-only cold loans share those exact queries.
 - `src/main_control/direct/`: the single packed mode/command/prefix switch in
-  `dispatch.rs` and the reader-owned `native_assignments.rs` scalar assignment switch, with synchronous `scan_*` routines and concrete `apply_*`
+  `dispatch.rs` and the reader-owned `native_assignments.rs` assignment switch, with synchronous `scan_*` routines and concrete `apply_*`
   methods organized by native command responsibility. `scan_macros.rs` releases
   actual scanner loans at cold owner and publication boundaries. The native
   fetch/reswitch loop borrows the complete actual execution owner, refreshing its mode for each command and querying box/trace/pointer state at the consuming arm. It retains its actual processor and context through RELAX, ordinary groups,
@@ -64,7 +64,7 @@ not allocate a vector merely to publish one already-complete node.
   without generic frame publication/projection. Fetch/reswitch borrows the one
   initialized command slot at remaining semantic ownership boundaries. Ordinary
   relax words execute through the executor-owned terminal consumer inside the
-  canonical reader; substantive groups, fonts and scalar assignments run through
+  canonical reader; substantive groups, fonts and assignments run through
   one outlined semantic handler to bound the per-word reader code size; the old post-fetch relax continuation is deleted. The
   consumer borrows actual driver counters and preserves pre-fetched raw
   character lookahead. Remaining commands clear their tag at successful continuation and

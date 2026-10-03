@@ -453,6 +453,10 @@ fn native_terminal_continuation_preserves_the_actual_operation_budget() {
         br"\def\m{\skip2=1pt \muskip2=1mu}\m\m\m\count0=9 \relax%",
         br"\def\m{\tolerance=100 \hsize=100pt}\m\m\m\count0=9 \relax%",
         br"\def\m{\baselineskip=12pt \thinmuskip=3mu}\m\m\m\count0=9 \relax%",
+        br"\def\m{\def\n{}\let\p=\n}\m\m\m\count0=9 \relax%",
+        br"\def\m{\edef\n{}\gdef\p{}}\m\m\m\count0=9 \relax%",
+        br"\def\m{\toks2={x}\everypar={y}}\m\m\m\count0=9 \relax%",
+        br"\def\m{\toks2={}\output={}}\m\m\m\count0=9 \relax%",
     ] {
         for budget in [1, 2, 3, 4, 6, 7] {
             crate::test_harness::with_nonstop_plain_universe(|stores| {
@@ -480,7 +484,7 @@ fn native_terminal_continuation_preserves_the_actual_operation_budget() {
                 assert_eq!(
                     completed,
                     budget - 1,
-                    "the driver owns the final operation at its budget boundary"
+                    "the driver owns the final operation at its budget boundary: {source:?}, budget={budget}"
                 );
                 assert_eq!(
                     admitted!(stores, |context| context.count(0).expect("count register")),

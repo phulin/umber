@@ -761,3 +761,13 @@ error chronology retain their existing spelling owners.
 Named glue parameters scan optional equals and their actual glue specification in the
 reader-owned execution arm. The glue-parameter assignment packet and scanner
 adapter are deleted; the selected packed meaning already supplies the target.
+
+Token-list assignment targets are scanned in their consuming native arm.
+`src/scanners/token_list.rs` scans the shared optional-equals/value grammar
+and returns actual collected or retained owners. Assignment packets and
+redundant pointer-presence bookkeeping are absent. Macro definition products
+retain only their checked target and published definition.
+
+Token-list RHS selection consumes native expanded words through the shared
+reader. Ordinary probes construct no `CurrentCommand`; actual exceptional
+backup metadata stays with its existing delivery owner.

@@ -32,4 +32,3 @@ pub use structured::{
     ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, TokenRequest,
     WriteStreamSelector,
 };
-pub use token_list::{ScannedTokenParameterAssignment, ScannedTokenRegisterAssignment};

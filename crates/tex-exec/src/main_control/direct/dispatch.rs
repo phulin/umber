@@ -973,99 +973,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     }
                                 };
                             }
-                            (
-                                _,
-                                codes::PRIMITIVE_DEF
-                                | codes::PRIMITIVE_EDEF
-                                | codes::PRIMITIVE_GDEF
-                                | codes::PRIMITIVE_XDEF,
-                            ) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global
-                                        || matches!(
-                                            command_code,
-                                            Some(codes::PRIMITIVE_GDEF | codes::PRIMITIVE_XDEF)
-                                        ),
-                                );
-                                let definition = processor
-                                    .scan_macro_definition(matches!(
-                                        command_code,
-                                        Some(codes::PRIMITIVE_EDEF | codes::PRIMITIVE_XDEF)
-                                    ))
-                                    .map_err(command_error)
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                let step = retained_assignment!(
-                                    receipts,
-                                    |context, _state, effects, fuel, observer, native_execution| {
-                                        if native_execution
-                                            .modes
-                                            .current_list()
-                                            .pending_hchars()
-                                            .is_some()
-                                        {
-                                            crate::box_runtime::flush_pending_hchars_with_fuel(
-                                                &mut native_execution.modes,
-                                                context,
-                                                effects,
-                                                fuel,
-                                            )?;
-                                        }
-                                        definition_assignments::apply_macro_definition(
-                                            definition.target,
-                                            definition.definition,
-                                            flags,
-                                            global,
-                                            context,
-                                            effects,
-                                            observer,
-                                            receipts,
-                                        )
-                                    }
-                                )?;
-                                self.schedule_assignment_token()?;
-                                Ok(step)
-                            }
-                            (_, codes::PRIMITIVE_LET | codes::PRIMITIVE_FUTURE_LET) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let (target, meaning) = processor
-                                    .scan_let_assignment(
-                                        command_code == Some(codes::PRIMITIVE_FUTURE_LET),
-                                    )
-                                    .map_err(command_error)
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                let step = retained_assignment!(
-                                    receipts,
-                                    |context,
-                                     _state,
-                                     effects,
-                                     fuel,
-                                     _observer,
-                                     native_execution| {
-                                        if native_execution
-                                            .modes
-                                            .current_list()
-                                            .pending_hchars()
-                                            .is_some()
-                                        {
-                                            crate::box_runtime::flush_pending_hchars_with_fuel(
-                                                &mut native_execution.modes,
-                                                context,
-                                                effects,
-                                                fuel,
-                                            )?;
-                                        }
-                                        definition_assignments::apply_let(
-                                            target, meaning, global, context, effects, receipts,
-                                        )
-                                    }
-                                )?;
-                                self.schedule_assignment_token()?;
-                                Ok(step)
-                            }
                             (_, codes::RELAX) => {
                                 let pending_hchars = processor.with_execution_owners(
                                     |_, _, _, _, _, execution, _, _, _| {
@@ -1333,14 +1240,25 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 | codes::INT_PARAM
                                 | codes::DIMEN_PARAM
                                 | codes::GLUE_PARAM
-                                | codes::MU_GLUE_PARAM),
+                                | codes::MU_GLUE_PARAM
+                                | codes::PRIMITIVE_DEF
+                                | codes::PRIMITIVE_EDEF
+                                | codes::PRIMITIVE_GDEF
+                                | codes::PRIMITIVE_XDEF
+                                | codes::PRIMITIVE_LET
+                                | codes::PRIMITIVE_FUTURE_LET
+                                | codes::PRIMITIVE_TOKS
+                                | codes::TOKS_REGISTER
+                                | codes::TOK_PARAM),
                             ) => {
-                                let word = command.static_word().expect("scalar assignment word");
-                                let completed = native_assignments::execute_scalar_assignment(
+                                let word = command.static_word().expect("native assignment word");
+                                let completed = native_assignments::execute_assignment(
                                     processor,
                                     word,
                                     code,
                                     global,
+                                    flags,
+                                    command.control_sequence(),
                                     scan_origin,
                                     &mut observation_receipts,
                                     Some(diagnostics),
@@ -1849,86 +1767,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     };
                                 }
                             }
-                            (_, codes::PRIMITIVE_TOKS) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let owner =
-                                    (command.control_sequence().ok_or(ExecError::MissingToken {
-                                        context: "token-list assignment owner",
-                                    }))
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                let assignment = (processor
-                                    .scan_token_register_assignment(owner)
-                                    .map_err(command_error))
-                                .map_err(|error| scan_error(error, scan_origin))?;
-                                return {
-                                    let step = retained_assignment!(
-                                        receipts,
-                                        |native_context,
-                                         native_state,
-                                         native_effects,
-                                         _native_fuel,
-                                         _native_observer,
-                                         native_execution| {
-                                            let tokens = match assignment.source {
-                                                Some(source) => Some(source),
-                                                None => publication::publish_tokens(
-                                                    native_state,
-                                                    native_context,
-                                                    assignment.tokens,
-                                                )?,
-                                            };
-                                            semantic::execute_toks(
-                                                native_context,
-                                                native_effects,
-                                                native_state,
-                                                receipts,
-                                                assignment.index,
-                                                tokens,
-                                                global,
-                                                false,
-                                            )
-                                        }
-                                    )?;
-                                    self.schedule_assignment_token()?;
-                                    Ok(step)
-                                };
-                            }
-                            (_, codes::TOKS_REGISTER) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let ResolvedMeaning::Static(Meaning::ToksRegister(index)) =
-                                    command.meaning()
-                                else {
-                                    unreachable!(
-                                        "packed command selected its native operand family"
-                                    )
-                                };
-                                {
-                                    let owner = (command.control_sequence().ok_or(
-                                        ExecError::MissingToken {
-                                            context: "token-list assignment owner",
-                                        },
-                                    ))
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                    let (tokens, source) = (processor
-                                        .scan_token_register_value(owner)
-                                        .map_err(command_error))
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                    return {
-                                        let step = retained_assignment!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer, native_execution| {
-    let tokens = match source { Some(source) => Some(source), None => publication::publish_tokens(native_state, native_context, tokens)? };
-    semantic::execute_toks(native_context, native_effects, native_state, receipts, index, tokens, global, false)
-})?;
-                                        self.schedule_assignment_token()?;
-                                        Ok(step)
-                                    };
-                                }
-                            }
                             (_, codes::PAGE_DIMENSION) => {
                                 let ResolvedMeaning::Static(Meaning::PageDimension(dimension)) =
                                     command.meaning()
@@ -1968,42 +1806,6 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     )
                                     .value;
                                     finish_scan!(self.execute_page_integer(integer, value))
-                                }
-                            }
-                            (_, codes::TOK_PARAM) => {
-                                let global = effective_global(
-                                    processor.int_param(IntParam::GLOBAL_DEFS),
-                                    global,
-                                );
-                                let ResolvedMeaning::Static(Meaning::TokParam(index)) =
-                                    command.meaning()
-                                else {
-                                    unreachable!(
-                                        "packed command selected its native operand family"
-                                    )
-                                };
-                                {
-                                    let owner = (command.control_sequence().ok_or(
-                                        ExecError::MissingToken {
-                                            context: "token-list assignment owner",
-                                        },
-                                    ))
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                    let tokens = (processor
-                                        .scan_token_parameter_assignment(
-                                            TokParam::new(index),
-                                            owner,
-                                        )
-                                        .map_err(command_error))
-                                    .map_err(|error| scan_error(error, scan_origin))?;
-                                    return {
-                                        let step = retained_assignment!(receipts, |native_context, native_state, native_effects, _native_fuel, _native_observer, native_execution| {
-    let tokens = match tokens.source { Some(source) => Some(source), None => publication::publish_tokens(native_state, native_context, tokens.tokens)? };
-    semantic::execute_toks(native_context, native_effects, native_state, receipts, index, tokens, global, true)
-})?;
-                                        self.schedule_assignment_token()?;
-                                        Ok(step)
-                                    };
                                 }
                             }
                             (

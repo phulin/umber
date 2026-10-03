@@ -156,8 +156,7 @@ pub use scanners::{
     ScannedLeaderPayload, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
     ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
     ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedScalar,
-    ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedTokenParameterAssignment,
-    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance, TokenRequest,
+    ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, TokenRequest,
     WriteStreamSelector,
 };
 pub use snapshot::{

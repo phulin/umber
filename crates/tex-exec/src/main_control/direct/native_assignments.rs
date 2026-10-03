@@ -1,7 +1,7 @@
-//! Scalar assignments execute at the canonical reader's terminal boundary.
+//! Assignments execute at the canonical reader's terminal boundary.
 use super::*;
 
-pub(super) fn accepts_scalar_assignment(code: u64) -> bool {
+pub(super) fn accepts_assignment(code: u64) -> bool {
     matches!(
         code,
         codes::PRIMITIVE_COUNT
@@ -16,19 +16,34 @@ pub(super) fn accepts_scalar_assignment(code: u64) -> bool {
             | codes::DIMEN_PARAM
             | codes::GLUE_PARAM
             | codes::MU_GLUE_PARAM
+            | codes::PRIMITIVE_DEF
+            | codes::PRIMITIVE_EDEF
+            | codes::PRIMITIVE_GDEF
+            | codes::PRIMITIVE_XDEF
+            | codes::PRIMITIVE_LET
+            | codes::PRIMITIVE_FUTURE_LET
+            | codes::PRIMITIVE_TOKS
+            | codes::TOKS_REGISTER
+            | codes::TOK_PARAM
     )
 }
 
-pub(super) fn execute_scalar_assignment<'state, 'host, G>(
+#[allow(clippy::too_many_arguments)] // actual processor, packed selector, scope and demanded owners
+pub(super) fn execute_assignment<'state, 'host, G>(
     processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
     word: u64,
     code: u64,
     global: bool,
+    flags: MeaningFlags,
+    control_sequence: Option<tex_state::interner::Symbol>,
     scan_origin: Option<OriginId>,
     observation_receipts: &mut Option<Vec<MutationRecord>>,
     pending_diagnostics: Option<&mut Vec<PendingDiagnostic<G>>>,
 ) -> Result<ReplayStep, ExecError> {
-    let global = effective_global(processor.int_param(IntParam::GLOBAL_DEFS), global);
+    let global = effective_global(
+        processor.int_param(IntParam::GLOBAL_DEFS),
+        global || matches!(code, codes::PRIMITIVE_GDEF | codes::PRIMITIVE_XDEF),
+    );
     macro_rules! apply_assignment {
         ($receipts:ident, |$context:ident, $state:ident, $effects:ident, $fuel:ident, $observer:ident, $execution:ident| $apply:expr) => {{
             if processor.has_pending_reports() {
@@ -277,6 +292,113 @@ pub(super) fn execute_scalar_assignment<'state, 'host, G>(
 
             Ok(step)
         }
-        _ => unreachable!("scalar assignment selection"),
+        codes::PRIMITIVE_DEF
+        | codes::PRIMITIVE_EDEF
+        | codes::PRIMITIVE_GDEF
+        | codes::PRIMITIVE_XDEF => {
+            let definition = processor
+                .scan_macro_definition(matches!(
+                    code,
+                    codes::PRIMITIVE_EDEF | codes::PRIMITIVE_XDEF
+                ))
+                .map_err(command_error)
+                .map_err(|error| scan_error(error, scan_origin))?;
+            let step = apply_assignment!(
+                receipts,
+                |context, _state, effects, fuel, observer, native_execution| {
+                    if native_execution
+                        .modes
+                        .current_list()
+                        .pending_hchars()
+                        .is_some()
+                    {
+                        crate::box_runtime::flush_pending_hchars_with_fuel(
+                            &mut native_execution.modes,
+                            context,
+                            effects,
+                            fuel,
+                        )?;
+                    }
+                    definition_assignments::apply_macro_definition(
+                        definition.target,
+                        definition.definition,
+                        flags,
+                        global,
+                        context,
+                        effects,
+                        observer,
+                        receipts,
+                    )
+                }
+            )?;
+
+            Ok(step)
+        }
+        codes::PRIMITIVE_LET | codes::PRIMITIVE_FUTURE_LET => {
+            let (target, meaning) = processor
+                .scan_let_assignment(code == codes::PRIMITIVE_FUTURE_LET)
+                .map_err(command_error)
+                .map_err(|error| scan_error(error, scan_origin))?;
+            let step = apply_assignment!(
+                receipts,
+                |context, _state, effects, fuel, _observer, native_execution| {
+                    if native_execution
+                        .modes
+                        .current_list()
+                        .pending_hchars()
+                        .is_some()
+                    {
+                        crate::box_runtime::flush_pending_hchars_with_fuel(
+                            &mut native_execution.modes,
+                            context,
+                            effects,
+                            fuel,
+                        )?;
+                    }
+                    definition_assignments::apply_let(
+                        target, meaning, global, context, effects, receipts,
+                    )
+                }
+            )?;
+
+            Ok(step)
+        }
+
+        codes::PRIMITIVE_TOKS | codes::TOKS_REGISTER | codes::TOK_PARAM => {
+            let owner = control_sequence.ok_or_else(|| {
+                scan_error(
+                    ExecError::MissingToken {
+                        context: "token-list assignment owner",
+                    },
+                    scan_origin,
+                )
+            })?;
+            let index = if code == codes::PRIMITIVE_TOKS {
+                take_native_scalar!(
+                    processor.scan_profile_register_index_retained(),
+                    scan_origin
+                )
+            } else {
+                Meaning::runtime_word_operand(word) as u16
+            };
+            let parameter = code == codes::TOK_PARAM;
+            let (tokens, source) = processor
+                .scan_token_list_value(owner, parameter && index == TokParam::OUTPUT.raw())
+                .map_err(command_error)
+                .map_err(|error| scan_error(error, scan_origin))?;
+            apply_assignment!(
+                receipts,
+                |context, state, effects, _fuel, _observer, execution| {
+                    let tokens = match source {
+                        Some(source) => Some(source),
+                        None => publication::publish_tokens(state, context, tokens)?,
+                    };
+                    semantic::execute_toks(
+                        context, effects, state, receipts, index, tokens, global, parameter,
+                    )
+                }
+            )
+        }
+        _ => unreachable!("native assignment selection"),
     }
 }
