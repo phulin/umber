@@ -1,6 +1,6 @@
 use super::*;
 use crate::input::ArgumentSpan;
-use tex_state::token::{Catcode, OriginId, Token, TokenWord};
+use tex_state::token::{Catcode, OriginId, Token};
 
 fn word(ch: char) -> TracedTokenWord {
     TracedTokenWord::pack(
@@ -23,7 +23,7 @@ fn append_all(
 ) {
     for word in words {
         arena
-            .append_argument_token(writer, ClassifiedToken::from_word(word, None), true)
+            .append_argument_word(writer, word)
             .expect("argument word");
     }
 }
@@ -40,21 +40,14 @@ fn admitted_brace_delta_drives_nested_depth_and_first_scan_facts_once() {
         brace(']', Catcode::EndGroup),
         brace('}', Catcode::EndGroup),
     ];
-    let paragraph_token = word('p').semantic_token();
     for (word, expected_depth) in words.into_iter().zip([1, 2, 2, 1, 0]) {
         let depth = arena
-            .append_argument_token(
-                &mut writer,
-                ClassifiedToken::from_word(word, Some(TokenWord::pack(paragraph_token))),
-                true,
-            )
+            .append_argument_word(&mut writer, word)
             .expect("argument word");
         assert_eq!(depth, expected_depth);
         assert_eq!(writer.brace_depth(), expected_depth);
     }
-    let facts = writer.facts();
-    assert!(facts.rejects_non_long_paragraph());
-    assert!(facts.removable_outer_group());
+    assert!(writer.removable_outer_group());
 
     writer
         .strip_outer_group()
@@ -190,7 +183,74 @@ fn outer_group_fact_rejects_empty_one_token_and_trailing_material() {
         let matching = arena.begin_match().expect("macro match");
         let mut writer = arena.begin_argument(&matching);
         append_all(&mut arena, &mut writer, words);
-        assert_eq!(writer.facts().removable_outer_group(), expected);
+        assert_eq!(writer.removable_outer_group(), expected);
+    }
+}
+
+#[test]
+fn fused_forwarding_preserves_refused_words_on_either_side_of_the_destination() {
+    for lower_destination in [false, true] {
+        for count in [1, 8192] {
+            let mut arena = ArgumentArena::default();
+            let reserved = if lower_destination {
+                let matching = arena.begin_match().expect("reserve lower region");
+                Some(arena.publish(matching))
+            } else {
+                None
+            };
+            let mut parent = arena.begin_match().expect("parent match");
+            let mut cursor = arena.begin_argument(&parent);
+            let words = vec![word('p'); count]
+                .into_iter()
+                .chain([
+                    brace('{', Catcode::BeginGroup),
+                    word('q'),
+                    brace('}', Catcode::EndGroup),
+                ])
+                .collect::<Vec<_>>();
+            append_all(&mut arena, &mut cursor, words.iter().copied());
+            arena
+                .publish_argument(&mut parent, cursor)
+                .expect("parent span");
+            let parent = arena.publish(parent);
+            if let Some(reserved) = reserved {
+                arena.release(reserved);
+            }
+            let child = arena.begin_match().expect("child match");
+            let mut cursor = arena.begin_argument(&child);
+            let accepted = arena
+                .consume_region::<()>(
+                    &mut cursor,
+                    parent,
+                    0..words.len(),
+                    &mut crate::execution_scratch::ArgumentRunAdmission::characters(),
+                )
+                .expect("forward admitted prefix");
+            assert_eq!(accepted, count);
+            assert_eq!(
+                arena.region(parent),
+                words,
+                "refused group stays in the source"
+            );
+            assert_eq!(
+                arena
+                    .match_words(&cursor)
+                    .expect("child words")
+                    .collect::<Vec<_>>(),
+                &words[..count]
+            );
+            assert_eq!(cursor.brace_depth(), 0);
+            assert!(!cursor.removable_outer_group());
+            arena.release(parent);
+            assert_eq!(
+                arena
+                    .match_words(&cursor)
+                    .expect("independent child")
+                    .count(),
+                count
+            );
+            arena.abort_capture();
+        }
     }
 }
 
@@ -209,12 +269,15 @@ fn forwarded_capture_survives_parent_release_and_abort_preserves_live_parent() {
     let parent = arena.publish(parent);
     let mut child = arena.begin_match().expect("child match");
     let mut cursor = arena.begin_argument(&child);
-    for _ in &words {
-        cursor.cursor.settle_argument_delta(0);
-    }
-    arena
-        .append_region(&mut cursor, parent, 0..words.len())
+    let count = arena
+        .consume_region::<()>(
+            &mut cursor,
+            parent,
+            0..words.len(),
+            &mut crate::execution_scratch::ArgumentRunAdmission::characters(),
+        )
         .expect("forward final words");
+    assert_eq!(count, words.len());
     arena.release(parent);
     assert_eq!(
         arena

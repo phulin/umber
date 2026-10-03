@@ -3,7 +3,7 @@
 use super::ReadSite;
 use crate::command::CurrentCommand;
 use crate::execution_scratch::{ArgumentRunAdmission, DefinitionReplacementSink};
-use crate::token_collector::{ClassifiedToken, TokenCollector};
+use crate::token_collector::TokenCollector;
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use std::ops::ControlFlow;
 use tex_state::interner::Symbol;
@@ -237,7 +237,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         if command.is_outer_recovery_space() {
                             return Ok(ControlFlow::Break(false));
                         }
-                        let token = processor.classify_collector_hot_token(&command, None);
+                        #[cfg(test)]
+                        {
+                            processor
+                                .command
+                                .token_collector_path_counters
+                                .raw_classifications += 1;
+                        }
+                        let token = command.spelling();
                         if processor.accept_replacement_word(
                             parameters,
                             collector,
@@ -253,8 +260,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .roots
                         .alignment
                         .account_literal_catcode(literal);
-                    let token =
-                        ClassifiedToken::from_word(TracedTokenWord::from_parts(word, origin), None);
+                    let token = TracedTokenWord::from_parts(word, origin);
                     #[cfg(test)]
                     {
                         processor

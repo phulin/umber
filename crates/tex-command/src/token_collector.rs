@@ -2,17 +2,16 @@
 //!
 //! `scan_toks` lists retain attempt-owned staging, while ordinary definitions
 //! write into their selected semantic region through the same phase-tagged
-//! in-progress owner. Macro arguments instead use the purpose-built
-//! `ExecutionScratch` writer: their
+//! in-progress owner. Macro arguments instead use their final invocation
+//! region and stack-local cursor: their
 //! brace, delimiter, range, and first-scan state never enters this generic
-//! destination dispatch. Both paths reuse `ClassifiedToken` without decoding
-//! a delivered command's spelling twice.
+//! destination dispatch. Both consume the actual traced spelling; no classified
+//! token facade or cached paragraph column is constructed.
 
 use tex_state::interner::Symbol;
-use tex_state::token::{Catcode, TokenWord, TracedTokenWord};
+use tex_state::token::TracedTokenWord;
 
 use crate::attempt::AttemptTokenBufferId;
-use crate::command::CurrentCommand;
 
 /// Per-word rewrite applied only while an escaping general-text collector
 /// writes its final replay owner.
@@ -21,92 +20,6 @@ pub(crate) enum ReplayWordTransform {
     Identity,
     Uppercase,
     Lowercase,
-}
-
-impl<G, Facts: crate::CommandHostFacts<G>> crate::CommandProcessor<'_, '_, G, Facts> {
-    /// Classifies one compact delivery at the shared collector boundary. The
-    /// collector only needs the packed spelling and paragraph fact, so this
-    /// path avoids constructing a `CurrentCommand` per token in either raw or
-    /// expanded collection.
-    #[inline(always)]
-    pub(crate) fn classify_collector_hot_token(
-        &mut self,
-        command: &CurrentCommand<G>,
-        paragraph_token: Option<TokenWord>,
-    ) -> ClassifiedToken {
-        #[cfg(test)]
-        {
-            self.command
-                .token_collector_path_counters
-                .raw_classifications += 1;
-        }
-        ClassifiedToken::from_hot(command, paragraph_token)
-    }
-}
-
-/// One raw delivered command classified once for every collector decision.
-///
-/// Token equality, group balance, parameter-number matching, and leading-space
-/// decisions use the immutable spelling. TeX82's collectors make these
-/// decisions from `cur_tok`; a control sequence whose resolved `cur_cmd` is a
-/// character command remains a control-sequence token in every grammar.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ClassifiedToken {
-    word: TracedTokenWord,
-    paragraph: bool,
-}
-
-const _: () = assert!(core::mem::size_of::<ClassifiedToken>() == 16);
-
-impl ClassifiedToken {
-    /// Classifies a compact expanded delivery without materializing its
-    /// rich command facade. Collector grammar decisions use only the
-    /// delivered spelling, so the hot command remains the sole per-token
-    /// owner until a genuine recovery or outward scanner boundary.
-    #[inline(always)]
-    pub(crate) fn from_hot<G>(
-        command: &CurrentCommand<G>,
-        paragraph_token: Option<TokenWord>,
-    ) -> Self {
-        let word = command.spelling();
-        Self {
-            word,
-            paragraph: Some(word.token_word()) == paragraph_token,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn from_word(word: TracedTokenWord, paragraph_token: Option<TokenWord>) -> Self {
-        Self {
-            word,
-            paragraph: Some(word.token_word()) == paragraph_token,
-        }
-    }
-
-    pub(crate) const fn word(&self) -> TracedTokenWord {
-        self.word
-    }
-
-    pub(crate) const fn spelling(&self) -> TokenWord {
-        self.word.token_word()
-    }
-
-    pub(crate) const fn spelling_is_begin_group(&self) -> bool {
-        matches!(self.spelling().literal_catcode(), Some(Catcode::BeginGroup))
-    }
-
-    pub(crate) const fn spelling_is_end_group(&self) -> bool {
-        matches!(self.spelling().literal_catcode(), Some(Catcode::EndGroup))
-    }
-
-    pub(crate) const fn spelling_is_parameter(&self) -> bool {
-        matches!(self.spelling().literal_catcode(), Some(Catcode::Parameter))
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn rejects_non_long_paragraph(&self, paragraph_checked: bool) -> bool {
-        paragraph_checked && self.paragraph
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -305,7 +218,7 @@ impl<G> TokenCollector<G> {
 
     /// Applies TeX82 §477's balanced-body brace state. The closing token which
     /// returns the depth to zero is the collector boundary and is not stored.
-    pub(crate) fn settle_balanced_brace(&mut self, token: ClassifiedToken) -> Result<bool, ()> {
+    pub(crate) fn settle_balanced_brace(&mut self, token: TracedTokenWord) -> Result<bool, ()> {
         if self.phase != TokenCollectorPhase::Replacement {
             return Err(());
         }

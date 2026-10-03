@@ -85,17 +85,19 @@ impl<G> ExecutionScratch<G> {
 pub(crate) trait PlainRunSink<G> {
     fn brace_depth(&self) -> u32;
     fn settle_admitted_word(&mut self, brace_delta: i8);
-    fn append_region_span(
+    fn consume_region_span(
         &mut self,
         arena: &mut crate::input::ArgumentArena,
         source: crate::input::ArgumentRegionId,
         range: core::ops::Range<usize>,
-    ) -> Result<(), ScratchError>;
-    fn append_token_span(
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<usize, ScratchError>;
+    fn consume_token_span(
         &mut self,
         arena: &mut crate::input::ArgumentArena,
         words: &[TokenWord],
-    ) -> Result<(), ScratchError>;
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<usize, ScratchError>;
 }
 
 /// Writes a plain run into an open definition's replacement text and tracks
@@ -117,27 +119,44 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
             self.cursor.advance_balanced_depth(i32::from(brace_delta));
         }
     }
-    fn append_region_span(
+    fn consume_region_span(
         &mut self,
         arena: &mut crate::input::ArgumentArena,
         source: crate::input::ArgumentRegionId,
         range: core::ops::Range<usize>,
-    ) -> Result<(), ScratchError> {
-        arena.region(source)[range]
-            .iter()
-            .try_for_each(|&word| self.writer.push_replacement(word.token_word()))
-            .map_err(|_| ScratchError::InvalidCoordinate)
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<usize, ScratchError> {
+        let words = &arena.region(source)[range];
+        let mut count = 0;
+        for &word in words {
+            if !admission.admits(word.token_word(), self) {
+                break;
+            }
+            self.writer
+                .push_replacement(word.token_word())
+                .map_err(|_| ScratchError::InvalidCoordinate)?;
+            count += 1;
+        }
+        Ok(count)
     }
 
-    fn append_token_span(
+    fn consume_token_span(
         &mut self,
         _: &mut crate::input::ArgumentArena,
         words: &[TokenWord],
-    ) -> Result<(), ScratchError> {
-        words
-            .iter()
-            .try_for_each(|&word| self.writer.push_replacement(word))
-            .map_err(|_| ScratchError::InvalidCoordinate)
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<usize, ScratchError> {
+        let mut count = 0;
+        for &word in words {
+            if !admission.admits(word, self) {
+                break;
+            }
+            self.writer
+                .push_replacement(word)
+                .map_err(|_| ScratchError::InvalidCoordinate)?;
+            count += 1;
+        }
+        Ok(count)
     }
 }
 
@@ -161,23 +180,40 @@ impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
     }
 
     fn settle_admitted_word(&mut self, _: i8) {}
-    fn append_region_span(
+    fn consume_region_span(
         &mut self,
         arena: &mut crate::input::ArgumentArena,
         source: crate::input::ArgumentRegionId,
         range: core::ops::Range<usize>,
-    ) -> Result<(), ScratchError> {
-        arena.region(source)[range]
-            .iter()
-            .try_for_each(|&word| self.push(word.token_word()))
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<usize, ScratchError> {
+        let words = &arena.region(source)[range];
+        let mut count = 0;
+        for &word in words {
+            if !admission.admits(word.token_word(), self) {
+                break;
+            }
+            self.push(word.token_word())?;
+            count += 1;
+        }
+        Ok(count)
     }
 
-    fn append_token_span(
+    fn consume_token_span(
         &mut self,
         _: &mut crate::input::ArgumentArena,
         words: &[TokenWord],
-    ) -> Result<(), ScratchError> {
-        words.iter().try_for_each(|&word| self.push(word))
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<usize, ScratchError> {
+        let mut count = 0;
+        for &word in words {
+            if !admission.admits(word, self) {
+                break;
+            }
+            self.push(word)?;
+            count += 1;
+        }
+        Ok(count)
     }
 }
 

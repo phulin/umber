@@ -134,6 +134,14 @@ shares the integer scanner; there is no retained leading command, separate
 conversion digit loop or unused radix result tuple. These locals unwind with
 the ordinary scanner call and never enter a checkpoint.
 
+Plain resident collection lends the final sink once and admits and writes each
+word in one traversal. Argument forwarding splits the source and destination
+invocation regions; neither an accepted-prefix pass nor a temporary token
+classification precedes the copy. Collectors consume traced spelling directly.
+The local scanner cursor owns only brace depth and the outer-group candidate
+state used by §394. Paragraph rejection runs at its actual matcher boundary;
+there is no cached paragraph flag or counter maintained for every accepted word.
+
 Expanded replacement collection lends its actual destination, parameter grammar
 and scanner episode to that same reader. Ordinary unobserved macro activation
 and ordinary replacement consumption construct no command; only observation

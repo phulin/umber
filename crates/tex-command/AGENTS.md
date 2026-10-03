@@ -75,8 +75,8 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 - `src/execution_scratch.rs`, `src/execution_scratch/tests.rs`: reusable
   bounded expression frames and admission/sinks for ordinary resident runs.
   Definition and csname collectors consume those runs directly. Admission
-  borrows the final sink’s scanner cursor and settles each accepted word once;
-  contiguous append does not revisit brace/group facts. Execution scratch owns
+  borrows the final sink’s scanner cursor, settles each accepted word and writes it in one traversal;
+  no accepted-prefix rescan or separate span-copy pass remains. Execution scratch owns
   no duplicate scan depth, macro argument payload, or publication capability.
 - `src/input/arguments.rs`, `src/input/arguments/tests.rs`: final macro
   `ArgumentArena`, with one reusable vector per simultaneous invocation.
@@ -93,7 +93,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 - `src/scanner_kernel.rs`: stack-local synchronous scanner cursor shared by
   macro arguments and `scan_toks`. It keeps brace and first-token facts beside
   the caller-owned output sink and settles each accepted word inside plain
-  run admission, before the contiguous storage append; a resource miss unwinds this cursor and the host replays from a full
+  run admission and final writing; it owns brace depth and a three-state outer-group candidate, with no per-word count or unused paragraph flag. A resource miss unwinds this cursor and the host replays from a full
   checkpoint rather than promoting scanner state into retained scratch.
 - Ordinary expansion has no parked-expansion owner. The shared reader exposes
   token facts; unobserved macros activate from resolved invocation facts without
@@ -556,7 +556,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 - `src/token_collector.rs`: scanner-owned in-progress collector for token-list
   and definition scans. It owns their one raw packed-spelling classification,
   destination phase, and publication cursor. Macro argument matching reuses
-  only `ClassifiedToken`; its purpose-built writer and invocation-owned words
+  only traced spelling; its purpose-built writer and invocation-owned words
   and ranges live in `input/arguments.rs`, with no generic destination dispatch.
 - `src/macro_call.rs`, `src/input/levels.rs`, and `src/input/arguments.rs`:
   activation retains the final definition body and transfers the invocation's

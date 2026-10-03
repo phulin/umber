@@ -1209,8 +1209,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             if primary == OriginId::UNKNOWN {
                 primary = command.origin();
             }
-            let token = self.classify_collector_hot_token(&command, None);
-            if token.spelling_is_begin_group() {
+            #[cfg(test)]
+            {
+                self.command
+                    .token_collector_path_counters
+                    .raw_classifications += 1;
+            }
+            let token = command.spelling();
+            if token.token_word().literal_catcode() == Some(Catcode::BeginGroup) {
                 self.finish_scan_toks_parameters(collector)?;
                 return Ok(ScannedParameterText {
                     highest_parameter: next_parameter - 1,
@@ -1220,7 +1226,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     missing_left_brace: false,
                 });
             }
-            if token.spelling_is_end_group() {
+            if token.token_word().literal_catcode() == Some(Catcode::EndGroup) {
                 // TeX82 §§475--476's `done1` branch has already consumed the
                 // right brace and decremented `align_state`. It expresses
                 // shock, restores that contribution, and finishes the
@@ -1253,8 +1259,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     missing_left_brace: true,
                 });
             }
-            if !token.spelling_is_parameter() {
-                self.push_scan_toks_word(collector, token.word())?;
+            if !(token.token_word().literal_catcode() == Some(Catcode::Parameter)) {
+                self.push_scan_toks_word(collector, token)?;
                 continue;
             }
             if self.get_token_into(&mut destination)? != crate::DeliveryStatus::Command {
@@ -1263,32 +1269,38 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let follower = destination
                 .take()
                 .expect("command status initializes destination");
-            let follower_token = self.classify_collector_hot_token(&follower, None);
-            if follower_token.spelling_is_begin_group() {
-                self.push_scan_toks_word(collector, follower_token.word())?;
+            #[cfg(test)]
+            {
+                self.command
+                    .token_collector_path_counters
+                    .raw_classifications += 1;
+            }
+            let follower_token = follower.spelling();
+            if follower_token.token_word().literal_catcode() == Some(Catcode::BeginGroup) {
+                self.push_scan_toks_word(collector, follower_token)?;
                 self.finish_scan_toks_parameters(collector)?;
                 return Ok(ScannedParameterText {
                     highest_parameter: next_parameter - 1,
-                    hash_brace: Some(follower_token.word()),
+                    hash_brace: Some(follower_token),
                     primary,
                     malformed_parameter,
                     missing_left_brace: false,
                 });
             }
-            if let Some(number) = parameter_number(follower_token.spelling().semantic_token())
+            if let Some(number) = parameter_number(follower_token.token_word().semantic_token())
                 && number == next_parameter
                 && number <= 9
             {
                 if let Token::Char {
                     ch,
                     cat: Catcode::Parameter,
-                } = token.spelling().semantic_token()
+                } = token.token_word().semantic_token()
                     && ch != '#'
                 {
                     // TeX82 §476's match token retains `cur_chr`, i.e. the
                     // actual parameter-character code. Keep that spelling
                     // beside the compact slot token when it is not `#`.
-                    self.push_scan_toks_word(collector, token.word())?;
+                    self.push_scan_toks_word(collector, token)?;
                 }
                 self.push_scan_toks_word(
                     collector,
@@ -1346,10 +1358,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         macro_parameters: Option<(u8, Option<Symbol>)>,
         collector: &mut TokenCollector<G>,
-        token: crate::token_collector::ClassifiedToken,
+        token: TracedTokenWord,
         backup: impl FnOnce(&mut Self) -> Result<(), CommandError>,
     ) -> Result<bool, CommandError> {
-        let spelling = token.word();
+        let spelling = token;
         if let Some(PendingParameter {
             hash,
             highest: highest_parameter,
@@ -1358,11 +1370,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         {
             // §479: a second parameter character stores that character
             // once -- `##` is one parameter token in the body, not two.
-            if token.spelling_is_parameter() {
+            if token.token_word().literal_catcode() == Some(Catcode::Parameter) {
                 self.push_replacement_token(collector, spelling)?;
                 return Ok(false);
             }
-            if let Some(number) = parameter_number(token.spelling().semantic_token())
+            if let Some(number) = parameter_number(token.token_word().semantic_token())
                 && number <= highest_parameter
             {
                 let converted = TracedTokenWord::pack(Token::Param(number), spelling.origin());
@@ -1387,7 +1399,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(false);
         }
         if let Some((highest_parameter, target)) = macro_parameters
-            && token.spelling_is_parameter()
+            && (token.token_word().literal_catcode() == Some(Catcode::Parameter))
         {
             collector
                 .set_pending_parameter(PendingParameter {

@@ -63,6 +63,17 @@ need no meaning lookup. Expanded delivery resolves each interpreted meaning
 once. A macro supplies only its name, origin, flags, and definition to activation
 and argument scanning; successful ordinary activation constructs no command.
 
+Plain resident runs admit and write each word in one traversal. Their sink
+borrows the final destination once, updates its grammar and appends the accepted
+word directly; there is no accepted-prefix rescan or subsequent span-copy pass.
+Forwarded arguments borrow the source and destination invocation vectors as
+disjoint regions. They preserve traced spelling while immutable replacement
+words acquire unknown origin at that same write. A refused word remains unread.
+The frame cursor, fuel and net alignment depth advance once for the accepted
+prefix. A source, parameter, recovery or fuel boundary keeps its existing
+canonical scalar continuation. Definition and csname sinks use this same run
+contract, without a second grammar or intermediate token collection.
+
 Main control's expanded fetch enters this same word loop and one expansion
 episode before reading its first token. There is no first-read preflight or
 separate first-macro activation path. Main control and scanners differ only at

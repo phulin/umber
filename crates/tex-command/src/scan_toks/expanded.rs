@@ -36,7 +36,7 @@ impl<G, Facts: crate::CommandHostFacts<G>>
                 .token_collector_path_counters
                 .raw_classifications += 1;
         }
-        let token = crate::token_collector::ClassifiedToken::from_word(spelling, None);
+        let token = spelling;
         if processor.accept_replacement_word(
             self.macro_parameters,
             self.collector,
@@ -128,7 +128,14 @@ impl<G, Facts: crate::CommandHostFacts<G>>
         if command.is_outer_recovery_space() {
             return Ok(ControlFlow::Continue(()));
         }
-        let token = processor.classify_collector_hot_token(command, None);
+        #[cfg(test)]
+        {
+            processor
+                .command
+                .token_collector_path_counters
+                .raw_classifications += 1;
+        }
+        let token = command.spelling();
         if processor.accept_replacement_word(
             self.macro_parameters,
             self.collector,

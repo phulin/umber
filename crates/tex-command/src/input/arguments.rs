@@ -5,9 +5,7 @@
 //! writes the final words directly, independently of ordinary backup input.
 
 use super::ArgumentSpan;
-use crate::execution_scratch::{PlainRunSink, ScratchError};
-#[cfg(test)]
-use crate::token_collector::ClassifiedToken;
+use crate::execution_scratch::{ArgumentRunAdmission, PlainRunSink, ScratchError};
 use core::hash::{Hash, Hasher};
 use core::num::NonZeroU32;
 use tex_state::token::{TokenWord, TracedTokenWord};
@@ -200,58 +198,19 @@ impl ArgumentArena {
                 .map(|region| region.words.capacity() * core::mem::size_of::<TracedTokenWord>())
                 .sum::<usize>()
     }
-    /// Settles one classified token: the append and the paragraph,
-    /// brace-depth, and removable-outer-group facts from one classification.
-    #[cfg(test)]
-    pub(crate) fn append_argument_token(
-        &mut self,
-        writer: &mut ArgumentCursor,
-        token: ClassifiedToken,
-        paragraph_checked: bool,
-    ) -> Result<u32, ScratchError> {
-        if writer.holdback_len != 0 {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.region_mut(writer.region).push(token.word());
-        writer.visible_end = self.tail(writer.region);
-        Ok(writer.cursor.settle_argument(token, paragraph_checked))
-    }
-
     /// Appends final spelling directly to the pending argument.
     #[inline(always)]
     pub(crate) fn append_argument_word(
         &mut self,
         writer: &mut ArgumentCursor,
         spelling: TracedTokenWord,
-        paragraph_checked: bool,
-        paragraph_token: Option<TokenWord>,
     ) -> Result<u32, ScratchError> {
         if writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
         self.region_mut(writer.region).push(spelling);
         writer.visible_end = self.tail(writer.region);
-        Ok(writer.cursor.settle_argument_word(
-            spelling.token_word(),
-            paragraph_checked && Some(spelling.token_word()) == paragraph_token,
-        ))
-    }
-
-    pub(crate) fn append_plain_argument_tokens(
-        &mut self,
-        writer: &mut ArgumentCursor,
-        words: &[TokenWord],
-    ) -> Result<(), ScratchError> {
-        if writer.holdback_len != 0 {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.region_mut(writer.region).extend(
-            words.iter().map(|&word| {
-                TracedTokenWord::from_parts(word, tex_state::token::OriginId::UNKNOWN)
-            }),
-        );
-        writer.visible_end = self.tail(writer.region);
-        Ok(())
+        Ok(writer.cursor.settle_argument_word(spelling.token_word()))
     }
 
     /// Appends an unpublished delimiter candidate after the visible argument
@@ -292,9 +251,7 @@ impl ArgumentArena {
             // `paragraph delimiter prefix` fact: it contributes brace/group
             // state when revealed, but the non-long paragraph check applies
             // only to the newly ordinary token.
-            writer
-                .cursor
-                .settle_argument_word(spelling.token_word(), false);
+            writer.cursor.settle_argument_word(spelling.token_word());
         }
         writer.visible_end = end;
         writer.holdback_start = end;
@@ -387,12 +344,13 @@ impl ArgumentArena {
     }
 
     /// Source rows borrow a body-owned region; capture owns a distinct slot.
-    fn append_region(
+    fn consume_region<G>(
         &mut self,
         writer: &mut ArgumentCursor,
         source: ArgumentRegionId,
         range: core::ops::Range<usize>,
-    ) -> Result<(), ScratchError> {
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<usize, ScratchError> {
         debug_assert_ne!(source, writer.region);
         debug_assert_eq!(writer.holdback_len, 0);
         let destination = writer.region.index();
@@ -405,9 +363,16 @@ impl ArgumentArena {
             (&upper[0].words, &mut lower[destination].words)
         };
         let words = &from[range];
-        to.extend_from_slice(words);
+        let mut count = 0;
+        for &word in words {
+            if !admission.admits(word.token_word(), writer) {
+                break;
+            }
+            to.push(word);
+            count += 1;
+        }
         writer.visible_end = to.len() as u32;
-        Ok(())
+        Ok(count)
     }
 }
 
@@ -421,43 +386,43 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
     fn settle_admitted_word(&mut self, brace_delta: i8) {
         self.cursor.settle_argument_delta(brace_delta);
     }
-    fn append_region_span(
+    fn consume_region_span(
         &mut self,
         arena: &mut ArgumentArena,
         source: ArgumentRegionId,
         range: core::ops::Range<usize>,
-    ) -> Result<(), ScratchError> {
-        arena.append_region(self, source, range)
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<usize, ScratchError> {
+        arena.consume_region(self, source, range, admission)
     }
-    fn append_token_span(
+    fn consume_token_span(
         &mut self,
         arena: &mut ArgumentArena,
         words: &[TokenWord],
-    ) -> Result<(), ScratchError> {
-        arena.append_plain_argument_tokens(self, words)
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<usize, ScratchError> {
+        if self.holdback_len != 0 {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let destination = arena.region_mut(self.region);
+        let mut count = 0;
+        for &word in words {
+            if !admission.admits(word, self) {
+                break;
+            }
+            destination.push(TracedTokenWord::from_parts(
+                word,
+                tex_state::token::OriginId::UNKNOWN,
+            ));
+            count += 1;
+        }
+        self.visible_end = destination.len() as u32;
+        Ok(count)
     }
 }
 
 #[cfg(test)]
 mod tests;
-/// Exact TeX82 §394 facts established while one argument is collected.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct MacroArgumentFacts {
-    rejects_non_long_paragraph: bool,
-    removable_outer_group: bool,
-}
-
-impl MacroArgumentFacts {
-    #[cfg(test)]
-    pub(crate) const fn rejects_non_long_paragraph(self) -> bool {
-        self.rejects_non_long_paragraph
-    }
-
-    pub(crate) const fn removable_outer_group(self) -> bool {
-        self.removable_outer_group
-    }
-}
-
 /// Stack-local writer for one pending macro argument.
 ///
 /// The argument occupies `start..visible_end` of the match words, less
@@ -479,11 +444,8 @@ impl ArgumentCursor {
         self.cursor.brace_depth()
     }
 
-    pub(crate) const fn facts(&self) -> MacroArgumentFacts {
-        MacroArgumentFacts {
-            rejects_non_long_paragraph: self.cursor.rejects_non_long_paragraph(),
-            removable_outer_group: self.cursor.removable_outer_group(),
-        }
+    pub(crate) const fn removable_outer_group(&self) -> bool {
+        self.cursor.removable_outer_group()
     }
 
     fn range(&self) -> Result<(u32, u32), ScratchError> {

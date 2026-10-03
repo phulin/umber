@@ -489,11 +489,7 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
                 .input
                 .levels
                 .arguments
-                .append_argument_token(
-                    &mut writer,
-                    crate::token_collector::ClassifiedToken::from_word(word, None),
-                    true,
-                )
+                .append_argument_word(&mut writer, word)
                 .expect("macro argument word");
         }
         command

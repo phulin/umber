@@ -4,16 +4,20 @@
 //! only the semantic state which advances beside an already-admitted input
 //! span: brace depth and the first-token facts needed by macro arguments.
 
-use tex_state::token::{Catcode, TokenWord};
-
-use crate::token_collector::ClassifiedToken;
+use tex_state::token::{Catcode, TokenWord, TracedTokenWord};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ScannerCursor {
     brace_depth: u32,
-    word_count: u32,
-    rejects_non_long_paragraph: bool,
-    outer_group_candidate: bool,
+    outer_group: OuterGroup,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum OuterGroup {
+    #[default]
+    Unstarted,
+    Candidate,
+    Disqualified,
 }
 
 impl ScannerCursor {
@@ -21,36 +25,14 @@ impl ScannerCursor {
         self.brace_depth
     }
 
-    pub(crate) const fn rejects_non_long_paragraph(self) -> bool {
-        self.rejects_non_long_paragraph
-    }
-
     pub(crate) const fn removable_outer_group(self) -> bool {
-        self.outer_group_candidate && self.brace_depth == 0
+        matches!(self.outer_group, OuterGroup::Candidate) && self.brace_depth == 0
     }
 
-    /// Settles one scalar token after its caller has written it to the final
-    /// sink. Classification, brace balance, and first-token state advance in
-    /// this one cursor and are never represented in a second pending object.
-    #[cfg(test)]
+    /// Advances the spelling facts needed to strip a single outer group.
+    /// Paragraph rejection belongs to the matcher before this accepted write.
     #[inline(always)]
-    pub(crate) fn settle_argument(
-        &mut self,
-        token: ClassifiedToken,
-        paragraph_checked: bool,
-    ) -> u32 {
-        self.settle_argument_word(
-            token.spelling(),
-            token.rejects_non_long_paragraph(paragraph_checked),
-        )
-    }
-
-    /// Settles one already-packed matcher token.  The macro matcher carries
-    /// paragraph spelling as a compact fact, so it need not construct a
-    /// `ClassifiedToken` or decode the token again on the accepted path.
-    #[inline(always)]
-    pub(crate) fn settle_argument_word(&mut self, word: TokenWord, paragraph: bool) -> u32 {
-        self.rejects_non_long_paragraph |= paragraph;
+    pub(crate) fn settle_argument_word(&mut self, word: TokenWord) -> u32 {
         let delta = match word.literal_catcode() {
             Some(Catcode::BeginGroup) => 1_i8,
             Some(Catcode::EndGroup) => -1_i8,
@@ -62,12 +44,19 @@ impl ScannerCursor {
     /// Settles an admitted spelling whose literal brace class is already known.
     #[inline(always)]
     pub(crate) fn settle_argument_delta(&mut self, delta: i8) -> u32 {
-        if self.word_count == 0 {
-            self.outer_group_candidate = delta == 1;
-        } else if self.brace_depth == 0 {
-            self.outer_group_candidate = false;
+        match self.outer_group {
+            OuterGroup::Unstarted => {
+                self.outer_group = if delta == 1 {
+                    OuterGroup::Candidate
+                } else {
+                    OuterGroup::Disqualified
+                };
+            }
+            OuterGroup::Candidate if self.brace_depth == 0 => {
+                self.outer_group = OuterGroup::Disqualified
+            }
+            OuterGroup::Candidate | OuterGroup::Disqualified => {}
         }
-        self.word_count = self.word_count.saturating_add(1);
         match delta {
             1 => self.brace_depth = self.brace_depth.saturating_add(1),
             -1 => self.brace_depth = self.brace_depth.saturating_sub(1),
@@ -79,13 +68,15 @@ impl ScannerCursor {
     /// TeX82 §477 balanced-body transition. The closing token which reaches
     /// depth zero belongs to the delimiter and is not written to the sink.
     #[inline(always)]
-    pub(crate) fn settle_balanced(&mut self, token: ClassifiedToken) -> bool {
-        if token.spelling_is_begin_group() {
+    pub(crate) fn settle_balanced(&mut self, token: TracedTokenWord) -> bool {
+        if token.token_word().literal_catcode() == Some(Catcode::BeginGroup) {
             self.brace_depth = self.brace_depth.saturating_add(1);
-        } else if token.spelling_is_end_group() && self.brace_depth != 0 {
+        } else if token.token_word().literal_catcode() == Some(Catcode::EndGroup)
+            && self.brace_depth != 0
+        {
             self.brace_depth -= 1;
         }
-        token.spelling_is_end_group() && self.brace_depth == 0
+        token.token_word().literal_catcode() == Some(Catcode::EndGroup) && self.brace_depth == 0
     }
 
     pub(crate) fn open_balanced_body(&mut self) {

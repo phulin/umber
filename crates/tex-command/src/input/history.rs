@@ -1080,56 +1080,37 @@ impl<G> crate::CommandState<G> {
             super::ResidentTokenStorage::MacroArgument { region, .. } => Some(region),
             _ => None,
         };
-        let traced_span = source_region.map(|region| {
-            &arguments.region(region)[frame.absolute_position()..frame.absolute_limit()]
-        });
-        let available_bound = |len: usize| available.min(len);
         let bound = if let Some(span) = direct_span {
-            available_bound(span.len())
+            available.min(span.len())
         } else {
-            available_bound(traced_span.expect("traced span").len())
+            let words = &arguments.region(source_region.expect("argument source region"))
+                [frame.absolute_position()..frame.absolute_limit()];
+            available.min(words.len())
         };
         let count = if let Some(span) = direct_span {
-            span[..bound]
-                .iter()
-                .take_while(|&&word| admission.admits(word, writer))
-                .count()
+            writer.consume_token_span(arguments, &span[..bound], &mut admission)
         } else {
-            traced_span
-                .expect("traced span")
-                .get(..bound)
-                .expect("bounded input span")
-                .iter()
-                .take_while(|word| admission.admits(word.token_word(), writer))
-                .count()
-        };
-        // An out-parameter can only stand in a macro replacement.
+            let start = frame.absolute_position();
+            writer.consume_region_span(
+                arguments,
+                source_region.expect("argument source region"),
+                start..start + bound,
+                &mut admission,
+            )
+        }
+        .map_err(|_| crate::CommandError::input_invariant())?;
+        // Only an unconsumed replacement parameter needs the canonical scalar
+        // reader. A refused argument word is already final traced spelling.
         let parameter_next = body
             && count < bound
-            && direct_span
-                .map(|span| span[count].out_parameter_slot().is_some())
-                .or_else(|| {
-                    traced_span.map(|span| span[count].token_word().out_parameter_slot().is_some())
-                })
-                .unwrap_or(false);
+            && direct_span.expect("replacement span")[count]
+                .out_parameter_slot()
+                .is_some();
         if count == 0 {
             return Ok(ResidentRun {
                 consumed: 0,
                 at_transition: parameter_next,
             });
-        }
-        if let Some(span) = direct_span {
-            writer
-                .append_token_span(arguments, &span[..count])
-                .map_err(|_| crate::CommandError::input_invariant())?;
-        } else {
-            writer
-                .append_region_span(
-                    arguments,
-                    source_region.expect("argument source region"),
-                    frame.absolute_position()..frame.absolute_position() + count,
-                )
-                .map_err(|_| crate::CommandError::input_invariant())?;
         }
         let consumed = count as u32;
         // The span append above succeeded in full, so the authoritative cursor

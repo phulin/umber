@@ -116,7 +116,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .input
                         .levels
                         .arguments
-                        .append_argument_word(&mut tokens, word, true, paragraph_token)
+                        .append_argument_word(&mut tokens, word)
                         .map_err(|_| CommandError::input_invariant())?;
                     Ok(true)
                 })?
@@ -312,7 +312,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .input
                         .levels
                         .arguments
-                        .append_argument_word(&mut tokens, word, true, paragraph_token)
+                        .append_argument_word(&mut tokens, word)
                         .map_err(|_| CommandError::input_invariant())?;
                     Ok(false)
                 })?
@@ -419,7 +419,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         mut buffer: ArgumentCursor,
     ) -> Result<ArgumentCursor, CommandError> {
-        if buffer.facts().removable_outer_group() {
+        if buffer.removable_outer_group() {
             buffer
                 .strip_outer_group()
                 .map_err(|_| CommandError::input_invariant())?;
