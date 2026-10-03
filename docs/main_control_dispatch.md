@@ -286,3 +286,5 @@ prefix spelling; observations, alignment correction and diagnostics stay in
 the same reader and backup paths.
 
 Native group entry writes its boundary directly into the save stack and returns only success or the actual error. The caller already owns the entered kind and line; it does not receive a copied `GroupFrame`. Exit still returns the actual closed frame for tracing. The no-op relax arm returns before recording a diagnostic origin, since it produces no diagnostic or list effect.
+
+Font selection consumes its final native font operand in the same reader through the existing assignment authority and performs the real afterassignment insertion before acquiring another word. Native no-ops, font selections and ordinary groups execute the last budgeted operation directly and return its actual result; budget exhaustion never forces a command record. The budget is admitted at reader entry and checked after each actual operation, without another per-word admission check.

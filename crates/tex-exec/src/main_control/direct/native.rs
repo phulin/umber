@@ -28,20 +28,17 @@ impl<'state, 'host, G>
             meaning,
             tex_state::meaning::MeaningWord::Static(Meaning::RELAX_WORD)
         ) {
-            return self.continue_native
-                && *self.completed_operations + 1 < self.remaining_operations
-                && !processor.has_pending_reports();
+            return self.continue_native && !processor.has_pending_reports();
         }
-        if !self.continue_native
-            || *self.completed_operations + 1 >= self.remaining_operations
-            || processor.has_pending_reports()
-        {
+        if !self.continue_native || processor.has_pending_reports() {
             return false;
         }
-        let tex_state::meaning::MeaningWord::Static(word) = meaning else {
-            return false;
+        let word = match meaning {
+            tex_state::meaning::MeaningWord::Font(_) => return true,
+            tex_state::meaning::MeaningWord::Static(word) => *word,
+            tex_state::meaning::MeaningWord::Macro { .. } => return false,
         };
-        match Meaning::runtime_word_control_code(*word) {
+        match Meaning::runtime_word_control_code(word) {
             codes::PRIMITIVE_BEGIN_GROUP => true,
             codes::CHAR_BEGIN_GROUP => {
                 processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
@@ -75,17 +72,45 @@ impl<'state, 'host, G>
         meaning: &tex_state::meaning::MeaningWord<G>,
         _: Option<tex_state::interner::Symbol>,
     ) -> std::ops::ControlFlow<()> {
-        let tex_state::meaning::MeaningWord::Static(word) = meaning else {
-            unreachable!("native main-control selection accepts static terminals")
-        };
-        if *word == Meaning::RELAX_WORD {
+        if matches!(
+            meaning,
+            tex_state::meaning::MeaningWord::Static(Meaning::RELAX_WORD)
+        ) {
             // TeX82 §1045: relax has no list effect after leaving main_loop.
+            if *self.completed_operations + 1 >= self.remaining_operations {
+                self.completion = Some(Ok(ReplayStep::Continue));
+                return std::ops::ControlFlow::Break(());
+            }
             *self.completed_operations += 1;
             return std::ops::ControlFlow::Continue(());
         }
         *self.scan_origin = Some(spelling.origin());
-        let code = Meaning::runtime_word_control_code(*word);
+        let code = match meaning {
+            tex_state::meaning::MeaningWord::Font(_) => codes::FONT,
+            tex_state::meaning::MeaningWord::Static(word) => {
+                Meaning::runtime_word_control_code(*word)
+            }
+            tex_state::meaning::MeaningWord::Macro { .. } => {
+                unreachable!("native main control consumes terminals")
+            }
+        };
         let result = match code {
+            codes::FONT => {
+                let tex_state::meaning::MeaningWord::Font(font) = meaning else {
+                    unreachable!("native font operand")
+                };
+                let global = effective_global(processor.int_param(IntParam::GLOBAL_DEFS), false);
+                let result =
+                    processor.with_execution_owners(|context, _, effects, _, _, _, _, _, _| {
+                        semantic::execute_font_select(context, effects, *font, global)
+                    });
+                result.and_then(|step| {
+                    processor
+                        .complete_assignment()
+                        .map(|()| step)
+                        .map_err(command_error)
+                })
+            }
             codes::CHAR_BEGIN_GROUP | codes::PRIMITIVE_BEGIN_GROUP => {
                 let kind = if code == codes::CHAR_BEGIN_GROUP {
                     GroupKind::Simple
@@ -115,11 +140,12 @@ impl<'state, 'host, G>
                 GroupKind::SemiSimple,
                 "semi simple group",
             ),
-            _ => unreachable!("native main-control selection accepts group terminals"),
+            _ => unreachable!("native main-control selection accepts font and group terminals"),
         };
         // Unsave can restore tracing parameters and can deliver aftergroup
         // diagnostics. Re-enter main control before another word in either case.
-        if result.is_err()
+        if *self.completed_operations + 1 >= self.remaining_operations
+            || result.is_err()
             || processor.has_pending_reports()
             || (matches!(code, codes::CHAR_END_GROUP | codes::PRIMITIVE_END_GROUP)
                 && (processor.int_param(IntParam::TRACING_COMMANDS) > 0

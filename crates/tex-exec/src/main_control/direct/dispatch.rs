@@ -236,9 +236,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                         prepare_command_trace(processor, mode, shown_mode);
                     }
                     // Admit untraced native continuation at the actual reader boundary.
-                    // Groups recheck tracing after unsave; reports, exceptional
-                    // group kinds and the driver budget remain live per word.
+                    // Groups recheck tracing after unsave; reports and exceptional
+                    // group kinds remain live. Consumption returns the real budget cut.
                     let continue_native = retain_commands
+                        && self.completed_operations < self.remaining_operations
                         && initial_prefix.is_none()
                         && !main_loop_active
                         && tracing_commands <= 0

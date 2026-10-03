@@ -448,6 +448,7 @@ fn native_terminal_continuation_preserves_the_actual_operation_budget() {
         br"\def\m{\relax\relax}\m\m\m\count0=9 \relax%".as_slice(),
         br"\def\m{{}}\m\m\m\count0=9 \relax%",
         br"\def\m{\begingroup\endgroup}\m\m\m\count0=9 \relax%",
+        br"\def\m{\nullfont\nullfont}\m\m\m\count0=9 \relax%",
     ] {
         for budget in [1, 2, 3, 4, 6, 7] {
             crate::test_harness::with_nonstop_plain_universe(|stores| {
