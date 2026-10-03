@@ -514,6 +514,8 @@ fn native_terminals_after_text_refresh_delivery_and_preserve_group_restoration()
     // character lookahead before the next fetch, with text owned by its
     // existing semantic consumer. Section 1269 inserts afterassignment once.
     for (operation, tail) in [
+        (r"\probe ", "yz"),
+        (r"\expandafter\probe\relax ", "yz"),
         (r"\relax ", "xyz"),
         (r"\f ", "xyz"),
         (r"\textfont0=\f ", "xyz"),

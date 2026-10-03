@@ -426,3 +426,7 @@ ends. Native delivery constructs neither a general `SourceToken` nor the
 retired `ScannedControlSequence` projection. Lexical inspection still requests
 its actual structured source token. Source cursors, normalized lines, origins
 and backing retain their existing input/checkpoint lifetime.
+
+## Expansion within character admission
+
+The execution-owned horizontal reader expands ordinary macros and primitives from its already resolved boundary word and continues the same input back edge. Immutable replacement bodies and actual argument regions retain their canonical lifetimes; no delivered command or intermediate replacement carrier owns them. Lexical inspection retains raw boundaries through its actual consumer's static policy. Both expanded readers and execution-owned character admission share one balanced invocation boundary for checkpoint quiescence, including errors. Observed or exceptional deliveries, undefined recovery and end-template handling keep their demanded command records.

@@ -283,7 +283,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// invocation facts survive matching; diagnostics need no delivery geometry
     /// or command record, even on prefix failure.
     #[inline(always)]
-    fn activate_read_macro(
+    pub(super) fn activate_read_macro(
         &mut self,
         word: tex_state::token::TokenWord,
         origin: tex_state::token::OriginId,

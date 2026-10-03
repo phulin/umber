@@ -454,6 +454,8 @@ fn native_main_control_continues_across_macro_bodies_without_command_records() {
         crate::MainControlConsumer<crate::CommandProcessor<'state, 'host, G, Facts>, G>
         for RelaxCount
     {
+        const EXPAND_BOUNDARIES: bool = false;
+
         fn accepts_native_terminal(
             &mut self,
             _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,

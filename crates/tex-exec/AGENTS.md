@@ -339,3 +339,5 @@ through the native consumer. Scalar resident text shares that same admission
 helper. Already-completed semantics preserve their live character-loop state
 through retained continuation; fonts and groups leave the loop at their real
 semantic entry. No second context admission is used to resume native text.
+
+The actual native consumer owns expansion at character boundaries. Bulk text consumes packed macro/primitive operands through the shared command reader without a delivered command or a second loop; lexical command-core consumers keep raw boundary semantics.

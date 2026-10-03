@@ -8,6 +8,9 @@ use super::{
 /// Selection precedes brace accounting; execution follows it. A declined word
 /// remains available to the caller's actual semantic ownership boundary.
 pub trait MainControlConsumer<Processor, G> {
+    /// Whether the actual consumer owns expansion at horizontal boundaries.
+    const EXPAND_BOUNDARIES: bool;
+
     fn accepts_native_terminal(
         &mut self,
         processor: &mut Processor,
@@ -25,6 +28,8 @@ pub trait MainControlConsumer<Processor, G> {
 
 // Lexical inspection asks for the actual terminal record, without executing it.
 impl<Processor, G> MainControlConsumer<Processor, G> for () {
+    const EXPAND_BOUNDARIES: bool = false;
+
     fn accepts_native_terminal(
         &mut self,
         _: &mut Processor,

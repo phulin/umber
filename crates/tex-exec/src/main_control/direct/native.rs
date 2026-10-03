@@ -225,6 +225,8 @@ impl<'state, 'host, G, const TEXT_BOUNDARY: bool>
         G,
     > for NativeMainControl<'_, TEXT_BOUNDARY>
 {
+    const EXPAND_BOUNDARIES: bool = true;
+
     #[inline(always)]
     fn accepts_native_terminal(
         &mut self,

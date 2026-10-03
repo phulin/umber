@@ -650,32 +650,6 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
 
 #[test]
 fn main_loop_native_boundary_consumes_the_word_without_a_command_record() {
-    struct NativeBoundary(Option<TokenWord>);
-    impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
-        crate::MainControlConsumer<crate::CommandProcessor<'state, 'host, G, Facts>, G>
-        for NativeBoundary
-    {
-        fn accepts_native_terminal(
-            &mut self,
-            _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
-            meaning: &tex_state::MeaningWord<G>,
-        ) -> bool {
-            matches!(meaning, tex_state::MeaningWord::Static(word)
-                if *word == Meaning::RELAX_WORD || matches!(Meaning::runtime_word_character(*word), Some((_, Catcode::Space))))
-        }
-
-        fn consume_native_terminal(
-            &mut self,
-            _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
-            spelling: tex_state::token::TracedTokenWord,
-            _: &tex_state::MeaningWord<G>,
-            _: Option<tex_state::interner::Symbol>,
-        ) -> std::ops::ControlFlow<()> {
-            assert!(self.0.replace(spelling.token_word()).is_none());
-            std::ops::ControlFlow::Break(())
-        }
-    }
-
     crate::test_harness::with_universe(|universe| {
         let relax = universe.intern("relax").expect("relax symbol");
         universe
@@ -721,7 +695,7 @@ fn main_loop_native_boundary_consumes_the_word_without_a_command_record() {
             );
             let mut destination = None;
             let mut characters = RecordingCharacterConsumer::default();
-            let mut native = NativeBoundary(None);
+            let mut native = NativeBoundary::<false>(None);
             assert_eq!(
                 processor
                     .main_loop_source_step_into(&mut destination, &mut characters, &mut native)
@@ -739,4 +713,175 @@ fn main_loop_native_boundary_consumes_the_word_without_a_command_record() {
             );
         }
     });
+}
+
+struct NativeBoundary<const EXPAND: bool>(Option<TokenWord>);
+impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>, const EXPAND: bool>
+    crate::MainControlConsumer<crate::CommandProcessor<'state, 'host, G, Facts>, G>
+    for NativeBoundary<EXPAND>
+{
+    const EXPAND_BOUNDARIES: bool = EXPAND;
+
+    fn accepts_native_terminal(
+        &mut self,
+        _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
+        meaning: &tex_state::MeaningWord<G>,
+    ) -> bool {
+        matches!(meaning, tex_state::MeaningWord::Static(word)
+            if *word == Meaning::RELAX_WORD || Meaning::runtime_word_character(*word).is_some_and(|(_, cat)| cat == Catcode::Space || (EXPAND && matches!(cat, Catcode::Letter | Catcode::Other))))
+    }
+
+    fn consume_native_terminal(
+        &mut self,
+        _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
+        spelling: tex_state::token::TracedTokenWord,
+        _: &tex_state::MeaningWord<G>,
+        _: Option<tex_state::interner::Symbol>,
+    ) -> std::ops::ControlFlow<()> {
+        assert!(self.0.replace(spelling.token_word()).is_none());
+        std::ops::ControlFlow::Break(())
+    }
+}
+
+#[test]
+fn execution_character_boundaries_expand_without_constructing_commands() {
+    // TeX82 §§380/389/1038: expand the boundary, then consume replacement
+    // characters through the same input owner. The final relax is the terminal.
+    for source in [
+        r"a\m c\relax",
+        r"a\empty c\relax",
+        r"a\expandafter\m\empty c\relax",
+    ] {
+        crate::test_harness::with_universe(|universe| {
+            let m = universe.intern("m").expect("macro symbol");
+            let publication = universe
+                .allocate_definition(
+                    &[],
+                    &[TokenWord::pack(Token::Char {
+                        ch: 'b',
+                        cat: Catcode::Letter,
+                    })],
+                )
+                .expect("macro body");
+            universe
+                .assign_meaning(
+                    m,
+                    MeaningWord::Macro {
+                        flags: MeaningFlags::EMPTY,
+                        definition: publication.reference(),
+                    },
+                    AssignmentScope::Global,
+                )
+                .expect("macro meaning");
+            let empty = universe.intern("empty").expect("empty macro symbol");
+            let empty_publication = universe
+                .allocate_definition(&[], &[])
+                .expect("empty macro body");
+            universe
+                .assign_meaning(
+                    empty,
+                    MeaningWord::Macro {
+                        flags: MeaningFlags::EMPTY,
+                        definition: empty_publication.reference(),
+                    },
+                    AssignmentScope::Global,
+                )
+                .expect("empty macro meaning");
+            for (name, meaning) in [
+                ("relax", Meaning::Relax),
+                (
+                    "expandafter",
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+                ),
+            ] {
+                let symbol = universe.intern(name).expect("primitive symbol");
+                universe
+                    .assign_meaning(
+                        symbol,
+                        MeaningWord::Static(meaning.encode()),
+                        AssignmentScope::Global,
+                    )
+                    .expect("primitive meaning");
+            }
+            let relax = universe.intern("relax").expect("terminal symbol").symbol();
+            let mut command = CommandState::default();
+            let id = command
+                .register_source(crate::SourceRegistration::new(
+                    crate::RegisteredSourceKind::Generated,
+                    source.as_bytes(),
+                ))
+                .expect("source");
+            command.open_registered_source(id).expect("source input");
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(32).expect("fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("context");
+            let before = crate::command::command_ownership_counters();
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut destination = None;
+            let mut characters = RecordingCharacterConsumer::default();
+            let mut native = NativeBoundary::<true>(None);
+            for _ in 0..16 {
+                let status = processor
+                    .main_loop_source_step_into(&mut destination, &mut characters, &mut native)
+                    .expect("native expansion boundary");
+                assert!(
+                    destination.is_none(),
+                    "source={source}, status={status:?}, command={:?}",
+                    destination
+                        .as_ref()
+                        .map(|command| (command.spelling().semantic_token(), command.meaning()))
+                );
+                assert_eq!(processor.command.transient.active_expansion_depth, 0);
+                if status == crate::DeliveryStatus::CharacterRunBoundary {
+                    let word = native.0.take().expect("native terminal boundary");
+                    match word.semantic_token() {
+                        Token::Char {
+                            ch,
+                            cat: Catcode::Letter | Catcode::Other,
+                        } => characters.characters.push(ch),
+                        Token::Cs(symbol) if symbol == relax => {
+                            native.0 = Some(word);
+                            break;
+                        }
+                        terminal => panic!("unexpected terminal {terminal:?}"),
+                    }
+                } else {
+                    assert_eq!(status, crate::DeliveryStatus::CharacterRun);
+                }
+            }
+            assert_eq!(native.0, Some(TokenWord::pack(Token::Cs(relax))));
+            assert_eq!(
+                characters.characters,
+                if source.contains("\\empty") && !source.contains("expandafter") {
+                    "ac"
+                } else {
+                    "abc"
+                }
+            );
+            drop(processor);
+            assert_eq!(
+                crate::command::command_ownership_counters().resolved_writes,
+                before.resolved_writes,
+                "source={source}"
+            );
+            assert_eq!(
+                fuel.burned(),
+                if source.contains("expandafter") {
+                    8
+                } else if source.contains("empty") {
+                    4
+                } else {
+                    5
+                },
+                "source={source}"
+            );
+        });
+    }
 }

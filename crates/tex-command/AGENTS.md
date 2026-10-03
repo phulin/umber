@@ -826,3 +826,5 @@ Futurelet retains its two operands in its own scanner grammar. Ordinary let scan
 Restricted integer scans return the existing scalar value and genuine primary origin. The separate restricted result and discarded scanned/recovered fields in math, character-definition and stream requests are removed. Canonical bounds/recovery stay central; ifeof demands its extra observer diagnostic locally. Profile register scanning selects the real bound before the direct integer scan, without traversing another register forwarding entry.
 
 The private HotToken wrapper is deleted. Remaining CurrentCommand consumers hold only their actual spelling, demanded delivery facts and native meaning directly; ordinary native input constructs no delivered record.
+
+Execution-owned character boundaries expand native macros and primitives in the existing reader back edge. Lexical callers select raw boundaries as a static property of their actual consumer. The shared expanded invocation records and restores checkpoint quiescence once at its real return; per-word expansion adds no command or bookkeeping record. Exceptional and observed boundaries retain their actual delivered command.

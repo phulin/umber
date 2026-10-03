@@ -41,8 +41,9 @@ publication, checkpoint, page-owner rotation or resource boundary runs. An
 error drops the real processor and context before aggregate failure settlement.
 There is no precomputed eligibility classification or parallel command loop.
 The same packed switch selects context-consuming semantics and genuine outer
-owner calls. The delivered native token/site and command word stay in one opaque
-`CurrentCommand` from raw input through expansion and that switch; spelling and
+owner calls. A declined or exceptional delivered word retains its required site facts in
+`CurrentCommand` through its actual semantic consumer; ordinary admitted input,
+expansion, scanning and text consume native words directly. Spelling and
 printed identity are projected only by their actual consumers. There is no
 HotCommand-to-CurrentCommand repacking boundary. Native callbacks return only their actual semantic result. The shared native
 continuation routine reads the live page, command, diagnostic and World owners
@@ -586,3 +587,24 @@ to resume the horizontal character loop.
 The private `HotToken` wrapper is also removed. Remaining delivered commands
 hold their actual word, origin, demanded delivery site and native meaning
 directly; ordinary native input constructs neither representation.
+
+## Expansion at a character boundary
+
+The horizontal reader consumes an ordinary macro or expandable primitive at
+its actual boundary from the already resolved native meaning, then continues
+its existing input back edge. Macro arguments and replacement text keep their
+canonical input owners; no delivered command, replacement packet or second
+expansion loop mediates the transition. Macro mismatch and paragraph/outer
+recovery retain the same matching and reporting order. Undefined words,
+end-template handling, observed input and exceptional delivery keep their
+actual semantic consumers.
+
+The caller statically selects whether the boundary consumer owns expansion.
+Execution expands boundaries; lexical inspection returns the raw word. This
+is a property of the actual consumer, with no retained eligibility flag. Both
+expanded fetching and execution-owned character admission enter the same
+balanced active-expansion boundary. It records quiescence once per reader
+invocation and restores it at the actual return, including failure; ordinary
+words add no expansion-depth bookkeeping. Fuel and raw accounting occur once
+at delivery, before expansion. Source position and literal-brace accounting
+remain at their original semantic positions.

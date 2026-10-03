@@ -574,6 +574,35 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         role: ExpandedReaderRole,
         terminal: &mut impl ExpandedReaderConsumer<Self, G>,
     ) -> Result<DeliveryStatus, CommandError> {
+        self.with_expanded_delivery(destination, |processor, destination| {
+            if processor.is_observed() {
+                processor.expanded_delivery_loop::<true, PRESERVE_UNDEFINED, STOP_PROTECTED, _>(
+                    destination,
+                    initial_action,
+                    role,
+                    terminal,
+                )
+            } else {
+                processor.expanded_delivery_loop::<false, PRESERVE_UNDEFINED, STOP_PROTECTED, _>(
+                    destination,
+                    initial_action,
+                    role,
+                    terminal,
+                )
+            }
+        })
+    }
+
+    /// One real reader invocation records checkpoint quiescence, not per-word state.
+    #[inline(always)]
+    fn with_expanded_delivery(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        consume: impl FnOnce(
+            &mut Self,
+            &mut Option<CurrentCommand<G>>,
+        ) -> Result<DeliveryStatus, CommandError>,
+    ) -> Result<DeliveryStatus, CommandError> {
         let depth = self.command.transient.active_expansion_depth;
         let Some(active_depth) = depth.checked_add(1) else {
             return self.fail_hot_expanded_delivery(
@@ -583,21 +612,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             );
         };
         self.command.transient.active_expansion_depth = active_depth;
-        let result = if self.is_observed() {
-            self.expanded_delivery_loop::<true, PRESERVE_UNDEFINED, STOP_PROTECTED, _>(
-                destination,
-                initial_action,
-                role,
-                terminal,
-            )
-        } else {
-            self.expanded_delivery_loop::<false, PRESERVE_UNDEFINED, STOP_PROTECTED, _>(
-                destination,
-                initial_action,
-                role,
-                terminal,
-            )
-        };
+        let result = consume(self, destination);
         debug_assert_eq!(self.command.transient.active_expansion_depth, active_depth);
         self.command.transient.active_expansion_depth = depth;
         match result {
@@ -671,7 +686,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
-    fn finish_character_boundary(
+    fn finish_character_boundary<N: MainControlConsumer<Self, G>>(
         &mut self,
         word: TokenWord,
         origin: OriginId,
@@ -679,8 +694,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         site: ReadSite,
         kind: crate::fuel::RawDeliveryKind,
         destination: &mut Option<CurrentCommand<G>>,
-        native: &mut impl MainControlConsumer<Self, G>,
-    ) -> Result<DeliveryStatus, CommandError> {
+        native: &mut N,
+    ) -> Result<std::ops::ControlFlow<DeliveryStatus>, CommandError> {
         self.fuel.charge()?;
         let (meaning, resolution) = self.resolve_token_word(word);
         self.record_consumed_word(kind, resolution.meaning_lookup());
@@ -689,44 +704,75 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .command
                 .delivery_mode
                 .requires_semantic_settlement(suppress, meaning.is_outer())
-            && matches!(
-                classify_native_command(word, &meaning),
-                ExpandedCommandAction::Return
-            )
-            && native.accepts_native_terminal(self, &meaning)
         {
             if matches!(site, ReadSite::Source(_))
                 && let Some(location) = self.pending_diagnostic_location.take()
             {
                 self.command.set_last_diagnostic_location(Some(location));
             }
-            self.command
-                .roots
-                .alignment
-                .account_literal_catcode(resolution.literal_catcode());
-            let _ = native.consume_native_terminal(
-                self,
-                TracedTokenWord::from_parts(word, origin),
-                &meaning,
-                resolution.control_sequence(),
-            );
-        } else {
-            let line = match site {
-                ReadSite::Source(line) => line,
-                _ => None,
-            };
-            let command = destination.insert(CurrentCommand::from_delivered_parts(
-                word,
-                origin,
-                matches!(site, ReadSite::Source(_)),
-                line,
-                suppress,
-                meaning,
-                resolution.control_sequence(),
-            ));
-            self.settle_hot_delivery(command, resolution.literal_catcode())?;
+            if N::EXPAND_BOUNDARIES
+                && let tex_state::meaning::MeaningWord::Macro { flags, definition } = meaning
+            {
+                let name = resolution
+                    .control_sequence()
+                    .ok_or_else(CommandError::input_invariant)?;
+                match self.activate_read_macro(word, origin, flags, definition, name) {
+                    Ok(())
+                    | Err(
+                        CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument,
+                    ) => {}
+                    Err(failure) => return Err(failure),
+                }
+                return Ok(std::ops::ControlFlow::Continue(()));
+            }
+            let action = classify_native_command(word, &meaning);
+            if N::EXPAND_BOUNDARIES
+                && let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) =
+                    action
+            {
+                self.expand_primitive(
+                    primitive,
+                    TracedTokenWord::from_parts(word, origin),
+                    resolution.control_sequence(),
+                    true,
+                )?;
+                return Ok(std::ops::ControlFlow::Continue(()));
+            }
+            if matches!(action, ExpandedCommandAction::Return)
+                && native.accepts_native_terminal(self, &meaning)
+            {
+                self.command
+                    .roots
+                    .alignment
+                    .account_literal_catcode(resolution.literal_catcode());
+                let _ = native.consume_native_terminal(
+                    self,
+                    TracedTokenWord::from_parts(word, origin),
+                    &meaning,
+                    resolution.control_sequence(),
+                );
+                return Ok(std::ops::ControlFlow::Break(
+                    DeliveryStatus::CharacterRunBoundary,
+                ));
+            }
         }
-        Ok(DeliveryStatus::CharacterRunBoundary)
+        let line = match site {
+            ReadSite::Source(line) => line,
+            _ => None,
+        };
+        let command = destination.insert(CurrentCommand::from_delivered_parts(
+            word,
+            origin,
+            matches!(site, ReadSite::Source(_)),
+            line,
+            suppress,
+            meaning,
+            resolution.control_sequence(),
+        ));
+        self.settle_hot_delivery(command, resolution.literal_catcode())?;
+        Ok(std::ops::ControlFlow::Break(
+            DeliveryStatus::CharacterRunBoundary,
+        ))
     }
 
     /// Admits ordinary characters within one selected native span. The first
@@ -784,7 +830,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     if admission.continue_run() {
                         std::ops::ControlFlow::Continue(true)
                     } else {
-                        std::ops::ControlFlow::Break(DeliveryStatus::CharacterRun)
+                        std::ops::ControlFlow::Break(std::ops::ControlFlow::Break(
+                            DeliveryStatus::CharacterRun,
+                        ))
                     }
                 },
                 &mut |processor, word, origin, suppress, site, kind| {
@@ -799,8 +847,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     )
                 },
             )?;
-            if let Some(status) = selected {
-                return Ok(status);
+            match selected {
+                Some(std::ops::ControlFlow::Break(status)) => return Ok(status),
+                Some(std::ops::ControlFlow::Continue(())) => continue,
+                None => {}
             }
             if consumed_characters
                 && self
@@ -844,10 +894,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     )
                 },
             )? {
-                return Ok(match result {
+                match result {
                     std::ops::ControlFlow::Break(status)
-                    | std::ops::ControlFlow::Continue(status) => status,
-                });
+                    | std::ops::ControlFlow::Continue(std::ops::ControlFlow::Break(status)) => {
+                        return Ok(status);
+                    }
+                    std::ops::ControlFlow::Continue(std::ops::ControlFlow::Continue(())) => {}
+                }
             }
         }
     }
@@ -1521,15 +1574,24 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// settles scalar input through the same owner when the borrowed prefix is
     /// unavailable.  The source row is selected once by `main_character_run`;
     /// this entry never probes it and re-enters a second delivery loop.
-    pub fn main_loop_source_step_into<C: MainCharacterConsumer<G, Facts>>(
+    pub fn main_loop_source_step_into<
+        C: MainCharacterConsumer<G, Facts>,
+        N: MainControlConsumer<Self, G>,
+    >(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         consume: &mut C,
-        native: &mut impl MainControlConsumer<Self, G>,
+        native: &mut N,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         debug_assert!(!self.is_observed());
-        self.main_character_run(destination, consume, native)
+        if N::EXPAND_BOUNDARIES {
+            self.with_expanded_delivery(destination, |processor, destination| {
+                processor.main_character_run(destination, consume, native)
+            })
+        } else {
+            self.main_character_run(destination, consume, native)
+        }
     }
 
     #[cold]
