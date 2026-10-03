@@ -284,9 +284,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     token_count: match self.command.input.levels.rows.last() {
                         Some(crate::input::InputLevel::Resident(row)) => match &row.storage {
                             crate::input::ResidentTokenStorage::MacroBody(body) => body
-                                .argument_spans(&self.command.input.levels.arguments)
+                                .argument_values(&self.command.input.levels.arguments)
                                 .iter()
-                                .map(|span| u64::from(span.len))
+                                .map(|span| u64::from(span.len()))
                                 .sum(),
                             _ => unreachable!("activation owns a macro body"),
                         },

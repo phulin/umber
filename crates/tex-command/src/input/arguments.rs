@@ -1,80 +1,116 @@
-//! Final invocation-owned macro argument storage (TeX82 §§392–400).
-//!
-//! Every simultaneous invocation owns one reusable region vector. Parameter
-//! rows borrow it; body retirement returns it to this allocator pool. Matching
-//! writes the final words directly, independently of ordinary backup input.
-
-use super::ArgumentSpan;
+//! Final invocation-owned macro arguments: retained spans or pooled spelling.
 use crate::execution_scratch::{ArgumentRunAdmission, PlainRunSink, ScratchError};
 use core::hash::{Hash, Hasher};
 use core::num::NonZeroU32;
-use tex_state::token::{TokenWord, TracedTokenWord};
+use tex_state::token::TracedTokenWord;
+mod backing;
+mod words;
+pub(crate) use words::{ArgumentValue, ArgumentWords, MacroWords};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ArgumentRegionId(NonZeroU32);
-
 impl ArgumentRegionId {
     fn index(self) -> usize {
         self.0.get() as usize - 1
     }
 }
-
-/// Move-only capture owner; final ranges already reside beside the words.
-/// Neither this owner nor a matcher cursor enters a snapshot.
 #[derive(Debug)]
 pub(crate) struct MatchedArguments {
     region: ArgumentRegionId,
 }
-
-#[derive(Debug, Default)]
-struct Region {
+#[derive(Debug)]
+struct Region<G> {
     words: Vec<TracedTokenWord>,
-    spans: [ArgumentSpan; 9],
+    values: [ArgumentValue<G>; 9],
     count: u8,
-    occupied: bool,
+    roots: u32,
+    published_raw_words: usize,
 }
-
-#[derive(Debug, Default)]
-pub(crate) struct ArgumentArena {
-    regions: Vec<Region>,
-    free: Vec<ArgumentRegionId>,
-    capture: Option<ArgumentRegionId>,
-}
-
-impl PartialEq for ArgumentArena {
-    fn eq(&self, other: &Self) -> bool {
-        self.capture == other.capture && self.live_regions().eq(other.live_regions())
-    }
-}
-impl Eq for ArgumentArena {}
-impl Hash for ArgumentArena {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.capture.hash(state);
-        for (index, words, spans) in self.live_regions() {
-            index.hash(state);
-            words.hash(state);
-            spans.hash(state);
+impl<G> Default for Region<G> {
+    fn default() -> Self {
+        Self {
+            words: Vec::new(),
+            values: core::array::from_fn(|_| ArgumentValue::default()),
+            count: 0,
+            roots: 0,
+            published_raw_words: 0,
         }
     }
 }
-
-pub(crate) type MacroWords<'a> = core::iter::Copied<core::slice::Iter<'a, TracedTokenWord>>;
-
-impl ArgumentArena {
-    fn live_regions(&self) -> impl Iterator<Item = (usize, &[TracedTokenWord], &[ArgumentSpan])> {
-        self.regions
+#[derive(Debug)]
+pub(crate) struct ArgumentArena<G> {
+    regions: Vec<Region<G>>,
+    free: Vec<ArgumentRegionId>,
+    capture: Option<ArgumentRegionId>,
+}
+impl<G> Default for ArgumentArena<G> {
+    fn default() -> Self {
+        Self {
+            regions: Vec::new(),
+            free: Vec::new(),
+            capture: None,
+        }
+    }
+}
+impl<G> PartialEq for ArgumentArena<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.capture == other.capture
+            && self
+                .regions
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.roots != 0)
+                .map(|(i, _)| i)
+                .eq(other
+                    .regions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| r.roots != 0)
+                    .map(|(i, _)| i))
+            && self
+                .regions
+                .iter()
+                .zip(&other.regions)
+                .enumerate()
+                .all(|(index, (a, b))| {
+                    if (a.roots != 0) != (b.roots != 0) {
+                        return false;
+                    }
+                    if a.roots == 0 {
+                        return true;
+                    }
+                    let id = ArgumentRegionId(NonZeroU32::new(index as u32 + 1).expect("region"));
+                    a.count == b.count
+                        && a.published_raw_words == b.published_raw_words
+                        && (0..a.count + u8::from(self.capture == Some(id) && a.count < 9)).all(
+                            |slot| self.words(id, slot).iter().eq(other.words(id, slot).iter()),
+                        )
+                })
+    }
+}
+impl<G> Eq for ArgumentArena<G> {}
+impl<G> Hash for ArgumentArena<G> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.capture.hash(state);
+        for (index, region) in self
+            .regions
             .iter()
             .enumerate()
-            .filter(|(_, region)| region.occupied)
-            .map(|(index, region)| {
-                (
-                    index,
-                    region.words.as_slice(),
-                    &region.spans[..usize::from(region.count)],
-                )
-            })
+            .filter(|(_, r)| r.roots != 0)
+        {
+            index.hash(state);
+            region.count.hash(state);
+            region.published_raw_words.hash(state);
+            let id = ArgumentRegionId(NonZeroU32::new(index as u32 + 1).expect("region"));
+            for slot in 0..region.count + u8::from(self.capture == Some(id) && region.count < 9) {
+                for word in self.words(id, slot).iter() {
+                    word.hash(state);
+                }
+            }
+        }
     }
-
+}
+impl<G> ArgumentArena<G> {
     pub(crate) fn begin_match(&mut self) -> Result<MatchedArguments, ScratchError> {
         debug_assert!(self.capture.is_none(), "raw matching never expands a macro");
         let region = if let Some(region) = self.free.pop() {
@@ -83,123 +119,143 @@ impl ArgumentArena {
             let index = self.regions.len();
             let id = u32::try_from(index)
                 .ok()
-                .and_then(|index| index.checked_add(1))
+                .and_then(|i| i.checked_add(1))
                 .and_then(NonZeroU32::new)
                 .ok_or(ScratchError::CapacityOverflow)?;
             self.regions
                 .try_reserve(1)
                 .map_err(|_| ScratchError::AllocationFailed)?;
-            // Reserve the return path before admitting this owner.
             self.free
                 .try_reserve(index + 1 - self.free.len())
                 .map_err(|_| ScratchError::AllocationFailed)?;
             self.regions.push(Region::default());
             ArgumentRegionId(id)
         };
-        self.regions[region.index()].occupied = true;
-        self.regions[region.index()].count = 0;
+        let value = &mut self.regions[region.index()];
+        value.roots = 1;
+        value.count = 0;
+        value.published_raw_words = 0;
         self.capture = Some(region);
         Ok(MatchedArguments { region })
     }
-
-    pub(crate) fn begin_argument(&self, matching: &MatchedArguments) -> ArgumentCursor {
-        debug_assert!(self.regions[matching.region.index()].count < 9);
-        let start = self.tail(matching.region);
+    pub(crate) fn begin_argument(&mut self, matching: &MatchedArguments) -> ArgumentCursor {
+        let region = &mut self.regions[matching.region.index()];
+        debug_assert!(region.count < 9);
+        region.values[usize::from(region.count)] = ArgumentValue::Owned {
+            start: region.words.len() as u32,
+            len: 0,
+        };
         ArgumentCursor {
             region: matching.region,
-            start,
-            visible_end: start,
+            start: 0,
+            visible_end: 0,
             cursor: crate::scanner_kernel::ScannerCursor::default(),
             end_trim: 0,
-            holdback_start: start,
+            holdback_start: 0,
             holdback_len: 0,
         }
     }
-
-    /// Transfers the final region's sole owner; words and ranges stay in place.
     pub(crate) fn publish(&mut self, matching: MatchedArguments) -> ArgumentRegionId {
         debug_assert_eq!(self.capture, Some(matching.region));
         self.capture = None;
         matching.region
     }
-
-    /// Native capacity bookkeeping reads the count, without constructing a span view.
     #[inline(always)]
     pub(crate) fn argument_count(&self, id: ArgumentRegionId) -> usize {
         usize::from(self.regions[id.index()].count)
     }
-
-    #[inline(always)]
-    pub(crate) fn spans(&self, id: ArgumentRegionId) -> &[ArgumentSpan] {
-        let region = &self.regions[id.index()];
-        &region.spans[..usize::from(region.count)]
+    pub(crate) fn values(&self, id: ArgumentRegionId) -> &[ArgumentValue<G>] {
+        let r = &self.regions[id.index()];
+        &r.values[..usize::from(r.count)]
     }
-
     pub(crate) fn abort_capture(&mut self) {
         if let Some(region) = self.capture.take() {
             self.release(region);
         }
     }
-
-    pub(crate) fn release(&mut self, id: ArgumentRegionId) {
+    fn release_root(&mut self, id: ArgumentRegionId) {
         let region = &mut self.regions[id.index()];
-        debug_assert!(region.occupied);
-        region.words.clear();
-        region.occupied = false;
-        self.free.push(id);
+        debug_assert!(region.roots != 0);
+        region.roots -= 1;
+        if region.roots == 0 {
+            region.words.clear();
+            self.free.push(id);
+        }
     }
-
-    /// Checkpoint install abandons all regions without copying the allocator pool.
+    pub(crate) fn release(&mut self, id: ArgumentRegionId) {
+        let mut pending = self.free.len();
+        self.release_root(id);
+        while pending < self.free.len() {
+            let released = self.free[pending];
+            pending += 1;
+            let slots = (usize::from(self.regions[released.index()].count) + 1).min(9);
+            for slot in 0..slots {
+                if let ArgumentValue::Region { region, .. } =
+                    core::mem::take(&mut self.regions[released.index()].values[slot])
+                {
+                    self.release_root(region);
+                }
+            }
+            self.regions[released.index()].count = 0;
+            self.regions[released.index()].published_raw_words = 0;
+        }
+    }
     pub(crate) fn clear(&mut self) {
         self.capture = None;
         self.free.clear();
         for (index, region) in self.regions.iter_mut().enumerate() {
             region.words.clear();
-            region.occupied = false;
+            region.roots = 0;
+            region.count = 0;
+            region.published_raw_words = 0;
+            for value in &mut region.values {
+                *value = ArgumentValue::default();
+            }
             self.free.push(ArgumentRegionId(
-                NonZeroU32::new(index as u32 + 1).expect("region index"),
+                NonZeroU32::new(index as u32 + 1).expect("region"),
             ));
         }
     }
-
     #[cfg(test)]
     pub(crate) fn pool_counts(&self) -> (usize, usize, usize) {
         (
             self.regions.len(),
-            self.live_regions().count(),
+            self.regions.iter().filter(|r| r.roots != 0).count(),
             self.retained_bytes(),
         )
     }
-
     pub(crate) fn is_matching(&self) -> bool {
         self.capture.is_some()
     }
     pub(crate) fn captured_word_len(&self) -> usize {
-        self.capture.map_or(0, |id| self.region(id).len())
+        self.capture.map_or(0, |id| {
+            let r = &self.regions[id.index()];
+            r.published_raw_words
+                + if r.count < 9 {
+                    r.values[usize::from(r.count)].len() as usize
+                } else {
+                    0
+                }
+        })
     }
     pub(crate) fn is_empty(&self) -> bool {
-        self.live_regions().next().is_none()
-    }
-    pub(crate) fn region(&self, id: ArgumentRegionId) -> &[TracedTokenWord] {
-        &self.regions[id.index()].words
-    }
-    fn region_mut(&mut self, id: ArgumentRegionId) -> &mut Vec<TracedTokenWord> {
-        &mut self.regions[id.index()].words
-    }
-    fn tail(&self, id: ArgumentRegionId) -> u32 {
-        self.region(id).len() as u32
+        self.regions.iter().all(|r| r.roots == 0)
     }
     pub(crate) fn retained_bytes(&self) -> usize {
-        self.regions.capacity() * core::mem::size_of::<Region>()
+        self.regions.capacity() * core::mem::size_of::<Region<G>>()
             + self.free.capacity() * core::mem::size_of::<ArgumentRegionId>()
             + self
                 .regions
                 .iter()
-                .map(|region| region.words.capacity() * core::mem::size_of::<TracedTokenWord>())
+                .map(|r| r.words.capacity() * core::mem::size_of::<TracedTokenWord>())
                 .sum::<usize>()
     }
-    /// Appends final spelling directly to the pending argument.
-    #[inline(always)]
+    fn pending_slot(&self, id: ArgumentRegionId) -> u8 {
+        self.regions[id.index()].count
+    }
+    fn pending_len(&self, id: ArgumentRegionId) -> u32 {
+        self.regions[id.index()].values[usize::from(self.pending_slot(id))].len()
+    }
     pub(crate) fn append_argument_word(
         &mut self,
         writer: &mut ArgumentCursor,
@@ -208,14 +264,10 @@ impl ArgumentArena {
         if writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        self.region_mut(writer.region).push(spelling);
-        writer.visible_end = self.tail(writer.region);
+        self.append_owned(writer.region, spelling)?;
+        writer.visible_end = self.pending_len(writer.region);
         Ok(writer.cursor.settle_argument_word(spelling.token_word()))
     }
-
-    /// Appends an unpublished delimiter candidate after the visible argument
-    /// prefix. Its scanner facts stay untouched until a mismatch reveals it.
-    #[inline(always)]
     pub(crate) fn append_delimiter_word(
         &mut self,
         writer: &mut ArgumentCursor,
@@ -224,14 +276,10 @@ impl ArgumentArena {
         if writer.holdback_len == 0 {
             writer.holdback_start = writer.visible_end;
         }
-        self.region_mut(writer.region).push(spelling);
+        self.append_owned(writer.region, spelling)?;
         writer.holdback_len += 1;
         Ok(())
     }
-
-    /// Commits the first `count` words of the unpublished delimiter suffix.
-    /// The words are already in place; only the scanner cursor and the
-    /// visible end advance.
     pub(crate) fn reveal_delimiter_words(
         &mut self,
         writer: &mut ArgumentCursor,
@@ -241,79 +289,65 @@ impl ArgumentArena {
             return Err(ScratchError::InvalidCoordinate);
         }
         let end = writer.holdback_start + count;
-        let revealed = self
-            .region(writer.region)
-            .get(writer.visible_end as usize..end as usize)
+        let words = self
+            .words(writer.region, self.pending_slot(writer.region))
+            .slice(writer.visible_end as usize..end as usize)
             .ok_or(ScratchError::InvalidCoordinate)?;
-        for spelling in revealed {
-            // A delimiter prefix is deliberately not reclassified as a
-            // paragraph after a mismatch. This preserves TeX82's historical
-            // `paragraph delimiter prefix` fact: it contributes brace/group
-            // state when revealed, but the non-long paragraph check applies
-            // only to the newly ordinary token.
-            writer.cursor.settle_argument_word(spelling.token_word());
+        for word in words.iter() {
+            writer.cursor.settle_argument_word(word.token_word());
         }
         writer.visible_end = end;
         writer.holdback_start = end;
         writer.holdback_len -= count;
         Ok(())
     }
-
-    /// Drops a completed delimiter from the tail of the match words.
     pub(crate) fn truncate_delimiter_suffix(
         &mut self,
         writer: &mut ArgumentCursor,
     ) -> Result<(), ScratchError> {
-        if writer.holdback_start + writer.holdback_len != self.tail(writer.region) {
+        if writer.holdback_start + writer.holdback_len != self.pending_len(writer.region) {
             return Err(ScratchError::InvalidCoordinate);
         }
-        self.region_mut(writer.region)
-            .truncate(writer.holdback_start as usize);
+        self.truncate_pending(writer.region, writer.holdback_start);
         writer.visible_end = writer.holdback_start;
         writer.holdback_len = 0;
         Ok(())
     }
-
     pub(crate) fn match_words(
         &self,
         writer: &ArgumentCursor,
     ) -> Result<MacroWords<'_>, ScratchError> {
         let (start, end) = writer.range()?;
-        self.region(writer.region)
-            .get(start as usize..end as usize)
-            .map(|words| words.iter().copied())
+        self.words(writer.region, self.pending_slot(writer.region))
+            .slice(start as usize..end as usize)
+            .map(ArgumentWords::iter)
             .ok_or(ScratchError::InvalidCoordinate)
     }
-
     pub(crate) fn publish_argument(
         &mut self,
         matching: &mut MatchedArguments,
         writer: ArgumentCursor,
     ) -> Result<(), ScratchError> {
         if writer.region != matching.region
-            || self.regions[matching.region.index()].count >= 9
+            || self.pending_slot(matching.region) >= 9
             || writer.holdback_len != 0
-            || writer.visible_end != self.tail(writer.region)
+            || writer.visible_end != self.pending_len(writer.region)
         {
             return Err(ScratchError::InvalidCoordinate);
         }
         let (start, end) = writer.range()?;
         let region = &mut self.regions[matching.region.index()];
-        region.spans[usize::from(region.count)] = ArgumentSpan {
-            start,
-            len: end - start,
-        };
+        region.published_raw_words += writer.visible_end as usize;
+        region.values[usize::from(region.count)].trim(start, end - start);
         region.count += 1;
         Ok(())
     }
-
     pub(crate) fn delimiter_prefix_len(
         &self,
         writer: &ArgumentCursor,
     ) -> Result<usize, ScratchError> {
         Ok(writer.holdback_len as usize)
     }
-
     pub(crate) fn delimiter_prefix_word(
         &self,
         writer: &ArgumentCursor,
@@ -321,107 +355,80 @@ impl ArgumentArena {
     ) -> Result<TracedTokenWord, ScratchError> {
         self.delimiter_prefix(writer)?
             .get(index)
-            .copied()
             .ok_or(ScratchError::InvalidCoordinate)
     }
-
     pub(crate) fn delimiter_prefix_words<'a>(
         &'a self,
-        writer: &'a ArgumentCursor,
-    ) -> Result<MacroWords<'a>, ScratchError> {
-        self.delimiter_prefix(writer)
-            .map(|words| words.iter().copied())
-    }
-
-    fn delimiter_prefix(
-        &self,
         writer: &ArgumentCursor,
-    ) -> Result<&[TracedTokenWord], ScratchError> {
+    ) -> Result<MacroWords<'a>, ScratchError> {
+        self.delimiter_prefix(writer).map(ArgumentWords::iter)
+    }
+    fn delimiter_prefix(&self, writer: &ArgumentCursor) -> Result<ArgumentWords<'_>, ScratchError> {
         let start = writer.holdback_start as usize;
-        self.region(writer.region)
-            .get(start..start + writer.holdback_len as usize)
+        self.words(writer.region, self.pending_slot(writer.region))
+            .slice(start..start + writer.holdback_len as usize)
             .ok_or(ScratchError::InvalidCoordinate)
     }
-
-    /// Source rows borrow a body-owned region; capture owns a distinct slot.
-    #[inline(always)]
-    fn consume_region<G>(
-        &mut self,
-        writer: &mut ArgumentCursor,
-        source: ArgumentRegionId,
-        range: core::ops::Range<usize>,
-        admission: &mut ArgumentRunAdmission<'_, '_, G>,
-    ) -> Result<usize, ScratchError> {
-        debug_assert_ne!(source, writer.region);
-        debug_assert_eq!(writer.holdback_len, 0);
-        let destination = writer.region.index();
-        let source_index = source.index();
-        let (from, to) = if source_index < destination {
-            let (lower, upper) = self.regions.split_at_mut(destination);
-            (&lower[source_index].words, &mut upper[0].words)
-        } else {
-            let (lower, upper) = self.regions.split_at_mut(source_index);
-            (&upper[0].words, &mut lower[destination].words)
-        };
-        let words = &from[range];
-        let start = to.len();
-        for &word in words {
-            if !admission.admits(word.token_word(), writer) {
-                break;
-            }
-            to.push(word);
-        }
-        writer.visible_end = to.len() as u32;
-        Ok(to.len() - start)
-    }
 }
-
 impl<G> PlainRunSink<G> for ArgumentCursor {
     #[inline(always)]
     fn brace_depth(&self) -> u32 {
         self.cursor.brace_depth()
     }
-
     #[inline(always)]
-    fn settle_admitted_word(&mut self, brace_delta: i8) {
-        self.cursor.settle_argument_delta(brace_delta);
+    fn settle_admitted_word(&mut self, delta: i8) {
+        self.cursor.settle_argument_delta(delta);
     }
-    #[inline(always)]
     fn consume_region_span(
         &mut self,
-        arena: &mut ArgumentArena,
+        arena: &mut ArgumentArena<G>,
         source: ArgumentRegionId,
+        slot: u8,
         range: core::ops::Range<usize>,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<usize, ScratchError> {
-        arena.consume_region(self, source, range, admission)
+        let mut count = 0;
+        for word in arena
+            .words(source, slot)
+            .slice(range.clone())
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .iter()
+        {
+            if !admission.admits(word.token_word(), self) {
+                break;
+            }
+            count += 1;
+        }
+        if count != 0 {
+            arena.extend_region(self.region, source, slot, range.start as u32, count as u32)?;
+            self.visible_end = arena.pending_len(self.region);
+        }
+        Ok(count)
     }
-    #[inline(always)]
     fn consume_token_span(
         &mut self,
-        arena: &mut ArgumentArena,
-        words: &[TokenWord],
+        arena: &mut ArgumentArena<G>,
+        body: &tex_state::ResidentMacroBody<G>,
+        range: core::ops::Range<usize>,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<usize, ScratchError> {
         if self.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let destination = arena.region_mut(self.region);
-        let start = destination.len();
-        for &word in words {
+        let mut count = 0;
+        for &word in &body.replacement_from(range.start as u32)[..range.len()] {
             if !admission.admits(word, self) {
                 break;
             }
-            destination.push(TracedTokenWord::from_parts(
-                word,
-                tex_state::token::OriginId::UNKNOWN,
-            ));
+            count += 1;
         }
-        self.visible_end = destination.len() as u32;
-        Ok(destination.len() - start)
+        if count != 0 {
+            arena.extend_definition(self.region, body, range.start as u32, count as u32)?;
+            self.visible_end = arena.pending_len(self.region);
+        }
+        Ok(count)
     }
 }
-
 #[cfg(test)]
 mod tests;
 /// Stack-local writer for one pending macro argument.

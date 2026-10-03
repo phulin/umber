@@ -114,11 +114,19 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             ResidentTokenStorage::StoredList(list) => {
                 consume_run!(list.words(), |word| (word, OriginId::UNKNOWN), true)
             }
-            ResidentTokenStorage::MacroArgument { region, .. } => consume_run!(
-                levels.arguments.region(*region),
-                |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin()),
-                false
-            ),
+            ResidentTokenStorage::MacroArgument { region, slot } => match levels
+                .arguments
+                .words(*region, *slot - 1)
+            {
+                crate::input::ArgumentWords::Traced(words) => consume_run!(
+                    words,
+                    |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin()),
+                    false
+                ),
+                crate::input::ArgumentWords::Definition(words) => {
+                    consume_run!(words, |word| (word, OriginId::UNKNOWN), false)
+                }
+            },
             _ => consume_run!(
                 &levels.words,
                 |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin()),

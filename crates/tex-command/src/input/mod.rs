@@ -14,7 +14,9 @@ mod tokenizer;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use arguments::{ArgumentArena, ArgumentCursor, ArgumentRegionId, MatchedArguments};
+pub(crate) use arguments::{
+    ArgumentArena, ArgumentCursor, ArgumentRegionId, ArgumentValue, ArgumentWords, MatchedArguments,
+};
 pub use history::BorrowedSourceCharacterRun;
 pub(crate) use history::{
     InputStack, InputStackContextCoordinate, ResidentRun, ResidentSourceAdvance,
@@ -23,11 +25,11 @@ pub(crate) use history::{
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
-    ArgumentSpan, BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroBodyCursor,
-    PackedInputFrame, PackedTokenOwnership, PackedTokenSpanSource, PendingInsertion, ReplayTrace,
-    ResidentTokenRow, ResidentTokenStorage, RetirementBehavior, SourceLevel, SourceOpenDepths,
-    SourceRetirement, SourceSlot, StoredReplayReason, TokenBehavior, TokenRowHeader, TokenSources,
-    backed_up_replay, packed_token_frame, semantic_replay, transient_replay,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroBodyCursor, PackedInputFrame,
+    PackedTokenOwnership, PackedTokenSpanSource, PendingInsertion, ReplayTrace, ResidentTokenRow,
+    ResidentTokenStorage, RetirementBehavior, SourceLevel, SourceOpenDepths, SourceRetirement,
+    SourceSlot, StoredReplayReason, TokenBehavior, TokenRowHeader, TokenSources, backed_up_replay,
+    packed_token_frame, semantic_replay, transient_replay,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor, SourceOffsetMap};
 #[cfg(test)]

@@ -87,15 +87,17 @@ pub(crate) trait PlainRunSink<G> {
     fn settle_admitted_word(&mut self, brace_delta: i8);
     fn consume_region_span(
         &mut self,
-        arena: &mut crate::input::ArgumentArena,
+        arena: &mut crate::input::ArgumentArena<G>,
         source: crate::input::ArgumentRegionId,
+        slot: u8,
         range: core::ops::Range<usize>,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<usize, ScratchError>;
     fn consume_token_span(
         &mut self,
-        arena: &mut crate::input::ArgumentArena,
-        words: &[TokenWord],
+        arena: &mut crate::input::ArgumentArena<G>,
+        body: &tex_state::ResidentMacroBody<G>,
+        range: core::ops::Range<usize>,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<usize, ScratchError>;
 }
@@ -121,14 +123,18 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
     }
     fn consume_region_span(
         &mut self,
-        arena: &mut crate::input::ArgumentArena,
+        arena: &mut crate::input::ArgumentArena<G>,
         source: crate::input::ArgumentRegionId,
+        slot: u8,
         range: core::ops::Range<usize>,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<usize, ScratchError> {
-        let words = &arena.region(source)[range];
+        let words = arena
+            .words(source, slot)
+            .slice(range)
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let mut count = 0;
-        for &word in words {
+        for word in words.iter() {
             if !admission.admits(word.token_word(), self) {
                 break;
             }
@@ -142,12 +148,13 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
 
     fn consume_token_span(
         &mut self,
-        _: &mut crate::input::ArgumentArena,
-        words: &[TokenWord],
+        _: &mut crate::input::ArgumentArena<G>,
+        body: &tex_state::ResidentMacroBody<G>,
+        range: core::ops::Range<usize>,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<usize, ScratchError> {
         let mut count = 0;
-        for &word in words {
+        for &word in &body.replacement_from(range.start as u32)[..range.len()] {
             if !admission.admits(word, self) {
                 break;
             }
@@ -182,14 +189,18 @@ impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
     fn settle_admitted_word(&mut self, _: i8) {}
     fn consume_region_span(
         &mut self,
-        arena: &mut crate::input::ArgumentArena,
+        arena: &mut crate::input::ArgumentArena<G>,
         source: crate::input::ArgumentRegionId,
+        slot: u8,
         range: core::ops::Range<usize>,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<usize, ScratchError> {
-        let words = &arena.region(source)[range];
+        let words = arena
+            .words(source, slot)
+            .slice(range)
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let mut count = 0;
-        for &word in words {
+        for word in words.iter() {
             if !admission.admits(word.token_word(), self) {
                 break;
             }
@@ -201,12 +212,13 @@ impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
 
     fn consume_token_span(
         &mut self,
-        _: &mut crate::input::ArgumentArena,
-        words: &[TokenWord],
+        _: &mut crate::input::ArgumentArena<G>,
+        body: &tex_state::ResidentMacroBody<G>,
+        range: core::ops::Range<usize>,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<usize, ScratchError> {
         let mut count = 0;
-        for &word in words {
+        for &word in &body.replacement_from(range.start as u32)[..range.len()] {
             if !admission.admits(word, self) {
                 break;
             }

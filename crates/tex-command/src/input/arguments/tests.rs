@@ -1,5 +1,4 @@
 use super::*;
-use crate::input::ArgumentSpan;
 use tex_state::token::{Catcode, OriginId, Token};
 
 fn word(ch: char) -> TracedTokenWord {
@@ -17,7 +16,7 @@ fn brace(ch: char, cat: Catcode) -> TracedTokenWord {
 }
 
 fn append_all(
-    arena: &mut ArgumentArena,
+    arena: &mut ArgumentArena<()>,
     writer: &mut ArgumentCursor,
     words: impl IntoIterator<Item = TracedTokenWord>,
 ) {
@@ -30,7 +29,7 @@ fn append_all(
 
 #[test]
 fn admitted_brace_delta_drives_nested_depth_and_first_scan_facts_once() {
-    let mut arena = ArgumentArena::default();
+    let mut arena = ArgumentArena::<()>::default();
     let mut matching = arena.begin_match().expect("macro match");
     let mut writer = arena.begin_argument(&matching);
     let words = [
@@ -57,28 +56,19 @@ fn admitted_brace_delta_drives_nested_depth_and_first_scan_facts_once() {
         .publish_argument(&mut matching, writer)
         .expect("argument range");
 
-    let address = arena.region(matching.region).as_ptr();
-    let ranges = arena.spans(matching.region).as_ptr();
     let region = arena.publish(matching);
     assert_eq!(
-        arena.spans(region).as_ptr(),
-        ranges,
-        "ranges stay in their final owner"
+        arena.words(region, 0).iter().collect::<Vec<_>>(),
+        words[1..4]
     );
-    assert_eq!(arena.spans(region), [ArgumentSpan { start: 1, len: 3 }]);
-    assert_eq!(&arena.region(region)[1..4], &words[1..4]);
-    assert_eq!(
-        arena.region(region).as_ptr(),
-        address,
-        "publication never copies the payload"
-    );
+    assert_eq!(arena.values(region)[0].len(), 3);
     arena.release(region);
     assert!(arena.is_empty());
 }
 
 #[test]
 fn publication_keeps_delimiter_recovery_and_empty_argument_ranges() {
-    let mut arena = ArgumentArena::default();
+    let mut arena = ArgumentArena::<()>::default();
     let mut matching = arena.begin_match().expect("macro match");
     let mut first = arena.begin_argument(&matching);
     append_all(&mut arena, &mut first, [word('a'), word('b')]);
@@ -113,16 +103,20 @@ fn publication_keeps_delimiter_recovery_and_empty_argument_ranges() {
 
     let region = arena.publish(matching);
     assert_eq!(
-        arena.region(region),
-        [word('a'), word('b'), word('c'), word('x')]
+        arena.words(region, 0).iter().collect::<Vec<_>>(),
+        [word('a'), word('b')]
     );
     assert_eq!(
-        arena.spans(region),
-        [
-            ArgumentSpan { start: 0, len: 2 },
-            ArgumentSpan { start: 2, len: 2 },
-            ArgumentSpan { start: 4, len: 0 }
-        ]
+        arena.words(region, 1).iter().collect::<Vec<_>>(),
+        [word('c'), word('x')]
+    );
+    assert_eq!(
+        arena
+            .values(region)
+            .iter()
+            .map(ArgumentValue::len)
+            .collect::<Vec<_>>(),
+        [2, 2, 0]
     );
     arena.release(region);
     assert!(arena.is_empty());
@@ -130,7 +124,7 @@ fn publication_keeps_delimiter_recovery_and_empty_argument_ranges() {
 
 #[test]
 fn trimmed_match_iterator_stops_at_both_stored_range_boundaries() {
-    let mut arena = ArgumentArena::default();
+    let mut arena = ArgumentArena::<()>::default();
     let matching = arena.begin_match().expect("macro match");
     let mut writer = arena.begin_argument(&matching);
     append_all(
@@ -179,7 +173,7 @@ fn outer_group_fact_rejects_empty_one_token_and_trailing_material() {
         ),
     ];
     for (words, expected) in cases {
-        let mut arena = ArgumentArena::default();
+        let mut arena = ArgumentArena::<()>::default();
         let matching = arena.begin_match().expect("macro match");
         let mut writer = arena.begin_argument(&matching);
         append_all(&mut arena, &mut writer, words);
@@ -191,7 +185,7 @@ fn outer_group_fact_rejects_empty_one_token_and_trailing_material() {
 fn fused_forwarding_preserves_refused_words_on_either_side_of_the_destination() {
     for lower_destination in [false, true] {
         for count in [1, 8192] {
-            let mut arena = ArgumentArena::default();
+            let mut arena = ArgumentArena::<()>::default();
             let reserved = if lower_destination {
                 let matching = arena.begin_match().expect("reserve lower region");
                 Some(arena.publish(matching))
@@ -218,17 +212,18 @@ fn fused_forwarding_preserves_refused_words_on_either_side_of_the_destination() 
             }
             let child = arena.begin_match().expect("child match");
             let mut cursor = arena.begin_argument(&child);
-            let accepted = arena
-                .consume_region::<()>(
-                    &mut cursor,
+            let accepted = cursor
+                .consume_region_span(
+                    &mut arena,
                     parent,
+                    0,
                     0..words.len(),
                     &mut crate::execution_scratch::ArgumentRunAdmission::characters(),
                 )
                 .expect("forward admitted prefix");
             assert_eq!(accepted, count);
             assert_eq!(
-                arena.region(parent),
+                arena.words(parent, 0).iter().collect::<Vec<_>>(),
                 words,
                 "refused group stays in the source"
             );
@@ -256,11 +251,10 @@ fn fused_forwarding_preserves_refused_words_on_either_side_of_the_destination() 
 
 #[test]
 fn forwarded_capture_survives_parent_release_and_abort_preserves_live_parent() {
-    let mut arena = ArgumentArena::default();
+    let mut arena = ArgumentArena::<()>::default();
     let mut parent = arena.begin_match().expect("parent match");
     let mut cursor = arena.begin_argument(&parent);
-    // More than the destination's initial capacity proves forwarding stays
-    // valid when its final vector reallocates.
+    // A long argument remains valid after its source invocation retires.
     let words = vec![word('p'); 8_192];
     append_all(&mut arena, &mut cursor, words.iter().copied());
     arena
@@ -269,10 +263,11 @@ fn forwarded_capture_survives_parent_release_and_abort_preserves_live_parent() {
     let parent = arena.publish(parent);
     let mut child = arena.begin_match().expect("child match");
     let mut cursor = arena.begin_argument(&child);
-    let count = arena
-        .consume_region::<()>(
-            &mut cursor,
+    let count = cursor
+        .consume_region_span(
+            &mut arena,
             parent,
+            0,
             0..words.len(),
             &mut crate::execution_scratch::ArgumentRunAdmission::characters(),
         )
@@ -295,7 +290,7 @@ fn forwarded_capture_survives_parent_release_and_abort_preserves_live_parent() {
     append_all(&mut arena, &mut cursor, [word('x')]);
     arena.abort_capture();
     assert_eq!(
-        arena.region(child),
+        arena.words(child, 0).iter().collect::<Vec<_>>(),
         words,
         "failed nested matching preserves its live parent's words"
     );
@@ -344,7 +339,7 @@ fn checkpoint_reset_excludes_pool_semantics_and_retains_capacity_once() {
 
 #[test]
 fn reused_argument_region_does_not_retain_prior_range_suffix_as_semantic_state() {
-    fn capture(arena: &mut ArgumentArena, arguments: &[char]) -> ArgumentRegionId {
+    fn capture(arena: &mut ArgumentArena<()>, arguments: &[char]) -> ArgumentRegionId {
         let mut matching = arena.begin_match().expect("match owner");
         for &ch in arguments {
             let mut cursor = arena.begin_argument(&matching);
@@ -355,22 +350,160 @@ fn reused_argument_region_does_not_retain_prior_range_suffix_as_semantic_state()
         }
         arena.publish(matching)
     }
-    let mut reused = ArgumentArena::default();
+    let mut reused = ArgumentArena::<()>::default();
     let prior = capture(&mut reused, &['a', 'b', 'c']);
     reused.release(prior);
     let current = capture(&mut reused, &['x']);
-    let mut fresh = ArgumentArena::default();
+    let mut fresh = ArgumentArena::<()>::default();
     let other = capture(&mut fresh, &['x']);
-    assert_eq!(reused.region(current), fresh.region(other));
-    assert_eq!(reused.spans(current), [ArgumentSpan { start: 0, len: 1 }]);
+    assert!(
+        reused
+            .words(current, 0)
+            .iter()
+            .eq(fresh.words(other, 0).iter())
+    );
+    assert_eq!(reused.values(current)[0].len(), 1);
     assert_eq!(
         reused, fresh,
         "unused prior ranges and pooled capacity are not semantic state"
     );
-    fn semantic_hash(arena: &ArgumentArena) -> u64 {
+    fn semantic_hash(arena: &ArgumentArena<()>) -> u64 {
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         arena.hash(&mut hash);
         hash.finish()
     }
     assert_eq!(semantic_hash(&reused), semantic_hash(&fresh));
+}
+
+#[test]
+fn fragmented_argument_materializes_before_either_source_retires() {
+    let mut arena = ArgumentArena::<()>::default();
+    let mut sources = Vec::new();
+    for ch in ['a', 'b'] {
+        let mut matching = arena.begin_match().expect("source match");
+        let mut cursor = arena.begin_argument(&matching);
+        append_all(&mut arena, &mut cursor, [word(ch)]);
+        arena
+            .publish_argument(&mut matching, cursor)
+            .expect("source argument");
+        sources.push(arena.publish(matching));
+    }
+    let mut child = arena.begin_match().expect("fragmented match");
+    let mut cursor = arena.begin_argument(&child);
+    for source in sources {
+        assert_eq!(
+            cursor.consume_region_span(
+                &mut arena,
+                source,
+                0,
+                0..1,
+                &mut ArgumentRunAdmission::characters(),
+            ),
+            Ok(1)
+        );
+        arena.release(source);
+    }
+    arena
+        .publish_argument(&mut child, cursor)
+        .expect("fragmented argument");
+    let child = arena.publish(child);
+    assert_eq!(
+        arena.words(child, 0).iter().collect::<Vec<_>>(),
+        [word('a'), word('b')]
+    );
+    arena.release(child);
+    assert!(arena.is_empty());
+}
+
+#[test]
+fn definition_argument_survives_publication_and_source_body_retirement() {
+    crate::test_harness::with_universe(|universe| {
+        let publication = universe
+            .allocate_definition(
+                &[tex_state::token::TokenWord::pack(Token::Param(1))],
+                &[
+                    word('a').token_word(),
+                    word('b').token_word(),
+                    word('c').token_word(),
+                ],
+            )
+            .expect("source definition");
+        let body = universe
+            .command_context()
+            .expect("context")
+            .admit_macro_body(publication.reference())
+            .expect("resident body");
+        let mut arena = ArgumentArena::default();
+        let mut matching = arena.begin_match().expect("argument match");
+        let mut cursor = arena.begin_argument(&matching);
+        assert_eq!(
+            cursor.consume_token_span(
+                &mut arena,
+                &body,
+                1..3,
+                &mut ArgumentRunAdmission::characters(),
+            ),
+            Ok(2)
+        );
+        drop(body);
+        drop(publication);
+        arena
+            .publish_argument(&mut matching, cursor)
+            .expect("argument");
+        let region = arena.publish(matching);
+        assert_eq!(
+            arena.words(region, 0).iter().collect::<Vec<_>>(),
+            [word('b'), word('c')]
+        );
+        arena.release(region);
+        assert!(arena.is_empty());
+    });
+}
+
+#[test]
+fn deeply_nested_argument_leases_release_without_recursive_drops() {
+    let mut arena = ArgumentArena::<()>::default();
+    let mut previous = None;
+    for _ in 0..10_000 {
+        let mut matching = arena.begin_match().expect("nested match");
+        let mut own = arena.begin_argument(&matching);
+        append_all(&mut arena, &mut own, [word('x')]);
+        arena
+            .publish_argument(&mut matching, own)
+            .expect("own argument");
+        if let Some(source) = previous {
+            let mut borrowed = arena.begin_argument(&matching);
+            assert_eq!(
+                borrowed.consume_region_span(
+                    &mut arena,
+                    source,
+                    0,
+                    0..1,
+                    &mut ArgumentRunAdmission::characters(),
+                ),
+                Ok(1)
+            );
+            arena
+                .publish_argument(&mut matching, borrowed)
+                .expect("borrowed argument");
+            arena.release(source);
+        }
+        previous = Some(arena.publish(matching));
+    }
+    let last = previous.expect("last invocation");
+    assert_eq!(arena.words(last, 1).get(0), Some(word('x')));
+    arena.release(last);
+    assert!(arena.is_empty());
+    let matching = arena.begin_match().expect("reuse released region");
+    let mut cursor = arena.begin_argument(&matching);
+    append_all(&mut arena, &mut cursor, [word('y')]);
+    assert_eq!(
+        arena
+            .match_words(&cursor)
+            .expect("reused words")
+            .collect::<Vec<_>>(),
+        [word('y')]
+    );
+    arena.abort_capture();
+    assert!(arena.is_empty());
 }

@@ -115,8 +115,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .command
                         .input
                         .levels
-                        .arguments
-                        .append_argument_word(tokens, word)
+                        .append_macro_argument_word(tokens, word, false)
                         .map_err(|_| CommandError::input_invariant())?;
                     Ok(true)
                 })?
@@ -207,8 +206,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .command
                             .input
                             .levels
-                            .arguments
-                            .append_delimiter_word(tokens, word)
+                            .append_macro_argument_word(tokens, word, true)
                             .map_err(|_| CommandError::input_invariant())?;
                         if processor
                             .command
@@ -282,8 +280,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .command
                                 .input
                                 .levels
-                                .arguments
-                                .append_delimiter_word(tokens, word)
+                                .append_macro_argument_word(tokens, word, true)
                                 .map_err(|_| CommandError::input_invariant())?;
                             return Ok(false);
                         }
@@ -310,8 +307,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .command
                         .input
                         .levels
-                        .arguments
-                        .append_argument_word(tokens, word)
+                        .append_macro_argument_word(tokens, word, false)
                         .map_err(|_| CommandError::input_invariant())?;
                     Ok(false)
                 })?

@@ -570,11 +570,11 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   and ranges live in `input/arguments.rs`, with no generic destination dispatch.
 - `src/macro_call.rs`, `src/input/levels.rs`, and `src/input/arguments.rs`:
   activation retains the final definition body and transfers the invocation's
-  already-written argument region, including its at most nine final ranges.
+  final argument region, including its at most nine per-parameter values.
   The parameter loop creates each actual argument cursor and lends it to either
   scanner, which returns only completion or failure. No cursor result is copied
-  out and immediately consumed. Argument sinks derive their accepted count from
-  the final vector's length change, with no parallel per-word counter.
+  out and immediately consumed. Argument sinks count the words accepted by the canonical admission loop
+  and extend their retained source or pooled spelling directly.
   A `MacroBody` row borrows the sealed replacement; body retirement subtracts
   the region's native parameter count and returns the whole owner. There is no
   copied parameter vector or frame parameter-base/count cache.
@@ -705,3 +705,12 @@ Rules, all of them load-bearing (umber2-johp.141):
   producer's is a second, divergent table; it will silently mask engine
   divergences that the producer's name would have exposed, which is exactly
   what a spelling-derived command name did until umber2-johp.141 deleted it.
+
+Macro argument regions own per-parameter values directly: pooled traced ranges,
+retained immutable definition spans, or indexed leases on original owned
+argument ranges. `src/input/arguments/words.rs` owns their spelling views and
+`backing.rs` owns source retention and actual fragmented-argument materialization.
+The same matcher writes all three forms. Parameter rows use local offsets;
+source aliases flatten once at capture. Native region release walks its reserved
+free-list suffix iteratively. Active captures and macro regions remain excluded
+from full checkpoints and formats.

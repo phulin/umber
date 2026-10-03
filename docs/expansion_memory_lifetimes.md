@@ -309,3 +309,36 @@ reading a marker solely for a disabled trace or deriving an unused observation
 length. The trace renders the stored definition marker at its actual print
 boundary; the observer obtains the final range length before emitting its
 ordered delimiter and argument records.
+
+## Retained macro argument spans
+
+The final invocation region owns up to nine argument values. Each value owns
+its actual spelling in one of three forms: a range in that region's pooled
+traced-word vector, an immutable definition body and range, or a counted lease
+on a range of an older region's owned argument. A parameter input row names its
+region and argument slot, and advances a local offset into that value. There is
+no second matcher or command product.
+
+The canonical argument writer starts with a retained span when a resident
+source supplies its words. Contiguous writes extend that span. A write from a
+different source materializes only that argument into its invocation's pooled
+vector, at the consuming write; no successful-command copying or settlement
+phase exists. Scalar deliveries use the same writer and retain a source only
+when its spelling and provenance equal the delivered word. Delimiter holdback,
+outer-group trimming, argument tracing and runaway diagnostics read that same
+final value.
+
+Source input rows may retire before a descendant macro consumes an argument.
+Definition spans therefore retain the actual immutable definition body. Region
+spans retain the original owned region with an indexed root count. Aliases
+resolve to that original owner at capture, so parameter substitution does not
+walk an alias chain. Body retirement, abandoned capture and materialization
+release their own leases. Zero-root regions return through the allocator's
+already-reserved free list; an iterative release walk avoids recursive drops
+across deeply nested invocations.
+
+TeX parameter and input-capacity bookkeeping still counts the logical arguments
+and raw captured words even when no spelling is copied. Checkpoint admission
+continues to exclude active macro frames and captures; the retained-span owner
+does not enter full checkpoints or formats. The main `CurrentCommand` handoff
+is a separate unfinished redesign.

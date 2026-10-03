@@ -110,14 +110,6 @@ pub(crate) enum InputLevel<G> {
     Resident(ResidentTokenRow<G>),
 }
 
-/// One macro argument's span within its invocation region: TeX82's `param_stack`
-/// entry (§388), which points at the argument's token list.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct ArgumentSpan {
-    pub(crate) start: u32,
-    pub(crate) len: u32,
-}
-
 /// One macro activation: TeX82 §390's `macro` token list.
 ///
 /// Matched argument spans borrow its final pooled region. The immutable
@@ -239,24 +231,24 @@ pub(crate) enum SourceRetirement {
 impl<G> MacroBodyCursor<G> {
     /// Argument ranges belong to this invocation's final region.
     #[inline(always)]
-    pub(crate) fn argument_spans<'a>(
+    pub(crate) fn argument_values<'a>(
         &self,
-        arguments: &'a super::ArgumentArena,
-    ) -> &'a [ArgumentSpan] {
+        arguments: &'a super::ArgumentArena<G>,
+    ) -> &'a [super::ArgumentValue<G>] {
         self.argument_region
-            .map_or(&[], |region| arguments.spans(region))
+            .map_or(&[], |region| arguments.values(region))
     }
 
     /// TeX82 §359's argument `#slot`, if this activation matched that many.
     #[inline(always)]
-    pub(crate) fn argument_span(
+    pub(crate) fn argument_len(
         &self,
-        arguments: &super::ArgumentArena,
+        arguments: &super::ArgumentArena<G>,
         slot: u8,
-    ) -> Option<ArgumentSpan> {
-        self.argument_spans(arguments)
+    ) -> Option<u32> {
+        self.argument_values(arguments)
             .get(usize::from(slot).checked_sub(1)?)
-            .copied()
+            .map(super::ArgumentValue::len)
     }
 }
 

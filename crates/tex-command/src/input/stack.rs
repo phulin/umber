@@ -329,9 +329,9 @@ impl<G> CommandState<G> {
                 // The activation's live argument spans; its parameter text and
                 // replacement stand for TeX's shared definition list.
                 ResidentTokenStorage::MacroBody(body) => body
-                    .argument_spans(&self.input.levels.arguments)
+                    .argument_values(&self.input.levels.arguments)
                     .iter()
-                    .map(|span| span.len as usize)
+                    .map(|span| span.len() as usize)
                     .sum::<usize>() as u32,
                 ResidentTokenStorage::StoredList(_) => 0,
                 ResidentTokenStorage::List(super::PackedTokenOwnership::Stored)

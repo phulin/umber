@@ -551,7 +551,7 @@ pub(crate) struct InputStack<G> {
     pub(crate) rows: Vec<InputLevel<G>>,
     /// Ordinary insertion and backup words, in push order.
     pub(crate) words: Vec<tex_state::token::TracedTokenWord>,
-    pub(crate) arguments: super::ArgumentArena,
+    pub(crate) arguments: super::ArgumentArena<G>,
     /// Native live parameter count for TeX capacity/high-water bookkeeping.
     pub(crate) parameter_count: usize,
     occupied_source_buffer_slots: usize,
@@ -716,11 +716,9 @@ impl<G> InputStack<G> {
                     tex_state::token::OriginId::UNKNOWN,
                 ))
             }
-            super::ResidentTokenStorage::MacroArgument { region, .. } => self
-                .arguments
-                .region(*region)
-                .get(row.header.frame.start() as usize + index as usize)
-                .copied(),
+            super::ResidentTokenStorage::MacroArgument { region, slot } => {
+                self.arguments.words(*region, *slot - 1).get(index as usize)
+            }
             super::ResidentTokenStorage::List(_) => self
                 .words
                 .get(row.header.frame.start() as usize + index as usize)
@@ -753,6 +751,20 @@ impl<G> InputStack<G> {
         self.words[row.header.frame.start() as usize..row.header.frame.absolute_limit()].reverse();
     }
 
+    pub(crate) fn append_macro_argument_word(
+        &mut self,
+        writer: &mut super::ArgumentCursor,
+        word: tex_state::token::TracedTokenWord,
+        delimiter: bool,
+    ) -> Result<u32, crate::execution_scratch::ScratchError> {
+        let row = self.rows.last().and_then(|level| match level {
+            InputLevel::Resident(row) => Some(row),
+            _ => None,
+        });
+        self.arguments
+            .append_from_input(writer, word, row, delimiter)
+    }
+
     /// The innermost macro activation's argument words and replacement.
     #[cfg(test)]
     pub(crate) fn innermost_macro_activation(
@@ -771,13 +783,14 @@ impl<G> InputStack<G> {
             _ => None,
         })?;
         let arguments = body
-            .argument_spans(&self.arguments)
+            .argument_values(&self.arguments)
             .iter()
-            .map(|span| {
+            .enumerate()
+            .map(|(slot, _)| {
                 self.arguments
-                    .region(body.argument_region.expect("matched region"))
-                    [span.start as usize..(span.start + span.len) as usize]
-                    .to_vec()
+                    .words(body.argument_region.expect("matched region"), slot as u8)
+                    .iter()
+                    .collect()
             })
             .collect();
         Some((arguments, self.row_words(row).collect()))
@@ -1077,23 +1090,37 @@ impl<G> crate::CommandState<G> {
             _ => None,
         };
         let source_region = match row.storage {
-            super::ResidentTokenStorage::MacroArgument { region, .. } => Some(region),
+            super::ResidentTokenStorage::MacroArgument { region, slot } => Some((region, slot - 1)),
             _ => None,
         };
         let bound = if let Some(span) = direct_span {
             available.min(span.len())
         } else {
-            let words = &arguments.region(source_region.expect("argument source region"))
-                [frame.absolute_position()..frame.absolute_limit()];
+            let words = &arguments
+                .words(
+                    source_region.expect("argument source region").0,
+                    source_region.expect("argument source region").1,
+                )
+                .slice(frame.position() as usize..frame.limit() as usize)
+                .expect("parameter range");
             available.min(words.len())
         };
-        let count = if let Some(span) = direct_span {
-            writer.consume_token_span(arguments, &span[..bound], &mut admission)
+        let count = if direct_span.is_some() {
+            writer.consume_token_span(
+                arguments,
+                match &row.storage {
+                    super::ResidentTokenStorage::MacroBody(body) => &body.body,
+                    _ => unreachable!(),
+                },
+                frame.position() as usize..frame.position() as usize + bound,
+                &mut admission,
+            )
         } else {
             let start = frame.absolute_position();
             writer.consume_region_span(
                 arguments,
-                source_region.expect("argument source region"),
+                source_region.expect("argument source region").0,
+                source_region.expect("argument source region").1,
                 start..start + bound,
                 &mut admission,
             )
@@ -1149,7 +1176,7 @@ impl<G> crate::CommandState<G> {
         &mut self,
         slot: u8,
         region: Option<super::ArgumentRegionId>,
-        span: Option<super::ArgumentSpan>,
+        span: Option<u32>,
         active_source: Option<tex_state::packed_input::SourceContext>,
         observer: &mut Option<&mut dyn CommandObserver>,
     ) -> Result<(), ()> {
@@ -1163,8 +1190,8 @@ impl<G> crate::CommandState<G> {
             .max(self.roots.input.levels.len());
         let mut frame = super::packed_token_frame(
             identity,
-            span.start,
-            span.len as usize,
+            0,
+            span as usize,
             &super::TokenBehavior::Parameter,
             super::RetirementBehavior::Pop,
             &super::ReplayTrace::MacroParameter { slot },
@@ -1455,7 +1482,7 @@ impl<G> InputStack<G> {
     fn release_row_words(
         row: &super::ResidentTokenRow<G>,
         words: &mut Vec<tex_state::token::TracedTokenWord>,
-        arguments: &mut super::ArgumentArena,
+        arguments: &mut super::ArgumentArena<G>,
         parameter_count: &mut usize,
     ) {
         match &row.storage {
