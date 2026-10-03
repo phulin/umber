@@ -143,6 +143,22 @@ just-applied unit brace adjustment. Input insertion does not modify alignment,
 and delimiter adjustments never emit this brace-correction record. Ordinary
 backups neither copy observed spelling nor load a discarded previous state.
 
+### Filename consumption
+
+Filename scanning uses continuing native-word consumers for its preliminary
+probe and character grammar. Web2C tex.ch [29.526] requires a preliminary
+fetch and backup before selecting the braced or unbraced path; that actual
+handoff stays in place. Both consumers classify native character meanings,
+retaining only the final components, quotation/group grammar and the first
+origin used by the result. A terminating noncharacter is backed up immediately
+with its original spelling and any demanded exceptional delivery metadata.
+No per-character command or decoded-meaning projection is constructed.
+
+The filename guard and actual scalar-error unwind surround this one scanner.
+String-pool publication remains after character collection and before the
+completed filename returns. Source opening and resource replay keep their
+existing outer ownership boundary.
+
 ### Raw binding operands
 
 Binding scans return the actual native `MeaningWord` that the eqtb installs.

@@ -808,3 +808,5 @@ scanner. Restricted register bounds and recovery remain unchanged.
 Expression operator and factor lookahead and raw/expanded math-shift probes consume native meanings in the shared reader. They back rejected spelling immediately with genuine exceptional delivery metadata; command slots and decoded-meaning helpers are absent from these probes. `src/scanners/expression/arithmetic.rs` owns factor/term/component arithmetic; the parent module owns scanner control and expression frames.
 
 Canonical backup mutation accepts actual storage, treatment and alignment adjustment without an observation closure. Cold observation follows insertion and reconstructs previous brace alignment from the applied unit adjustment; ordinary backup carries no discarded previous-state value.
+
+Filename grammar consumes native character meanings without per-character commands. Its one actual scanner retains Web2C tex.ch [29.526] preliminary backup, filename guard, quotation/group grammar, primary origin, string-pool publication and scalar-error unwind; redundant inner/leading/character result forwarding is deleted.

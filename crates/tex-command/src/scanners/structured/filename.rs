@@ -5,98 +5,49 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// cursor or a backed-up raw command.
     pub fn scan_file_name(&mut self) -> Result<ScannedFileName, CommandError> {
         self.command.begin_file_name()?;
-        let result = self.scan_file_name_inner();
+        let result = self.scan_file_name_words();
+        let result = self.finish_scalar_call(result);
         self.command.end_file_name();
         result
     }
 
-    fn scan_file_name_inner(&mut self) -> Result<ScannedFileName, CommandError> {
-        let result = self.scan_file_name_leading();
-        self.finish_scalar_call(result)
-    }
-
-    fn scan_file_name_leading(&mut self) -> Result<ScannedFileName, CommandError> {
-        let mut destination = None;
-        let first = loop {
-            let command = match self.request_expanded_token(&mut destination) {
-                Ok(DeliveryStatus::Command) => destination
-                    .take()
-                    .ok_or_else(|| CommandError::input_invariant())?,
-                Ok(DeliveryStatus::End) | Ok(_) => {
-                    return Err(CommandError::input_invariant());
-                }
-                Err(error) => return Err(error),
+    fn scan_file_name_words(&mut self) -> Result<ScannedFileName, CommandError> {
+        let mut primary = None;
+        let mut grouped = false;
+        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
+            let character = match meaning {
+                tex_state::MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
+                _ => None,
             };
-            if !matches!(
-                static_meaning(command.meaning()),
-                Some(Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                })
-            ) {
-                break command;
+            if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
+                return Ok(std::ops::ControlFlow::Continue(()));
             }
-        };
-        let provenance = StructuredProvenance {
-            primary: first.origin(),
-        };
-        let grouped = matches!(
-            static_meaning(first.meaning()),
-            Some(Meaning::CharToken {
-                cat: Catcode::BeginGroup,
-                ..
-            })
-        );
-        // `scan_file_name` replays its first non-space token before consuming
-        // the filename. TeX82 exposes this `back_input` hand-off, and it
-        // keeps the group-opening case on the same ordinary delivery path.
-        self.back_input(first)?;
-        self.scan_file_name_characters(
-            FileNameComponents::default(),
-            0,
-            false,
-            grouped,
-            provenance.primary,
-        )
-    }
-
-    fn scan_file_name_characters(
-        &mut self,
-        mut components: FileNameComponents,
-        mut character_count: usize,
-        mut quoted: bool,
-        grouped: bool,
-        provenance: OriginId,
-    ) -> Result<ScannedFileName, CommandError> {
-        let mut destination = None;
-        loop {
-            let command = match self.request_expanded_token(&mut destination) {
-                Ok(DeliveryStatus::Command) => destination
-                    .take()
-                    .ok_or_else(|| CommandError::input_invariant())?,
-                Ok(DeliveryStatus::End) => break,
-                Ok(_) => return Err(CommandError::input_invariant()),
-                Err(error) => return Err(error),
+            primary = Some(spelling.origin());
+            grouped = character.is_some_and(|(_, cat)| cat == Catcode::BeginGroup);
+            // Web2C tex.ch [29.526] replays the first token before selecting
+            // the braced/unbraced filename path. This is a real input handoff.
+            processor.back_consumed_word(spelling, exceptional)?;
+            Ok(std::ops::ControlFlow::Break(()))
+        })?;
+        let primary = primary.ok_or_else(CommandError::input_invariant)?;
+        let mut components = FileNameComponents::default();
+        let mut character_count = 0;
+        let mut quoted = false;
+        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
+            let character = match meaning {
+                tex_state::MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
+                _ => None,
             };
-            match static_meaning(command.meaning()) {
-                Some(Meaning::CharToken {
-                    cat: Catcode::BeginGroup,
-                    ..
-                }) if grouped => {}
-                Some(Meaning::CharToken { ch: '"', .. }) => quoted = !quoted,
-                Some(Meaning::CharToken {
-                    cat: Catcode::EndGroup,
-                    ..
-                }) if grouped && !quoted => {
-                    break;
+            match character {
+                Some((_, Catcode::BeginGroup)) if grouped => {}
+                Some(('"', _)) => quoted = !quoted,
+                Some((_, Catcode::EndGroup)) if grouped && !quoted => {
+                    return Ok(std::ops::ControlFlow::Break(()));
                 }
-                Some(Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                }) if !grouped && !quoted => {
-                    break;
+                Some((_, Catcode::Space)) if !grouped && !quoted => {
+                    return Ok(std::ops::ControlFlow::Break(()));
                 }
-                Some(Meaning::CharToken { ch, .. }) => {
+                Some((ch, _)) => {
                     character_count += 1;
                     if character_count > FILE_NAME_POOL_CAPACITY {
                         return Err(CommandError::fatal(crate::FatalError::overflow(
@@ -107,14 +58,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     components.push_character(ch);
                 }
                 _ if !grouped => {
-                    self.back_input(command)?;
-                    break;
+                    processor.back_consumed_word(spelling, exceptional)?;
+                    return Ok(std::ops::ControlFlow::Break(()));
                 }
                 _ => return Err(CommandError::input_invariant()),
             }
-        }
-        // Web2C tex.ch [29.517] applies `search_string`/`slow_make_string`
-        // independently to TeX82 §§516--520's nonempty components.
+            Ok(std::ops::ControlFlow::Continue(()))
+        })?;
+        // Web2C tex.ch [29.517] publishes each nonempty component separately.
         for component in [&components.area, &components.name, &components.extension] {
             if !component.is_empty() {
                 self.state.slow_make_string_pool_string(component);
@@ -122,9 +73,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
         Ok(ScannedFileName {
             components,
-            provenance: StructuredProvenance {
-                primary: provenance,
-            },
+            provenance: StructuredProvenance { primary },
         })
     }
 
