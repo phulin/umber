@@ -179,6 +179,7 @@ impl<G> ArgumentArena<G> {
             self.capture = None;
         }
     }
+    #[inline(always)]
     pub(crate) fn release(&mut self, id: ArgumentRegionId) {
         let region = &mut self.regions[id.index()];
         debug_assert!(region.roots != 0);
@@ -186,6 +187,18 @@ impl<G> ArgumentArena<G> {
         if region.roots != 0 {
             return;
         }
+        if region.sources.is_empty() {
+            region.words.clear();
+            region.count = 0;
+            region.published_raw_words = 0;
+            region.source_slots = 0;
+            self.free.push(id);
+            return;
+        }
+        self.release_retained_sources(id);
+    }
+    #[inline(never)]
+    fn release_retained_sources(&mut self, id: ArgumentRegionId) {
         let mut pending = self.free.len();
         self.free.push(id);
         while pending < self.free.len() {

@@ -21,13 +21,6 @@ pub(crate) enum ArgumentWords<'a> {
 }
 impl<'a> ArgumentWords<'a> {
     #[inline(always)]
-    pub(crate) fn len(self) -> usize {
-        match self {
-            Self::Traced(words) => words.len(),
-            Self::Definition(words) => words.len(),
-        }
-    }
-    #[inline(always)]
     pub(crate) fn get(self, index: usize) -> Option<TracedTokenWord> {
         match self {
             Self::Traced(words) => words.get(index).copied(),

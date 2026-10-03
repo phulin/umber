@@ -332,20 +332,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             stop_word,
             close_floor,
         );
-        let admission = if stop_word.is_none() {
+        let mut admission = if stop_word.is_none() {
             admission.completing_undelimited()
         } else {
             admission
         };
-        let admission = if self.command.delivery_mode.alignment_active()
-            || self.outer_recovered_while_matching
-        {
-            admission.characters_only()
-        } else {
-            admission
-        };
+        if self.command.delivery_mode.alignment_active() || self.outer_recovered_while_matching {
+            admission.restrict_to_characters();
+        }
         self.command
-            .consume_plain_resident_run(tokens, self.fuel, admission)
+            .consume_plain_resident_run(tokens, self.fuel, &mut admission)
     }
 
     fn check_argument_paragraph(

@@ -1047,7 +1047,7 @@ impl<G> crate::CommandState<G> {
         &mut self,
         writer: &mut impl crate::execution_scratch::PlainRunSink<G>,
         fuel: &mut crate::fuel::CommandFuel,
-        mut admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<ResidentRun, crate::CommandError> {
         let InputStack {
             rows, arguments, ..
@@ -1055,84 +1055,65 @@ impl<G> crate::CommandState<G> {
         let Some(InputLevel::Resident(row)) = rows.last_mut() else {
             return Ok(ResidentRun::default());
         };
-        let body = match &row.storage {
-            super::ResidentTokenStorage::MacroBody(_) => true,
-            super::ResidentTokenStorage::MacroArgument { .. } => false,
-            super::ResidentTokenStorage::List(_) | super::ResidentTokenStorage::StoredList(_) => {
-                return Ok(ResidentRun::default());
-            }
-        };
         let frame = row.header.frame;
         if frame.position() >= frame.limit() {
             return Ok(ResidentRun {
                 consumed: 0,
-                at_transition: true,
+                at_transition: matches!(
+                    row.storage,
+                    super::ResidentTokenStorage::MacroBody(_)
+                        | super::ResidentTokenStorage::MacroArgument { .. }
+                ),
             });
         }
-        // A `\noexpand`-marked frame settles its control sequences through
-        // ordinary delivery.
-        admission = if frame.flags().contains(
+        // Suppression restricts the same admission cursor in place.
+        if frame.flags().contains(
             tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
         ) {
-            admission.characters_only()
-        } else {
-            admission
-        };
+            admission.restrict_to_characters();
+        }
         let available = fuel.remaining().min(u64::from(u32::MAX)) as usize;
-        if available == 0 {
-            fuel.charge()?;
-            unreachable!("zero remaining fuel must fail")
-        }
-        let direct_span = match &row.storage {
+        let (count, parameter_next) = match &row.storage {
             super::ResidentTokenStorage::MacroBody(body) => {
-                Some(body.body.replacement_from(frame.position()))
+                if available == 0 {
+                    fuel.charge()?;
+                    unreachable!("zero remaining fuel must fail");
+                }
+                let span = body.body.replacement_from(frame.position());
+                let bound = available.min(span.len());
+                let count = writer
+                    .consume_token_span(
+                        arguments,
+                        &body.body,
+                        frame.position() as usize..frame.position() as usize + bound,
+                        admission,
+                    )
+                    .map_err(|_| crate::CommandError::input_invariant())?;
+                let parameter_next = count < bound && span[count].out_parameter_slot().is_some();
+                (count, parameter_next)
             }
-            _ => None,
+            super::ResidentTokenStorage::MacroArgument { region, slot } => {
+                if available == 0 {
+                    fuel.charge()?;
+                    unreachable!("zero remaining fuel must fail");
+                }
+                let start = frame.position() as usize;
+                let bound = available.min((frame.limit() - frame.position()) as usize);
+                let count = writer
+                    .consume_region_span(
+                        arguments,
+                        *region,
+                        *slot - 1,
+                        start..start + bound,
+                        admission,
+                    )
+                    .map_err(|_| crate::CommandError::input_invariant())?;
+                (count, false)
+            }
+            super::ResidentTokenStorage::List(_) | super::ResidentTokenStorage::StoredList(_) => {
+                return Ok(ResidentRun::default());
+            }
         };
-        let source_region = match row.storage {
-            super::ResidentTokenStorage::MacroArgument { region, slot } => Some((region, slot - 1)),
-            _ => None,
-        };
-        let bound = if let Some(span) = direct_span {
-            available.min(span.len())
-        } else {
-            let words = &arguments
-                .words(
-                    source_region.expect("argument source region").0,
-                    source_region.expect("argument source region").1,
-                )
-                .slice(frame.position() as usize..frame.limit() as usize)
-                .expect("parameter range");
-            available.min(words.len())
-        };
-        let count = if direct_span.is_some() {
-            writer.consume_token_span(
-                arguments,
-                match &row.storage {
-                    super::ResidentTokenStorage::MacroBody(body) => &body.body,
-                    _ => unreachable!(),
-                },
-                frame.position() as usize..frame.position() as usize + bound,
-                &mut admission,
-            )
-        } else {
-            let start = frame.absolute_position();
-            writer.consume_region_span(
-                arguments,
-                source_region.expect("argument source region").0,
-                source_region.expect("argument source region").1,
-                start..start + bound,
-                &mut admission,
-            )
-        }
-        .map_err(|_| crate::CommandError::input_invariant())?;
-        // Only an unconsumed replacement parameter needs the canonical scalar
-        // reader. A refused argument word is already final traced spelling.
-        let parameter_next = body
-            && count < bound
-            && direct_span.expect("replacement span")[count]
-                .out_parameter_slot()
-                .is_some();
         if count == 0 {
             return Ok(ResidentRun {
                 consumed: 0,
@@ -1156,7 +1137,7 @@ impl<G> crate::CommandState<G> {
         #[cfg(feature = "profiling")]
         fuel.record_raw_run(
             true,
-            if body {
+            if matches!(row.storage, super::ResidentTokenStorage::MacroBody(_)) {
                 crate::fuel::RawDeliveryKind::StoredToken
             } else {
                 crate::fuel::RawDeliveryKind::MacroArgument

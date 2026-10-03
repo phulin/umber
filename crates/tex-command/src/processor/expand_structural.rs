@@ -154,7 +154,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let run = self.command.consume_plain_resident_run(
             &mut CsnameNameSink { name },
             self.fuel,
-            ArgumentRunAdmission::characters(),
+            &mut ArgumentRunAdmission::characters(),
         )?;
         // A run that stopped before a refused word leaves it to the scalar
         // scan; one that drained its frame may resume on the next.

@@ -343,6 +343,14 @@ values into immediately consumed temporaries nor visits normal ranges to drop
 owners they never had. Returned word and source-lane capacity stays with the
 engine.
 
+The resident-run reader borrows one stack-local admission cursor. Frame suppression
+restricts that actual cursor in place; it does not copy or reconstruct its
+configuration. A single match on the actual resident storage lends its definition
+body or parameter range directly to the sink. There are no parallel source-kind,
+optional-body and optional-region descriptors. Empty-source argument retirement
+returns the region directly; only actual retained sources enter the iterative
+lease-release loop.
+
 Native parameter and virtual raw-word bookkeeping still counts all logical
 arguments and captured words. Full checkpoints and formats exclude active
 macro frames and captures. Their cold restore clears the actual transient

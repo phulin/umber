@@ -161,17 +161,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(false);
         };
         // The body's own closing brace (depth one) ends the run.
-        let admission = ArgumentRunAdmission::with_commands(self.state, None, None, 1)
+        let mut admission = ArgumentRunAdmission::with_commands(self.state, None, None, 1)
             .stopping_at_parameters(macro_definition);
-        let admission = if self.command.delivery_mode.alignment_active() {
-            admission.characters_only()
-        } else {
-            admission
-        };
+        if self.command.delivery_mode.alignment_active() {
+            admission.restrict_to_characters();
+        }
         let mut sink = DefinitionReplacementSink { writer, cursor };
         let run = self
             .command
-            .consume_plain_resident_run(&mut sink, self.fuel, admission)?;
+            .consume_plain_resident_run(&mut sink, self.fuel, &mut admission)?;
         Ok(run.at_transition)
     }
 

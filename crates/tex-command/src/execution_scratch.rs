@@ -229,7 +229,6 @@ impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
 pub(crate) struct ArgumentRunAdmission<'a, 'admission, G> {
     state: Option<&'a tex_state::CommandContext<'admission, G>>,
     paragraph_token: Option<TokenWord>,
@@ -304,11 +303,8 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
 
     /// The same admission restricted to literal characters, for input frames
     /// whose control sequences need ordinary delivery settlement.
-    pub(crate) const fn characters_only(self) -> Self {
-        Self {
-            state: None,
-            ..self
-        }
+    pub(crate) fn restrict_to_characters(&mut self) {
+        self.state = None;
     }
 
     /// Net `align_state` change of the braces admitted so far.
