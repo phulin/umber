@@ -614,3 +614,9 @@ remain at their original semantic positions.
 Ordinary math letters, other characters and character definitions append their actual noad through the retained processor, using TeX82 sections 1154--1155's existing mathcode projection, family selection and native list insertion. Active mathcodes retain the same active-character expansion and backup semantics on that processor. No delivered command or rebuilt command machine mediates an ordinary math character. Tracking, alignment, tracing and real page-owner demands retain their existing consumer boundaries.
 
 Horizontal glyphs return their actual completion from the glyph arm because they change the next fetch role. Math glyphs keep the existing main-control role and continue its real budgeted back edge. Other native operations perform no glyph-completion classification. No cached mode, mathcode or eligibility field is added.
+
+## Active mathcode expansion
+
+TeX82 section 1152's synthetic active spelling is already the current token: it must not be charged or delivered again. Ordinary treatment resolves that spelling once, expands its native macro or primitive operands within the shared expanded invocation, and backs the actual terminal spelling through the existing word consumer. A nonexpandable active meaning backs its spelling directly. This avoids both the synthetic `CurrentCommand` and a delivered result created solely for backup.
+
+Observed treatment and genuine undefined, end-template or alignment demands keep their existing delivered facts and ordering. Empty replacement, replay completion, prefix failure and paragraph/outer recovery use the same canonical macro matcher and input owners. Expansion capacity and checkpoint quiescence stay at their actual invocation boundaries; no synthetic input row or token carrier replaces either command.

@@ -191,9 +191,20 @@ fn active_character_empty_macro_retires_replay_before_settling_next_command() {
             &mut diagnostic_effects,
         );
 
+        let before = crate::command::command_ownership_counters();
         processor
             .treat_as_active_character('~', OriginId::UNKNOWN)
             .expect("empty active macro treatment");
+        assert_eq!(
+            crate::command::command_ownership_counters().resolved_writes,
+            before.resolved_writes,
+            "active expansion backs the actual word without commands"
+        );
+        assert_eq!(
+            processor.fuel.burned(),
+            1,
+            "synthetic active spelling is not charged"
+        );
         let backed_up = crate::test_harness::expect_raw_command(&mut processor);
         assert_eq!(
             backed_up.spelling().semantic_token(),
@@ -477,6 +488,90 @@ fn expandafter_retains_native_operands_and_preserves_brace_backup() {
             );
             assert_eq!(processor.command.alignment.align_state, align);
             assert_eq!(processor.fuel.burned(), 4);
+        });
+    }
+}
+
+#[test]
+fn native_active_meanings_expand_and_back_without_command_construction() {
+    // TeX82 §1152 synthesizes cur_tok before x_token; only newly fetched
+    // replacement/operand words consume fuel. Section 325 backs spelling.
+    for case in [0, 1, 2] {
+        crate::test_harness::with_universe(|universe| {
+            let active = universe
+                .intern_active_character('~')
+                .expect("active symbol");
+            let body = universe
+                .allocate_definition(&[], &[TokenWord::pack(letter('b'))])
+                .expect("macro body");
+            let empty = universe.allocate_definition(&[], &[]).expect("empty body");
+            let empty_name = universe.intern("empty").expect("empty symbol");
+            universe
+                .assign_meaning(
+                    empty_name,
+                    MeaningWord::macro_definition(MeaningFlags::EMPTY, empty.reference()),
+                    AssignmentScope::Global,
+                )
+                .expect("empty meaning");
+            let meaning = match case {
+                0 => MeaningWord::Static(
+                    Meaning::CharToken {
+                        ch: 'b',
+                        cat: Catcode::Letter,
+                    }
+                    .encode(),
+                ),
+                1 => MeaningWord::macro_definition(MeaningFlags::EMPTY, body.reference()),
+                _ => MeaningWord::Static(
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter).encode(),
+                ),
+            };
+            universe
+                .assign_meaning(active, meaning, AssignmentScope::Global)
+                .expect("active meaning");
+            let mut command = CommandState::default();
+            if case == 2 {
+                crate::test_harness::push(
+                    &mut command,
+                    [letter('a'), Token::Cs(empty_name.symbol())],
+                );
+            }
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(8).expect("fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let before = crate::command::command_ownership_counters();
+            processor
+                .treat_as_active_character('~', OriginId::UNKNOWN)
+                .expect("native active treatment");
+            assert_eq!(
+                crate::command::command_ownership_counters().resolved_writes,
+                before.resolved_writes,
+                "case={case}"
+            );
+            assert_eq!(processor.fuel.burned(), [0, 1, 3][case]);
+            assert_eq!(processor.command.transient.active_expansion_depth, 0);
+            let actual = crate::test_harness::expect_raw_command(&mut processor)
+                .spelling()
+                .semantic_token();
+            assert_eq!(
+                actual,
+                match case {
+                    0 => Token::Char {
+                        ch: '~',
+                        cat: Catcode::Active
+                    },
+                    1 => letter('b'),
+                    _ => letter('a'),
+                }
+            );
         });
     }
 }

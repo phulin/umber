@@ -1330,43 +1330,25 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    /// TeX82 §1152's `@<Treat |cur_chr| as an active character@>`:
-    ///
-    /// ```text
-    /// begin cur_cs:=cur_chr+active_base;
-    /// cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
-    /// x_token; back_input;
-    /// end
-    /// ```
-    ///
-    /// This is the whole of TeX's `\mathcode` escape hatch. §1155's
-    /// `set_math_char` and §1151's `scan_math` both branch here when a
-    /// character's `math_code` is `@'100000`, which is what makes plain
-    /// TeX's ``\mathcode`\'="8000`` route `'` through the active `'` macro
-    /// that builds `\prime` lists.
-    ///
-    /// The character is not backed up and reread. §1152 loads the
-    /// `active_base + c` cell's meaning straight into `cur_cmd`/`cur_chr`,
-    /// so there is no raw delivery for it at all: `x_token` expands that
-    /// meaning in place -- observing a macro push, not a backup -- and only
-    /// the unexpandable token expansion settles on is backed up, from where
-    /// the caller rereads it. An active character bound to an unexpandable
-    /// meaning still reaches §381's tail, so it is still observed as one
-    /// expanded delivery and backed up unchanged.
-    pub fn treat_as_active_character(
+    /// Demanded synthetic-command evidence for observation and exceptional x_token.
+    #[cold]
+    #[inline(never)]
+    fn treat_observed_or_exceptional_active_character(
         &mut self,
-        ch: char,
-        origin: OriginId,
+        spelling: TracedTokenWord,
+        meaning: tex_state::meaning::MeaningWord<G>,
+        control_sequence: Option<tex_state::interner::Symbol>,
     ) -> Result<(), CommandError> {
-        let spelling = TracedTokenWord::pack(
-            Token::Char {
-                ch,
-                cat: Catcode::Active,
-            },
-            origin,
-        );
         self.advance_delivery_sequence();
-        let command = CurrentCommand::<G>::resolve(spelling, false, None, self.state);
+        let command = CurrentCommand::from_delivered_parts(
+            spelling.token_word(),
+            spelling.origin(),
+            false,
+            None,
+            false,
+            meaning,
+            control_sequence,
+        );
         let mut destination = None;
         let status = self.active_x_token_into(command, &mut destination)?;
         let settled = match status {
@@ -1376,8 +1358,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .expect("command status initializes destination"),
             _ => unreachable!("active-character delivery normalizes to commands"),
         };
-        // §325 needs only `cur_tok`; the settled token is `x_token`'s result
-        // rather than a delivery this call is undoing, exactly as in §326.
         self.back_input(settled)
     }
 

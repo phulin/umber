@@ -392,30 +392,6 @@ impl<G> CurrentCommand<G> {
 }
 
 impl<G> CurrentCommand<G> {
-    /// Resolves one delivered spelling into TeX's effective current command.
-    ///
-    /// TeX82's `get_next` preserves the input token as `cur_tok` while it
-    /// obtains `cur_cmd`/`cur_chr` from either that character spelling or the
-    /// current meaning of its control sequence. Active characters use their
-    /// separate control-sequence namespace; escaped control sequences retain
-    /// their original spelling even after their meaning changes.
-    pub(crate) fn resolve(
-        spelling: TracedTokenWord,
-        direct_source: bool,
-        direct_source_line: Option<u32>,
-        state: &CommandContext<'_, G>,
-    ) -> Self {
-        Self::from_resolved_delivery(
-            spelling.token_word(),
-            spelling.origin(),
-            direct_source,
-            direct_source_line,
-            false,
-            state,
-        )
-        .0
-    }
-
     /// Returns the command-owned identity selected by raw input delivery.
     pub(crate) fn identity(&self) -> CommandIdentity {
         if self

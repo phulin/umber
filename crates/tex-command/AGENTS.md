@@ -828,3 +828,5 @@ Restricted integer scans return the existing scalar value and genuine primary or
 The private HotToken wrapper is deleted. Remaining CurrentCommand consumers hold only their actual spelling, demanded delivery facts and native meaning directly; ordinary native input constructs no delivered record.
 
 Execution-owned character boundaries expand native macros and primitives in the existing reader back edge. Lexical callers select raw boundaries as a static property of their actual consumer. The shared expanded invocation records and restores checkpoint quiescence once at its real return; per-word expansion adds no command or bookkeeping record. Exceptional and observed boundaries retain their actual delivered command.
+
+Active mathcode treatment consumes its synthetic native spelling and backs the actual expanded word in src/processor/expand/scalar.rs, without charging the synthetic token or constructing ordinary commands. Genuine observed, undefined, end-template and alignment treatment retains its required delivery facts. The unused CurrentCommand::resolve convenience constructor is deleted; fixtures use the actual delivery constructor.

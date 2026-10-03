@@ -161,3 +161,128 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 }
+
+impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
+    /// TeX82 §1152's `@<Treat |cur_chr| as an active character@>`:
+    ///
+    /// ```text
+    /// begin cur_cs:=cur_chr+active_base;
+    /// cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
+    /// x_token; back_input;
+    /// end
+    /// ```
+    ///
+    /// This is the whole of TeX's `\mathcode` escape hatch. §1155's
+    /// `set_math_char` and §1151's `scan_math` both branch here when a
+    /// character's `math_code` is `@'100000`, which is what makes plain
+    /// TeX's ``\mathcode`\'="8000`` route `'` through the active `'` macro
+    /// that builds `\prime` lists.
+    ///
+    /// The character is not backed up and reread. §1152 loads the
+    /// `active_base + c` cell's meaning straight into `cur_cmd`/`cur_chr`,
+    /// so there is no raw delivery for it at all: `x_token` expands that
+    /// meaning in place -- observing a macro push, not a backup -- and only
+    /// the unexpandable token expansion settles on is backed up, from where
+    /// the caller rereads it. An active character bound to an unexpandable
+    /// meaning still reaches §381's tail, so it is still observed as one
+    /// expanded delivery and backed up unchanged.
+    pub fn treat_as_active_character(
+        &mut self,
+        ch: char,
+        origin: tex_state::token::OriginId,
+    ) -> Result<(), CommandError> {
+        use super::{ExpandedCommandAction, ExpansionDispatch, classify_native_command};
+        use tex_state::token::{Catcode, Token};
+        let spelling = TracedTokenWord::pack(
+            Token::Char {
+                ch,
+                cat: Catcode::Active,
+            },
+            origin,
+        );
+        let (meaning, resolution) = self.resolve_token_word(spelling.token_word());
+        let action = classify_native_command(spelling.token_word(), &meaning);
+        if self.is_observed()
+            || self.command.delivery_mode.requires_persistent_settlement()
+            || matches!(
+                action,
+                ExpandedCommandAction::EndTemplate
+                    | ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
+            )
+        {
+            return self.treat_observed_or_exceptional_active_character(
+                spelling,
+                meaning,
+                resolution.control_sequence(),
+            );
+        }
+        if action == ExpandedCommandAction::Return {
+            #[cfg(feature = "profiling")]
+            self.record_expanded_delivery();
+            return self.back_input_token(spelling);
+        }
+        let mut consume = |processor: &mut Self,
+                           spelling: TracedTokenWord,
+                           _: &MeaningWord<G>,
+                           _: Option<Symbol>,
+                           exceptional: Option<&CurrentCommand<G>>| {
+            processor.back_consumed_word(spelling, exceptional)?;
+            Ok(ControlFlow::Break(()))
+        };
+        let mut destination = None;
+        self.with_expanded_delivery(&mut destination, |processor, destination| {
+            match action {
+                ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
+                    let MeaningWord::Macro { flags, definition } = meaning else {
+                        unreachable!("native active macro");
+                    };
+                    let name = resolution
+                        .control_sequence()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    match processor.activate_read_macro(
+                        spelling.token_word(),
+                        origin,
+                        flags,
+                        definition,
+                        name,
+                    ) {
+                        Ok(())
+                        | Err(
+                            CommandError::ParagraphInMacroArgument
+                            | CommandError::OuterInMacroArgument,
+                        ) => {}
+                        Err(failure) => return Err(failure),
+                    }
+                }
+                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) => {
+                    processor.expand_primitive(
+                        primitive,
+                        spelling,
+                        resolution.control_sequence(),
+                        true,
+                    )?;
+                }
+                _ => unreachable!("native active expansion"),
+            }
+            loop {
+                let status = processor.expanded_delivery_loop::<false, false, false, _>(
+                    destination,
+                    None,
+                    ExpandedReaderRole::Scanner,
+                    &mut ScalarWords {
+                        consume: &mut consume,
+                    },
+                )?;
+                match status {
+                    DeliveryStatus::ReplayCompleted(_) => continue,
+                    DeliveryStatus::End
+                    | DeliveryStatus::Command
+                    | DeliveryStatus::PendingExpanded
+                    | DeliveryStatus::AlignmentClosingBrace => return Ok(status),
+                    _ => unreachable!("active expansion consumes the actual terminal word"),
+                }
+            }
+        })
+        .map(|_| ())
+    }
+}

@@ -114,12 +114,15 @@ fn compact_character_projections_distinguish_tokens_from_chardef_values() {
 }
 
 fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCommand<G> {
-    CurrentCommand::resolve(
-        TracedTokenWord::pack(token, OriginId::UNKNOWN),
+    CurrentCommand::from_resolved_delivery(
+        TokenWord::pack(token),
+        OriginId::UNKNOWN,
         false,
         None,
+        false,
         &universe.command_context().expect("command context"),
     )
+    .0
 }
 
 #[test]
