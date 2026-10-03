@@ -331,21 +331,14 @@ fn retained_byte_projection_has_fixed_work_with_many_group_segments() {
     assert_exact_capacity_accounting(&shallow);
     assert_exact_capacity_accounting(&deep);
 
+    let shallow_visits = shallow.group_entry_visits.get();
+    let deep_visits = deep.group_entry_visits.get();
     for _ in 0..4_096 {
         std::hint::black_box(shallow.retained_bytes());
         std::hint::black_box(deep.retained_bytes());
     }
-    assert_eq!(
-        shallow.retained_bytes(),
-        shallow
-            .group_capacity_bytes
-            .saturating_add(shallow.checkpoint_capacity_bytes)
-    );
-    assert_eq!(
-        deep.retained_bytes(),
-        deep.group_capacity_bytes
-            .saturating_add(deep.checkpoint_capacity_bytes)
-    );
+    assert_eq!(shallow.group_entry_visits.get(), shallow_visits);
+    assert_eq!(deep.group_entry_visits.get(), deep_visits);
 }
 
 #[test]

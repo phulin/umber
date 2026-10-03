@@ -482,3 +482,12 @@ semantics-preserving stage must match the exhaustive existing 663 ordered
 divergence signatures, not claim clean conformance. Performance measurements
 and unchanged original targets remain evidence and architectural goals, not
 arbitrary implementation-closure blockers.
+
+### Journal capacity reporting
+
+The live save stack and checkpoint log own their vector capacities. Retained
+byte reporting reads those capacities directly with a fixed number of scalar
+operations; neither group entries nor checkpoint deltas are traversed. The
+journal stores no second byte-count cache and performs no capacity refresh
+after append, unsave or checkpoint transitions. Existing save-stack high-water
+accounting remains authoritative for TeX capacity diagnostics.

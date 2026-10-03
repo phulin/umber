@@ -209,8 +209,6 @@ pub(crate) struct SaveJournal<G> {
     save_position: u32,
     box_spec_words: usize,
     max_save_words: [usize; 2],
-    group_capacity_bytes: usize,
-    checkpoint_capacity_bytes: usize,
     #[cfg(test)]
     first_touch_cell_visits: usize,
     #[cfg(test)]
@@ -267,8 +265,6 @@ impl<G> SaveJournal<G> {
             save_position: 0,
             box_spec_words: 0,
             max_save_words: [0; 2],
-            group_capacity_bytes: 0,
-            checkpoint_capacity_bytes: 0,
             #[cfg(test)]
             first_touch_cell_visits: 0,
             #[cfg(test)]
@@ -316,7 +312,7 @@ impl<G> SaveJournal<G> {
         )
         .with_save_position(self.save_position);
         self.host_epoch = next_serial;
-        self.refresh_checkpoint_capacity_bytes();
+
         Ok(cursor)
     }
 
@@ -372,7 +368,6 @@ impl<G> SaveJournal<G> {
                 .checkpoint_entries
                 .checked_add(1)
                 .expect("checkpoint journal exceeds usize entries");
-            self.refresh_checkpoint_capacity_bytes();
         }
 
         if saved_at.is_some() {
@@ -382,7 +377,7 @@ impl<G> SaveJournal<G> {
                 is_extended_register_cell(cell),
             );
         }
-        self.refresh_group_capacity_bytes();
+
         #[cfg(feature = "profiling")]
         self.record_profile_peak();
     }
@@ -468,7 +463,6 @@ impl<G> SaveJournal<G> {
         }
         self.active_sequence.append(entry);
         self.save_position = position;
-        self.refresh_group_capacity_bytes();
     }
 
     #[cfg(test)]
@@ -495,7 +489,6 @@ impl<G> SaveJournal<G> {
         };
         self.save_position =
             u32::try_from(self.active_sequence.entries.len()).expect("group save stack fits u32");
-        self.refresh_group_capacity_bytes();
     }
 
     pub(crate) fn record_box_save(&mut self, saved: crate::env::durable_boxes::DurableMutation) {
@@ -598,9 +591,9 @@ impl<G> SaveJournal<G> {
     }
 
     #[must_use]
-    pub(crate) const fn retained_bytes(&self) -> usize {
-        self.group_capacity_bytes
-            .saturating_add(self.checkpoint_capacity_bytes)
+    pub(crate) fn retained_bytes(&self) -> usize {
+        (self.active_sequence.entries.capacity() * core::mem::size_of::<JournalEntry<G>>())
+            .saturating_add(self.checkpoint_undo.retained_bytes())
     }
 
     /// Direct absolute save-index lookup.  This function deliberately has no
@@ -707,7 +700,7 @@ impl<G> SaveJournal<G> {
         self.save_stack = SaveStackProjection::default();
         self.save_position = 0;
         self.host_epoch = candidate_serial;
-        self.refresh_group_capacity_bytes();
+
         Ok(tail)
     }
 
@@ -723,8 +716,7 @@ impl<G> SaveJournal<G> {
         self.save_position = tail.save_position;
         self.checkpoint_entries = tail.prior_checkpoint_entries;
         self.checkpoint_undo.reject();
-        self.refresh_checkpoint_capacity_bytes();
-        self.refresh_group_capacity_bytes();
+
         self.advance_host_epoch();
     }
 
@@ -737,7 +729,7 @@ impl<G> SaveJournal<G> {
         }
         self.preflight_epoch_advance(1)?;
         self.checkpoint_undo.accept()?;
-        self.refresh_checkpoint_capacity_bytes();
+
         self.advance_host_epoch();
         Ok(())
     }
@@ -748,7 +740,7 @@ impl<G> SaveJournal<G> {
             "journal cursor belongs to another state"
         );
         self.checkpoint_undo.restore(cursor.checkpoint);
-        self.refresh_checkpoint_capacity_bytes();
+
         self.checkpoint_entries = cursor.checkpoint_entries() as usize;
         self.advance_host_epoch();
         self.save_stack = cursor.save_stack;
@@ -764,7 +756,7 @@ impl<G> SaveJournal<G> {
             return Err(crate::StateError::InvalidCursor);
         }
         let released = self.checkpoint_undo.release_prefix(cursor.checkpoint)?;
-        self.refresh_checkpoint_capacity_bytes();
+
         Ok(released)
     }
 
@@ -780,13 +772,12 @@ impl<G> SaveJournal<G> {
         }
         self.checkpoint_undo
             .release_root(released.checkpoint, oldest.map(|cursor| cursor.checkpoint))?;
-        self.refresh_checkpoint_capacity_bytes();
+
         Ok(())
     }
 
     pub(crate) fn release_unretained_capture(&mut self, cursor: JournalCursor<G>) {
         self.checkpoint_undo.release_capture(cursor.checkpoint);
-        self.refresh_checkpoint_capacity_bytes();
     }
 
     /// Prefix reclamation does not restore state or consume ordinary group
@@ -831,7 +822,6 @@ impl<G> SaveJournal<G> {
         self.active_sequence.unsaving = false;
         self.save_stack = cursor.save_stack;
         self.save_position = cursor.save_position;
-        self.refresh_group_capacity_bytes();
     }
 
     pub(crate) fn group_save_len(&self) -> usize {
@@ -860,15 +850,6 @@ impl<G> SaveJournal<G> {
     #[cfg(test)]
     fn group_capacity_bytes_census(&self) -> usize {
         self.active_sequence.entries.capacity() * core::mem::size_of::<JournalEntry<G>>()
-    }
-
-    fn refresh_group_capacity_bytes(&mut self) {
-        self.group_capacity_bytes =
-            self.active_sequence.entries.capacity() * core::mem::size_of::<JournalEntry<G>>();
-    }
-
-    fn refresh_checkpoint_capacity_bytes(&mut self) {
-        self.checkpoint_capacity_bytes = self.checkpoint_undo.retained_bytes();
     }
 
     fn advance_host_epoch(&mut self) {

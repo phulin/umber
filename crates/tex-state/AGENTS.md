@@ -619,3 +619,8 @@ restore, and fork allocation are flat across initialized trie sizes while a
 fixed bounded mutable payload remains rollback-safe. The broader state budgets
 run explicitly with
 `cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets`.
+
+The save journal derives retained byte counts from the actual group-stack and
+checkpoint-log capacities only when queried, with fixed scalar work and no
+entry traversal. It stores no duplicate capacity-byte caches and performs no
+refresh bookkeeping on append, unsave or checkpoint transitions.
