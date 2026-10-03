@@ -3339,11 +3339,7 @@ impl<G> Universe<G> {
         Ok(())
     }
 
-    pub fn begin_group(
-        &mut self,
-        kind: GroupKind,
-        entered_line: u32,
-    ) -> Result<GroupFrame, UniverseError> {
+    pub fn begin_group(&mut self, kind: GroupKind, entered_line: u32) -> Result<(), UniverseError> {
         Ok(self.command_context()?.begin_group(kind, entered_line)?)
     }
 

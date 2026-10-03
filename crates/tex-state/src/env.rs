@@ -1728,7 +1728,7 @@ impl<G> DenseState<G> {
         &mut self,
         kind: GroupKind,
         entered_line: u32,
-    ) -> Result<GroupFrame, StateError> {
+    ) -> Result<(), StateError> {
         let depth = u32::try_from(self.journal().group_frames().len())
             .map_err(|_| StateError::GroupDepthExhausted)?;
         let level = depth
@@ -1752,7 +1752,7 @@ impl<G> DenseState<G> {
             latest_save_push_before,
         );
         self.journal_mut().record_group_enter(frame);
-        Ok(frame)
+        Ok(())
     }
 
     pub(crate) fn restore_group_mutation(

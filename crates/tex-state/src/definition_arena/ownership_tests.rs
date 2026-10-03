@@ -342,7 +342,7 @@ fn primitive_registry_and_unwinding_unsave_retire_their_actual_definition_positi
                 1,
                 "registry is its actual owner"
             );
-            let group = universe
+            universe
                 .begin_group(crate::GroupKind::Simple, 1)
                 .expect("group");
             let publication = universe
@@ -361,7 +361,7 @@ fn primitive_registry_and_unwinding_unsave_retire_their_actual_definition_positi
                 universe
                     .command_context()
                     .expect("context")
-                    .end_group_observed(group.kind(), |_, _| panic!("observer unwind"))
+                    .end_group_observed(crate::GroupKind::Simple, |_, _| panic!("observer unwind"))
                     .expect("group exit");
             }));
             assert!(result.is_err());

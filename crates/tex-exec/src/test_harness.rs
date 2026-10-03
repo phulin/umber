@@ -5,8 +5,7 @@ use tex_state::env::{AssignmentScope, CodeTableKind};
 use tex_state::interner::InternerBudget;
 use tex_state::token::Catcode;
 use tex_state::{
-    CommandContext, GenerationBrand, GroupFrame, GroupKind, InteractionMode, StateError, Universe,
-    World,
+    CommandContext, GenerationBrand, GroupKind, InteractionMode, StateError, Universe, World,
 };
 
 /// Generation-aware vocabulary shared by executor tests.
@@ -141,12 +140,12 @@ pub(crate) fn with_pdf_setup<G, R>(
     with_admitted(universe, setup)
 }
 
-/// Opens a group through admitted command state and returns its durable frame.
+/// Opens a group directly in admitted command state.
 pub(crate) fn begin_group<G>(
     universe: &mut Universe<G>,
     kind: GroupKind,
     entered_line: u32,
-) -> Result<GroupFrame, StateError> {
+) -> Result<(), StateError> {
     with_admitted(universe, |context| context.begin_group(kind, entered_line))
 }
 

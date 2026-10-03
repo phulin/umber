@@ -75,7 +75,6 @@ impl<'state, 'host, G>
         meaning: &tex_state::meaning::MeaningWord<G>,
         _: Option<tex_state::interner::Symbol>,
     ) -> std::ops::ControlFlow<()> {
-        *self.scan_origin = Some(spelling.origin());
         let tex_state::meaning::MeaningWord::Static(word) = meaning else {
             unreachable!("native main-control selection accepts static terminals")
         };
@@ -84,6 +83,7 @@ impl<'state, 'host, G>
             *self.completed_operations += 1;
             return std::ops::ControlFlow::Continue(());
         }
+        *self.scan_origin = Some(spelling.origin());
         let code = Meaning::runtime_word_control_code(*word);
         let result = match code {
             codes::CHAR_BEGIN_GROUP | codes::PRIMITIVE_BEGIN_GROUP => {

@@ -284,3 +284,5 @@ no scalar origin, so those scans track no first-token provenance and construct
 no scalar packet. Failed keyword matching still owns and backs its actual
 prefix spelling; observations, alignment correction and diagnostics stay in
 the same reader and backup paths.
+
+Native group entry writes its boundary directly into the save stack and returns only success or the actual error. The caller already owns the entered kind and line; it does not receive a copied `GroupFrame`. Exit still returns the actual closed frame for tracing. The no-op relax arm returns before recording a diagnostic origin, since it produces no diagnostic or list effect.

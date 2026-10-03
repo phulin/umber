@@ -73,9 +73,8 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         kind: crate::GroupKind,
         entered_line: u32,
-    ) -> Result<crate::GroupFrame, StateError> {
-        let frame = self.admitted.state().begin_group(kind, entered_line)?;
-        Ok(frame)
+    ) -> Result<(), StateError> {
+        self.admitted.state().begin_group(kind, entered_line)
     }
 
     /// Streams each native restore while its saved owners are still live.

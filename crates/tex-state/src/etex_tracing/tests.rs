@@ -85,10 +85,10 @@ fn zero_source_line_is_omitted() {
 fn leaving_a_group_reports_the_closed_frame() {
     with_test_universe(|universe| {
         enable_tracing(universe);
-        let frame = universe
+        universe
             .begin_group(GroupKind::VBox, 313)
             .expect("begin vbox group");
-        trace_enter(universe, frame.kind(), 1, frame.entered_line());
+        trace_enter(universe, GroupKind::VBox, 1, 313);
         let before_leave = routed_log(universe).len();
         let frame = universe.end_group(GroupKind::VBox).expect("end vbox group");
         trace_leave(universe, frame.kind(), 1, frame.entered_line());
