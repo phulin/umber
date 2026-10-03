@@ -281,7 +281,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let leading_point = is_point_character(native_character(meaning));
                 self.back_consumed_word(spelling, exceptional)?;
                 if leading_point {
-                    self.consume_token_spelling(&mut |_, _, _| Ok(()))?;
+                    self.consume_raw_words::<false, _>(&mut |_, _, _, _| {
+                        Ok(std::ops::ControlFlow::Break(()))
+                    })?;
                     self.scan_dimension_units(0, true, negative, allow_infinite, mu)
                 } else {
                     self.scan_dimension_after_integer(negative, allow_infinite, mu)

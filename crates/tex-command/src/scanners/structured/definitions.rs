@@ -118,73 +118,59 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         future: bool,
     ) -> Result<(Symbol, ResolvedMeaning<G>), CommandError> {
-        // §1221 inspects only each token's spelling and meaning, so every
-        // operand stays in its compact delivery.
-        let mut destination = None;
+        use std::ops::ControlFlow;
+
         let target = self.scan_definition_target()?;
         let meaning = if future {
-            let mut first_destination = None;
-            if self.get_token_into(&mut first_destination)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            let mut second_destination = None;
-            if self.get_token_into(&mut second_destination)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            let second = second_destination
-                .take()
-                .ok_or_else(|| CommandError::input_invariant())?;
-            let meaning = second.meaning();
-            self.back_input(second)?;
-            let first = first_destination
-                .take()
-                .ok_or_else(|| CommandError::input_invariant())?;
-            self.back_input(first)?;
-            meaning
+            // Keep the first token at its real consuming boundary while the
+            // second is read and backed up. Both backups retain their actual
+            // alignment adjustment and observation identity.
+            self.consume_raw_words::<false, _>(&mut |processor, first, _, first_command| {
+                let meaning = processor
+                    .consume_raw_words::<true, _>(&mut |processor, second, meaning, command| {
+                        let meaning = meaning.expect("raw meaning requested").resolve();
+                        processor.back_consumed_word(second, command)?;
+                        Ok(ControlFlow::Break(meaning))
+                    })?
+                    .ok_or_else(CommandError::input_invariant)?;
+                processor.back_consumed_word(first, first_command)?;
+                Ok(ControlFlow::Break(meaning))
+            })?
+            .ok_or_else(CommandError::input_invariant)?
         } else {
-            let is_space = |command: &crate::command::CurrentCommand<G>| {
-                matches!(
-                    command.static_meaning(),
-                    Some(Meaning::CharToken {
+            // §1221: any leading spaces, optional literal equals, then at
+            // most one space. Space uses cur_cmd, equals uses cur_tok.
+            let mut after_equals = 0;
+            self.consume_raw_words::<true, _>(&mut |_, spelling, meaning, _| {
+                let meaning = meaning.expect("raw meaning requested").resolve();
+                let space = matches!(
+                    meaning,
+                    ResolvedMeaning::Static(Meaning::CharToken {
                         cat: Catcode::Space,
                         ..
                     })
-                )
-            };
-            let mut source = loop {
-                if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
-                    return Err(CommandError::input_invariant());
-                }
-                let source = destination
-                    .take()
-                    .ok_or_else(|| CommandError::input_invariant())?;
-                if !is_space(&source) {
-                    break source;
-                }
-            };
-            if matches!(
-                source.spelling().semantic_token(),
-                Token::Char {
-                    ch: '=',
-                    cat: Catcode::Other
-                }
-            ) {
-                if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
-                    return Err(CommandError::input_invariant());
-                }
-                source = destination
-                    .take()
-                    .ok_or_else(|| CommandError::input_invariant())?;
-                if is_space(&source) {
-                    if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
-                        return Err(CommandError::input_invariant());
+                );
+                if after_equals == 0 {
+                    if space {
+                        return Ok(ControlFlow::Continue(()));
                     }
-                    source = destination
-                        .take()
-                        .ok_or_else(|| CommandError::input_invariant())?;
+                    if matches!(
+                        spelling.semantic_token(),
+                        Token::Char {
+                            ch: '=',
+                            cat: Catcode::Other
+                        }
+                    ) {
+                        after_equals = 1;
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                } else if after_equals == 1 && space {
+                    after_equals = 2;
+                    return Ok(ControlFlow::Continue(()));
                 }
-            }
-            source.meaning()
+                Ok(ControlFlow::Break(meaning))
+            })?
+            .ok_or_else(CommandError::input_invariant)?
         };
         Ok((target, meaning))
     }

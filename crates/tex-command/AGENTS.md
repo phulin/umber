@@ -177,7 +177,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   adding production state or an alternate delivery path.
 - `src/processor/expand/collect.rs`: raw collection and `get_token_spelling`
   consume tokens in the canonical reader. Raw operand consumers receive actual
-  spelling; ordinary unobserved operands construct no command. Observation,
+  spelling and demand-only native meaning in one continuing reader; ordinary
+  unobserved operands construct no command. Let consumes meaning directly;
+  futurelet backs both tokens at their live consuming boundaries. Observation,
   outer recovery, alignment and source control-sequence creation keep their
   original semantic positions.
 - `src/processor/expand/tests/kernel.rs`: nested reader resumption, every

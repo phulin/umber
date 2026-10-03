@@ -3,41 +3,19 @@
 use super::*;
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
-    fn back_macro_argument_word(
-        &mut self,
-        word: TracedTokenWord,
-        command: Option<&CurrentCommand<G>>,
-    ) -> Result<(), CommandError> {
-        if let Some(command) = command {
-            return self.back_input(*command);
-        }
-        let (mut command, _) = CurrentCommand::from_resolved_delivery(
-            word.token_word(),
-            word.origin(),
-            false,
-            None,
-            false,
-            self.state,
-        );
-        command.set_alignment_adjustment(
-            crate::processor::alignment::AlignmentDeliveryState::<G>::back_input_adjustment(
-                word.semantic_token(),
-            ),
-        );
-        self.back_input(command)
-    }
-
     /// §395 backs up the actual extra brace before inserting and reporting par.
     fn recover_extra_right_brace_argument(
         &mut self,
         word: TracedTokenWord,
         command: Option<&CurrentCommand<G>>,
     ) -> Result<(), CommandError> {
-        self.back_macro_argument_word(word, command)?;
+        self.back_consumed_word(word, command)?;
         self.insert_macro_argument_recovery_par()?;
         self.report_extra_right_brace_argument();
-        self.consume_token_spelling(&mut |processor, par, command| {
-            processor.back_macro_argument_word(par, command)
+        self.consume_raw_words::<false, _>(&mut |processor, par, _, command| {
+            processor
+                .back_consumed_word(par, command)
+                .map(|()| std::ops::ControlFlow::Break(()))
         })?
         .ok_or(CommandError::ParagraphInMacroArgument)?;
         self.report_paragraph_ended_before_complete(&[]);
@@ -65,10 +43,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
             }
             let appended = self
-                .consume_token_spelling(&mut |processor, word, command| {
+                .consume_raw_words::<false, _>(&mut |processor, word, _, command| {
                     if command.is_some_and(CurrentCommand::is_outer_recovery_space) {
                         // §23's returned spacer is not linked into the argument.
-                        return Ok(false);
+                        return Ok(std::ops::ControlFlow::Break(false));
                     }
                     if processor.outer_recovered_while_matching
                         && command.is_some_and(CurrentCommand::is_effective_paragraph)
@@ -96,12 +74,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let catcode = word.token_word().literal_catcode();
                     if tokens.brace_depth() == 0 {
                         if catcode == Some(Catcode::Space) {
-                            return Ok(false);
+                            return Ok(std::ops::ControlFlow::Break(false));
                         }
                         if catcode == Some(Catcode::EndGroup) {
                             return processor
                                 .recover_extra_right_brace_argument(word, command)
-                                .map(|_| false);
+                                .map(|_| std::ops::ControlFlow::Break(false));
                         }
                     }
                     processor.check_argument_paragraph(
@@ -117,7 +95,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .levels
                         .append_macro_argument_word(tokens, word, false)
                         .map_err(|_| CommandError::input_invariant())?;
-                    Ok(true)
+                    Ok(std::ops::ControlFlow::Break(true))
                 })?
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
             if appended && tokens.brace_depth() == 0 {
@@ -157,9 +135,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
             }
             let completed = self
-                .consume_token_spelling(&mut |processor, word, command| {
+                .consume_raw_words::<false, _>(&mut |processor, word, _, command| {
                     if command.is_some_and(CurrentCommand::is_outer_recovery_space) {
-                        return Ok(false);
+                        return Ok(std::ops::ControlFlow::Break(false));
                     }
                     if processor.outer_recovered_while_matching
                         && command.is_some_and(CurrentCommand::is_effective_paragraph)
@@ -216,7 +194,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                     .truncate_delimiter_suffix(tokens)
                                     .map_err(|_| CommandError::input_invariant())?;
                             }
-                            return Ok(true);
+                            return Ok(std::ops::ControlFlow::Break(true));
                         }
                         processor
                             .command
@@ -224,7 +202,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .levels
                             .append_macro_argument_word(tokens, word, true)
                             .map_err(|_| CommandError::input_invariant())?;
-                        return Ok(false);
+                        return Ok(std::ops::ControlFlow::Break(false));
                     }
 
                     if prefix_len != 0 {
@@ -274,7 +252,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .levels
                                 .append_macro_argument_word(tokens, word, true)
                                 .map_err(|_| CommandError::input_invariant())?;
-                            return Ok(false);
+                            return Ok(std::ops::ControlFlow::Break(false));
                         }
                     }
 
@@ -286,7 +264,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     {
                         return processor
                             .recover_extra_right_brace_argument(word, command)
-                            .map(|_| false);
+                            .map(|_| std::ops::ControlFlow::Break(false));
                     }
                     processor.check_argument_paragraph(
                         word,
@@ -301,7 +279,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .levels
                         .append_macro_argument_word(tokens, word, false)
                         .map_err(|_| CommandError::input_invariant())?;
-                    Ok(false)
+                    Ok(std::ops::ControlFlow::Break(false))
                 })?
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
             if completed {
@@ -378,7 +356,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // enclosing scanner status, so retain the exact `\par` input
             // ahead of that restoration rather than merely returning an
             // error from the scalar matcher.
-            self.back_macro_argument_word(word, command)?;
+            self.back_consumed_word(word, command)?;
             // §396 ends with `back_error`, so §82 renders the context with the
             // replayed `\par` already on the stack.
             let partial = partial

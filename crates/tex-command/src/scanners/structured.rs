@@ -156,6 +156,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut consume =
             |processor: &mut Self,
              spelling: TracedTokenWord,
+             _: Option<&tex_state::meaning::MeaningWord<G>>,
              exceptional: Option<&crate::CurrentCommand<G>>| {
                 if matches!(
                     spelling.semantic_token(),
@@ -164,10 +165,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         ..
                     }
                 ) {
-                    return Ok(None);
+                    return Ok(std::ops::ControlFlow::Continue(()));
                 }
                 if let Some(target) = processor.project_definition_target(spelling.token_word()) {
-                    return Ok(Some(target));
+                    return Ok(std::ops::ControlFlow::Break(target));
                 }
                 // §1215 backs up an ordinary non-control token (`cur_cs=0`),
                 // while an already-frozen control token is consumed before the
@@ -202,19 +203,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .context(context);
                 let outcome = report.error();
                 processor.finish_error_outcome(outcome)?;
-                Ok(None)
+                Ok(std::ops::ControlFlow::Continue(()))
             };
-        loop {
-            let target = match self.consume_token_spelling(&mut consume)? {
-                Some(target) => target,
-                None => self
-                    .consume_token_spelling(&mut consume)?
-                    .ok_or_else(CommandError::input_invariant)?,
-            };
-            if let Some(target) = target {
-                return Ok(target);
-            }
+        if let Some(target) = self.consume_raw_words::<false, _>(&mut consume)? {
+            return Ok(target);
         }
+        self.consume_raw_words::<false, _>(&mut consume)?
+            .ok_or_else(CommandError::input_invariant)
     }
 
     /// Scans TeX82 §1224's complete `\\chardef` or `\\mathchardef` operand.

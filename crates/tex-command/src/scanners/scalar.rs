@@ -511,7 +511,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let integer = self.scan_integer()?;
         let decimal = is_point_character(self.integer_terminator_character);
         if decimal {
-            self.consume_token_spelling(&mut |_, _, _| Ok(()))?;
+            self.consume_raw_words::<false, _>(&mut |_, _, _, _| {
+                Ok(std::ops::ControlFlow::Break(()))
+            })?;
         }
         self.scan_dimension_units(integer.value, decimal, negative, allow_infinite, mu)
     }
@@ -850,7 +852,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     fn scan_character_code(&mut self) -> Result<(i32, bool), CommandError> {
-        self.consume_token_spelling(&mut |processor, spelling, exceptional| {
+        self.consume_raw_words::<false, _>(&mut |processor, spelling, _, exceptional| {
             let token = spelling.semantic_token();
             // §442 cancels raw brace accounting before interpreting cur_tok
             // as a character code. Active characters use their spelling too.
@@ -886,11 +888,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .capabilities()
                         .supports_unicode())
             {
-                Ok((value, true))
+                Ok(std::ops::ControlFlow::Break((value, true)))
             } else {
                 processor.back_consumed_word(spelling, exceptional)?;
                 processor.improper_alphabetic_constant_error()?;
-                Ok((0, false))
+                Ok(std::ops::ControlFlow::Break((0, false)))
             }
         })
         .map(|result| result.unwrap_or((0, false)))

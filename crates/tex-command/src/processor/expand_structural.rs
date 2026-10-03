@@ -64,7 +64,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut adjustment = super::AlignmentDeliveryAdjustment::None;
         let mut observed_spelling = None;
         let first = self
-            .consume_token_spelling(&mut |processor, word, command| {
+            .consume_raw_words::<false, _>(&mut |processor, word, _, command| {
                 adjustment = command.map_or_else(
                     || {
                         super::alignment::AlignmentDeliveryState::<G>::back_input_adjustment(
@@ -78,7 +78,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         command.expect("observed raw token has a command"),
                     ));
                 }
-                Ok(word)
+                Ok(std::ops::ControlFlow::Break(word))
             })?
             .ok_or_else(CommandError::input_invariant)?;
         self.expand_next_token()?;

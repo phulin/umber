@@ -100,6 +100,23 @@ comparing complete preloaded and partitioned output byte for byte.
 
 ## Native execution owner
 
+### Raw binding operands
+
+The canonical raw reader lends spelling and, when its consumer requests it,
+the already-resolved native meaning. A spelling-only consumer does not resolve
+ordinary literal characters. Continuing consumers keep accepted spaces and
+the optional equals sign inside that reader; no delivered command or operand
+packet crosses the successful boundary. `get_token_spelling` returns the
+actual retained token when its caller needs one.
+
+Normal `\let` consumes the RHS meaning directly. Its leading spaces are
+meaning-based, while its optional equals sign is spelling-based; after that
+sign it skips at most one space. `\futurelet` keeps its first token in the
+live consumer, reads the second without expansion, backs the second and then
+the first, and returns the second meaning. Exceptional alignment, outer
+recovery and observation lend their existing command only at those demanded
+boundaries, preserving the actual backup adjustment and observed identity.
+
 Main control separates the owned `CommandState`, fuel, resource capabilities,
 operation observer and resource-decline slot from one owned `ExecutionState`.
 That execution owner contains the existing mode, box, alignment, math,

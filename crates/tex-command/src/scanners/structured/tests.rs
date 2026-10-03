@@ -459,6 +459,95 @@ fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
 }
 
 #[test]
+fn let_uses_meaning_for_spaces_but_spelling_for_equals() {
+    crate::test_harness::with_universe(|universe| {
+        let target = universe.intern("target").expect("target").symbol();
+        let space_id = universe.intern("spacealias").expect("space alias");
+        let space_alias = space_id.symbol();
+        universe
+            .assign_meaning(
+                space_id,
+                MeaningWord::from_static(Meaning::CharToken {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                }),
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("space meaning");
+        let equals_id = universe.intern("equalsalias").expect("equals alias");
+        let equals_alias = equals_id.symbol();
+        universe
+            .assign_meaning(
+                equals_id,
+                MeaningWord::from_static(Meaning::CharToken {
+                    ch: '=',
+                    cat: Catcode::Other,
+                }),
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("equals meaning");
+
+        for (operands, expected, following) in [
+            (
+                vec![Token::Cs(space_alias), space(), other('x'), other('y')],
+                other('x'),
+                other('y'),
+            ),
+            (
+                vec![
+                    other('='),
+                    Token::Cs(space_alias),
+                    Token::Cs(space_alias),
+                    other('y'),
+                ],
+                space(),
+                other('y'),
+            ),
+            (
+                vec![Token::Cs(equals_alias), other('y')],
+                other('='),
+                other('y'),
+            ),
+        ] {
+            let mut command = CommandState::default();
+            crate::test_harness::push(
+                &mut command,
+                [Token::Cs(target)].into_iter().chain(operands),
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostics = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostics,
+            );
+            let (actual_target, meaning) =
+                processor.scan_let_assignment(false).expect("let operands");
+            assert_eq!(actual_target, target);
+            let Token::Char { ch, cat } = expected else {
+                unreachable!()
+            };
+            assert_eq!(
+                meaning,
+                ResolvedMeaning::Static(Meaning::CharToken { ch, cat })
+            );
+            assert_eq!(
+                processor
+                    .get_token_spelling()
+                    .expect("following token")
+                    .expect("token")
+                    .semantic_token(),
+                following
+            );
+        }
+    });
+}
+
+#[test]
 fn preamble_span_expansion_retires_its_command_before_raw_refill() {
     // TeX82 §759 implements the preamble `\span` transition as
     // `expand; get_token`: expansion consumes `\noexpand`, then the fresh raw
