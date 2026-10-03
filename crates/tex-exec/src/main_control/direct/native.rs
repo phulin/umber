@@ -47,24 +47,37 @@ impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
                         .0
                 };
                 let origin = processor.active_macro_origin().unwrap_or(spelling.origin());
-                let etex_extended = processor.profile() == CommandProfile::ETEX26;
-                processor.with_execution_owners(
-                    |context, _, effects, fuel, _, execution, _, _, _| {
-                        if TEXT_BOUNDARY {
-                            execution.main_loop_active = false;
-                        }
-                        characters::append_native_character(
-                            context,
-                            effects,
-                            fuel,
-                            execution,
-                            ch,
-                            origin,
-                            etex_extended,
-                        )?;
-                        Ok(ReplayStep::Continue)
-                    },
-                )
+                let mode = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                    execution.modes.current_mode()
+                });
+                if matches!(mode, Mode::Math | Mode::DisplayMath) {
+                    characters::append_native_math_character(processor, ch, origin)
+                        .map(|()| ReplayStep::Continue)
+                } else {
+                    let etex_extended = processor.profile() == CommandProfile::ETEX26;
+                    let result = processor.with_execution_owners(
+                        |context, _, effects, fuel, _, execution, _, _, _| {
+                            if TEXT_BOUNDARY {
+                                execution.main_loop_active = false;
+                            }
+                            characters::append_native_character(
+                                context,
+                                effects,
+                                fuel,
+                                execution,
+                                ch,
+                                origin,
+                                etex_extended,
+                            )?;
+                            Ok(ReplayStep::Continue)
+                        },
+                    );
+                    // Horizontal glyphs change the next fetch to character lookahead.
+                    // The completion owns that resulting state; other operations
+                    // never classify themselves again as possible glyphs.
+                    self.completion = Some(result);
+                    return std::ops::ControlFlow::Break(());
+                }
             }
             codes::CHAR_SPACE => processor.with_execution_owners(
                 |context, _, effects, fuel, _, execution, _, _, _| {
@@ -191,10 +204,6 @@ impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
         // Unsave can restore tracing parameters and can deliver aftergroup
         // diagnostics. Re-enter main control before another word in either case.
         if TEXT_BOUNDARY
-            || matches!(
-                code,
-                codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN
-            )
             || *self.completed_operations + 1 >= self.remaining_operations
             || result.is_err()
             || processor.has_pending_reports()
@@ -252,7 +261,10 @@ impl<'state, 'host, G, const TEXT_BOUNDARY: bool>
                 .with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
                     matches!(
                         execution.modes.current_mode(),
-                        Mode::Horizontal | Mode::RestrictedHorizontal
+                        Mode::Horizontal
+                            | Mode::RestrictedHorizontal
+                            | Mode::Math
+                            | Mode::DisplayMath
                     ) && execution.active_alignment.is_none()
                         && !execution.page_region_succession_pending
                         && !context.tracked_region_is_active()

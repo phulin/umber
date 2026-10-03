@@ -608,3 +608,9 @@ invocation and restores it at the actual return, including failure; ordinary
 words add no expansion-depth bookkeeping. Fuel and raw accounting occur once
 at delivery, before expansion. Source position and literal-brace accounting
 remain at their original semantic positions.
+
+## Native math characters
+
+Ordinary math letters, other characters and character definitions append their actual noad through the retained processor, using TeX82 sections 1154--1155's existing mathcode projection, family selection and native list insertion. Active mathcodes retain the same active-character expansion and backup semantics on that processor. No delivered command or rebuilt command machine mediates an ordinary math character. Tracking, alignment, tracing and real page-owner demands retain their existing consumer boundaries.
+
+Horizontal glyphs return their actual completion from the glyph arm because they change the next fetch role. Math glyphs keep the existing main-control role and continue its real budgeted back edge. Other native operations perform no glyph-completion classification. No cached mode, mathcode or eligibility field is added.

@@ -341,3 +341,5 @@ through retained continuation; fonts and groups leave the loop at their real
 semantic entry. No second context admission is used to resume native text.
 
 The actual native consumer owns expansion at character boundaries. Bulk text consumes packed macro/primitive operands through the shared command reader without a delivered command or a second loop; lexical command-core consumers keep raw boundary semantics.
+
+Native math letters, other characters and character definitions use the retained processor, shared mathcode projection and existing native noad builder. Active mathcodes keep canonical expansion/backup semantics on that processor. Horizontal glyphs return their actual completion from their own arm; math glyphs continue main control, and native assignments perform no glyph-completion test.

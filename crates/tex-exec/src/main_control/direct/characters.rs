@@ -123,3 +123,29 @@ pub(super) fn append_native_character<G>(
     });
     Ok(())
 }
+
+/// Append an actual math noad, or retain §1155's active-character treatment.
+pub(super) fn append_native_math_character<'state, 'host, G>(
+    processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
+    ch: char,
+    origin: OriginId,
+) -> Result<(), ExecError> {
+    let code = processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+        execution.main_loop_active = false;
+        math_character_code(context, ch)
+    });
+    if code >= 0x8000 {
+        processor
+            .treat_as_active_character(ch, origin)
+            .map_err(command_error)
+    } else {
+        processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+            append_math_char(
+                execution.modes.current_list_mutation(),
+                context,
+                code,
+                origin,
+            )
+        })
+    }
+}

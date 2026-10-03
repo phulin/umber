@@ -636,3 +636,94 @@ fn native_first_character_preserves_the_completed_character_loop_state() {
         });
     }
 }
+
+#[test]
+fn native_math_characters_and_active_mathcodes_preserve_budget_boundaries() {
+    // TeX82 §§1154--1155: letter/other/char_given use math_code;
+    // an active code expands and backs its result before appending a noad.
+    for (source, setup, budget, expected) in [
+        (
+            r"\chardef\g=97 \def\m{b}\setbox0=\hbox{$a\g\m c$}",
+            4,
+            1,
+            "a",
+        ),
+        (
+            r"\chardef\g=97 \def\m{b}\setbox0=\hbox{$a\g\m c$}",
+            4,
+            2,
+            "aa",
+        ),
+        (
+            r"\chardef\g=97 \def\m{b}\setbox0=\hbox{$a\g\m c$}",
+            4,
+            4,
+            "aabc",
+        ),
+        (
+            r#"\catcode`~=13 \def~{b}\catcode`~=12 \mathcode`~="8000 \setbox0=\hbox{$~c$}"#,
+            6,
+            1,
+            "",
+        ),
+        (
+            r#"\catcode`~=13 \def~{b}\catcode`~=12 \mathcode`~="8000 \setbox0=\hbox{$~c$}"#,
+            6,
+            2,
+            "b",
+        ),
+        (
+            r#"\catcode`~=13 \def~{b}\catcode`~=12 \mathcode`~="8000 \setbox0=\hbox{$~c$}"#,
+            6,
+            3,
+            "bc",
+        ),
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, source.as_bytes());
+            for _ in 0..setup {
+                control.advance(stores).expect("math setup");
+            }
+            assert_eq!(control.execution.modes.current_mode(), Mode::Math);
+            let mut effects = DiagnosticEffects::new();
+            let mut provider = None;
+            let mut completed = 0;
+            assert!(matches!(
+                control
+                    .execute_control_chunk(
+                        stores,
+                        None,
+                        None,
+                        &mut effects,
+                        false,
+                        &mut provider,
+                        budget,
+                        &mut completed
+                    )
+                    .expect("native math characters"),
+                ReplayStep::Continue
+            ));
+            assert_eq!(completed, budget - 1, "driver owns the final operation");
+            assert_eq!(control.execution.modes.current_mode(), Mode::Math);
+            assert!(!control.execution.main_loop_active);
+            let characters = admitted!(stores, |context| {
+                control
+                    .execution
+                    .modes
+                    .current_list()
+                    .nodes(context)
+                    .iter()
+                    .map(|node| match node.to_owned() {
+                        Node::MathNoad(MathNoad {
+                            nucleus: MathField::MathChar(character),
+                            ..
+                        }) => character.character,
+                        other => panic!("unexpected math node {other:?}"),
+                    })
+                    .collect::<String>()
+            });
+            assert_eq!(characters, expected, "source={source}, budget={budget}");
+        });
+    }
+}

@@ -5194,6 +5194,19 @@ fn append_math_char<G>(
     Ok(())
 }
 
+/// The actual mathcode and its demanded dependency projection (TeX82 §1155).
+fn math_character_code<G>(stores: &mut CommandContext<'_, G>, ch: char) -> u32 {
+    let code = stores.mathcode(ch);
+    stores.observe_command_projection(
+        tex_state::DependencyKey::Code {
+            table: tex_state::DependencyCodeTable::Mathcode,
+            scalar: ch.into(),
+        },
+        DependencyValue::Integer(i64::from(code)),
+    );
+    code
+}
+
 /// TeX82 §1155's `set_math_char`, entered from every §1154 case that derives
 /// its code from a character's `math_code`.
 ///
@@ -5224,14 +5237,7 @@ fn set_math_char<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<(), ExecError> {
-    let code = stores.mathcode(ch);
-    stores.observe_command_projection(
-        tex_state::DependencyKey::Code {
-            table: tex_state::DependencyCodeTable::Mathcode,
-            scalar: ch.into(),
-        },
-        DependencyValue::Integer(i64::from(code)),
-    );
+    let code = math_character_code(stores, ch);
     if code >= 0x8000 {
         let mut processor = command.processor(stores);
         let treated = processor.treat_as_active_character(ch, origin);
