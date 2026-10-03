@@ -189,6 +189,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   storage tag or reader invalidation protocol. Source-token delivery enters
   the normal source reader; only refill, exhaustion, and recovery use cold
   input transitions.
+- Unicode source admission validates immutable backing once. The line cursor
+  reads ASCII directly and decodes only the next non-ASCII scalar, retaining
+  exact byte/scalar coordinates without revalidating the remaining file.
 - Macro argument trace markers are read by the demanded cold trace, and
   observation lengths are derived only inside the observer boundary. Ordinary
   matching publishes its final cursor without these discarded trace inputs.

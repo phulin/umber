@@ -564,16 +564,22 @@ impl SourceLineState {
                 }
                 CharacterMode::UnicodeExtended => {
                     let index = usize::try_from(start).ok()?;
-                    let text = std::str::from_utf8(bytes.get(index..)?)
-                        .expect("Unicode backing was validated at registration");
-                    let scalar = text
-                        .chars()
-                        .next()
-                        .expect("cursor before retained end has a scalar");
-                    (
-                        CharacterCode::from(scalar),
-                        u64::try_from(scalar.len_utf8()).expect("UTF-8 width fits u64"),
-                    )
+                    let lead = *bytes.get(index)?;
+                    if lead.is_ascii() {
+                        (CharacterCode::from(char::from(lead)), 1)
+                    } else {
+                        // Registration validates the immutable backing. Decode
+                        // only this scalar, rather than revalidating the whole
+                        // remaining file for every character.
+                        let width = lead.leading_ones() as usize;
+                        let text = std::str::from_utf8(bytes.get(index..index + width)?)
+                            .expect("Unicode backing was validated at registration");
+                        let scalar = text
+                            .chars()
+                            .next()
+                            .expect("cursor before retained end has a scalar");
+                        (CharacterCode::from(scalar), width as u64)
+                    }
                 }
             };
             cursor.byte_cursor += width;

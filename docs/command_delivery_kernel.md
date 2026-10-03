@@ -13,6 +13,14 @@ physical cursor appropriate to its storage lifetime. Parent readers remain in
 their frames while child input is active. Checkpoint capture and restoration
 continue to use those existing frame coordinates.
 
+Unicode source registration, editor rebind, and line replacement validate their
+immutable backing at admission. Character decoding then reads only the next
+scalar: ASCII consumes one byte directly, and a non-ASCII lead selects its
+bounded UTF-8 scalar slice. It does not validate the remaining file suffix on
+every character. The existing byte/scalar cursor and saved line positions stay
+authoritative; no validation cache, extra source tag, unchecked string, or
+parallel decoder state is introduced.
+
 Delivery borrows the exposed frame directly. A second cached storage tag and
 its invalidation protocol are unnecessary: the frame's storage variant is the
 authority. No Rust borrow survives stack mutation, nested scanning, or resource
