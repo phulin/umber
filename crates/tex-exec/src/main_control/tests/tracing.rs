@@ -1114,3 +1114,21 @@ fn tracingparagraphs_reports_exact_first_pass_break_sequence() {
         assert!(log.starts_with(expected));
     });
 }
+
+#[test]
+fn native_group_exit_restores_command_tracing_before_aftergroup_delivery() {
+    // TeX82 §§280/299: unsave restores eqtb before delivering the next command.
+    for source in [
+        br"\tracingcommands=1\tracingonline=1{\tracingcommands=0\aftergroup\relax}\relax\end".as_slice(),
+        br"\tracingcommands=1\tracingonline=1\begingroup\tracingcommands=0\aftergroup\relax\endgroup\relax\end",
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, source);
+            run_to_end(&mut control, stores);
+            let terminal = pending_sink_text(stores, true);
+            assert_eq!(terminal.matches("{\\relax}").count(), 2, "{terminal:?}");
+            assert!(terminal.contains("{\\relax}\n{\\relax}\n{\\end}"), "{terminal:?}");
+        });
+    }
+}

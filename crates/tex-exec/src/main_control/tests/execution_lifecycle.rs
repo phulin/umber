@@ -441,48 +441,57 @@ fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
 }
 
 #[test]
-fn native_relax_continuation_preserves_the_actual_operation_budget() {
-    // TeX82 §1045 counts each relax separately, including replacement text.
-    for budget in [1, 2, 3, 4, 6, 7] {
-        crate::test_harness::with_nonstop_plain_universe(|stores| {
-            let mut control = MainControl::tex82_initex(stores);
-            register_source(
-                &mut control,
-                br"\def\m{\relax\relax}\m\m\m\count0=9 \relax%",
-            );
-            control.advance(stores).expect("install macro");
-            let mut effects = DiagnosticEffects::new();
-            let mut provider = None;
-            let mut completed = 0;
-            assert!(matches!(
-                control
-                    .execute_control_chunk(
-                        stores,
-                        None,
-                        None,
-                        &mut effects,
-                        false,
-                        &mut provider,
-                        budget,
-                        &mut completed
-                    )
-                    .expect("bounded native continuation"),
-                ReplayStep::Continue
-            ));
-            assert_eq!(
-                completed,
-                budget - 1,
-                "the driver owns the final operation at its budget boundary"
-            );
-            assert_eq!(
-                admitted!(stores, |context| context.count(0).expect("count register")),
-                if budget == 7 { 9 } else { 0 }
-            );
-            run_to_end(&mut control, stores);
-            assert_eq!(
-                admitted!(stores, |context| context.count(0).expect("count register")),
-                9
-            );
-        });
+fn native_terminal_continuation_preserves_the_actual_operation_budget() {
+    // TeX82 §§1030/1045/1061/1068 count every terminal separately, including
+    // replacement text and each group boundary.
+    for source in [
+        br"\def\m{\relax\relax}\m\m\m\count0=9 \relax%".as_slice(),
+        br"\def\m{{}}\m\m\m\count0=9 \relax%",
+        br"\def\m{\begingroup\endgroup}\m\m\m\count0=9 \relax%",
+    ] {
+        for budget in [1, 2, 3, 4, 6, 7] {
+            crate::test_harness::with_nonstop_plain_universe(|stores| {
+                let mut control = MainControl::tex82_initex(stores);
+                register_source(&mut control, source);
+                control.advance(stores).expect("install macro");
+                let mut effects = DiagnosticEffects::new();
+                let mut provider = None;
+                let mut completed = 0;
+                assert!(matches!(
+                    control
+                        .execute_control_chunk(
+                            stores,
+                            None,
+                            None,
+                            &mut effects,
+                            false,
+                            &mut provider,
+                            budget,
+                            &mut completed,
+                        )
+                        .expect("bounded native continuation"),
+                    ReplayStep::Continue
+                ));
+                assert_eq!(
+                    completed,
+                    budget - 1,
+                    "the driver owns the final operation at its budget boundary"
+                );
+                assert_eq!(
+                    admitted!(stores, |context| context.count(0).expect("count register")),
+                    if budget == 7 { 9 } else { 0 }
+                );
+                run_to_end(&mut control, stores);
+                assert_eq!(
+                    admitted!(stores, |context| context.execution_group_depth()),
+                    0,
+                    "every interrupted group resumes and closes"
+                );
+                assert_eq!(
+                    admitted!(stores, |context| context.count(0).expect("count register")),
+                    9
+                );
+            });
+        }
     }
 }

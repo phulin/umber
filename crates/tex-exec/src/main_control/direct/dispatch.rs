@@ -235,10 +235,10 @@ impl<G> DirectDispatch<'_, '_, G> {
                             });
                         prepare_command_trace(processor, mode, shown_mode);
                     }
-                    // Expansion and relax cannot apply stomach changes or trace
-                    // assignments. Admit their continuation once at this real
-                    // reader boundary; reports and budget remain live per word.
-                    let continue_relax = retain_commands
+                    // Admit untraced native continuation at the actual reader boundary.
+                    // Groups recheck tracing after unsave; reports, exceptional
+                    // group kinds and the driver budget remain live per word.
+                    let continue_native = retain_commands
                         && initial_prefix.is_none()
                         && !main_loop_active
                         && tracing_commands <= 0
@@ -248,20 +248,31 @@ impl<G> DirectDispatch<'_, '_, G> {
                             execution.boxes.pending_leader.is_none()
                                 && execution.modes.current_list().pending_hchars().is_none()
                         });
-                    if continue_relax {
+                    if continue_native {
                         self.current_origin = None;
                     }
-                    let mut native = NativeMainControl {
-                        continue_relax,
-                        remaining_operations: self.remaining_operations,
-                        completed_operations: &mut self.completed_operations,
-                        scan_origin: &mut scan_origin,
+                    let (delivery, native_completion) = {
+                        let mut native = NativeMainControl {
+                            continue_native,
+                            remaining_operations: self.remaining_operations,
+                            completed_operations: &mut self.completed_operations,
+                            scan_origin: &mut scan_origin,
+                            completion: None,
+                        };
+                        let delivery = processor.main_control_until(
+                            &mut command_slot,
+                            main_loop_active,
+                            &mut native,
+                        );
+                        (delivery, native.completion)
                     };
-                    let delivery = processor.main_control_until(
-                        &mut command_slot,
-                        main_loop_active,
-                        &mut native,
-                    );
+                    if let Some(completed) = native_completion {
+                        return retained_semantic!(
+                            receipts,
+                            |_context, _state, _effects, _fuel, _observer, _execution| completed
+                                .map_err(|error| scan_error(error, scan_origin))
+                        );
+                    }
                     match (delivery.map_err(command_error))
                         .map_err(|error| scan_error(error, scan_origin))?
                     {
@@ -855,26 +866,14 @@ impl<G> DirectDispatch<'_, '_, G> {
                                          fuel,
                                          _observer,
                                          native_execution| {
-                                            if native_execution
-                                                .modes
-                                                .current_list()
-                                                .pending_hchars()
-                                                .is_some()
-                                            {
-                                                crate::box_runtime::flush_pending_hchars_with_fuel(
-                                                    &mut native_execution.modes,
-                                                    context,
-                                                    effects,
-                                                    fuel,
-                                                )?;
-                                            }
-                                            enter_group(
+                                            apply_groups::begin_native_group(
                                                 context,
                                                 command,
                                                 effects,
+                                                fuel,
+                                                &mut native_execution.modes,
                                                 GroupKind::Simple,
-                                            );
-                                            Ok(ReplayStep::Continue)
+                                            )
                                         }
                                     )
                                 };
@@ -889,26 +888,14 @@ impl<G> DirectDispatch<'_, '_, G> {
                                          fuel,
                                          _observer,
                                          native_execution| {
-                                            if native_execution
-                                                .modes
-                                                .current_list()
-                                                .pending_hchars()
-                                                .is_some()
-                                            {
-                                                crate::box_runtime::flush_pending_hchars_with_fuel(
-                                                    &mut native_execution.modes,
-                                                    context,
-                                                    effects,
-                                                    fuel,
-                                                )?;
-                                            }
-                                            enter_group(
+                                            apply_groups::begin_native_group(
                                                 context,
                                                 command,
                                                 effects,
+                                                fuel,
+                                                &mut native_execution.modes,
                                                 GroupKind::SemiSimple,
-                                            );
-                                            Ok(ReplayStep::Continue)
+                                            )
                                         }
                                     )
                                 };

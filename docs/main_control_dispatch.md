@@ -231,3 +231,22 @@ Deferred openout scans its stream, optional equals and filename in the same
 selected arm before handing its final filename to the actual output-stream
 semantic boundary. It opens no second processor. The replaced streams-scanner
 module is deleted.
+
+## Native group continuation
+
+Ordinary simple and semi-simple group boundaries execute synchronously inside
+main control's canonical expanded reader. Their spelling and resolved packed
+meaning stay borrowed parameters; the reader performs literal brace accounting
+before semantic consumption. No command record is created for an admitted group.
+Group entry lends the actual context, command, effects, fuel and mode nest to
+one source-free helper. Group exit uses the same synchronous unsave routine that
+owns saved values and aftergroup input, with full checkpoints unchanged.
+
+The native consumer owns an optional actual semantic completion only when a
+report or failure requires returning to the driver. It never stores a token,
+meaning, opcode or generic operation. Successful ordinary group consumption
+increments the actual operation count and immediately continues the input loop.
+Unsave checks restored tracing parameters before consuming another terminal.
+Tracing, observation, character flushing, box/math/recovery group behavior and
+the final driver-budget operation retain their genuine boundaries and share the
+same group helpers; there is no second group engine or deferred cleanup stage.

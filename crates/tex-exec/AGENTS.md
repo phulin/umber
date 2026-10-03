@@ -287,7 +287,10 @@ through executor and session; successful results construct no failure payload.
 
 - `src/main_control/direct/native.rs`: the main-control terminal consumer,
   borrowing actual driver operation counts and diagnostic origins. Ordinary
-  relax words continue inside the canonical expanded reader; tracing, leaders,
+  relax and simple/semi-simple group words continue inside the canonical
+  expanded reader. Entry and unsave share the actual group helpers; group exit
+  rechecks restored tracing parameters. Only actual reporting/failure results
+  are returned, without command records. Tracing, leaders,
   character lookahead, flushing and budget cuts retain their actual boundaries.
 
 Mark class/text and deferred openout operands scan in their selected switch

@@ -135,3 +135,19 @@ pub(super) fn finish_native_group_leave<G, Facts: tex_command::CommandHostFacts<
     });
     Ok(ReplayStep::Continue)
 }
+
+/// Source-free group entry through the sole actual mode and save-stack owners.
+pub(super) fn begin_native_group<G>(
+    context: &mut CommandContext<'_, G>,
+    command: &mut tex_command::CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    modes: &mut ModeNest,
+    kind: GroupKind,
+) -> Result<ReplayStep, ExecError> {
+    if modes.current_list().pending_hchars().is_some() {
+        crate::box_runtime::flush_pending_hchars_with_fuel(modes, context, effects, fuel)?;
+    }
+    enter_group(context, command, effects, kind);
+    Ok(ReplayStep::Continue)
+}
