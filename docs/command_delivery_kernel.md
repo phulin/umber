@@ -89,7 +89,7 @@ not open a temporary processor with forbidden host facts or lend modes from a
 second owner path. A lexical boundary writes the existing destination and
 continues through main-loop lookahead with the same processor and delivery
 cursor; an applied character run returns at its existing driver budget boundary.
-Tracing, tracking, alignment, and checkpoint cuts retain their existing demand.
+Tracing, tracking, alignment, and checkpoint cuts retain their existing demand. Source admission sits inside the actual missing-command fetch branch; a supplied command and later retained commands carry no source-boundary flag through the switch.
 
 Main control's expanded fetch enters this same word loop and one expansion
 episode before reading its first token. There is no first-read preflight or

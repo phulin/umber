@@ -479,24 +479,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             } else {
                 self.scan_delimited_argument(&mut argument, flags, delimiter, paragraph_token)?;
             }
-            let marker = body.parameter_pattern().marker_index(parameter).map_or(
-                Ok('#'),
-                |index| match body
-                    .parameter_word(index)
-                    .ok_or_else(CommandError::input_invariant)?
-                    .semantic_token()
-                {
-                    Token::Char { ch, .. } => Ok(ch),
-                    _ => Err(CommandError::input_invariant()),
-                },
-            )?;
-            self.trace_macro_argument(marker, parameter + 1, &argument)?;
-            let argument_token_count = argument
-                .visible_len()
-                .map_err(|_| CommandError::input_invariant())?;
-            observe!(
-                self,
-                CommandObservation::TokenList(TokenListRecord {
+            if self.state.int_param(IntParam::TRACING_MACROS) > 0 {
+                self.trace_macro_argument(body, parameter, &argument)?;
+            }
+            if self.is_observed() {
+                let argument_token_count = argument
+                    .visible_len()
+                    .map_err(|_| CommandError::input_invariant())?;
+                self.observe(CommandObservation::TokenList(TokenListRecord {
                     transition: "splice",
                     purpose: "macro_delimiter_match",
                     tokens: delimiter
@@ -510,11 +500,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             ))
                         })
                         .collect(),
-                }),
-            );
-            observe!(
-                self,
-                CommandObservation::Macro(MacroRecord::Argument {
+                }));
+                self.observe(CommandObservation::Macro(MacroRecord::Argument {
                     control_sequence: self.state.resolve(macro_name).to_owned(),
                     parameter: (parameter + 1) as u8,
                     token_count: argument_token_count as u64,
@@ -527,8 +514,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .expect("matched macro argument remains live until sealing")
                         .map(|token| self.observed_token(token))
                         .collect(),
-                }),
-            );
+                }));
+            }
             self.command
                 .input
                 .levels

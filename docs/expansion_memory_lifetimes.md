@@ -302,3 +302,10 @@ neither loan. Raw aftergroup and afterassignment operands use
 reader. Their save-stack or pending-assignment owner consumes that spelling in
 the retained executor loan, without constructing a command or another semantic
 machine for the operand.
+
+Macro-argument trace markers and observed token counts belong to their demanded
+consumers. Ordinary matching scans and publishes the final cursor without
+reading a marker solely for a disabled trace or deriving an unused observation
+length. The trace renders the stored definition marker at its actual print
+boundary; the observer obtains the final range length before emitting its
+ordered delimiter and argument records.

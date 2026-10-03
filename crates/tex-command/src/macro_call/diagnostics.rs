@@ -37,16 +37,28 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     /// TeX82 §400's `#n<-<argument>` trace in completed-argument order.
+    #[cold]
+    #[inline(never)]
     pub(super) fn trace_macro_argument(
         &mut self,
-        marker: char,
+        body: &ResidentMacroBody<G>,
         parameter: usize,
         argument: &ArgumentCursor,
     ) -> Result<(), CommandError> {
-        if self.state.int_param(IntParam::TRACING_MACROS) <= 0 {
-            return Ok(());
-        }
-        let mut text = format!("{marker}{parameter}<-");
+        let marker = body
+            .parameter_pattern()
+            .marker_index(parameter)
+            .map_or(Ok('#'), |index| {
+                match body
+                    .parameter_word(index)
+                    .ok_or_else(CommandError::input_invariant)?
+                    .semantic_token()
+                {
+                    Token::Char { ch, .. } => Ok(ch),
+                    _ => Err(CommandError::input_invariant()),
+                }
+            })?;
+        let mut text = format!("{marker}{}<-", parameter + 1);
         for word in self
             .command
             .input

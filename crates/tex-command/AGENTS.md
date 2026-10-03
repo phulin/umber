@@ -189,6 +189,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   storage tag or reader invalidation protocol. Source-token delivery enters
   the normal source reader; only refill, exhaustion, and recovery use cold
   input transitions.
+- Macro argument trace markers are read by the demanded cold trace, and
+  observation lengths are derived only inside the observer boundary. Ordinary
+  matching publishes its final cursor without these discarded trace inputs.
 - Main-loop character consumers borrow the actual host owner through the same
   processor as native command delivery. The source and resident admission seams
   lend state, fuel, effects, and that owner synchronously; no temporary
