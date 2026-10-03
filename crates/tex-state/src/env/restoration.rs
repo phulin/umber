@@ -4,6 +4,11 @@
 use super::{DenseState, GroupFrame, GroupKind, GroupMismatch, JournalEntry, StateError};
 
 impl<G> DenseState<G> {
+    #[inline]
+    pub(crate) fn group_has_saved_records(&self, frame: GroupFrame) -> bool {
+        self.journal().len() > frame.journal_start as usize
+    }
+
     pub(crate) fn closing_group(&self, expected: GroupKind) -> Result<GroupFrame, StateError> {
         let frame = *self
             .group_frames()

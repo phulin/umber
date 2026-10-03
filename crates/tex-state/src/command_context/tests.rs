@@ -143,3 +143,49 @@ fn unsave_observes_classic_sparse_and_aftergroup_at_their_tex_positions() {
         assert_eq!(state.execution_group_depth(), 0);
     });
 }
+
+#[test]
+fn empty_inner_group_preserves_outer_saved_cells_and_aftergroup() {
+    use crate::GroupKind;
+    with_test_universe(|universe| {
+        let mut context = universe.command_context().expect("context");
+        context.begin_group(GroupKind::Simple, 10).expect("outer");
+        context
+            .assign_count(0, 17, AssignmentScope::Local)
+            .expect("outer value");
+        let after = crate::token::TracedTokenWord::pack(
+            crate::token::Token::Char {
+                ch: 'A',
+                cat: crate::token::Catcode::Letter,
+            },
+            crate::token::OriginId::UNKNOWN,
+        );
+        context.save_aftergroup(after).expect("outer aftergroup");
+        context
+            .begin_group(GroupKind::SemiSimple, 20)
+            .expect("empty inner");
+        assert!(context.end_group(GroupKind::Simple).is_err());
+        assert_eq!(context.execution_group_depth(), 2);
+        let inner = context
+            .end_group_observed(GroupKind::SemiSimple, |_, _| {
+                panic!("an empty group has no restoration or aftergroup events");
+            })
+            .expect("empty inner closes");
+        assert_eq!(inner.entered_line(), 20);
+        assert_eq!(context.execution_group_depth(), 1);
+        assert_eq!(context.count(0).expect("outer value survives"), 17);
+        let mut chronology = Vec::new();
+        context
+            .end_group_observed(GroupKind::Simple, |_, event| match event {
+                crate::GroupUnsaveEvent::AfterGroup(word) => {
+                    assert_eq!(word, after);
+                    chronology.push("aftergroup");
+                }
+                crate::GroupUnsaveEvent::Restoration(_) => chronology.push("restore"),
+            })
+            .expect("outer closes");
+        assert_eq!(chronology, ["aftergroup", "restore"]);
+        assert_eq!(context.count(0).expect("original value restored"), 0);
+        assert_eq!(context.execution_group_depth(), 0);
+    });
+}

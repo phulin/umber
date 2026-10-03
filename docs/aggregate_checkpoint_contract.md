@@ -491,3 +491,13 @@ operations; neither group entries nor checkpoint deltas are traversed. The
 journal stores no second byte-count cache and performs no capacity refresh
 after append, unsave or checkpoint transitions. Existing save-stack high-water
 accounting remains authoritative for TeX capacity diagnostics.
+
+### Group exit without saved records
+
+Closing a group first validates the actual innermost boundary and enters the
+synchronous unsave guard. If the save-stack length equals that boundary's
+record start, there are no cells, boxes, sparse markers or aftergroup words to
+restore. Close that same boundary directly and poison the same dependency
+timeline. Cursor and sparse-chain state belong only to the actual restoration
+walk, which remains the sole saved-record path and keeps its physical order.
+An empty inner group must preserve all saved records of its outer group.

@@ -624,3 +624,9 @@ The save journal derives retained byte counts from the actual group-stack and
 checkpoint-log capacities only when queried, with fixed scalar work and no
 entry traversal. It stores no duplicate capacity-byte caches and performs no
 refresh bookkeeping on append, unsave or checkpoint transitions.
+
+- `src/command_context/groups.rs`: native group entry, inspection, aftergroup
+  and synchronous unsave on the actual admitted context. Empty scopes close
+  their boundary directly; cursor and sparse-chain state exist only in the
+  sole saved-record restoration walk. Validation, the unsave guard and
+  dependency poisoning apply to every group close.
