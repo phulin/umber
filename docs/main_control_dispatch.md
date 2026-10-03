@@ -128,11 +128,19 @@ actual retained token when its caller needs one.
 
 Normal `\let` consumes the RHS meaning directly. Its leading spaces are
 meaning-based, while its optional equals sign is spelling-based; after that
-sign it skips at most one space. `\futurelet` keeps its first token in the
-live consumer, reads the second without expansion, backs the second and then
-the first, and returns the second meaning. Exceptional alignment, outer
+sign it skips at most one space. `\futurelet` retains only its first spelling,
+actual alignment adjustment and demanded observed spelling, then ends that
+reader call before reading the second token. It backs the second and then the
+first and returns the second meaning. `\expandafter` retains the same real
+backup facts across its second operand. All backups share one input-stack
+conservation, alignment correction and final-input insertion implementation;
+their demanded observations follow insertion. Exceptional alignment, outer
 recovery and observation lend their existing command only at those demanded
-boundaries, preserving the actual backup adjustment and observed identity.
+boundaries. No successful backup constructs a replacement command.
+The three raw operands that must later be backed up (`\futurelet`'s first
+token, `\expandafter`'s first token, and `\noexpand`'s target) share one
+reader entry returning those actual backup facts. `\noexpand` restores its
+temporary normal scanner status before backing the target with suppression.
 
 Main control separates the owned `CommandState`, fuel, resource capabilities,
 operation observer and resource-decline slot from one owned `ExecutionState`.

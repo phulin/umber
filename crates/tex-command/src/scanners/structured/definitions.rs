@@ -122,21 +122,23 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
         let target = self.scan_definition_target()?;
         let meaning = if future {
-            // Keep the first token at its real consuming boundary while the
-            // second is read and backed up. Both backups retain their actual
-            // alignment adjustment and observation identity.
-            self.consume_raw_words::<false, _>(&mut |processor, first, _, first_command| {
-                let meaning = processor
-                    .consume_raw_words::<true, _>(&mut |processor, second, meaning, command| {
-                        let meaning = meaning.expect("raw meaning requested").resolve();
-                        processor.back_consumed_word(second, command)?;
-                        Ok(ControlFlow::Break(meaning))
-                    })?
-                    .ok_or_else(CommandError::input_invariant)?;
-                processor.back_consumed_word(first, first_command)?;
-                Ok(ControlFlow::Break(meaning))
-            })?
-            .ok_or_else(CommandError::input_invariant)?
+            let mut adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
+            let mut observed_spelling = None;
+            let first = self.read_backup_operand(&mut adjustment, &mut observed_spelling)?;
+            let meaning = self
+                .consume_raw_words::<true, _>(&mut |processor, spelling, meaning, command| {
+                    let meaning = meaning.expect("raw meaning requested").resolve();
+                    processor.back_consumed_word(spelling, command)?;
+                    Ok(ControlFlow::Break(meaning))
+                })?
+                .ok_or_else(CommandError::input_invariant)?;
+            self.back_retained_word(
+                first,
+                adjustment,
+                observed_spelling,
+                BackupTreatment::Ordinary,
+            )?;
+            meaning
         } else {
             // §1221: any leading spaces, optional literal equals, then at
             // most one space. Space uses cur_cmd, equals uses cur_tok.

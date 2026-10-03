@@ -186,7 +186,8 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   consume tokens in the canonical reader. Raw operand consumers receive actual
   spelling and demand-only native meaning in one continuing reader; ordinary
   unobserved operands construct no command. Let consumes meaning directly;
-  futurelet backs both tokens at their live consuming boundaries. Observation,
+  futurelet releases its first reader before the second operand and backs
+  both words through the common canonical insertion implementation. Observation,
   outer recovery, alignment and source control-sequence creation keep their
   original semantic positions.
 - `src/processor/expand/tests/kernel.rs`: nested reader resumption, every

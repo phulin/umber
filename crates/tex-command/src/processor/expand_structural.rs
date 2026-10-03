@@ -6,10 +6,7 @@ use tex_state::token::{OriginId, Token, TracedTokenWord};
 use crate::CommandError;
 use crate::command::CurrentCommand;
 use crate::execution_scratch::{ArgumentRunAdmission, CsnameNameSink};
-use crate::input::{BackupTreatment, ReplayTrace, RetirementBehavior, TokenBehavior};
-use crate::observation::{
-    CommandObservation, InputReason, InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
-};
+use crate::input::BackupTreatment;
 use crate::processor::status::{ScannerStatus, ScannerStatusVisibility};
 
 use super::expand_render::print_esc_text;
@@ -23,16 +20,22 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX.web's `\noexpand`: read normally, then replay exactly one target
     /// from a backed-up level carrying the non-sticky suppression treatment.
     pub(super) fn expand_noexpand(&mut self) -> Result<(), CommandError> {
-        let mut destination = None;
-        match self.get_token_with_normal_scanner_status_into(&mut destination)? {
-            DeliveryStatus::End => return Err(CommandError::input_invariant()),
-            DeliveryStatus::Command => {}
-            _ => unreachable!("ordinary token delivery returns only commands"),
+        let episode = (!matches!(self.command.scanner, ScannerStatus::Normal)).then(|| {
+            self.begin_scanner_episode(ScannerStatus::Normal, ScannerStatusVisibility::Observed)
+        });
+        let mut adjustment = super::AlignmentDeliveryAdjustment::None;
+        let mut observed = None;
+        let result = self.read_backup_operand(&mut adjustment, &mut observed);
+        if let Some(episode) = episode {
+            self.finish_scanner_episode(episode);
         }
-        let target = destination
-            .take()
-            .expect("command status initializes destination");
-        self.back_input_with_treatment(target, BackupTreatment::SuppressExpandableControlSequence)
+        let spelling = result?;
+        self.back_retained_word(
+            spelling,
+            adjustment,
+            observed,
+            BackupTreatment::SuppressExpandableControlSequence,
+        )
     }
 
     /// Reads one token with TeX82's temporary `scanner_status := normal`
@@ -63,26 +66,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn expand_expandafter(&mut self) -> Result<(), CommandError> {
         let mut adjustment = super::AlignmentDeliveryAdjustment::None;
         let mut observed_spelling = None;
-        let first = self
-            .consume_raw_words::<false, _>(&mut |processor, word, _, command| {
-                adjustment = command.map_or_else(
-                    || {
-                        super::alignment::AlignmentDeliveryState::<G>::back_input_adjustment(
-                            word.semantic_token(),
-                        )
-                    },
-                    CurrentCommand::alignment_adjustment,
-                );
-                if processor.is_observed() {
-                    observed_spelling = Some(processor.observed_command_spelling(
-                        command.expect("observed raw token has a command"),
-                    ));
-                }
-                Ok(std::ops::ControlFlow::Break(word))
-            })?
-            .ok_or_else(CommandError::input_invariant)?;
+        let first = self.read_backup_operand(&mut adjustment, &mut observed_spelling)?;
         self.expand_next_token()?;
-        self.replay_expandafter_first(first, adjustment, observed_spelling)
+        self.back_retained_word(
+            first,
+            adjustment,
+            observed_spelling,
+            BackupTreatment::Ordinary,
+        )
     }
 
     /// Collects TeX82 §372's expanded character list through `\\endcsname`.
@@ -184,39 +175,5 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let symbol = self.state.intern_relaxed_control_sequence(&name);
         self.command.recycle_csname_scratch(name);
         self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), opener))
-    }
-
-    fn replay_expandafter_first(
-        &mut self,
-        spelling: TracedTokenWord,
-        adjustment: super::AlignmentDeliveryAdjustment,
-        observed_spelling: Option<crate::observation::ObservedToken>,
-    ) -> Result<(), CommandError> {
-        self.conserve_input_stack_for_descendant()?;
-        self.command.alignment.undo_delivery(adjustment);
-        let level = self.command.push_token_level(
-            spelling,
-            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
-            RetirementBehavior::Pop,
-            ReplayTrace::BackedUp,
-        );
-        if let Some(observed_spelling) = observed_spelling {
-            // TeX82 §25's `back_input` is part of the expandafter lifecycle:
-            // after expanding its second token, the saved first token must be
-            // a visible ordinary backup before raw delivery resumes.
-            self.observe(CommandObservation::Input(InputRecord {
-                transition: InputTransition::Backup,
-                reason: InputReason::Backup,
-                source_name: None,
-                source: None,
-                level: level.0,
-                position: 0,
-            }));
-            self.observe(CommandObservation::Recovery(RecoveryRecord {
-                kind: RecoveryKind::Backup,
-                tokens: vec![observed_spelling],
-            }));
-        }
-        Ok(())
     }
 }

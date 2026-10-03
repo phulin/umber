@@ -162,33 +162,114 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         spelling: TracedTokenWord,
         storage: impl crate::input::PackedTokenSpanSource<G>,
     ) -> Result<(), CommandError> {
+        self.push_backed_up_input(
+            storage,
+            BackupTreatment::Ordinary,
+            AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
+            |processor| processor.observed_token(spelling),
+        )
+    }
+
+    /// Reads the actual spelling and backup facts that must survive another
+    /// operand read or a temporary scanner-status scope.
+    pub(crate) fn read_backup_operand(
+        &mut self,
+        adjustment: &mut super::AlignmentDeliveryAdjustment,
+        observed: &mut Option<crate::observation::ObservedToken>,
+    ) -> Result<TracedTokenWord, CommandError> {
+        self.consume_raw_words::<false, _>(&mut |processor, spelling, _, command| {
+            *adjustment = command.map_or_else(
+                || AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
+                CurrentCommand::alignment_adjustment,
+            );
+            if processor.is_observed() {
+                *observed = Some(processor.observed_command_spelling(
+                    command.expect("observed raw operand has a command"),
+                ));
+            }
+            Ok(std::ops::ControlFlow::Break(spelling))
+        })?
+        .ok_or_else(CommandError::input_invariant)
+    }
+
+    /// Backs a real token retained across another operand read. Only its
+    /// original adjustment and demanded observed spelling outlive delivery.
+    pub(crate) fn back_retained_word(
+        &mut self,
+        spelling: TracedTokenWord,
+        adjustment: super::AlignmentDeliveryAdjustment,
+        observed_spelling: Option<crate::observation::ObservedToken>,
+        treatment: BackupTreatment,
+    ) -> Result<(), CommandError> {
+        self.push_backed_up_input(spelling, treatment, adjustment, |_| {
+            observed_spelling.expect("observed retained token has its original spelling")
+        })
+    }
+
+    fn push_backed_up_input(
+        &mut self,
+        storage: impl crate::input::PackedTokenSpanSource<G>,
+        treatment: BackupTreatment,
+        adjustment: super::AlignmentDeliveryAdjustment,
+        observe: impl FnOnce(&Self) -> crate::observation::ObservedToken,
+    ) -> Result<(), CommandError> {
+        // §325 conserves depleted input before undoing delivery and pushing.
         self.conserve_input_stack_for_descendant()?;
-        self.command
-            .alignment
-            .undo_delivery(AlignmentDeliveryState::<G>::back_input_adjustment(
-                spelling.semantic_token(),
-            ));
+        let previous_align_state = self.command.alignment.align_state;
+        self.command.alignment.undo_delivery(adjustment);
         let level = self.command.push_token_level(
             storage,
-            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+            TokenBehavior::BackedUp(treatment),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
         if self.is_observed() {
-            self.observe(CommandObservation::Input(InputRecord {
-                transition: InputTransition::Backup,
-                reason: InputReason::Backup,
-                source_name: None,
-                source: None,
-                level: level.0,
-                position: 0,
-            }));
-            self.observe(CommandObservation::Recovery(RecoveryRecord {
-                kind: RecoveryKind::Backup,
-                tokens: vec![self.observed_token(spelling)],
-            }));
+            let spelling = observe(self);
+            self.observe_backed_up_input(level, spelling, adjustment, previous_align_state);
         }
         Ok(())
+    }
+
+    #[cold]
+    fn observe_backed_up_input(
+        &mut self,
+        level: crate::input::InputLevelId,
+        spelling: crate::observation::ObservedToken,
+        adjustment: super::AlignmentDeliveryAdjustment,
+        previous_align_state: i32,
+    ) {
+        self.observe(CommandObservation::Input(InputRecord {
+            transition: InputTransition::Backup,
+            reason: InputReason::Backup,
+            source_name: None,
+            source: None,
+            level: level.0,
+            position: 0,
+        }));
+        self.observe(CommandObservation::Recovery(RecoveryRecord {
+            kind: RecoveryKind::Backup,
+            tokens: vec![spelling],
+        }));
+        if self.command.alignment.active_alignment.is_some()
+            && matches!(
+                adjustment,
+                super::AlignmentDeliveryAdjustment::BeginGroup
+                    | super::AlignmentDeliveryAdjustment::EndGroup
+            )
+        {
+            self.observe(CommandObservation::Alignment(AlignmentRecord {
+                transition: "backup_correction",
+                alignment: self
+                    .command
+                    .alignment
+                    .active_alignment
+                    .map(|identity| identity.raw()),
+                nesting: self.command.alignment_observation_nesting(),
+                align_state: self.command.alignment.align_state,
+                delimiter: None,
+                previous_align_state: Some(previous_align_state),
+            }));
+        }
     }
     /// Restores a native save level and admits aftergroup tokens directly to
     /// final input. The callback observes each value before its saved owner drops.
@@ -276,60 +357,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         command: CurrentCommand<G>,
         treatment: BackupTreatment,
     ) -> Result<(), CommandError> {
-        // §325 runs the stack-conservation loop before it touches
-        // `align_state` and before it pushes the `backed_up` list, so every
-        // depleted level retires ahead of the backup.
-        self.conserve_input_stack_for_descendant()?;
-        let previous_align_state = self.command.alignment.align_state;
-        let adjustment = command.alignment_adjustment();
-        self.undo_alignment_delivery(&command);
-
-        let level = self.command.push_token_level(
+        self.push_backed_up_input(
             command.spelling(),
-            TokenBehavior::BackedUp(treatment),
-            RetirementBehavior::Pop,
-            ReplayTrace::BackedUp,
-        );
-        if self.is_observed() {
-            self.observe(CommandObservation::Input(InputRecord {
-                transition: InputTransition::Backup,
-                reason: InputReason::Backup,
-                source_name: None,
-                source: None,
-                level: level.0,
-                position: 0,
-            }));
-            self.observe(CommandObservation::Recovery(RecoveryRecord {
-                kind: RecoveryKind::Backup,
-                tokens: vec![self.observed_command_spelling(&command)],
-            }));
-            if self.command.alignment.active_alignment.is_some()
-                && matches!(
-                    adjustment,
-                    crate::processor::AlignmentDeliveryAdjustment::BeginGroup
-                        | crate::processor::AlignmentDeliveryAdjustment::EndGroup
-                )
-            {
-                self.observe(CommandObservation::Alignment(AlignmentRecord {
-                    transition: "backup_correction",
-                    alignment: self
-                        .command
-                        .alignment
-                        .active_alignment
-                        .map(|identity| identity.raw()),
-                    nesting: self.command.alignment_observation_nesting(),
-                    align_state: self.command.alignment.align_state,
-                    delimiter: None,
-                    previous_align_state: Some(previous_align_state),
-                }));
-            }
-        }
-        Ok(())
-    }
-    pub(crate) fn undo_alignment_delivery(&mut self, command: &CurrentCommand<G>) {
-        self.command
-            .alignment
-            .undo_delivery(command.alignment_adjustment());
+            treatment,
+            command.alignment_adjustment(),
+            |processor| processor.observed_command_spelling(&command),
+        )
     }
     /// Cancels raw brace accounting for a matched `#{` delimiter. The opening
     /// brace was delivered as parameter text, so scalar macro matching must
