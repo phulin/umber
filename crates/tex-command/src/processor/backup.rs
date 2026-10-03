@@ -1,6 +1,6 @@
 //! Canonical command backup and replay insertion transitions.
 
-use tex_state::meaning::Meaning;
+use tex_state::meaning::{Meaning, MeaningWord};
 use tex_state::token::{Catcode, TracedTokenWord};
 
 use crate::command::CurrentCommand;
@@ -46,22 +46,20 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         outer_horizontal: bool,
     ) -> Result<bool, CommandError> {
-        let mut destination = None;
-        match self.get_token_into(&mut destination)? {
-            super::DeliveryStatus::End => return Ok(false),
-            super::DeliveryStatus::Command => {}
-            _ => unreachable!("ordinary token delivery returns only commands"),
-        }
-
-        let next = destination
-            .take()
-            .expect("command status initializes destination");
-        if outer_horizontal && is_math_shift(&next) {
-            Ok(true)
-        } else {
-            self.back_input(next)?;
-            Ok(false)
-        }
+        self.consume_raw_words::<true, _>(&mut |processor, spelling, meaning, exceptional| {
+            let shift = outer_horizontal
+                && matches!(
+                    meaning.expect("math probe requested native meaning"),
+                    MeaningWord::Static(word)
+                        if Meaning::runtime_word_character(*word)
+                            .is_some_and(|(_, cat)| cat == Catcode::MathShift)
+                );
+            if !shift {
+                processor.back_consumed_word(spelling, exceptional)?;
+            }
+            Ok(std::ops::ControlFlow::Break(shift))
+        })
+        .map(|shift| shift.unwrap_or(false))
     }
     /// Performs TeX82 §1197's `@<Check that another \.\$ follows@>`, the probe
     /// §1194 `after_math` runs when a display, or a display's equation number,
@@ -72,21 +70,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// §327 `back_error`, whose backup half lives here; the executor owns the
     /// accompanying ``Display math should end with $$`` diagnostic.
     pub fn scan_display_end_math_shift(&mut self) -> Result<bool, CommandError> {
-        let mut destination = None;
-        match self.request_expanded_token(&mut destination)? {
-            super::DeliveryStatus::End => return Ok(false),
-            super::DeliveryStatus::Command => {}
-            _ => unreachable!("ordinary expanded delivery returns only commands"),
-        }
-        let next = destination
-            .take()
-            .expect("command status initializes destination");
-        if is_math_shift(&next) {
-            Ok(true)
-        } else {
-            self.back_input(next)?;
-            Ok(false)
-        }
+        let mut shift = false;
+        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
+            shift = matches!(meaning, MeaningWord::Static(word)
+                if Meaning::runtime_word_character(*word)
+                    .is_some_and(|(_, cat)| cat == Catcode::MathShift));
+            if !shift {
+                processor.back_consumed_word(spelling, exceptional)?;
+            }
+            Ok(std::ops::ControlFlow::Break(()))
+        })?;
+        Ok(shift)
     }
     /// TeX82 §323's `back_list`: `begin_token_list(p,backed_up)`.
     ///
@@ -163,12 +157,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         spelling: TracedTokenWord,
         storage: impl crate::input::PackedTokenSpanSource<G>,
     ) -> Result<(), CommandError> {
-        self.push_backed_up_input(
-            storage,
-            BackupTreatment::Ordinary,
-            AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
-            |processor| processor.observed_token(spelling),
-        )
+        let adjustment =
+            AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token());
+        let level = self.push_backed_up_input(storage, BackupTreatment::Ordinary, adjustment)?;
+        if self.is_observed() {
+            self.observe_backed_up_input(level, self.observed_token(spelling), adjustment);
+        }
+        Ok(())
     }
 
     /// Reads the actual spelling and backup facts that must survive another
@@ -204,9 +199,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         observed_spelling: Option<crate::observation::ObservedToken>,
         treatment: BackupTreatment,
     ) -> Result<(), CommandError> {
-        self.push_backed_up_input(spelling, treatment, adjustment, |_| {
-            observed_spelling.expect("observed retained token has its original spelling")
-        })
+        let level = self.push_backed_up_input(spelling, treatment, adjustment)?;
+        if self.is_observed() {
+            self.observe_backed_up_input(
+                level,
+                observed_spelling.expect("observed retained token has its original spelling"),
+                adjustment,
+            );
+        }
+        Ok(())
     }
 
     #[inline]
@@ -215,11 +216,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         storage: impl crate::input::PackedTokenSpanSource<G>,
         treatment: BackupTreatment,
         adjustment: super::AlignmentDeliveryAdjustment,
-        observe: impl FnOnce(&Self) -> crate::observation::ObservedToken,
-    ) -> Result<(), CommandError> {
+    ) -> Result<crate::input::InputLevelId, CommandError> {
         // §325 conserves depleted input before undoing delivery and pushing.
         self.conserve_input_stack_for_descendant()?;
-        let previous_align_state = self.command.alignment.align_state;
         self.command.alignment.undo_delivery(adjustment);
         let level = self.command.push_token_level(
             storage,
@@ -227,11 +226,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        if self.is_observed() {
-            let spelling = observe(self);
-            self.observe_backed_up_input(level, spelling, adjustment, previous_align_state);
-        }
-        Ok(())
+        Ok(level)
     }
 
     #[cold]
@@ -240,7 +235,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         level: crate::input::InputLevelId,
         spelling: crate::observation::ObservedToken,
         adjustment: super::AlignmentDeliveryAdjustment,
-        previous_align_state: i32,
     ) {
         self.observe(CommandObservation::Input(InputRecord {
             transition: InputTransition::Backup,
@@ -271,7 +265,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 nesting: self.command.alignment_observation_nesting(),
                 align_state: self.command.alignment.align_state,
                 delimiter: None,
-                previous_align_state: Some(previous_align_state),
+                previous_align_state: Some(match adjustment {
+                    // Input insertion leaves the just-adjusted state unchanged.
+                    super::AlignmentDeliveryAdjustment::BeginGroup => {
+                        self.command.alignment.align_state + 1
+                    }
+                    super::AlignmentDeliveryAdjustment::EndGroup => {
+                        self.command.alignment.align_state - 1
+                    }
+                    _ => unreachable!("only unit brace adjustments emit backup correction"),
+                }),
             }));
         }
     }
@@ -362,12 +365,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         command: CurrentCommand<G>,
         treatment: BackupTreatment,
     ) -> Result<(), CommandError> {
-        self.push_backed_up_input(
-            command.spelling(),
-            treatment,
-            command.alignment_adjustment(),
-            |processor| processor.observed_command_spelling(&command),
-        )
+        let adjustment = command.alignment_adjustment();
+        let level = self.push_backed_up_input(command.spelling(), treatment, adjustment)?;
+        if self.is_observed() {
+            self.observe_backed_up_input(
+                level,
+                self.observed_command_spelling(&command),
+                adjustment,
+            );
+        }
+        Ok(())
     }
     /// Cancels raw brace accounting for a matched `#{` delimiter. The opening
     /// brace was delivered as parameter text, so scalar macro matching must
@@ -375,17 +382,4 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(crate) fn undo_delimiter_begin_group_delivery(&mut self) {
         self.command.alignment.undo_delimiter_begin_group_delivery();
     }
-}
-
-/// Whether a delivered command is TeX82's `math_shift` command code -- the
-/// single test both §1138's opener and §1197's closer apply to their peeked
-/// token, and the reason neither may grow a private notion of "a `$`".
-fn is_math_shift<G>(command: &CurrentCommand<G>) -> bool {
-    matches!(
-        command.meaning(),
-        tex_state::ResolvedMeaning::Static(Meaning::CharToken {
-            cat: Catcode::MathShift,
-            ..
-        })
-    )
 }

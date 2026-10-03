@@ -2,14 +2,17 @@
 
 use tex_state::GlueId;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, MeaningWord, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 use tex_state::token::Catcode;
 
 use super::scalar::InternalValue;
 use crate::observation::canonical_names::glue_order_name;
-use crate::processor::{CommandProcessor, DeliveryStatus};
-use crate::{CommandError, CommandObservation, CurrentCommand, ObservationValue, ScannerRecord};
+use crate::processor::CommandProcessor;
+use crate::{CommandError, CommandObservation, ObservationValue, ScannerRecord};
+
+mod arithmetic;
+use arithmetic::{apply_factor, evaluate_term, negate_value, validate_factor};
 
 const INTEGER_LIMIT: i64 = i32::MAX as i64;
 const DIMENSION_LIMIT: i64 = Scaled::MAX_DIMEN.raw() as i64;
@@ -297,38 +300,27 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         loop {
             let factor = match phase {
                 ExpressionPhase::FactorLeading => {
-                    let first = loop {
-                        let mut first = None;
-                        let delivery = match self.request_expanded_token(&mut first) {
-                            Ok(delivery) => delivery,
-                            Err(error) => {
-                                return Err(self.expression_scan_error(error, stack_mark));
+                    let mut parenthesis = false;
+                    let probe = self.consume_expanded_words(
+                        &mut |processor, spelling, meaning, _, exceptional| {
+                            let character = match meaning {
+                                MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
+                                _ => None,
+                            };
+                            if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
+                                return Ok(std::ops::ControlFlow::Continue(()));
                             }
-                        };
-                        match delivery {
-                            DeliveryStatus::End => break None,
-                            DeliveryStatus::Command => {
-                                let first =
-                                    first.expect("command delivery initializes destination");
-                                if !matches!(
-                                    static_meaning(first.meaning()),
-                                    Meaning::CharToken {
-                                        cat: Catcode::Space,
-                                        ..
-                                    }
-                                ) {
-                                    break Some(first);
-                                }
+                            parenthesis = character == Some(('(', Catcode::Other));
+                            if !parenthesis {
+                                processor.back_consumed_word(spelling, exceptional)?;
                             }
-                            _ => {
-                                unreachable!("ordinary expanded delivery returns only commands")
-                            }
-                        }
-                    };
-                    if first
-                        .as_ref()
-                        .is_some_and(|command| is_other_character(command, '('))
-                    {
+                            Ok(std::ops::ControlFlow::Break(()))
+                        },
+                    );
+                    if let Err(error) = probe {
+                        return Err(self.expression_scan_error(error, stack_mark));
+                    }
+                    if parenthesis {
                         let factor_kind = frame.factor_kind();
                         if let Err(error) = self.command.scratch.push_expression_frame(frame) {
                             fail!(crate::scan_toks::scratch_command_error(error));
@@ -336,11 +328,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         frame = ExpressionFrame::new(factor_kind);
                         phase = ExpressionPhase::FactorLeading;
                         continue;
-                    }
-                    if let Some(command) = first
-                        && let Err(error) = self.back_input(command)
-                    {
-                        fail!(error);
                     }
                     phase = ExpressionPhase::FactorScalar;
                     continue;
@@ -447,46 +434,35 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         parenthesized: bool,
     ) -> Result<ExpressionOperator, CommandError> {
-        let command = loop {
-            let mut command = None;
-            let delivery = self.request_expanded_token(&mut command)?;
-            let command = match delivery {
-                DeliveryStatus::End => return Ok(ExpressionOperator::None),
-                DeliveryStatus::Command => {
-                    command.expect("command delivery initializes destination")
-                }
-                _ => unreachable!("ordinary expanded delivery returns only commands"),
+        let mut operator = ExpressionOperator::None;
+        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
+            let character = match meaning {
+                MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
+                _ => None,
             };
-            if !matches!(
-                static_meaning(command.meaning()),
-                Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
+            if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
+                return Ok(std::ops::ControlFlow::Continue(()));
+            }
+            operator = match character {
+                Some(('+', Catcode::Other)) => ExpressionOperator::Add,
+                Some(('-', Catcode::Other)) => ExpressionOperator::Subtract,
+                Some(('*', Catcode::Other)) => ExpressionOperator::Multiply,
+                Some(('/', Catcode::Other)) => ExpressionOperator::Divide,
+                _ => ExpressionOperator::None,
+            };
+            if matches!(operator, ExpressionOperator::None) {
+                if parenthesized {
+                    if character != Some((')', Catcode::Other)) {
+                        processor.back_consumed_word(spelling, exceptional)?;
+                        processor.missing_expression_parenthesis_error()?;
+                    }
+                } else if !matches!(meaning, MeaningWord::Static(Meaning::RELAX_WORD)) {
+                    processor.back_consumed_word(spelling, exceptional)?;
                 }
-            ) {
-                break command;
             }
-        };
-        for (character, operator) in [
-            ('+', ExpressionOperator::Add),
-            ('-', ExpressionOperator::Subtract),
-            ('*', ExpressionOperator::Multiply),
-            ('/', ExpressionOperator::Divide),
-        ] {
-            if is_other_character(&command, character) {
-                return Ok(operator);
-            }
-        }
-
-        if parenthesized {
-            if !is_other_character(&command, ')') {
-                self.back_input(command)?;
-                self.missing_expression_parenthesis_error()?;
-            }
-        } else if !matches!(static_meaning(command.meaning()), Meaning::Relax) {
-            self.back_input(command)?;
-        }
-        Ok(ExpressionOperator::None)
+            Ok(std::ops::ControlFlow::Break(()))
+        })?;
+        Ok(operator)
     }
 
     fn missing_expression_parenthesis_error(&mut self) -> Result<(), CommandError> {
@@ -530,289 +506,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             value,
         }));
     }
-}
-
-fn is_other_character<G>(command: &CurrentCommand<G>, expected: char) -> bool {
-    matches!(
-        static_meaning(command.meaning()),
-        Meaning::CharToken {
-            ch,
-            cat: Catcode::Other,
-        } if ch == expected
-    )
-}
-
-fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
-    match meaning {
-        ResolvedMeaning::Static(meaning) => meaning,
-        ResolvedMeaning::Macro { .. } => Meaning::Undefined,
-    }
-}
-
-fn validate_factor<G>(
-    factor: ExpressionValue<G>,
-    kind: ExpressionKind,
-    term_operator: ExpressionOperator,
-    overflow: &mut bool,
-) -> ExpressionValue<G> {
-    let limit = if term_operator.continues_term() {
-        INTEGER_LIMIT
-    } else {
-        kind.limit()
-    };
-    match factor {
-        ExpressionValue::Number(value) => {
-            ExpressionValue::Number(bounded_number(value, limit, overflow))
-        }
-        ExpressionValue::Glue(mut value) => {
-            value.width = bounded_number(value.width, DIMENSION_LIMIT, overflow);
-            value.stretch = bounded_number(value.stretch, DIMENSION_LIMIT, overflow);
-            value.shrink = bounded_number(value.shrink, DIMENSION_LIMIT, overflow);
-            ExpressionValue::Glue(value)
-        }
-    }
-}
-
-fn negate_value<G>(value: ExpressionValue<G>) -> ExpressionValue<G> {
-    match value {
-        ExpressionValue::Number(value) => ExpressionValue::Number(value.saturating_neg()),
-        ExpressionValue::Glue(mut value) => {
-            value.width = value.width.saturating_neg();
-            value.stretch = value.stretch.saturating_neg();
-            value.shrink = value.shrink.saturating_neg();
-            value.identity = None;
-            value.source_register = None;
-            value.shared_zero = false;
-            ExpressionValue::Glue(value)
-        }
-    }
-}
-
-fn bounded_number(value: i64, limit: i64, overflow: &mut bool) -> i64 {
-    if (-limit..=limit).contains(&value) {
-        value
-    } else {
-        *overflow = true;
-        0
-    }
-}
-
-fn apply_factor<G>(
-    frame: &mut ExpressionFrame<G>,
-    factor: ExpressionValue<G>,
-    mut operator: ExpressionOperator,
-    overflow: &mut bool,
-) -> ExpressionOperator {
-    match frame.term_operator {
-        ExpressionOperator::None => {
-            frame.term = factor;
-            if matches!(frame.term, ExpressionValue::Glue(_))
-                && !matches!(operator, ExpressionOperator::None)
-            {
-                let ExpressionValue::Glue(mut glue) = frame.term else {
-                    unreachable!()
-                };
-                glue.normalize();
-                glue.identity = None;
-                glue.source_register = None;
-                glue.shared_zero = false;
-                frame.term = ExpressionValue::Glue(glue);
-            }
-        }
-        ExpressionOperator::Multiply if matches!(operator, ExpressionOperator::Divide) => {
-            frame.scale_numerator = factor.integer();
-            operator = ExpressionOperator::Scale;
-        }
-        ExpressionOperator::Multiply => {
-            frame.term = multiply_value(frame.term, factor.integer(), frame.kind, overflow);
-        }
-        ExpressionOperator::Divide => {
-            frame.term = divide_value(frame.term, factor.integer(), frame.kind, overflow);
-        }
-        ExpressionOperator::Scale => {
-            frame.term = scale_value(
-                frame.term,
-                frame.scale_numerator,
-                factor.integer(),
-                frame.kind,
-                overflow,
-            );
-        }
-        ExpressionOperator::Add | ExpressionOperator::Subtract => {
-            unreachable!("add/subtract is expression state, never term state")
-        }
-    }
-    operator
-}
-
-fn evaluate_term<G>(frame: &mut ExpressionFrame<G>, next: ExpressionOperator, overflow: &mut bool) {
-    frame.expression = match frame.expression_operator {
-        ExpressionOperator::None => frame.term,
-        ExpressionOperator::Add => {
-            add_value(frame.expression, frame.term, false, frame.kind, overflow)
-        }
-        ExpressionOperator::Subtract => {
-            add_value(frame.expression, frame.term, true, frame.kind, overflow)
-        }
-        ExpressionOperator::Multiply | ExpressionOperator::Divide | ExpressionOperator::Scale => {
-            unreachable!("multiply/divide is term state, never expression state")
-        }
-    };
-    frame.term_operator = ExpressionOperator::None;
-    frame.expression_operator = next;
-}
-
-fn add_value<G>(
-    left: ExpressionValue<G>,
-    right: ExpressionValue<G>,
-    subtract: bool,
-    kind: ExpressionKind,
-    overflow: &mut bool,
-) -> ExpressionValue<G> {
-    match (left, right) {
-        (ExpressionValue::Number(left), ExpressionValue::Number(right)) => {
-            let right = if subtract { -right } else { right };
-            ExpressionValue::Number(bounded_number(left + right, kind.limit(), overflow))
-        }
-        (ExpressionValue::Glue(mut left), ExpressionValue::Glue(right)) => {
-            left.width = add_component(left.width, right.width, subtract, overflow);
-            add_ordered_component(
-                &mut left.stretch,
-                &mut left.stretch_order,
-                right.stretch,
-                right.stretch_order,
-                subtract,
-                overflow,
-            );
-            add_ordered_component(
-                &mut left.shrink,
-                &mut left.shrink_order,
-                right.shrink,
-                right.shrink_order,
-                subtract,
-                overflow,
-            );
-            left.normalize();
-            left.identity = None;
-            left.source_register = None;
-            left.shared_zero = false;
-            ExpressionValue::Glue(left)
-        }
-        _ => unreachable!("one expression frame has one value type"),
-    }
-}
-
-fn add_component(left: i64, right: i64, subtract: bool, overflow: &mut bool) -> i64 {
-    bounded_number(
-        left + if subtract { -right } else { right },
-        DIMENSION_LIMIT,
-        overflow,
-    )
-}
-
-fn add_ordered_component(
-    left: &mut i64,
-    left_order: &mut Order,
-    right: i64,
-    right_order: Order,
-    subtract: bool,
-    overflow: &mut bool,
-) {
-    if *left_order == right_order {
-        *left = add_component(*left, right, subtract, overflow);
-    } else if *left_order < right_order && right != 0 {
-        // etex.ch's exact dominant-order branch copies the higher-order
-        // component without applying the expression subtraction flag.
-        *left = right;
-        *left_order = right_order;
-    }
-}
-
-fn multiply_value<G>(
-    value: ExpressionValue<G>,
-    factor: i64,
-    kind: ExpressionKind,
-    overflow: &mut bool,
-) -> ExpressionValue<G> {
-    map_components(value, kind.limit(), overflow, |component, limit| {
-        bounded_i128(i128::from(component) * i128::from(factor), limit)
-    })
-}
-
-fn divide_value<G>(
-    value: ExpressionValue<G>,
-    divisor: i64,
-    kind: ExpressionKind,
-    overflow: &mut bool,
-) -> ExpressionValue<G> {
-    map_components(value, kind.limit(), overflow, |component, limit| {
-        rounded_fraction(component, 1, divisor, limit)
-    })
-}
-
-fn scale_value<G>(
-    value: ExpressionValue<G>,
-    numerator: i64,
-    denominator: i64,
-    kind: ExpressionKind,
-    overflow: &mut bool,
-) -> ExpressionValue<G> {
-    map_components(value, kind.limit(), overflow, |component, limit| {
-        rounded_fraction(component, numerator, denominator, limit)
-    })
-}
-
-fn map_components<G>(
-    value: ExpressionValue<G>,
-    number_limit: i64,
-    overflow: &mut bool,
-    mut map: impl FnMut(i64, i64) -> Option<i64>,
-) -> ExpressionValue<G> {
-    let mut apply = |value, limit| match map(value, limit) {
-        Some(value) => value,
-        None => {
-            *overflow = true;
-            0
-        }
-    };
-    match value {
-        ExpressionValue::Number(value) => ExpressionValue::Number(apply(value, number_limit)),
-        ExpressionValue::Glue(mut glue) => {
-            glue.width = apply(glue.width, DIMENSION_LIMIT);
-            glue.stretch = apply(glue.stretch, DIMENSION_LIMIT);
-            glue.shrink = apply(glue.shrink, DIMENSION_LIMIT);
-            glue.identity = None;
-            glue.source_register = None;
-            glue.shared_zero = false;
-            ExpressionValue::Glue(glue)
-        }
-    }
-}
-
-fn bounded_i128(value: i128, limit: i64) -> Option<i64> {
-    let limit = i128::from(limit);
-    (-limit..=limit)
-        .contains(&value)
-        .then(|| i64::try_from(value).expect("bounded expression result fits i64"))
-}
-
-/// e-TeX's `fract`/`quotient`: nearest-integer division, with exact halves
-/// rounded away from zero and the result bounded before publication.
-fn rounded_fraction(value: i64, numerator: i64, denominator: i64, limit: i64) -> Option<i64> {
-    if denominator == 0 {
-        return None;
-    }
-    let product = i128::from(value) * i128::from(numerator);
-    let divisor = i128::from(denominator);
-    let negative = (product < 0) ^ (divisor < 0);
-    let product = product.abs();
-    let divisor = divisor.abs();
-    let mut quotient = product / divisor;
-    if (product % divisor) * 2 >= divisor {
-        quotient += 1;
-    }
-    let quotient = if negative { -quotient } else { quotient };
-    bounded_i128(quotient, limit)
 }
 
 fn expression_internal_value<G>(kind: ExpressionKind, value: ExpressionValue<G>) -> InternalValue {

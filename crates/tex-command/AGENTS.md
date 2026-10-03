@@ -804,3 +804,7 @@ Scanners expose actual direct `Result` entry points. The custom retained scalar
 result enum and conversions, identity detach function and `_retained` scanner
 forwarders are deleted. Actual scratch/filename unwinding remains in its owning
 scanner. Restricted register bounds and recovery remain unchanged.
+
+Expression operator and factor lookahead and raw/expanded math-shift probes consume native meanings in the shared reader. They back rejected spelling immediately with genuine exceptional delivery metadata; command slots and decoded-meaning helpers are absent from these probes. `src/scanners/expression/arithmetic.rs` owns factor/term/component arithmetic; the parent module owns scanner control and expression frames.
+
+Canonical backup mutation accepts actual storage, treatment and alignment adjustment without an observation closure. Cold observation follows insertion and reconstructs previous brace alignment from the applied unit adjustment; ordinary backup carries no discarded previous-state value.

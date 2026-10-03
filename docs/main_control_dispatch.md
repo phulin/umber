@@ -117,6 +117,32 @@ alignment correction, then reports the inserted equals sign. The common report
 routine accepts that real diagnostic site after backup, rather than a command
 record that it would immediately unpack and discard.
 
+### Expression and math lookahead
+
+Expression factor and operator probes consume native meanings in the shared
+expanded reader. Leading meaning-spaces continue inside that reader;
+parentheses and operators complete their actual decision. A rejected token is
+backed up immediately from its spelling and, only at an exceptional delivery,
+its original alignment and observation metadata. The expression stack and
+arithmetic state remain the same owners. No operator command slot or decoded
+meaning projection is retained. `scanners/expression/arithmetic.rs` owns the
+unchanged factor, term and glue-component arithmetic; the parent module owns
+the scanner and its actual expression frames.
+
+Math opening lookahead uses the canonical raw reader, while closing display
+lookahead uses the expanded reader, preserving TeX82 sections 1138 and 1197.
+Each decides from the actual math-shift meaning, or backs up immediately, and
+returns its genuine boolean decision. Control-sequence character aliases are
+classified by meaning; backup retains their original spelling.
+
+Canonical backup mutation receives only actual storage, treatment and alignment
+adjustment and returns the installed input level. Its callers demand spelling
+observations after insertion; no observation factory crosses the mutation.
+The cold alignment-correction observer reconstructs the previous state from the
+just-applied unit brace adjustment. Input insertion does not modify alignment,
+and delimiter adjustments never emit this brace-correction record. Ordinary
+backups neither copy observed spelling nor load a discarded previous state.
+
 ### Raw binding operands
 
 Binding scans return the actual native `MeaningWord` that the eqtb installs.

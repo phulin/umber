@@ -192,3 +192,90 @@ fn warmed_numexpr_destination_path_allocates_zero_heap() {
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
     });
 }
+
+#[test]
+fn expression_probes_use_character_alias_meanings_and_preserve_following_spelling() {
+    // e-TeX scan_expr tests cur_cmd/cur_chr, so aliases of spaces and
+    // other-character parentheses/operators participate in its grammar.
+    #[derive(Default)]
+    struct Observer(Vec<crate::CommandObservation>);
+    impl crate::CommandObserver for Observer {
+        fn committed(&mut self, observation: crate::CommandObservation) {
+            self.0.push(observation);
+        }
+    }
+    for observed in [false, true] {
+        crate::test_harness::with_universe(|universe| {
+            let mut aliases = Vec::new();
+            for (name, ch, cat) in [
+                ("space_alias", ' ', Catcode::Space),
+                ("left_alias", '(', Catcode::Other),
+                ("plus_alias", '+', Catcode::Other),
+                ("right_alias", ')', Catcode::Other),
+                ("following_alias", 'X', Catcode::Other),
+            ] {
+                let symbol = universe.intern(name).expect("alias symbol");
+                universe
+                    .assign_meaning(
+                        symbol,
+                        MeaningWord::from_static(Meaning::CharToken { ch, cat }),
+                        AssignmentScope::Global,
+                    )
+                    .expect("character alias");
+                aliases.push(Token::Cs(symbol.symbol()));
+            }
+            let [space, left, plus, right, following] = aliases[..] else {
+                unreachable!();
+            };
+            let mut command = CommandState::new(CommandProfile::ETEX26);
+            crate::test_harness::push(
+                &mut command,
+                [
+                    space,
+                    other('2'),
+                    other('*'),
+                    left,
+                    space,
+                    other('1'),
+                    space,
+                    plus,
+                    space,
+                    other('2'),
+                    right,
+                    space,
+                    following,
+                ],
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("context");
+            let mut observer = Observer::default();
+            let processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut processor = if observed {
+                processor.with_observer(&mut observer)
+            } else {
+                processor
+            };
+            assert!(matches!(
+                processor
+                    .scan_expression_primitive(UnexpandablePrimitive::NumExpr)
+                    .expect("alias expression"),
+                crate::InternalValue::Integer(6)
+            ));
+            assert_eq!(
+                crate::test_harness::expect_expanded_command(&mut processor)
+                    .spelling()
+                    .semantic_token(),
+                following,
+                "backup preserves the control-sequence spelling"
+            );
+        });
+    }
+}
