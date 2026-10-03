@@ -2895,7 +2895,24 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 }
                             }
                             (_, codes::PRIMITIVE_OPEN_OUT) => {
-                                return finish_scan!(self.scan_open_out_operation());
+                                let stream = take_native_scalar!(
+                                    processor.scan_restricted_integer_retained(
+                                        RestrictedIntegerClass::FourBit
+                                    ),
+                                    scan_origin
+                                )
+                                .value as u8;
+                                let _ = take_native_scalar!(
+                                    processor.scan_optional_equals_retained(),
+                                    scan_origin
+                                );
+                                let file_name = take_native_scalar!(
+                                    processor.scan_file_name_retained(),
+                                    scan_origin
+                                );
+                                return finish_scan!(
+                                    self.execute_deferred_open_out(stream, file_name.packed())
+                                );
                             }
                             (_, codes::PRIMITIVE_CLOSE_OUT) => {
                                 return {
@@ -4032,19 +4049,35 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     };
                                 }
                             }
-                            (_, codes::PRIMITIVE_MARK) => {
-                                return {
-                                    let (direct_arg0, direct_arg1) = (
-                                        0,
-                                        (processor.scan_balanced_text(true).map_err(command_error))
-                                            .map_err(|error| scan_error(error, scan_origin))?
-                                            .tokens,
-                                    );
-                                    finish_scan!(self.execute_mark(direct_arg0, direct_arg1))
+                            (_, codes::PRIMITIVE_MARK | codes::PRIMITIVE_MARKS) => {
+                                let class = if command_code == Some(codes::PRIMITIVE_MARK) {
+                                    0
+                                } else {
+                                    take_native_scalar!(
+                                        processor.scan_extended_register_index_retained(),
+                                        scan_origin
+                                    )
                                 };
-                            }
-                            (_, codes::PRIMITIVE_MARKS) => {
-                                return finish_scan!(self.scan_marks_operation());
+                                let scan = processor.scan_balanced_text_retained(true);
+                                let tokens = retain_operation_child(processor, scan)
+                                    .map_err(|error| scan_error(error, scan_origin))?
+                                    .tokens;
+                                return retained_semantic!(
+                                    receipts,
+                                    |context, state, effects, fuel, _observer, execution| {
+                                        let tokens =
+                                            publication::publish_tokens(state, context, tokens)?;
+                                        semantic::execute_mark(
+                                            context,
+                                            &mut execution.modes,
+                                            effects,
+                                            fuel,
+                                            &mut execution.boxes,
+                                            class,
+                                            tokens,
+                                        )
+                                    }
+                                );
                             }
                             (_, codes::PRIMITIVE_H_ALIGN) if mode == Mode::Horizontal => {
                                 (processor

@@ -21,34 +21,6 @@ impl<G> DirectDispatch<'_, '_, G> {
         )
     }
 
-    pub(super) fn execute_mark(
-        &mut self,
-        mut class: u16,
-        tokens: tex_command::AttemptTokenListId,
-    ) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-        let mut tokens = publication::publish_tokens(
-            &mut self.control.command,
-            &mut self
-                .stores
-                .command_context()
-                .expect("token publication admission"),
-            tokens,
-        )?;
-        self.control.execution.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, modes, _, _, command, boxes, _, _, _, _, _, _| {
-                semantic::execute_mark(stores, modes, command, boxes, &mut class, &mut tokens)
-            },
-        )
-    }
-
     pub(super) fn execute_paragraph(
         &mut self,
         mut current_line: i32,

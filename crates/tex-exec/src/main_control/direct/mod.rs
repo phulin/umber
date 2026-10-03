@@ -35,7 +35,6 @@ mod scan_math;
 mod scan_meaning_recovery;
 mod scan_primitive_recovery;
 mod scan_replay;
-mod scan_streams;
 use command_codes as codes;
 mod publication;
 

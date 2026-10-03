@@ -289,3 +289,10 @@ through executor and session; successful results construct no failure payload.
   borrowing actual driver operation counts and diagnostic origins. Ordinary
   relax words continue inside the canonical expanded reader; tracing, leaders,
   character lookahead, flushing and budget cuts retain their actual boundaries.
+
+Mark class/text and deferred openout operands scan in their selected switch
+arms through the retained processor. Mark publication lends only actual
+context, modes, diagnostic effects, fuel and boxes to its semantic routine;
+TeX82 §1101 performs no page build or page-output capture. Its whole-executor
+application wrapper and the second-processor streams-scanner module are
+deleted. Restricted horizontal mark migration keeps its existing page region.

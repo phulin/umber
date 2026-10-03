@@ -214,3 +214,20 @@ The scalar array scan and its durable encoding remain distinct representations.
 Replacing that encoding with a native scalar-array owner, and removing the main
 `CurrentCommand` handoff, remain unfinished; deleting the assignment adapters
 does not establish either claim.
+
+## Mark and output-stream operands
+
+TeX82 §1101 and e-TeX 2.6 [26.424] append a mark in any mode without
+calling the page builder. The selected mark arm scans its actual class and
+balanced text through the retained processor, publishes the final token-list
+owner in the admitted context, and lends only that context, modes, diagnostics,
+fuel and box owner to the mark semantic routine. Pending characters flush at
+that operation; restricted horizontal box migration retains its actual page
+region. There is no whole-executor reconstruction or page-output capture for
+this source-free operation. The replaced mark scanner and application wrappers
+are deleted.
+
+Deferred openout scans its stream, optional equals and filename in the same
+selected arm before handing its final filename to the actual output-stream
+semantic boundary. It opens no second processor. The replaced streams-scanner
+module is deleted.

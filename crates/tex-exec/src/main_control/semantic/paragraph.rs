@@ -88,35 +88,24 @@ pub(in crate::main_control) fn execute_set_language<G>(
 pub(in crate::main_control) fn execute_mark<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
     boxes: &mut ReplayBoxes<G>,
-    class: &mut u16,
-    tokens: &mut tex_state::TokenListId<G>,
+    class: u16,
+    tokens: tex_state::TokenListId<G>,
 ) -> Result<ReplayStep, ExecError> {
     {
         // No `build_page` call afterward (unlike `\penalty`/`\insert`):
         // TeX82 §1101 and e-TeX 2.6 [26.424]'s `make_mark` append the
         // node in every mode and leave page building to a later trigger.
-        crate::box_runtime::flush_pending_hchars_with_fuel(
-            modes,
-            stores,
-            command.diagnostic_effects,
-            command.fuel,
-        )?;
+        crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, effects, fuel)?;
         let migration_segment_start = (modes.current_mode() == Mode::RestrictedHorizontal
             && boxes.active_boxes.last().is_some_and(|box_state| {
                 box_state.kind == ReplayBoxKind::HBox && box_state.box_segment_start.is_some()
             }))
         .then(|| stores.begin_page_node_region());
-        let tokens = stores.node_token_list(tokens);
-        crate::vertical::append_vertical_contribution(
-            modes,
-            stores,
-            Node::Mark {
-                class: *class,
-                tokens,
-            },
-        );
+        let tokens = stores.node_token_list(&tokens);
+        crate::vertical::append_vertical_contribution(modes, stores, Node::Mark { class, tokens });
         if let Some(start) = migration_segment_start {
             let segment = stores.close_page_box_segment(start);
             if !segment.is_empty() {
