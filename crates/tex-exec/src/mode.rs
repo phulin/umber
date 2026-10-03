@@ -409,11 +409,12 @@ impl ModeList {
         font: FontId,
         ch: char,
         origin: OriginId,
+        script: tex_fonts::Script,
     ) {
         debug_assert!(self.pending_hchars.is_none());
         debug_assert!(source.is_empty());
         source.push(PendingHChar { font, ch, origin });
-        self.pending_hchars = Some(PendingHRun::new(source, self.nodes.len()));
+        self.pending_hchars = Some(PendingHRun::new(source, self.nodes.len(), script));
     }
 
     pub(crate) fn pending_hchars(&self) -> Option<&PendingHRun> {
@@ -800,13 +801,20 @@ impl ModeListMutation<'_> {
         self.list.with_last_node_mut(stores, mutate)
     }
 
-    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
+    pub(crate) fn begin_pending_hchars(
+        &mut self,
+        font: FontId,
+        ch: char,
+        origin: OriginId,
+        script: tex_fonts::Script,
+    ) {
         let scratch = self
             .scratch
             .as_deref_mut()
             .expect("pending horizontal runs require the mode scratch owner");
         let source = scratch.take_pending_source();
-        self.list.begin_pending_hchars(source, font, ch, origin);
+        self.list
+            .begin_pending_hchars(source, font, ch, origin, script);
     }
 
     /// Retires the pending word after its output has been built successfully,
@@ -856,6 +864,7 @@ impl ModeListMutation<'_> {
         &mut self,
         font: FontId,
         capacity: usize,
+        initial_script: tex_fonts::Script,
         mut next: F,
     ) -> usize
     where
@@ -888,7 +897,7 @@ impl ModeListMutation<'_> {
                     .take()
                     .expect("first pending character owns the reserved source");
                 self.list
-                    .begin_pending_hchars(pending_source, font, ch, origin);
+                    .begin_pending_hchars(pending_source, font, ch, origin, initial_script);
             }
             appended += 1;
         }
@@ -1260,11 +1269,11 @@ pub(crate) struct PendingHRun {
 }
 
 impl PendingHRun {
-    fn new(source: Vec<PendingHChar>, insertion_index: usize) -> Self {
-        let first = source
-            .first()
-            .expect("a pending run owns its first source character");
-        let script = tex_fonts::character_script(first.ch);
+    fn new(source: Vec<PendingHChar>, insertion_index: usize, script: tex_fonts::Script) -> Self {
+        assert!(
+            !source.is_empty(),
+            "a pending run owns its first source character"
+        );
         Self {
             insertion_index,
             source,

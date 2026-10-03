@@ -212,6 +212,22 @@ production read/write/group/save ratio exists: the
 lack a revision-scoped census receipt. Qualitative workload reasoning must not
 be reported as a measured percentage.
 
+### Font-script ownership
+
+TFM ligature and kern processing uses font character codes and its own
+ligature program; Unicode script classification belongs to OpenType shaping.
+Character admission produces a script only for an actual left-to-right shaping
+font. A TFM pending run stores `Common` and performs no Unicode script lookup.
+Changing between a TFM font and a shaping font already closes the pending run
+because the font identities differ, independently of script compatibility.
+
+The producer supplies the initial script to the actual pending-run owner.
+Neither its constructor nor the source-span writer reclassifies the first
+character. Subsequent shaping characters retain the existing supported/strong
+script update and compatibility rules, including unsupported initial scripts.
+The actual pending run, provenance, fuel, failure rollback and checkpoint owners
+retain their existing lifetimes.
+
 ## Source ownership and validation
 
 | Responsibility                        | Source and active proof                                                                                                                                                                                                |

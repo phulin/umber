@@ -105,6 +105,7 @@ fn direct_tfm_failure_rolls_back_output_and_clears_reusable_work() {
             tex_state::font::NULL_FONT,
             'a',
             tex_state::token::OriginId::UNKNOWN,
+            tex_fonts::Script::Common,
         );
 
         let mut effects = tex_state::diagnostic::DiagnosticEffects::new();

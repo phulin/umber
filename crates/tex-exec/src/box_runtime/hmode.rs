@@ -78,7 +78,11 @@ fn classify_character_run_candidate<G>(
         *fallback = Some(tex_command::CharacterRunFallback::LexicalBoundary);
         return None;
     }
-    let script = tex_fonts::character_script(ch);
+    let script = if font_is_ltr_shaping {
+        tex_fonts::character_script(ch)
+    } else {
+        tex_fonts::Script::Common
+    };
     if index != 0
         && font_is_ltr_shaping
         && pending_script.is_some_and(|pending| {
@@ -210,7 +214,7 @@ pub(crate) fn append_character_run_with_fuel<G>(
     let mut first = Some((first, first_origin, first_script_option));
     let accepted = {
         let mut list = nest.current_list_mutation();
-        let accepted = list.append_pending_hchars(font, capacity, |index| {
+        let accepted = list.append_pending_hchars(font, capacity, first_script, |index| {
             if index == 0 {
                 first.take()
             } else {
@@ -565,12 +569,16 @@ pub(crate) fn append_hchar_with_fuel<G>(
         .ok()
         .is_some_and(|code| stores.font_false_boundary_char(font) == Some(code));
     if character_exists || false_boundary_character {
+        let script = font_is_ltr_shaping.then(|| tex_fonts::character_script(ch));
         let flush_incompatible_run = nest.current_list().pending_hchars().is_some_and(|pending| {
             (font_is_ltr_shaping
                 || (pending.source[0].font != font
                     && is_ltr_shaping_font(stores, pending.source[0].font)))
                 && (pending.source[0].font != font
-                    || !scripts_compatible(pending.script, tex_fonts::character_script(ch)))
+                    || !scripts_compatible(
+                        pending.script,
+                        script.unwrap_or(tex_fonts::Script::Common),
+                    ))
         });
         if flush_incompatible_run {
             let insert_hyphen_discs = mode == Mode::Horizontal;
@@ -584,15 +592,7 @@ pub(crate) fn append_hchar_with_fuel<G>(
             )?;
         }
         let mut list = nest.current_list_mutation();
-        append_pending_hchar(
-            &mut list,
-            stores,
-            mode,
-            font,
-            font_is_ltr_shaping,
-            ch,
-            origin,
-        );
+        append_pending_hchar(&mut list, font, ch, origin, script);
         update_space_factor(&mut list, stores, ch);
         return Ok(());
     }
@@ -723,26 +723,27 @@ pub(crate) fn fix_hyphen_language_with_fuel<G>(
     Ok(())
 }
 
-pub(crate) fn append_pending_hchar<G>(
+fn append_pending_hchar(
     list: &mut crate::mode::ModeListMutation<'_>,
-    _stores: &mut CommandContext<'_, G>,
-    _mode: Mode,
     font: FontId,
-    font_is_ltr_shaping: bool,
     ch: char,
     origin: OriginId,
+    script: Option<tex_fonts::Script>,
 ) {
-    let script = list.pending_hchars().and_then(|pending| {
-        let script = tex_fonts::character_script(ch);
-        (font_is_ltr_shaping
-            && is_supported_script(pending.script)
-            && is_supported_script(script)
-            && is_strong_script(script))
-        .then_some(script)
+    let update_script = list.pending_hchars().and_then(|pending| {
+        script.filter(|&script| {
+            is_supported_script(pending.script)
+                && is_supported_script(script)
+                && is_strong_script(script)
+        })
     });
-    let appended = list.append_pending_hchar(font, ch, origin, script);
-    if !appended {
-        list.begin_pending_hchars(font, ch, origin);
+    if !list.append_pending_hchar(font, ch, origin, update_script) {
+        list.begin_pending_hchars(
+            font,
+            ch,
+            origin,
+            script.unwrap_or(tex_fonts::Script::Common),
+        );
     }
 }
 

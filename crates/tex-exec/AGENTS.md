@@ -210,6 +210,10 @@ not allocate a vector merely to publish one already-complete node.
   unified executor's optional append-bounded evidence publication seam; every
   allocating category closes before operation commit while warmed category
   capacity remains with the operation owner.
+- Character admission derives Unicode scripts only for actual OpenType
+  shaping fonts. Pending-run constructors accept that already selected script;
+  TFM runs use `Common` without per-character Unicode classification. Font
+  changes retain their existing flush and checkpoint semantics.
 - `src/mode.rs` and `src/mode/tests.rs`: mode nest, page-arena list roots with
   detached active builders, checked `PageListSpan` live roots carried only
   within their admitting `PageRegion`, an owned mode-list slot that downgrades

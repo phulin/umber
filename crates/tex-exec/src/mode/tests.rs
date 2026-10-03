@@ -61,6 +61,7 @@ fn pending_source_capacity_recycles_on_flush() {
             FontId::testing_new(2),
             'a',
             tex_state::token::OriginId::UNKNOWN,
+            tex_fonts::Script::Common,
         );
         for ch in ['b', 'c', 'd', 'e', 'f', 'g'] {
             list.append_pending_hchar(
@@ -86,6 +87,7 @@ fn pending_source_capacity_recycles_on_flush() {
         FontId::testing_new(3),
         'x',
         tex_state::token::OriginId::UNKNOWN,
+        tex_fonts::Script::Common,
     );
     assert_eq!(
         nest.current_list()
@@ -104,16 +106,19 @@ fn pending_run_admission_reserves_before_first_append_and_stops_at_boundary() {
     nest.push(Mode::Horizontal).expect("horizontal mode");
 
     let mut calls = 0;
-    let accepted =
-        nest.current_list_mutation()
-            .append_pending_hchars(FontId::testing_new(2), 16, |index| {
-                calls += 1;
-                (index < 3).then_some((
-                    char::from(b'a' + index as u8),
-                    tex_state::token::OriginId::UNKNOWN,
-                    None,
-                ))
-            });
+    let accepted = nest.current_list_mutation().append_pending_hchars(
+        FontId::testing_new(2),
+        16,
+        tex_fonts::Script::Common,
+        |index| {
+            calls += 1;
+            (index < 3).then_some((
+                char::from(b'a' + index as u8),
+                tex_state::token::OriginId::UNKNOWN,
+                None,
+            ))
+        },
+    );
     assert_eq!(accepted, 3);
     assert_eq!(
         calls, 4,
@@ -134,12 +139,15 @@ fn pending_run_admission_with_zero_acceptance_leaves_list_and_scratch_untouched(
     let before = nest.summary();
 
     let mut calls = 0;
-    let accepted =
-        nest.current_list_mutation()
-            .append_pending_hchars(FontId::testing_new(2), 8, |_| {
-                calls += 1;
-                None
-            });
+    let accepted = nest.current_list_mutation().append_pending_hchars(
+        FontId::testing_new(2),
+        8,
+        tex_fonts::Script::Common,
+        |_| {
+            calls += 1;
+            None
+        },
+    );
     assert_eq!(accepted, 0);
     assert_eq!(calls, 1);
     assert_eq!(nest.summary(), before);
@@ -153,15 +161,18 @@ fn identity_enabled_pending_accumulation_does_not_capture_mode_identity() {
     nest.push(Mode::Horizontal).expect("horizontal mode");
     super::reset_mode_identity_capture_calls_for_test();
 
-    let appended =
-        nest.current_list_mutation()
-            .append_pending_hchars(FontId::testing_new(2), 8, |index| {
-                (index < 4).then_some((
-                    char::from(b'a' + index as u8),
-                    tex_state::token::OriginId::UNKNOWN,
-                    None,
-                ))
-            });
+    let appended = nest.current_list_mutation().append_pending_hchars(
+        FontId::testing_new(2),
+        8,
+        tex_fonts::Script::Common,
+        |index| {
+            (index < 4).then_some((
+                char::from(b'a' + index as u8),
+                tex_state::token::OriginId::UNKNOWN,
+                None,
+            ))
+        },
+    );
     assert_eq!(appended, 4);
     assert_eq!(super::mode_identity_capture_calls_for_test(), 0);
     assert!(nest.current_list_mutation().clear_pending_hchars());
@@ -181,6 +192,7 @@ fn warmed_pending_source_flushes_allocate_nothing() {
             FontId::testing_new(2),
             'a',
             tex_state::token::OriginId::UNKNOWN,
+            tex_fonts::Script::Common,
         );
         for ch in ['b', 'c', 'd', 'e'] {
             list.append_pending_hchar(
@@ -204,6 +216,7 @@ fn warmed_pending_source_flushes_allocate_nothing() {
                 FontId::testing_new(2),
                 'a',
                 tex_state::token::OriginId::UNKNOWN,
+                tex_fonts::Script::Common,
             );
             list.append_pending_hchar(
                 FontId::testing_new(2),
@@ -625,6 +638,7 @@ fn populate_nested_candidate<G>(
             FontId::testing_new(2),
             'a',
             tex_state::token::OriginId::UNKNOWN,
+            tex_fonts::Script::Common,
         );
         list.set_align_state(align_state());
         list.set_space_factor(777);
@@ -839,6 +853,7 @@ fn pending_horizontal_run_cannot_publish_a_retained_checkpoint() {
         FontId::testing_new(2),
         'a',
         tex_state::token::OriginId::UNKNOWN,
+        tex_fonts::Script::Common,
     );
     let _ = source.checkpoint_with_identity(false);
 }
