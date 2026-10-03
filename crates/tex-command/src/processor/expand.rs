@@ -7,6 +7,7 @@ mod once;
 mod primitive;
 mod resident;
 mod scalar;
+mod skipping;
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
@@ -295,6 +296,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<DeliveryStatus, CommandError> {
         let status = self.consume_input(
             self.create_source_control_sequences,
+            &mut |_, _, _, _, _, _, _| Ok(std::ops::ControlFlow::Continue(false)),
             &mut |processor, word, origin, suppress, site, kind| {
                 processor
                     .finish_delivered_word::<OBSERVED>(
@@ -345,6 +347,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn consume_input<R>(
         &mut self,
         create_control_sequences: bool,
+        admit: &mut impl FnMut(
+            &mut tex_state::CommandContext<'_, G>,
+            &mut crate::fuel::CommandFuel,
+            &mut super::alignment::AlignmentDeliveryState<G>,
+            TokenWord,
+            bool,
+            crate::fuel::RawDeliveryKind,
+            super::delivery_mode::DeliveryMode,
+        ) -> Result<std::ops::ControlFlow<R, bool>, CommandError>,
         finish: &mut impl FnMut(
             &mut Self,
             TokenWord,
@@ -355,18 +366,41 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         ) -> Result<std::ops::ControlFlow<R>, CommandError>,
         finished: impl Fn(DeliveryStatus) -> Result<std::ops::ControlFlow<R>, CommandError>,
     ) -> Result<R, CommandError> {
+        let prepaid = std::cell::Cell::new(false);
         loop {
             self.pending_diagnostic_location = None;
             self.charge_command_action()?;
+            prepaid.set(true);
+            let mut finish_word = |processor: &mut Self, word, origin, suppress, site, kind| {
+                if !prepaid.get() {
+                    processor.charge_command_action()?;
+                    prepaid.set(true);
+                }
+                finish(processor, word, origin, suppress, site, kind)
+            };
             let consumed = loop {
                 if let Some(result) = self.consume_resident_input(
-                    &mut |_, _, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
-                    finish,
+                    &mut |state, fuel, _, alignment, _, word, _, suppress, kind, mode| {
+                        if !prepaid.get() {
+                            fuel.charge()?;
+                            prepaid.set(true);
+                        }
+                        let result = admit(state, fuel, alignment, word, suppress, kind, mode)?;
+                        if matches!(result, std::ops::ControlFlow::Continue(true)) {
+                            prepaid.set(false);
+                        }
+                        Ok(result.map_break(std::ops::ControlFlow::Break))
+                    },
+                    &mut finish_word,
                 )? {
                     break result;
                 }
+                if !prepaid.get() {
+                    self.charge_command_action()?;
+                    prepaid.set(true);
+                }
                 if let Some(result) =
-                    self.advance_input_boundary(create_control_sequences, finish)?
+                    self.advance_input_boundary(create_control_sequences, &mut finish_word)?
                 {
                     match result {
                         std::ops::ControlFlow::Continue(value) => break value,
@@ -648,16 +682,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 _ => crate::fuel::RawDeliveryKind::StoredToken,
             };
             let selected = self.consume_resident_input(
-                &mut |state, fuel, effects, _, execution, word, origin| {
+                &mut |state, fuel, effects, _, execution, word, origin, _, _, _| {
                     let Token::Char {
                         ch,
                         cat: Catcode::Letter | Catcode::Other,
                     } = word.semantic_token()
                     else {
-                        return std::ops::ControlFlow::Continue(false);
+                        return Ok(std::ops::ControlFlow::Continue(false));
                     };
                     if !allows_characters || !fuel.try_charge() {
-                        return std::ops::ControlFlow::Continue(false);
+                        return Ok(std::ops::ControlFlow::Continue(false));
                     }
                     consumed_characters = true;
                     #[cfg(feature = "profiling")]
@@ -670,9 +704,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         MainCharacterInput::Scalar { ch, origin },
                     );
                     if admission.continue_run() {
-                        std::ops::ControlFlow::Continue(true)
+                        Ok(std::ops::ControlFlow::Continue(true))
                     } else {
-                        std::ops::ControlFlow::Break(DeliveryStatus::CharacterRun)
+                        Ok(std::ops::ControlFlow::Break(DeliveryStatus::CharacterRun))
                     }
                 },
                 &mut |processor, word, origin, suppress, site, kind| {

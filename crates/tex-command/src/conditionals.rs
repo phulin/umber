@@ -1662,44 +1662,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .limit(condition)
             .ok_or_else(|| CommandError::input_invariant())?;
 
-        let mut nested_conditions = 0_u32;
-        let mut destination = None;
-        loop {
-            if self.get_next_skipping_into(&mut destination, &mut nested_conditions)?
-                != crate::DeliveryStatus::Command
-            {
-                return Err(CommandError::input_invariant());
-            }
-            let command = destination
-                .as_ref()
-                .expect("command status initializes destination");
-            let Some(meaning) = command.static_meaning() else {
-                destination = None;
-                continue;
-            };
-            if let Meaning::ExpandablePrimitive(primitive) = meaning
-                && ConditionalKind::from_primitive(primitive).is_some()
-            {
-                nested_conditions = nested_conditions.saturating_add(1);
-                destination = None;
-                continue;
-            }
-            let Some(delimiter) = ConditionalDelimiter::from_meaning(meaning) else {
-                destination = None;
-                continue;
-            };
-            if nested_conditions != 0 {
-                if delimiter == ConditionalDelimiter::Fi {
-                    nested_conditions -= 1;
-                }
-                destination = None;
-                continue;
-            }
-            return Ok(PassTextStop {
-                delimiter,
-                nested_conditions,
-            });
-        }
+        self.consume_skipped_text()
     }
 }
 

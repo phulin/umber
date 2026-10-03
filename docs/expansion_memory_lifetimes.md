@@ -385,3 +385,28 @@ recovery package serve no consumer and are deleted. Recovery copies the actual
 status before clearing it. Scoped episodes retain only that installed status,
 the actual prior status and observation demand. Full checkpoint admission
 rejects an active status directly, without a redundant warning-state check.
+
+# Continuing conditional skips
+
+TeX82 §494 consumes skipped text inside the canonical raw input reader until
+an unmatched conditional delimiter completes the skip. Source words and
+resident spans have the same consumer. Literal characters update only actual
+brace bookkeeping; control sequences resolve their live meaning once and
+update the call-local conditional depth. Ordinary words construct no command,
+effect classification, or intermediate skip result. The final delimiter is
+the actual semantic result.
+
+Observation, outer recovery, suppression and alignment use a demanded command
+inside this consumer. Alignment template insertion continues the same reader;
+source retirement, parameter substitution and EOF recovery retain their
+existing authoritative input transitions. The consumer preserves get-next
+control-sequence creation policy, rather than adopting get-token interning.
+
+The shared reader reserves one fuel charge before entering cold input
+transitions. A continuing resident consumer spends that reservation on its
+first word and charges before advancing each subsequent word. A call-local
+boolean records whether the next word is already charged. Frame exhaustion
+and parameter substitution retry under that reservation, so neither transition
+adds a charge. Admission may fail before cursor advancement. Call-local
+reservation and nesting facts unwind on failure and never enter checkpoints.
+No completed-command cleanup or settlement stage is introduced.

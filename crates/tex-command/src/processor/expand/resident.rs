@@ -52,7 +52,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut Facts,
             TokenWord,
             OriginId,
-        ) -> ControlFlow<R, bool>,
+            bool,
+            crate::fuel::RawDeliveryKind,
+            crate::processor::delivery_mode::DeliveryMode,
+        ) -> Result<ControlFlow<R, bool>, CommandError>,
         finish: &mut impl FnMut(
             &mut Self,
             TokenWord,
@@ -73,6 +76,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         if frame.position() >= frame.limit() {
             return Ok(None);
         }
+        let suppress = frame.flags().contains(
+            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+        );
+        let kind = match row.storage {
+            ResidentTokenStorage::MacroArgument { .. } => {
+                crate::fuel::RawDeliveryKind::MacroArgument
+            }
+            _ => crate::fuel::RawDeliveryKind::StoredToken,
+        };
         macro_rules! consume_run {
             ($words:expr, $project:expr, $parameters:expr) => {{
                 let words = $words;
@@ -88,8 +100,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         // exactly once before attempting substitution.
                         return Ok(None);
                     }
-                    frame.advance_resident();
-                    match admit(
+                    let admitted = admit(
                         self.state,
                         self.fuel,
                         self.diagnostic_effects,
@@ -97,7 +108,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         &mut self.host.facts,
                         word,
                         origin,
-                    ) {
+                        suppress,
+                        kind,
+                        self.command.delivery_mode,
+                    )?;
+                    frame.advance_resident();
+                    match admitted {
                         ControlFlow::Continue(true) => {}
                         ControlFlow::Continue(false) => break (word, origin),
                         ControlFlow::Break(result) => return Ok(Some(result)),
@@ -132,15 +148,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin()),
                 true
             ),
-        };
-        let suppress = frame.flags().contains(
-            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
-        );
-        let kind = match row.storage {
-            ResidentTokenStorage::MacroArgument { .. } => {
-                crate::fuel::RawDeliveryKind::MacroArgument
-            }
-            _ => crate::fuel::RawDeliveryKind::StoredToken,
         };
         finish(self, word, origin, suppress, ReadSite::Resident, kind).map(Some)
     }

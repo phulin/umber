@@ -184,7 +184,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   exact fuel-failure prefixes, and one reader selection per resident run.
 - `src/processor/expand/resident.rs`: runs scalar character admission inside one
   storage selection, calling the selected scalar consumer at a boundary. Raw delivery
-  uses the same reader with single-word admission. Directly borrows the exposed semantic
+  uses the same reader with single-word or continuing admission. Directly borrows the exposed semantic
   input frame and advances its existing physical reader. Input frames own
   reader state across nesting and rollback; delivery has no parallel cached
   storage tag or reader invalidation protocol. Source-token delivery enters
@@ -219,6 +219,13 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   actual settlement boundary. One read/interpret loop invokes native consumers directly or initializes explicitly requested delivery records. Matching's local
   storage lives in its activation call; prefix diagnostics consume spelling and
   invocation facts without a command or delivery geometry.
+- `src/processor/expand/skipping.rs`: TeX82 §494's continuing raw consumer.
+  Source and resident words update actual brace/conditional nesting directly;
+  only an unmatched delimiter completes the skip. Ordinary skipped words have
+  no command or effect product. Observation, suppression, outer recovery and
+  alignment construct their demanded command inside this same consumer.
+  The shared reader reserves fuel across cold transitions and charges each
+  additional resident word before advancing the authoritative frame.
 - `src/processor/expand/primitive.rs`: the sole primitive expansion engine from
   native opcode, traced invocation spelling and control-sequence identity. It
   retains capacity and resource unwind, outlines real conditional/nonconditional
