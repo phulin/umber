@@ -13,6 +13,10 @@ and `allocate_reserved_token_list`: complete source validation and destination
 reservation precede streaming into the native token arena. These methods do not
 expose substores or introduce another arena.
 
+The retired private `src/hot_core/` bank, stack and journal prototypes are
+deleted. Live environment storage and the native journal remain the sole
+state/group/checkpoint owners; do not add parallel migration substrates.
+
 Definition-owned parameter programs expose literal delimiter views only for nonempty delimiters. Undelimited parameters have no view, and overlap metadata is projected only for a multiword literal delimiter.
 
 ## File Map
@@ -71,7 +75,9 @@ Definition-owned parameter programs expose literal delimiter views only for none
   discard lists, insertions, and marks of that same borrow.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, generic tracked-region lifecycle and journal-write records, deterministic ordering, rollback failure closure, and handle-independent observation tests.
-- `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
+- `src/diagnostic.rs`: One lazily owned operation-local diagnostic payload
+  keeps prints, recovery and first-cause capture off ordinary terminal storage;
+  no cached pending flag or per-command cleanup exists. tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
 - `src/diagnostic/tests.rs`: Destination-selection, admitted forced-online
   routing without eqtb assignment, `print_nl` line-break, and scalar-formatting
   tests for the diagnostic channel.
@@ -120,7 +126,8 @@ Definition-owned parameter programs expose literal delimiter views only for none
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
 - `src/expansion_diagnostic.rs`: Detached recoverable expansion diagnostic
   values shared by command expansion and execution-side presentation.
-- `src/env/banks.rs`: Direct contiguous banks, page/index dense banks,
+- `src/env/banks.rs`: Fixed boxed-array parameter/font banks with no dynamic
+  length or capacity, page/index dense banks,
   dense-prefix/paged-overflow register banks, typed parameter ids, and the
   runtime-only per-cell save serial used by direct checkpoint first-touch.
 - `src/env/banks/tests.rs`: Direct-index, virtual-default, and paged-overflow
@@ -236,18 +243,6 @@ Definition-owned parameter programs expose literal delimiter views only for none
 - `src/frozen_lookup.rs`: Versioned portable literal bucket/index codecs used to encode and validate cold format structures; decoded token lookup tables own no runtime liveness.
 - `src/frozen_lookup/tests.rs`: Deterministic generation, lookup equivalence, and malformed literal-table validation tests.
 - `src/glue.rs`: Storage-independent immutable TeX glue values.
-- `src/hot_core/journal.rs`: Inline-small first-write inverse records, strictly
-  nested marks, exact rollback, and parent-epoch transfer over typed mutable
-  targets.
-- `src/hot_core/mod.rs`: Private HotCore storage module boundary; command
-  semantics remain outside this substrate.
-- `src/hot_core/stack.rs`: Copy-only compact
-  stacks with 32-bit marks, inline common storage, spill reuse, accounting, and
-  bounded-cycle controls.
-- `src/hot_core/state.rs`: Fixed-length
-  inline-small dense mutable banks, typed namespace/generation coordinates,
-  first-write journal integration, stale rejection, nested rollback, and
-  plateau controls.
 - `src/hyphenation.rs`: Liang-style position lookup with one coarse immutable
   owner for the initialized pattern trie and one reversible direct-state
   journal for mutable exceptions, saved codes, and capacity scalars.

@@ -10,7 +10,7 @@ fn zero(_: u32) -> i32 {
 
 #[test]
 fn dense_bank_reads_one_validated_slot() {
-    let mut bank = DenseBank::fixed(4, 0_i32, LEVEL_ONE).expect("dense allocation");
+    let mut bank = DenseBank::<_, 4>::fixed(0_i32, LEVEL_ONE).expect("dense allocation");
     bank.write(
         2,
         BankCell {

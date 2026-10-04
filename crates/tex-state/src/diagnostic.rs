@@ -217,8 +217,14 @@ impl DetachedDiagnosticEffect {
 /// This is deliberately operation-local rather than state stored in
 /// `Universe`. Moving it to World publishes every completed diagnostic in
 /// canonical order; dropping it makes a rollback publish none of them.
-#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default)]
 pub struct DiagnosticEffects {
+    pending: Option<Box<PendingDiagnostics>>,
+}
+
+/// Storage exists only when a diagnostic is actually produced.
+#[derive(Debug, Default)]
+struct PendingDiagnostics {
     effects: Vec<DetachedDiagnosticEffect>,
     error_stop_recovery: Option<crate::print::ErrorRecoveryRequest>,
     first_recoverable: Option<RecoverableDiagnostic>,
@@ -227,15 +233,15 @@ pub struct DiagnosticEffects {
 impl DiagnosticEffects {
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            effects: Vec::new(),
-            error_stop_recovery: None,
-            first_recoverable: None,
-        }
+        Self { pending: None }
+    }
+
+    fn pending_mut(&mut self) -> &mut PendingDiagnostics {
+        self.pending.get_or_insert_with(Default::default)
     }
 
     pub fn push(&mut self, effect: DetachedDiagnosticEffect) {
-        self.effects.push(effect);
+        self.pending_mut().effects.push(effect);
     }
 
     pub(crate) fn push_ordinary_rendered(
@@ -244,7 +250,7 @@ impl DiagnosticEffects {
         max_print_line: usize,
         text: String,
     ) {
-        self.effects.push(DetachedDiagnosticEffect {
+        self.push(DetachedDiagnosticEffect {
             selector: Selector::for_interaction(interaction_mode),
             max_print_line,
             records_warning_history: false,
@@ -253,59 +259,83 @@ impl DiagnosticEffects {
     }
 
     #[must_use]
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        self.effects.is_empty() && self.error_stop_recovery.is_none()
+        self.pending.as_ref().is_none_or(|pending| {
+            pending.effects.is_empty() && pending.error_stop_recovery.is_none()
+        })
     }
 
-    /// Reports whether a cold-path recoverable candidate is waiting for the
-    /// enclosing operation's commit seam. This is intentionally separate from
-    /// [`Self::is_empty`], which is used by the hot character/command loop and
-    /// must retain its pre-evidence cost model.
+    /// Whether the actual operation-local diagnostic collector has a report
+    /// or recovery request for the executor to publish.
     #[must_use]
-    pub fn has_first_recoverable(&self) -> bool {
-        self.first_recoverable.is_some()
+    #[inline(always)]
+    pub fn has_pending_reports(&self) -> bool {
+        self.pending.as_ref().is_some_and(|pending| {
+            !pending.effects.is_empty()
+                || pending.error_stop_recovery.is_some()
+                || pending.first_recoverable.is_some()
+        })
     }
 
-    /// Reports whether the operation-local candidate still needs its
-    /// report-time site completed. Callers use this to avoid recomputing a
-    /// captured site at the outer error-return seam.
+    /// Whether a recoverable candidate awaits its enclosing commit owner.
+    #[must_use]
+    #[inline(always)]
+    pub fn has_first_recoverable(&self) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| pending.first_recoverable.is_some())
+    }
+
+    /// Whether the first report still needs its report-time site completed.
     #[must_use]
     pub fn first_recoverable_site_missing(&self) -> bool {
-        self.first_recoverable
+        self.pending
             .as_ref()
+            .and_then(|pending| pending.first_recoverable.as_ref())
             .is_some_and(|diagnostic| diagnostic.site.is_none())
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.effects.len()
+        self.pending
+            .as_ref()
+            .map_or(0, |pending| pending.effects.len())
     }
 
     pub fn drain(&mut self) -> impl Iterator<Item = DetachedDiagnosticEffect> + '_ {
-        self.effects.drain(..)
+        self.pending
+            .iter_mut()
+            .flat_map(|pending| pending.effects.drain(..))
     }
 
     /// Retains the synchronous ErrorStop input action until the enclosing
     /// executor hands control back to the sole command-input owner.
     pub fn request_error_stop_recovery(&mut self, request: crate::print::ErrorRecoveryRequest) {
         assert!(
-            self.error_stop_recovery.replace(request).is_none(),
+            self.pending_mut()
+                .error_stop_recovery
+                .replace(request)
+                .is_none(),
             "one executor transition owns at most one ErrorStop response"
         );
     }
 
     /// Transfers the synchronous response to the command/input transition.
     pub fn take_error_stop_recovery(&mut self) -> Option<crate::print::ErrorRecoveryRequest> {
-        self.error_stop_recovery.take()
+        self.pending
+            .as_mut()
+            .and_then(|pending| pending.error_stop_recovery.take())
     }
 
     /// Records the first recoverable report produced by this operation.
     /// Later reports cannot replace it, matching TeX's first-cause semantics.
     pub fn record_first_recoverable(&mut self, diagnostic: RecoverableDiagnostic) -> bool {
-        if self.first_recoverable.is_some() {
+        let pending = self.pending_mut();
+        if pending.first_recoverable.is_some() {
             false
         } else {
-            self.first_recoverable = Some(diagnostic);
+            pending.first_recoverable = Some(diagnostic);
             true
         }
     }
@@ -313,7 +343,10 @@ impl DiagnosticEffects {
     /// Freezes the first report's compact provenance at the report-completion
     /// seam. A later report cannot fill or overwrite an earlier site.
     pub fn complete_first_recoverable(&mut self, site: DiagnosticSite) {
-        if let Some(diagnostic) = self.first_recoverable.as_mut()
+        if let Some(diagnostic) = self
+            .pending
+            .as_mut()
+            .and_then(|pending| pending.first_recoverable.as_mut())
             && diagnostic.site.is_none()
         {
             if let Some(interaction) = site.interaction {
@@ -325,13 +358,18 @@ impl DiagnosticEffects {
 
     /// Moves the operation-local candidate to its enclosing commit owner.
     pub fn take_first_recoverable(&mut self) -> Option<RecoverableDiagnostic> {
-        self.first_recoverable.take()
+        self.pending
+            .as_mut()
+            .and_then(|pending| pending.first_recoverable.take())
     }
 
     /// Reinstalls a candidate retained across an intermediate publication.
     pub fn restore_first_recoverable(&mut self, diagnostic: RecoverableDiagnostic) {
         assert!(
-            self.first_recoverable.replace(diagnostic).is_none(),
+            self.pending_mut()
+                .first_recoverable
+                .replace(diagnostic)
+                .is_none(),
             "one operation owns at most one first recoverable diagnostic"
         );
     }

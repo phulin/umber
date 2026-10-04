@@ -614,8 +614,7 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
     pub fn has_pending_reports(&self) -> bool {
         self.synchronous_error_reported
             || !self.command.semantic_diagnostics.is_empty()
-            || !self.diagnostic_effects.is_empty()
-            || self.diagnostic_effects.has_first_recoverable()
+            || self.diagnostic_effects.has_pending_reports()
     }
 
     /// Reborrows the actual owners for a completed source-free native command.

@@ -1044,3 +1044,26 @@ the existing cursor representation; it adds no flag, cached count, journal or
 parallel publication state. Full checkpoints continue to validate their real
 base, retained count and end, while the native continuation reads the actual
 end without traversing the effect vector.
+
+## Fixed environment storage
+
+The five small parameter/font banks have sizes fixed by TeX's parameter and
+math-family vocabularies. Each owns a boxed array with that size in its type,
+instead of a vector with a dynamic length and capacity. Construction reserves
+the complete allocation fallibly; no bank grows during execution. Ordinary
+constant-index reads can prove their bounds from the type. Group saves,
+checkpoint first-touch serials and cold format iteration keep using the same
+actual cells and journal. The unused parallel hot-core bank, stack and journal
+prototypes are deleted rather than retained as future migration substrates.
+
+## Demanded diagnostic storage
+
+The operation-local diagnostic collector is one optional owning pointer. Its
+print queue, synchronous recovery request and first recoverable report exist
+only after an actual diagnostic producer needs them. An ordinary terminal
+therefore tests absent diagnostic storage instead of inspecting three empty
+containers. This is the actual collector representation, not a dirty flag or
+cached summary. Printing, first-cause capture and recovery keep their existing
+order and ownership. Draining print effects keeps any recovery/cause alive;
+the collector's ordinary scope releases its storage, with no per-command
+normalization or successful cleanup stage.

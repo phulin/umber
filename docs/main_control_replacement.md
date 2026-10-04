@@ -728,28 +728,20 @@ empty diagnostic vectors or format trace values.
 
 ## Module boundaries
 
-The replacement should converge on modules of roughly these responsibilities:
+The implemented core uses the existing owners directly:
 
-- `hot_core/mod.rs`: aggregate semantic owner and admitted borrowed views;
-- `hot_core/layout.rs`: packed words, coordinates, and size/layout assertions;
-- `hot_core/arena.rs`: typed segmented arenas and sealing;
-- `hot_core/input.rs`: source and token frames plus raw delivery;
-- `hot_core/expand.rs`: macro expansion and condition delivery;
-- `hot_core/scan/`: scalar and structured scanners over the persistent input;
-- `hot_core/dispatch.rs`: opcode dispatch and common direct handlers;
-- `hot_core/state.rs`: dense banks and compact value coordinates;
-- `hot_core/journal.rs`: group save records, transaction marks, and rollback;
-- `hot_core/mode.rs`: mode stack and the sole node builder;
-- `cold/diagnostics.rs`: context and trace rendering;
-- `cold/provenance.rs`: structural provenance publication;
-- `cold/observation.rs`: canonical observation publication;
-- `cold/checkpoint.rs`: named snapshot sealing and DTO construction; and
-- `barrier.rs`: typed resource, effect, output, checkpoint, and cancellation
-  exits.
+- `tex-command/src/processor/`: frame-owned input, expansion and scanning;
+- `tex-exec/src/main_control/interpreter/`: retained native opcode execution;
+- `tex-state/src/env/`: direct live environment banks;
+- `tex-state/src/journal/`: native groups and checkpoint undo records; and
+- `tex-state/src/world/`: actual resource and effect publication.
 
-`MainControl` becomes a small lifecycle facade over the persistent interpreter
-and barrier driver. Scanner and executor modules remain testable separately,
-but their production path is not separated by a heap-owning universal DTO.
+The unused private `tex-state/src/hot_core/` bank, stack and journal prototypes
+are deleted. They never owned live engine state. Future changes replace the
+actual owner rather than introducing another storage substrate or migration
+adapter. `MainControl` remains the lifecycle facade over its retained processor
+and actual host boundaries; ordinary terminal delivery carries no universal
+command object.
 
 ## Migration plan
 

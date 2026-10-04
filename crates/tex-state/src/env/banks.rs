@@ -527,24 +527,28 @@ pub enum BankError {
 
 /// Contiguous current-value storage. Reads are one bounds-checked index.
 #[derive(Clone)]
-pub(crate) struct DenseBank<T: Clone> {
-    cells: Vec<BankCell<T>>,
+pub(crate) struct DenseBank<T: Clone, const LEN: usize> {
+    cells: Box<[BankCell<T>; LEN]>,
 }
 
-impl<T: Clone> DenseBank<T> {
-    pub(crate) fn fixed(len: usize, default: T, level: u32) -> Result<Self, BankError> {
+impl<T: Clone, const LEN: usize> DenseBank<T, LEN> {
+    pub(crate) fn fixed(default: T, level: u32) -> Result<Self, BankError> {
         let mut cells = Vec::new();
         cells
-            .try_reserve_exact(len)
+            .try_reserve_exact(LEN)
             .map_err(|_| BankError::AllocationFailed)?;
         cells.resize(
-            len,
+            LEN,
             BankCell {
                 value: default.clone(),
                 level,
                 host_epoch: 0,
             },
         );
+        let cells = match cells.into_boxed_slice().try_into() {
+            Ok(cells) => cells,
+            Err(_) => unreachable!("fixed bank allocation has its declared length"),
+        };
         Ok(Self { cells })
     }
 

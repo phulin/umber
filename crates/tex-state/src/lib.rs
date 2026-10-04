@@ -72,8 +72,6 @@ mod format_container;
 mod frozen_lookup;
 pub(crate) mod generation;
 pub mod glue;
-#[allow(dead_code)] // Storage substrate is consumed as HotCore families migrate.
-pub(crate) mod hot_core;
 pub mod hyphenation;
 pub(crate) mod identity;
 pub mod ids;
