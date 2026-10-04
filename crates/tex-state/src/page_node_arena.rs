@@ -2180,14 +2180,10 @@ impl<'a> PageMaterialArena<'a> {
         initialize: impl FnOnce(crate::NodeDestination<'_>),
     ) -> Result<ConstructedNodeMetadata, ForkArenaError> {
         let identity_enabled = builder.identity.is_some();
-        let annex_operation = self
-            .region
-            .annex_arena
-            .operation_mark(&self.pool.annex_chunks);
-        let constructed = {
+        let (constructed, annex_operation) = {
             let mut annex =
                 NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena);
-            self.region.pub_arena.construct_region_value_active_list(
+            let constructed = self.region.pub_arena.construct_region_value_active_list(
                 &mut self.pool.chunks,
                 &mut builder.inner,
                 identity_enabled,
@@ -2225,15 +2221,18 @@ impl<'a> PageMaterialArena<'a> {
                         paired_dependency_floor,
                     ))
                 },
-            )
+            );
+            (constructed, annex.operation())
         };
         let (item_identity, metadata) = match constructed {
             Ok(constructed) => constructed,
             Err(error) => {
-                self.region
-                    .annex_arena
-                    .restore_operation(&mut self.pool.annex_chunks, annex_operation)
-                    .expect("failed destination construction restores its annex suffix");
+                if let Some(operation) = annex_operation {
+                    self.region
+                        .annex_arena
+                        .restore_unsealed_copy_operation(&mut self.pool.annex_chunks, operation)
+                        .expect("failed destination construction restores its annex suffix");
+                }
                 return Err(error);
             }
         };

@@ -2271,3 +2271,46 @@ fn historical_durable_owner_copy_is_move_only_and_independent() {
     );
     arena.retire_durable(history).expect("retire history");
 }
+
+#[test]
+fn failed_annex_construction_preserves_prefix_and_allows_same_builder_retry() {
+    page_arena!(arena, pool, state, 64);
+    page_arena!(foreign, foreign_pool, foreign_state, 64);
+    arena.enable_semantic_identity();
+    let local_child = arena.publish_owned(penalties(&[42])).expect("local child");
+    let foreign_child = foreign
+        .publish_owned(penalties(&[91]))
+        .expect("foreign child");
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut builder).expect("open builder");
+    for value in 0..12 {
+        arena
+            .push_active_list(&mut builder, Node::Penalty(value))
+            .expect("existing prefix");
+    }
+    let discretionary = |pre| Node::Disc {
+        kind: crate::node::DiscKind::Discretionary,
+        pre,
+        post: PageListId::empty(),
+        replace: PageListId::empty(),
+        physical_replace_count: 0,
+    };
+    assert_eq!(
+        arena.push_active_list(&mut builder, discretionary(foreign_child)),
+        Err(ForkArenaError::InvalidRegion)
+    );
+    arena
+        .push_active_list(&mut builder, discretionary(local_child))
+        .expect("annex retry in the same live builder");
+    arena
+        .push_active_list(&mut builder, Node::Penalty(99))
+        .expect("inline tail");
+    let list = arena
+        .finalize_active_list(&mut builder)
+        .expect("finalize retry");
+    let mut expected = penalties(&(0..12).collect::<Vec<_>>());
+    expected.push(discretionary(local_child));
+    expected.push(Node::Penalty(99));
+    assert_eq!(resolved(&arena, list), expected);
+    assert_eq!(list.semantic_identity(), Some(identity(&expected).raw()));
+}

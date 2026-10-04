@@ -38,3 +38,8 @@ Scalar noads with empty scripts live wholly in the existing resident record.
 Complex noads encode final fixed words without a heap vector. Inline noads
 are child-free leaves for copies; hashing, views and owned materialization
 share the private decoder, which rejects duplicate scalar-annex encoding.
+
+The annex writer reuses its existing optional copy-operation coordinate for
+construction rollback. It starts that coordinate only at an actual append;
+inline nodes do not take an annex mark. The node owner restores that coordinate
+only on failure, without a successful settlement or cleanup operation.

@@ -756,3 +756,16 @@ uses that same authority. Active category 13 retains its actual scalar/name
 lookup and live dense meaning read. Token construction and format admission
 still validate scalars and category operands, including rejection of malformed
 format tokens; there is no alternate representation or compatibility decoder.
+
+## Annex bookkeeping on actual writes
+
+Constructing an inline node does not touch the annex arena and needs no annex
+rollback coordinate. The existing optional copy-operation coordinate in the
+annex writer is initialized at its first actual append, then reused by subsequent
+appends in that construction. On failed node construction, that actual coordinate
+restores the annex suffix. A node which writes no annex data has nothing to
+restore. Successful construction has no settlement, commit, or cleanup pass.
+The active list's separate lifetime rollback mark remains authoritative for
+aborting the complete list; full checkpoints retain their existing owner and
+truncation ordering. No extra flag, transaction wrapper, or alternate constructor
+is introduced.

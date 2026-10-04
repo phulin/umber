@@ -474,6 +474,16 @@ impl<'a> NodeAnnexWriter<'a> {
         }
     }
 
+    fn begin_write(&mut self) {
+        if self.operation.is_none() {
+            self.operation = Some(self.arena.begin_unsealed_copy_operation(self.pool));
+        }
+    }
+
+    pub(crate) const fn operation(&self) -> Option<UnsealedCopyOperation<NodeAnnexLane>> {
+        self.operation
+    }
+
     pub(crate) fn view(&self) -> NodeAnnexView<'_> {
         NodeAnnexView::new(self.pool, self.arena)
     }
@@ -487,6 +497,7 @@ impl<'a> NodeAnnexWriter<'a> {
             body.len() <= MAX_FIXED_COPY_BODY_WORDS,
             "fixed node annex record exceeds design maximum"
         );
+        self.begin_write();
         let publication_serial = self.pool.next_publication_serial();
         let list = self
             .arena
@@ -610,6 +621,7 @@ impl<'a> NodeAnnexWriter<'a> {
         }
         let mut keys = SmallVec::<[AnnexKey<()>; 16]>::new();
         let mut first_list = None;
+        self.begin_write();
         self.arena.append_unsealed_fixed_batch_copy_parts(
             self.pool,
             words,
@@ -630,6 +642,7 @@ impl<'a> NodeAnnexWriter<'a> {
     }
 
     pub(crate) fn append_span<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {
+        self.begin_write();
         let publication_serial = self.pool.next_publication_serial();
         let list = self
             .arena
@@ -650,6 +663,7 @@ impl<'a> NodeAnnexWriter<'a> {
         &mut self,
         body: impl IntoIterator<Item = u32>,
     ) -> AnnexKey<Kind> {
+        self.begin_write();
         let publication_serial = self.pool.next_publication_serial();
         let list = self
             .arena
