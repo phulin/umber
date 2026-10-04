@@ -4,9 +4,9 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 ## Crate Role
 
-`tex-exec` consumes completed commands from `tex-command` and applies unexpandable TeX semantics to `tex-state::Universe`. `MainControl` is the only command-processing front. It installs and dispatches unexpandable primitives, manages the mode nest, performs assignments and grouping-sensitive state changes, builds horizontal and vertical material, invokes pure typesetting kernels, lowers shipped pages into `tex-out` artifacts, and emits diagnostics through the state/world boundary.
+`tex-exec` consumes native expanded terminal words from `tex-command` and applies unexpandable TeX semantics to `tex-state::Universe`. `MainControl` is the only command-processing front. It installs and dispatches unexpandable primitives, manages the mode nest, performs assignments and grouping-sensitive state changes, builds horizontal and vertical material, invokes pure typesetting kernels, lowers shipped pages into `tex-out` artifacts, and emits diagnostics through the state/world boundary.
 
-Command operands are scanned by `tex-command` into typed request and result values. Execution code applies completed values through scoped reborrows of the actual retained processor owners, or after that borrow ends at a genuine mutable-mode or host boundary; it must not add another source cursor, raw-token delivery loop, scanner facade, or command compatibility adapter.
+Command operands are scanned by `tex-command` into typed request and result values. Execution code applies completed values through scoped reborrows of the actual retained processor owners, or after that borrow ends at a genuine World output boundary; it must not add another source cursor, raw-token delivery loop, scanner facade, or command compatibility adapter.
 
 Group close drives the same `CommandProcessor::end_group` native stack walk in the sole direct dispatcher. Its diagnostic callback renders each restoration while the saved owners are live; aftergroup words enter final input during unsave. There is no restoration receipt, token result vector, or delayed aftergroup scheduling helper. Ordinary, observed, diagnostic, and nested commands use that same group seam.
 
@@ -86,6 +86,13 @@ not allocate a vector merely to publish one already-complete node.
   box-builder/leader executor files, and pending-setbox/shipout mailboxes are
   deleted. Immediate stream output consumes scanner storage directly; there
   is no deferred extension union or immediate-print queue.
+- `src/main_control/interpreter/math_shift.rs` and `display_math.rs`: native
+  inline/display entry, font validation, equation-number completion, actual
+  list packaging and display probes on the live processor. Font diagnostics
+  publish before the synchronous report without re-admitting World. Native
+  unsave restores parameters before resumed input. The former math-shift
+  pairing packet and root math executors are deleted; only unported
+  alignment recovery still retains its old display-close helper.
 - The former `src/main_control/direct/` directory is deleted completely,
   including its dispatcher owner and processor reconstruction adapters. Do not
   restore it or add an equivalent compatibility dispatcher. Genuine opcode,
@@ -135,7 +142,7 @@ not allocate a vector merely to publish one already-complete node.
 - `src/main_control/cold/`: genuine native alignment, PDF, grouping, and
   recovery helpers shared by the direct engine. `groups.rs` owns live group
   entry/unsave; `conditions.rs` owns partoken policy and final conditional
-  reporting; `operand_values.rs` contains concrete arithmetic/math operands.
+  reporting; `operand_values.rs` contains concrete arithmetic operands.
   `alignment.rs`, `pdf.rs`, and `support.rs` retain the actual builder, PDF,
   and source-free semantic owners. There is no cold operation scanner,
   promotion writer, phase wrapper, or cold dispatch authority.

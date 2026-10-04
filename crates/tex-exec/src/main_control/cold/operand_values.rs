@@ -1,11 +1,5 @@
 //! Concrete math and arithmetic operands.
 use super::super::*;
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::main_control) enum MathShiftPairing {
-    Unpaired,
-    Paired,
-    ProbeDisplayEnd,
-}
 #[derive(Clone, Copy, Debug)]
 pub(in crate::main_control) enum ArithmeticTarget {
     IntegerRegister(u16),

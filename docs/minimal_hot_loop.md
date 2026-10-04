@@ -885,3 +885,14 @@ before the text. Immediate forms keep only the actual prepared form record
 until their required World traversal; checkpoint and format admission reject
 that live output boundary. There is no deferred extension request or print
 queue for successful ordinary execution.
+
+## Native math-shift lifetime
+
+Inline math, displayed formulas and equation numbers retain the same command
+processor from their closing shift through font validation, list conversion,
+native unsave and the required next-token probes. The first display probe is
+raw; a closing display probe expands with the restored live mode. Formula
+font diagnostics publish before their synchronous error dialogue through the
+current admitted World. Opening and closing math produce no pairing request,
+processor reconstruction or ordinary owner re-admission. Only actual display
+interrupts and equation-number roots survive between body commands.

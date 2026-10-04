@@ -97,6 +97,9 @@ pub(super) fn execute<'state, 'host, G>(
         codes::PRIMITIVE_IGNORE_SPACES => {
             characters::ignore_spaces(processor, observation_receipts)
         }
+        codes::CHAR_MATH_SHIFT => {
+            math_shift::apply(processor, spelling, meaning, control_sequence, exceptional)
+        }
         codes::CHAR_PARAMETER => {
             recovery::illegal_case(processor, spelling, meaning, control_sequence, exceptional)
         }
