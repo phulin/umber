@@ -13,10 +13,9 @@ use super::{
 
 /// Completed command-state outcome of one resident input transition.
 ///
-/// Ordinary commands have already committed their exact work facts, received
-/// their one-delivery suppression, and received alignment treatment. Only a
-/// forbidden outer command crosses back to the processor, whose cold recovery
-/// path owns diagnostics and input insertion.
+/// Ordinary words continue inside the shared reader. Source acquisition,
+/// retained token-list exhaustion and replay completion cross back to the
+/// processor at their actual input ownership boundary.
 #[derive(Debug)]
 pub(crate) enum ResidentBoundary {
     InvalidCharacter,
@@ -273,21 +272,26 @@ impl<G> CommandState<G> {
     /// Retires an exhausted restartable token or macro-argument row selected
     /// by the resident delivery transition itself.
     ///
-    /// `index` is the already-admitted top coordinate. Terminal token input
-    /// and a v-template still waiting for `do_endv` deliberately return `None`
+    /// Retirement borrows the actual current owner. Terminal token input
+    /// and a v-template still waiting for `do_endv` return their cold boundary
     /// so the processor's explicit cold handling remains authoritative. Once
     /// `do_endv` has completed, its awaiting v-template is a §357 resident
     /// restart just like any other exhausted token list.
-    pub(crate) fn retire_resident_ordinary_input(
+    #[inline(always)]
+    pub(crate) fn finish_resident_exhaustion(
         &mut self,
-        index: usize,
         observer: &mut Option<&mut dyn crate::CommandObserver>,
         immediate_write_retirement: &mut Option<InputLevelId>,
-    ) -> Option<crate::CommandReplayEpisode> {
-        let row = self.input.levels.resident_at(index);
+    ) -> Option<ResidentBoundary> {
+        let row = self
+            .input
+            .levels
+            .current
+            .as_ref()
+            .expect("current token input");
         assert!(
             !matches!(row.storage, InputStorage::Source(_)),
-            "resident coordinate selects token input"
+            "current resident owner contains token input"
         );
         let action = match row.retirement() {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
@@ -295,7 +299,9 @@ impl<G> CommandState<G> {
                 InputRetirementAction::VTemplatePopped
             }
             RetirementBehavior::StopAtEnd | RetirementBehavior::RetainExhaustedVTemplate => {
-                return None;
+                return Some(ResidentBoundary::TokenExhausted {
+                    identity: row.identity(),
+                });
             }
         };
         // The retirement reason names only the observer's record.
@@ -303,7 +309,7 @@ impl<G> CommandState<G> {
             .is_some()
             .then(|| input_retirement_reason(&row.behavior(), &row.trace().expect("token input")));
         let identity = row.identity();
-        self.input.levels.pop_resident(index);
+        self.input.levels.pop_resident();
         self.settle_resident_retirement(
             identity,
             action,
@@ -311,6 +317,7 @@ impl<G> CommandState<G> {
             observer,
             immediate_write_retirement,
         )
+        .map(ResidentBoundary::ReplayCompleted)
     }
 
     /// TeX82 one-word nodes owned by live command input and argument buffers.
@@ -343,7 +350,7 @@ impl<G> CommandState<G> {
     }
 
     pub(crate) fn top_input_level_identity(&self) -> Option<InputLevelId> {
-        self.input.levels.last().map(InputLevel::identity)
+        self.input.levels.current.as_ref().map(InputLevel::identity)
     }
 
     /// Installs one complete macro activation and its replacement-body level:
@@ -501,7 +508,8 @@ impl<G> CommandState<G> {
         let level = self
             .input
             .levels
-            .last()
+            .current
+            .as_ref()
             .ok_or(InputRetirementError::NoInput)?;
         let actual = level.identity();
         if actual != expected {
@@ -636,7 +644,7 @@ impl<G> CommandState<G> {
     /// therefore unwind top-down here even when a macro body, an alignment
     /// template, or a partially consumed source is still live.
     pub(crate) fn pop_input_level_at_end_of_job(&mut self) -> Option<InputRetirement> {
-        let level = self.input.levels.last()?;
+        let level = self.input.levels.current.as_ref()?;
         if let row @ InputLevel {
             storage: InputStorage::MacroBody(_),
             ..

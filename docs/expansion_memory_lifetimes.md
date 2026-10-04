@@ -453,6 +453,24 @@ Resident rows store the actual packed frame beside their token owner. The one-fi
 
 The authoritative InputLevel contains one packed frame and one InputStorage union, including its sole boxed SourceSlot. SourceLevel, ResidentTokenRow, ResidentTokenStorage and ResidentSourceTop are deleted. MacroBodyCursor retains the actual immutable definition and final argument region; parameter input borrows that region. SourceSlot advances with the real packed frame, and full checkpoint copies retain only their admitted source or durable/traced word owners. No additional row wrapper, source view, compatibility accessor or native lifetime counter is introduced.
 
+InputStack owns its actual current level directly; its vector contains only
+suspended levels. Push suspends the previous owner, and resident pop releases
+its final word or argument suffix before dropping it in place and restoring
+its parent. Cold context display and source-coordinate checks borrow the
+actual suspended/current sequence without collecting rows. Captures retain
+this same distinction under the existing quiescent admission rules. The old
+row-vector field, slice dereference and generic slice-index facade are deleted;
+ordinary delivery never computes a top-row coordinate.
+
+ModeNest likewise owns one actual current semantic level and only suspended
+levels in its bounded vector. Current mode, list, pending characters and list
+mutation borrow that level directly. Cold diagnostics traverse actual owners;
+explicit summaries alone collect requested detached values. Full restart
+capture still requires one rootless empty outer vertical level. Restore
+recycles displaced pending sources before clearing suspended owners and
+installing the captured outer level, under the existing candidate/page-region
+barriers. The live-level slice and identity-enabling no-op are deleted.
+
 Native immediate writes and image attributes render attempt tokens directly
 into their final print or PDF entry. No retained token-list publication or
 intermediate extension request precedes that consumption. Native box operands

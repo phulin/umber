@@ -784,7 +784,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
                     <= 1;
             #[cfg(feature = "profiling")]
-            let kind = match self.command.roots.input.levels.rows.last() {
+            let kind = match self.command.roots.input.levels.current.as_ref() {
                 Some(
                     row @ crate::input::InputLevel {
                         storage:
@@ -857,23 +857,21 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .roots
                     .input
                     .levels
-                    .rows
-                    .last()
+                    .current
+                    .as_ref()
                     .is_none_or(|row| row.stored_is_exhausted() == Some(true))
             {
                 return Ok(DeliveryStatus::CharacterRun);
             }
-            if let Some(index) = self.command.roots.input.levels.rows.len().checked_sub(1)
-                && matches!(
-                    self.command.roots.input.levels.rows[index],
-                    InputLevel {
-                        storage: InputStorage::Source(_),
-                        ..
-                    }
-                )
-                && self
-                    .advance_source_character_step(index, usize::MAX, consume)?
-                    .is_some()
+            if matches!(
+                self.command.roots.input.levels.current.as_ref(),
+                Some(InputLevel {
+                    storage: InputStorage::Source(_),
+                    ..
+                })
+            ) && self
+                .advance_source_character_step(usize::MAX, consume)?
+                .is_some()
             {
                 return Ok(DeliveryStatus::CharacterRun);
             }

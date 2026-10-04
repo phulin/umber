@@ -206,14 +206,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let output_has_remaining = levels.pending_token_word(output_index).is_some();
         let levels_above_are_depleted_backups = (output_index + 1..levels.len()).all(|index| {
             matches!(
-                levels[index].frame.kind(),
+                levels.level(index).expect("admitted input").frame.kind(),
                 tex_state::packed_input::InputFrameKind::BackedUp
             ) && levels.pending_token_word(index).is_none()
         });
         let unbalanced = output_has_remaining || !levels_above_are_depleted_backups;
 
         if unbalanced {
-            let output_identity = levels[output_index].identity();
+            let output_identity = levels.level(output_index).expect("output input").identity();
             let mut discarded = None;
             loop {
                 let levels = &self.command.input.levels;
@@ -256,7 +256,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     | InputStorage::MacroArgument { .. },
                 ..
             },
-        ) = levels.last()
+        ) = levels.current.as_ref()
         else {
             return Ok(());
         };
@@ -322,7 +322,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(SourceExhaustionStatus::Continue);
         }
         if self.state.int_param(IntParam::TRACING_NESTING) > 1 {
-            let context = match self.command.input.levels.last() {
+            let context = match self.command.input.levels.current.as_ref() {
                 Some(
                     source @ InputLevel {
                         storage: InputStorage::Source(_),
@@ -487,7 +487,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// The top row §§325 and 390 would retire, with its end-of-level action.
     #[inline(always)]
     pub(super) fn depleted_input_top(&self) -> Option<(InputLevelId, RetirementBehavior)> {
-        match self.command.input.levels.last() {
+        match self.command.input.levels.current.as_ref() {
             Some(
                 level @ row @ InputLevel {
                     storage:
@@ -534,14 +534,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // included, retires through the resident path directly: no
             // source ancestry, file warning, or file close can apply to it.
             let retirement = if retirement == RetirementBehavior::Pop {
-                let index = self.command.input.levels.len() - 1;
-                match self.command.retire_resident_ordinary_input(
-                    index,
+                match self.command.finish_resident_exhaustion(
                     &mut self.observer,
                     &mut self.immediate_write_retirement,
                 ) {
-                    Some(episode) => RetirementHandoff::Completed(episode),
+                    Some(crate::input::ResidentBoundary::ReplayCompleted(episode)) => {
+                        RetirementHandoff::Completed(episode)
+                    }
                     None => RetirementHandoff::Continue,
+                    Some(_) => unreachable!("ordinary exhausted input was popped"),
                 }
             } else {
                 self.retire_input_top(identity)?

@@ -1,7 +1,6 @@
 use ahash::RandomState;
 use smallvec::{SmallVec, smallvec};
 use std::hash::{BuildHasher, Hash, Hasher};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
@@ -14,6 +13,10 @@ use tex_state::token::OriginId;
 use tex_state::{CommandContext, EngineBoundaryHasher, EngineMode, Universe};
 
 use crate::ExecError;
+
+mod nest;
+pub use nest::ModeNest;
+pub(crate) use nest::{ModeCheckpoint, PreparedModeReplayRestore};
 
 #[cfg(test)]
 thread_local! {
@@ -1462,7 +1465,7 @@ impl ModeNestSummary {
 
     #[cfg(test)]
     pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
-        semantic_fingerprint_levels(&self.levels, universe)
+        semantic_fingerprint_levels(self.levels.len(), self.levels.iter(), universe)
     }
 }
 
@@ -1487,11 +1490,15 @@ impl Clone for ModeNestSummary {
     }
 }
 
-fn semantic_fingerprint_levels<G>(levels: &[ModeLevelSummary], universe: &Universe<G>) -> u64 {
+fn semantic_fingerprint_levels<'a, G>(
+    count: usize,
+    levels: impl Iterator<Item = &'a ModeLevelSummary>,
+    universe: &Universe<G>,
+) -> u64 {
     #[cfg(test)]
     SEMANTIC_FINGERPRINT_CALLS.with(|calls| calls.set(calls.get() + 1));
     universe.engine_boundary_hash(0x6d6f_6465_5f6e_6573, |projection| {
-        projection.usize(levels.len());
+        projection.usize(count);
         for level in levels {
             hash_mode(level.mode, projection);
             projection.i32(level.entry_line);
@@ -1761,12 +1768,15 @@ fn mode_list_semantic_identity(list: &ModeList) -> u64 {
     hasher.finish()
 }
 
-fn mode_nest_semantic_identity(levels: &[ModeLevelSummary]) -> u64 {
+fn mode_nest_semantic_identity<'a>(
+    count: usize,
+    levels: impl Iterator<Item = &'a ModeLevelSummary>,
+) -> u64 {
     #[cfg(test)]
     MODE_IDENTITY_CAPTURE_CALLS.with(|calls| calls.set(calls.get() + 1));
     let mut hasher = mode_identity_hasher(MODE_NEST_IDENTITY_DOMAIN);
     1_u16.hash(&mut hasher);
-    (levels.len() as u64).hash(&mut hasher);
+    (count as u64).hash(&mut hasher);
     for level in levels {
         match level.mode {
             Mode::Vertical => 0_u8,
@@ -1781,532 +1791,6 @@ fn mode_nest_semantic_identity(levels: &[ModeLevelSummary]) -> u64 {
         mode_list_semantic_identity(&level.list).hash(&mut hasher);
     }
     hasher.finish()
-}
-
-/// Explicit stack of TeX mode levels.
-struct ModeNestStorage {
-    levels: Vec<ModeLevelSummary>,
-    scratch: HorizontalModeScratch,
-}
-
-impl ModeNestStorage {
-    fn recycle_level_pending_sources(&mut self) {
-        let scratch = &mut self.scratch;
-        for level in &mut self.levels {
-            if let Some(value) = level.list.pending_hchars.take() {
-                scratch.recycle_pending_source(value.source);
-            }
-        }
-    }
-}
-
-static NEXT_MODE_CHECKPOINT_OWNER: AtomicUsize = AtomicUsize::new(1);
-
-/// Opaque bounded root of one mode timeline position.
-pub(crate) struct ModeCheckpoint {
-    owner: usize,
-    outer: ModeLevelSummary,
-    reachable_state_identity_root: Option<u64>,
-}
-
-pub(crate) enum PreparedModeReplayRestore {
-    Candidate { nest: usize, checkpoint: usize },
-    Independent { nest: usize, checkpoint: usize },
-}
-
-impl Clone for ModeCheckpoint {
-    fn clone(&self) -> Self {
-        Self {
-            owner: self.owner,
-            outer: self.outer.clone_rootless(),
-            reachable_state_identity_root: self.reachable_state_identity_root,
-        }
-    }
-}
-
-impl std::fmt::Debug for ModeCheckpoint {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ModeCheckpoint")
-            .field("owner", &self.owner)
-            .finish_non_exhaustive()
-    }
-}
-
-impl ModeCheckpoint {
-    #[cfg(feature = "profiling")]
-    pub(crate) fn replay_work(&self) -> u64 {
-        0
-    }
-
-    pub(crate) fn retention_owner_address(&self) -> usize {
-        self.owner
-    }
-
-    pub(crate) const fn reachable_state_identity_root(&self) -> Option<u64> {
-        self.reachable_state_identity_root
-    }
-
-    pub(crate) fn retained_owner_bytes(&self) -> usize {
-        std::mem::size_of::<ModeLevelSummary>()
-    }
-
-    pub(crate) fn retains_page_node_handles(&self) -> bool {
-        false
-    }
-
-    pub(crate) fn summary(&self) -> ModeNestSummary {
-        ModeNestSummary {
-            levels: vec![self.outer.clone_rootless()],
-        }
-    }
-}
-
-pub struct ModeNest {
-    storage: ModeNestStorage,
-    lifecycle: ModeNestLifecycle,
-    /// TeX82 §216's maximum pre-push `nest_ptr`. This runtime diagnostic is
-    /// intentionally absent from summaries, semantic equality, and hashes.
-    max_nest_stack: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ModeNestLifecycle {
-    Independent,
-    CheckpointCandidate,
-}
-
-impl Drop for ModeNest {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            return;
-        }
-        assert_eq!(
-            self.lifecycle,
-            ModeNestLifecycle::Independent,
-            "checkpoint candidate mode owner requires explicit accept or reject"
-        );
-    }
-}
-
-impl std::fmt::Debug for ModeNest {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ModeNest")
-            .field("levels", &self.storage.levels)
-            .finish()
-    }
-}
-
-impl PartialEq for ModeNest {
-    fn eq(&self, other: &Self) -> bool {
-        self.storage.levels == other.storage.levels
-    }
-}
-
-impl Default for ModeNest {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ModeNest {
-    pub(crate) const fn is_checkpoint_candidate(&self) -> bool {
-        matches!(self.lifecycle, ModeNestLifecycle::CheckpointCandidate)
-    }
-
-    /// Promotes the current mode owner through the aggregate candidate
-    /// barrier. Consuming the candidate makes a second disposition impossible.
-    pub(crate) fn accept_checkpoint_candidate(mut self) -> Self {
-        self.accept_checkpoint_candidate_in_place();
-        self
-    }
-
-    /// Promotes the current mode owner without replacing its bounded stack
-    /// storage. This is the production `MainControl` settlement path: the
-    /// stack allocation remains owned by the accepted control instead of
-    /// constructing a default nest merely to move it out and back.
-    pub(crate) fn accept_checkpoint_candidate_in_place(&mut self) {
-        assert_eq!(
-            self.lifecycle,
-            ModeNestLifecycle::CheckpointCandidate,
-            "only a rooted mode candidate can be accepted"
-        );
-        self.lifecycle = ModeNestLifecycle::Independent;
-    }
-
-    /// Rejects the candidate-only mode suffix after destination owners have
-    /// returned their roots. Consuming the candidate prevents later use.
-    pub(crate) fn reject_checkpoint_candidate(mut self) {
-        assert_eq!(
-            self.lifecycle,
-            ModeNestLifecycle::CheckpointCandidate,
-            "only a rooted mode candidate can be rejected"
-        );
-        self.lifecycle = ModeNestLifecycle::Independent;
-    }
-
-    /// TeX82 §11's maximum number of simultaneously saved semantic levels.
-    const TEX82_NEST_SIZE: usize = 40;
-    const MAX_LIVE_LEVELS: usize = Self::TEX82_NEST_SIZE + 1;
-
-    /// Creates the outer main vertical nest level.
-    #[must_use]
-    pub fn new() -> Self {
-        // The semantic stack is permanently bounded, so allocate its complete
-        // pointer array once just as TeX82 does.
-        let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
-        levels.push(ModeLevelSummary::new(Mode::Vertical));
-        Self {
-            storage: ModeNestStorage {
-                levels,
-                scratch: HorizontalModeScratch::default(),
-            },
-            lifecycle: ModeNestLifecycle::Independent,
-            max_nest_stack: 0,
-        }
-    }
-
-    /// Rehydrates a nest from snapshot summary state.
-    pub fn from_summary(summary: ModeNestSummary) -> Result<Self, ExecError> {
-        if summary.levels.is_empty() {
-            return Err(ExecError::EmptyModeNestSummary);
-        }
-        if summary.levels.len() > Self::MAX_LIVE_LEVELS {
-            return Err(ExecError::Fatal(tex_command::FatalError::overflow(
-                "semantic nest size",
-                Self::TEX82_NEST_SIZE as i32,
-            )));
-        }
-        Ok(Self {
-            storage: ModeNestStorage {
-                levels: summary.levels,
-                scratch: HorizontalModeScratch::default(),
-            },
-            lifecycle: ModeNestLifecycle::Independent,
-            max_nest_stack: 0,
-        })
-    }
-
-    #[must_use]
-    pub fn summary(&self) -> ModeNestSummary {
-        ModeNestSummary {
-            levels: self
-                .storage
-                .levels
-                .iter()
-                .map(|level| {
-                    #[cfg(test)]
-                    {
-                        level.clone_operation_projection()
-                    }
-                    #[cfg(not(test))]
-                    {
-                        level.clone_rootless()
-                    }
-                })
-                .collect(),
-        }
-    }
-
-    pub(crate) fn levels(&self) -> &[ModeLevelSummary] {
-        &self.storage.levels
-    }
-
-    pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
-        semantic_fingerprint_levels(&self.storage.levels, universe)
-    }
-
-    /// Retains the former demand-selection entry point for callers which
-    /// enable the complete engine identity. Mode identity is now computed at
-    /// the checkpoint boundary, so there is no live state to enable.
-    #[doc(hidden)]
-    pub fn enable_reachable_state_identity(&mut self) {}
-
-    pub(crate) fn checkpoint_with_identity(
-        &mut self,
-        wants_reachable_state_identity: bool,
-    ) -> ModeCheckpoint {
-        assert!(
-            self.restart_checkpoint_is_quiescent(),
-            "restart checkpoint requires one quiescent empty outer vertical mode"
-        );
-        self.storage.scratch.clear();
-        let reachable_state_identity_root = wants_reachable_state_identity
-            .then(|| mode_nest_semantic_identity(&self.storage.levels));
-        let owner = NEXT_MODE_CHECKPOINT_OWNER.fetch_add(1, Ordering::Relaxed);
-        assert_ne!(owner, 0, "mode checkpoint owner identity exhausted");
-        ModeCheckpoint {
-            owner,
-            outer: self.storage.levels[0].clone_rootless(),
-            reachable_state_identity_root,
-        }
-    }
-
-    /// Reports whether the complete mode owner can cross a named restart
-    /// boundary. TeX82 §1096 may finish an outer paragraph while command
-    /// input still owns a macro argument; if consuming that argument starts a
-    /// new paragraph, the delayed command boundary must wait for outer
-    /// vertical mode again instead of capturing the intervening horizontal
-    /// list.
-    pub(crate) fn restart_checkpoint_is_quiescent(&self) -> bool {
-        self.storage.levels.len() == 1
-            && self.storage.levels[0].mode == Mode::Vertical
-            && self.storage.levels[0].list.is_checkpoint_rootless()
-    }
-
-    /// Reports whether any live mode payload retains page-arena coordinates.
-    ///
-    /// Shipout uses this borrowed projection before releasing a rootless page
-    /// suffix.  It deliberately stays on the live owner instead of cloning a
-    /// [`ModeNestSummary`] and every retained list merely to answer the
-    /// lifetime question.
-    pub(crate) fn retains_page_node_handles(&self) -> bool {
-        self.storage
-            .levels
-            .iter()
-            .any(|level| level.list.has_node_roots())
-    }
-
-    /// Preflights the mode half of page succession without cloning a mode
-    /// level or scanning arena payload. Every level is checked against the
-    /// admitted current region; succession is permitted only after the exact
-    /// live and rollback-restorable mode-list closures have become rootless.
-    pub(crate) fn preflight_page_region_succession<G>(
-        &self,
-        stores: &CommandContext<'_, G>,
-    ) -> Option<tex_state::page::ModeListRegionPreflight> {
-        self.storage
-            .levels
-            .iter()
-            .all(|level| level.list.validate_page_region(stores))
-            .then_some(())?;
-        (!self.retains_page_node_handles()).then(|| stores.seal_mode_list_region_preflight())
-    }
-
-    pub(crate) fn restore_checkpoint(
-        &mut self,
-        checkpoint: &ModeCheckpoint,
-    ) -> Result<(), ExecError> {
-        assert_eq!(
-            self.lifecycle,
-            ModeNestLifecycle::Independent,
-            "candidate settlement precedes same-owner restoration"
-        );
-        self.storage.recycle_level_pending_sources();
-        self.storage.levels.clear();
-        self.storage.levels.push(checkpoint.outer.clone_rootless());
-        self.storage.scratch.clear();
-        Ok(())
-    }
-
-    pub(crate) fn prepare_checkpoint_restore_after_replay(
-        &self,
-        checkpoint: &ModeCheckpoint,
-    ) -> PreparedModeReplayRestore {
-        let nest = std::ptr::from_ref(self) as usize;
-        let checkpoint = checkpoint.owner;
-        if self.is_checkpoint_candidate() {
-            PreparedModeReplayRestore::Candidate { nest, checkpoint }
-        } else {
-            PreparedModeReplayRestore::Independent { nest, checkpoint }
-        }
-    }
-
-    pub(crate) fn apply_prepared_checkpoint_restore_after_replay(
-        &mut self,
-        checkpoint: &ModeCheckpoint,
-        prepared: PreparedModeReplayRestore,
-    ) -> Result<(), ExecError> {
-        match prepared {
-            PreparedModeReplayRestore::Candidate {
-                nest,
-                checkpoint: owner,
-            } if nest == std::ptr::from_ref(self) as usize
-                && owner == checkpoint.owner
-                && self.is_checkpoint_candidate() =>
-            {
-                self.storage.recycle_level_pending_sources();
-                self.storage.levels.clear();
-                self.storage.levels.push(checkpoint.outer.clone_rootless());
-                self.storage.scratch.clear();
-                Ok(())
-            }
-            PreparedModeReplayRestore::Independent {
-                nest,
-                checkpoint: owner,
-            } if nest == std::ptr::from_ref(self) as usize
-                && owner == checkpoint.owner
-                && !self.is_checkpoint_candidate() =>
-            {
-                self.restore_checkpoint(checkpoint)
-            }
-            _ => Err(ExecError::Halted),
-        }
-    }
-
-    pub(crate) fn fork_checkpoint(checkpoint: &ModeCheckpoint) -> Result<Self, ExecError> {
-        let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
-        levels.push(checkpoint.outer.clone_rootless());
-        Ok(Self {
-            storage: ModeNestStorage {
-                levels,
-                scratch: HorizontalModeScratch::default(),
-            },
-            lifecycle: ModeNestLifecycle::CheckpointCandidate,
-            max_nest_stack: 0,
-        })
-    }
-
-    #[must_use]
-    pub fn depth(&self) -> usize {
-        self.storage.levels.len()
-    }
-
-    /// TeX82 §216's maximum `nest_ptr` observed before a semantic push.
-    #[must_use]
-    pub const fn maximum_saved_depth(&self) -> usize {
-        self.max_nest_stack
-    }
-
-    /// Retains a job's operational high-water mark across restoration of an
-    /// earlier semantic mode summary. The summary itself remains free of
-    /// diagnostic accounting, so fresh format/session materialization still
-    /// starts from zero.
-    pub(crate) fn retain_maximum_saved_depth(&mut self, maximum: usize) {
-        self.max_nest_stack = self.max_nest_stack.max(maximum);
-    }
-
-    #[must_use]
-    pub fn current_mode(&self) -> Mode {
-        self.storage
-            .levels
-            .last()
-            .expect("ModeNest always has at least one level")
-            .mode()
-    }
-
-    /// Saves the current level and enters a new empty semantic level.
-    ///
-    /// TeX82 §216 checks `nest_size` before copying `cur_list` into the
-    /// semantic stack. Accordingly, a rejected push leaves every live level
-    /// unchanged.
-    pub fn push(&mut self, mode: Mode) -> Result<(), ExecError> {
-        self.push_at_line(mode, 0)
-    }
-
-    /// Enters a semantic level while retaining TeX's `mode_line` diagnostic
-    /// context. A negative line identifies the output-routine level.
-    pub(crate) fn push_at_line(&mut self, mode: Mode, entry_line: i32) -> Result<(), ExecError> {
-        let depth = self.storage.levels.len();
-        if depth > Self::TEX82_NEST_SIZE {
-            return Err(ExecError::Fatal(tex_command::FatalError::overflow(
-                "semantic nest size",
-                Self::TEX82_NEST_SIZE as i32,
-            )));
-        }
-        self.max_nest_stack = self.max_nest_stack.max(depth.saturating_sub(1));
-        let mut level = ModeLevelSummary::new(mode);
-        level.set_entry_line(entry_line);
-        if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
-            level.mutate_list(|list| list.set_space_factor(1000));
-        }
-        self.storage.levels.push(level);
-        Ok(())
-    }
-
-    pub fn pop(&mut self) -> Result<ModeLevelSummary, ExecError> {
-        if self.storage.levels.len() == 1 {
-            return Err(ExecError::CannotPopBaseMode);
-        }
-        if self.current_list().pending_hchars().is_some() {
-            return Err(ExecError::UncommittedPendingHchars);
-        }
-        let popped = self
-            .storage
-            .levels
-            .pop()
-            .expect("length checked before popping mode level");
-        self.storage.scratch.clear();
-        Ok(popped)
-    }
-
-    #[inline]
-    pub fn current_list(&self) -> &ModeList {
-        self.storage
-            .levels
-            .last()
-            .expect("ModeNest always has at least one level")
-            .list()
-    }
-
-    pub(crate) fn horizontal_mode_scratch_mut(&mut self) -> &mut HorizontalModeScratch {
-        &mut self.storage.scratch
-    }
-
-    pub(crate) fn reshape_open_type_runs_list<G>(
-        &mut self,
-        stores: &mut CommandContext<'_, G>,
-        source: tex_state::page_node_arena::PageListId,
-    ) -> tex_state::page_node_arena::PageListId {
-        self.storage
-            .scratch
-            .reshape_open_type_runs_list(stores, source)
-    }
-
-    /// Appends one owned node to the current mode list.
-    pub fn push_current_node<G>(&mut self, stores: &mut CommandContext<'_, G>, node: Node) {
-        self.current_list_mutation().push(stores, node);
-    }
-
-    pub(crate) fn current_list_mutation(&mut self) -> ModeListMutation<'_> {
-        let storage = &mut self.storage;
-        let list = &mut storage
-            .levels
-            .last_mut()
-            .expect("ModeNest always has at least one level")
-            .list;
-        ModeListMutation {
-            list,
-            scratch: Some(&mut storage.scratch),
-        }
-    }
-
-    pub(crate) fn list_mutation(&mut self, index: usize) -> Option<ModeListMutation<'_>> {
-        let storage = &mut self.storage;
-        Some(ModeListMutation {
-            list: &mut storage.levels.get_mut(index)?.list,
-            scratch: Some(&mut storage.scratch),
-        })
-    }
-
-    #[must_use]
-    pub fn enclosing_vertical_prev_graf(&self) -> i32 {
-        let storage = &self.storage;
-        let index = enclosing_vertical_index(&storage.levels);
-        storage.levels[index].list().prev_graf()
-    }
-
-    #[must_use]
-    pub fn enclosing_vertical_prev_depth(&self) -> Option<Scaled> {
-        let storage = &self.storage;
-        let index = enclosing_vertical_index(&storage.levels);
-        storage.levels[index].list().prev_depth()
-    }
-
-    pub fn set_enclosing_vertical_prev_graf(&mut self, lines: i32) {
-        let index = enclosing_vertical_index(&self.storage.levels);
-        self.list_mutation(index)
-            .expect("enclosing vertical level exists")
-            .set_prev_graf(lines);
-    }
-}
-
-fn enclosing_vertical_index(levels: &[ModeLevelSummary]) -> usize {
-    levels
-        .iter()
-        .rposition(|level| matches!(level.mode(), Mode::Vertical | Mode::InternalVertical))
-        .expect("base vertical level is always present")
 }
 
 #[cfg(test)]

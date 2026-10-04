@@ -162,17 +162,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         if maximum == 0 || self.is_observed() {
             return Ok(0);
         }
-        let Some(index) = self.command.input.levels.rows.len().checked_sub(1) else {
+        let Some(current) = self.command.input.levels.current.as_ref() else {
             return Ok(0);
         };
-        if !matches!(
-            self.command.input.levels.rows[index].storage,
-            crate::input::InputStorage::Source(_)
-        ) {
+        if !matches!(current.storage, crate::input::InputStorage::Source(_)) {
             return Ok(0);
         }
         Ok(self
-            .advance_source_character_step(index, maximum, consume)?
+            .advance_source_character_step(maximum, consume)?
             .unwrap_or(0))
     }
 

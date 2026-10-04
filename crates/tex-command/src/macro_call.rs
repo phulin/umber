@@ -265,7 +265,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 CommandObservation::Macro(MacroRecord::Activation {
                     control_sequence: self.state.resolve(macro_name).to_owned(),
                     argument_count: parameter_count as u8,
-                    token_count: match self.command.input.levels.rows.last() {
+                    token_count: match self.command.input.levels.current.as_ref() {
                         Some(
                             row @ crate::input::InputLevel {
                                 storage:

@@ -11,11 +11,7 @@ use crate::observation::{
     AlignmentRecord, CommandObservation, CommandObserver, InputReason, InputRecord, InputTransition,
 };
 
-use core::hash::{Hash, Hasher};
-use core::ops::{Deref, Index};
-use core::slice::SliceIndex;
-
-use super::{CompactSourceTokenizationStep, InputLevel, InputStorage, SourceSlot};
+use super::{CompactSourceTokenizationStep, InputLevel, InputStack, InputStorage, SourceSlot};
 
 /// Profiling-only proof that active-source delivery is independent of input
 /// depth. Shipping builds contain neither the counters nor their updates.
@@ -530,95 +526,6 @@ impl DiagnosticSourceCursor {
     }
 }
 
-/// One generation-tied input stack whose live rows are authoritative.
-///
-/// Rows cover sources and token lists. Each source row owns its variable
-/// source state directly; transient token rows read `words`, while immutable
-/// definitions and durable lists retain their immutable owner in the row. Arguments
-/// read their body-owned pooled region, which also owns the final argument
-/// ranges. The live parameter count supplies native capacity bookkeeping.
-/// Popping returns the actual region; checkpoints admit no active macros.
-pub(crate) struct InputStack<G> {
-    pub(crate) rows: Vec<InputLevel<G>>,
-    /// Ordinary insertion and backup words, in push order.
-    pub(crate) words: Vec<tex_state::token::TracedTokenWord>,
-    pub(crate) arguments: super::ArgumentArena<G>,
-    /// Native live parameter count for TeX capacity/high-water bookkeeping.
-    pub(crate) parameter_count: usize,
-    occupied_source_buffer_slots: usize,
-    context_epoch: u64,
-}
-
-impl<G> Default for InputStack<G> {
-    fn default() -> Self {
-        Self {
-            rows: Vec::new(),
-            words: Vec::new(),
-            arguments: super::ArgumentArena::default(),
-            parameter_count: 0,
-            occupied_source_buffer_slots: 0,
-            context_epoch: 0,
-        }
-    }
-}
-
-impl<G: core::fmt::Debug> core::fmt::Debug for InputStack<G> {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter
-            .debug_struct("InputStack")
-            .field("rows", &self.rows)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<G: PartialEq> PartialEq for InputStack<G> {
-    fn eq(&self, other: &Self) -> bool {
-        self.rows == other.rows
-            && self.words == other.words
-            && self.parameter_count == other.parameter_count
-            && self.arguments == other.arguments
-    }
-}
-
-impl<G: Eq> Eq for InputStack<G> {}
-
-impl<G: Hash> Hash for InputStack<G> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.rows.hash(state);
-        self.words.hash(state);
-        self.arguments.hash(state);
-        self.parameter_count.hash(state);
-    }
-}
-
-impl<G> Deref for InputStack<G> {
-    type Target = [InputLevel<G>];
-
-    fn deref(&self) -> &Self::Target {
-        &self.rows
-    }
-}
-
-impl<G, I> Index<I> for InputStack<G>
-where
-    I: SliceIndex<[InputLevel<G>]>,
-{
-    type Output = I::Output;
-
-    fn index(&self, index: I) -> &Self::Output {
-        &self.rows[index]
-    }
-}
-
-impl<'a, G> IntoIterator for &'a InputStack<G> {
-    type Item = &'a InputLevel<G>;
-    type IntoIter = core::slice::Iter<'a, InputLevel<G>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.rows.iter()
-    }
-}
-
 impl<G> InputStack<G> {
     /// Copies a quiescent stack for a checkpoint capture.
     ///
@@ -628,7 +535,12 @@ impl<G> InputStack<G> {
         debug_assert!(self.arguments.is_empty());
         debug_assert_eq!(self.parameter_count, 0);
         Self {
-            rows: self.rows.iter().map(InputLevel::checkpoint_copy).collect(),
+            current: self.current.as_ref().map(InputLevel::checkpoint_copy),
+            suspended: self
+                .suspended
+                .iter()
+                .map(InputLevel::checkpoint_copy)
+                .collect(),
             words: self.words.clone(),
             arguments: super::ArgumentArena::default(),
             parameter_count: self.parameter_count,
@@ -641,9 +553,11 @@ impl<G> InputStack<G> {
     /// epoch advances so coordinates captured before restore cannot name its rows.
     pub(crate) fn install_checkpoint(&mut self, capture: &Self) {
         self.arguments.clear();
-        self.rows.clear();
-        self.rows
-            .extend(capture.rows.iter().map(InputLevel::checkpoint_copy));
+        self.current = None;
+        self.suspended.clear();
+        self.suspended
+            .extend(capture.suspended.iter().map(InputLevel::checkpoint_copy));
+        self.current = capture.current.as_ref().map(InputLevel::checkpoint_copy);
         self.words.clone_from(&capture.words);
         self.parameter_count = capture.parameter_count;
         self.occupied_source_buffer_slots = capture.occupied_source_buffer_slots;
@@ -652,7 +566,7 @@ impl<G> InputStack<G> {
 
     /// Whether any macro activation is live.
     pub(crate) fn has_macro_activation(&self) -> bool {
-        self.rows.iter().any(|level| {
+        self.iter().any(|level| {
             matches!(
                 level,
                 super::InputLevel {
@@ -721,7 +635,7 @@ impl<G> InputStack<G> {
         let row @ super::InputLevel {
             storage: super::InputStorage::List(super::PackedTokenOwnership::BackedUp),
             ..
-        } = self.rows.last_mut().expect("aftergroup backup exists")
+        } = self.current.as_mut().expect("aftergroup backup exists")
         else {
             unreachable!("aftergroup backup is token input")
         };
@@ -735,7 +649,7 @@ impl<G> InputStack<G> {
         let row @ super::InputLevel {
             storage: super::InputStorage::List(super::PackedTokenOwnership::BackedUp),
             ..
-        } = self.rows.last().expect("aftergroup backup exists")
+        } = self.current.as_ref().expect("aftergroup backup exists")
         else {
             unreachable!("aftergroup backup is token input")
         };
@@ -750,7 +664,7 @@ impl<G> InputStack<G> {
         delimiter: bool,
     ) -> Result<u32, crate::execution_scratch::ScratchError> {
         self.arguments
-            .append_from_input(writer, word, &self.rows, delimiter)
+            .append_from_input(writer, word, self.current.as_ref(), delimiter)
     }
 
     /// The innermost macro activation's argument words and replacement.
@@ -761,7 +675,7 @@ impl<G> InputStack<G> {
         Vec<Vec<tex_state::token::TracedTokenWord>>,
         Vec<tex_state::token::TracedTokenWord>,
     )> {
-        let (row, body) = self.rows.iter().rev().find_map(|level| match level {
+        let (row, body) = self.iter().rev().find_map(|level| match level {
             row @ super::InputLevel {
                 storage: super::InputStorage::MacroBody(body),
                 ..
@@ -788,7 +702,7 @@ impl<G> InputStack<G> {
         &self,
         index: usize,
     ) -> Option<tex_state::token::TracedTokenWord> {
-        let row = self.rows.get(index)?;
+        let row = self.level(index)?;
         self.row_word_at(row, row.frame.position())
     }
 
@@ -817,7 +731,7 @@ impl<G> InputStack<G> {
     }
 
     pub(crate) fn diagnostic_context_coordinate(&self) -> InputStackContextCoordinate {
-        let top = match self.rows.last() {
+        let top = match self.current.as_ref() {
             None => DiagnosticInputTop::Empty,
             Some(
                 source @ InputLevel {
@@ -872,7 +786,7 @@ impl<G> InputStack<G> {
     /// Finds the first editor-generated physical backing among the live
     /// source rows.
     pub(crate) fn editor_backing(&self, accepted: &[u8]) -> Option<&super::RegisteredSource> {
-        self.rows.iter().find_map(|level| {
+        self.iter().find_map(|level| {
             let source @ InputLevel {
                 storage: InputStorage::Source(_),
                 ..
@@ -899,7 +813,7 @@ impl<G> InputStack<G> {
         offsets: super::source::SourceOffsetMap,
     ) -> bool {
         let mut rebound = false;
-        for level in &mut self.rows {
+        for level in self.iter_mut() {
             let source @ InputLevel {
                 storage: InputStorage::Source(_),
                 ..
@@ -938,7 +852,7 @@ impl<G> InputStack<G> {
         let source @ InputLevel {
             storage: InputStorage::Source(_),
             ..
-        } = self.rows.last()?
+        } = self.current.as_ref()?
         else {
             return None;
         };
@@ -950,7 +864,7 @@ impl<G> InputStack<G> {
         &self,
         id: tex_state::SourceId,
     ) -> Option<&super::RegisteredSource> {
-        self.rows.iter().find_map(|level| {
+        self.iter().find_map(|level| {
             let source @ InputLevel {
                 storage: InputStorage::Source(_),
                 ..
@@ -968,7 +882,7 @@ impl<G> InputStack<G> {
         id: tex_state::SourceId,
         replacement: super::RegisteredSource,
     ) -> bool {
-        let Some(index) = self.rows.iter().position(|level| {
+        let Some(index) = self.iter().position(|level| {
             let source @ InputLevel {
                 storage: InputStorage::Source(_),
                 ..
@@ -989,7 +903,7 @@ impl<G> InputStack<G> {
         let source @ InputLevel {
             storage: InputStorage::Source(_),
             ..
-        } = &mut self.rows[index]
+        } = self.level_mut(index).expect("admitted source coordinate")
         else {
             unreachable!("physical source lookup returned a token row")
         };
@@ -1003,7 +917,7 @@ impl<G> InputStack<G> {
         slot.cursor.backing_capability = None;
         let current_buffer_slots = super::source::occupied_source_buffer_slots(&slot.cursor);
         slot.occupied_buffer_slots = current_buffer_slots;
-        for level in &mut self.rows {
+        for level in self.iter_mut() {
             let Some(source_context) = level.source_context() else {
                 continue;
             };
@@ -1028,7 +942,7 @@ impl<G> InputStack<G> {
     #[inline(always)]
     pub(crate) fn current_source_context(&self) -> Option<tex_state::packed_input::SourceContext> {
         record_source_context_read();
-        self.rows.last().and_then(InputLevel::source_context)
+        self.current.as_ref().and_then(InputLevel::source_context)
     }
 
     /// Mutates only copy-small lexer execution state.
@@ -1043,7 +957,7 @@ impl<G> InputStack<G> {
         let InputLevel {
             frame,
             storage: InputStorage::Source(slot),
-        } = self.rows.last_mut()?
+        } = self.current.as_mut()?
         else {
             return None;
         };
@@ -1079,9 +993,9 @@ impl<G> crate::CommandState<G> {
         mut admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<ResidentRun, crate::CommandError> {
         let InputStack {
-            rows, arguments, ..
+            current, arguments, ..
         } = &mut self.roots.input.levels;
-        let Some(row) = rows.last_mut() else {
+        let Some(row) = current.as_mut() else {
             return Ok(ResidentRun::default());
         };
         let frame = row.frame;
@@ -1221,25 +1135,6 @@ impl<G> crate::CommandState<G> {
             }));
         }
         Ok(())
-    }
-
-    #[inline(always)]
-    pub(crate) fn finish_resident_exhaustion(
-        &mut self,
-        resident_index: usize,
-        identity: super::InputLevelId,
-        observer: &mut Option<&mut dyn CommandObserver>,
-        immediate_write_retirement: &mut Option<super::InputLevelId>,
-    ) -> Option<super::ResidentBoundary> {
-        let retirement = self.retire_resident_ordinary_input(
-            resident_index,
-            observer,
-            immediate_write_retirement,
-        );
-        if self.input.levels.len() == resident_index + 1 {
-            return Some(super::ResidentBoundary::TokenExhausted { identity });
-        }
-        retirement.map(super::ResidentBoundary::ReplayCompleted)
     }
 
     pub(crate) fn settle_input_retirement(
@@ -1404,8 +1299,8 @@ pub(crate) fn observed_retirement_reason(
 impl<G> InputStack<G> {
     pub(crate) fn retain_top_v_template(&mut self) -> bool {
         let Some(cursor) = self
-            .rows
-            .last_mut()
+            .current
+            .as_mut()
             .filter(|row| !matches!(row.storage, InputStorage::Source(_)))
         else {
             return false;
@@ -1446,14 +1341,17 @@ impl<G> InputStack<G> {
                     .occupied_buffer_slots,
             );
         }
-        self.rows.push(value);
+        if let Some(previous) = self.current.replace(value) {
+            self.suspended.push(previous);
+        }
     }
 
     pub(crate) fn pop_project<R>(
         &mut self,
         project: impl FnOnce(&InputLevel<G>, Option<&SourceSlot<G>>) -> R,
     ) -> Option<R> {
-        let retired = self.rows.pop()?;
+        let retired = self.current.take()?;
+        self.current = self.suspended.pop();
         let source = match &retired {
             source @ InputLevel {
                 storage: InputStorage::Source(_),
@@ -1478,14 +1376,10 @@ impl<G> InputStack<G> {
         Some(result)
     }
 
-    /// Pops a non-source row already admitted as the resident semantic top.
-    ///
-    /// The caller carries `index` from the one top selection which found
-    /// exhaustion, so this performs neither another top lookup nor the
-    /// identity validation required by cold detached coordinates.
+    /// Releases the actual current resident owner, then restores its parent.
+    /// Detached source coordinates do not participate in resident retirement.
     #[inline(always)]
-    pub(super) fn pop_resident(&mut self, index: usize) {
-        debug_assert_eq!(index.checked_add(1), Some(self.rows.len()));
+    pub(super) fn pop_resident(&mut self) {
         if let Some(
             row @ InputLevel {
                 storage:
@@ -1495,7 +1389,7 @@ impl<G> InputStack<G> {
                     | InputStorage::MacroArgument { .. },
                 ..
             },
-        ) = self.rows.get(index)
+        ) = self.current.as_ref()
         {
             Self::release_row_words(
                 row,
@@ -1503,11 +1397,11 @@ impl<G> InputStack<G> {
                 &mut self.arguments,
                 &mut self.parameter_count,
             );
-            // The row owns its shared payload until suffix release finishes.
-            // Drop it here without moving the enum and payload through temporaries.
-            self.rows.truncate(index);
+            // Keep the retiring payload alive through suffix release, then
+            // drop it in place while restoring the suspended parent.
+            self.current = self.suspended.pop();
         } else {
-            unreachable!("resident coordinate selects a resident row");
+            unreachable!("current input is resident");
         }
     }
 
@@ -1534,11 +1428,6 @@ impl<G> InputStack<G> {
             }
             super::InputStorage::MacroArgument { .. } => {}
         }
-    }
-
-    pub(super) fn resident_at(&self, index: usize) -> &InputLevel<G> {
-        debug_assert_eq!(index.checked_add(1), Some(self.rows.len()));
-        &self.rows[index]
     }
 
     pub(crate) fn mutate_top_source_cursor<R>(
@@ -1573,7 +1462,7 @@ impl<G> InputStack<G> {
         let source @ InputLevel {
             storage: InputStorage::Source(_),
             ..
-        } = self.rows.last_mut()?
+        } = self.current.as_mut()?
         else {
             return None;
         };
@@ -1610,7 +1499,7 @@ impl<G> InputStack<G> {
     pub(crate) fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             .saturating_add(
-                self.rows
+                self.suspended
                     .capacity()
                     .saturating_mul(std::mem::size_of::<InputLevel<G>>()),
             )
@@ -1630,7 +1519,7 @@ impl<G> InputStack<G> {
     }
 
     fn refresh_occupied_source_buffer_slots(&mut self) {
-        self.occupied_source_buffer_slots = self.rows.iter().fold(0, |total, level| {
+        self.occupied_source_buffer_slots = self.iter().fold(0, |total, level| {
             let source @ InputLevel {
                 storage: InputStorage::Source(_),
                 ..

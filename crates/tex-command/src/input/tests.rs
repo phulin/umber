@@ -85,7 +85,7 @@ fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
         assert!(rendered.contains("#1->"), "{rendered:?}");
         assert!(rendered.contains("x#1"), "{rendered:?}");
         command.input.levels.pop_project(|_, _| ());
-        assert!(command.input.levels.is_empty());
+        assert!(command.input.levels.current.is_none());
         assert_eq!(probe.profile_region_owner_count(), 1);
         let summary = command
             .publish_summary(universe)
@@ -94,7 +94,7 @@ fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
         command
             .restore_summary(&summary, universe)
             .expect("aggregate restore releases active body");
-        assert!(command.input.levels.is_empty());
+        assert!(command.input.levels.current.is_none());
         assert_eq!(probe.profile_region_owner_count(), 1);
     });
 }
@@ -135,7 +135,7 @@ fn durable_token_list_reads_its_retained_span_without_stack_copy() {
             .publish_summary(universe)
             .expect("stored-list checkpoint");
         command.input.levels.pop_project(|_, _| ());
-        assert!(command.input.levels.is_empty());
+        assert!(command.input.levels.current.is_none());
         command
             .restore_summary(&summary, universe)
             .expect("restore retired stored-list input");
@@ -152,7 +152,7 @@ fn durable_token_list_reads_its_retained_span_without_stack_copy() {
             token
         );
         command.input.levels.pop_project(|_, _| ());
-        assert!(command.input.levels.is_empty());
+        assert!(command.input.levels.current.is_none());
     });
 }
 

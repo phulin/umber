@@ -569,11 +569,13 @@ pub(crate) fn execute_showlists<G>(
     profile: tex_command::CommandProfile,
 ) -> Result<(), ExecError> {
     let mut text = String::new();
-    let levels = nest.levels();
-    let output_routine_active = levels.iter().any(|level| level.entry_line() < 0);
+    let output_routine_active = nest.iter_levels().any(|level| level.entry_line() < 0);
     let page = page_activity_snapshot(stores, output_routine_active)?;
     let ignored_depth = ignored_depth(stores);
-    for (index, level) in levels.iter().enumerate().rev() {
+    let mut inner = None;
+    for (offset, level) in nest.iter_levels().rev().enumerate() {
+        let index = nest.depth() - 1 - offset;
+        let adjacent_inner = inner.replace(level);
         text.push_str("### ");
         text.push_str(mode_text(level.mode()));
         text.push_str(" mode entered at line ");
@@ -627,7 +629,7 @@ pub(crate) fn execute_showlists<G>(
                     DumpConfig::read(stores).for_profile(profile),
                 ));
             }
-        } else if let Some(nodes) = showlists_level_nodes(stores, levels, index) {
+        } else if let Some(nodes) = showlists_level_nodes(stores, level, adjacent_inner) {
             if index == 0 {
                 text.push_str("### recent contributions:\n");
             }
@@ -761,14 +763,11 @@ enum ShowlistsNodes<'a> {
 
 fn showlists_level_nodes<'a, G>(
     stores: &'a CommandContext<'_, G>,
-    levels: &[crate::mode::ModeLevelSummary],
-    index: usize,
+    level: &crate::mode::ModeLevelSummary,
+    inner: Option<&crate::mode::ModeLevelSummary>,
 ) -> Option<ShowlistsNodes<'a>> {
-    let level = &levels[index];
     if level.mode() == Mode::DisplayMath
-        && let Some(eq_no) = levels
-            .get(index + 1)
-            .and_then(|inner| inner.list().display_eq_no())
+        && let Some(eq_no) = inner.and_then(|inner| inner.list().display_eq_no())
     {
         return Some(ShowlistsNodes::Page(eq_no.display.list()));
     }

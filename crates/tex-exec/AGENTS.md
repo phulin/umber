@@ -260,6 +260,10 @@ not allocate a vector merely to publish one already-complete node.
   preserves the capability until Session settles the aggregate. The move-only mode succession receipt is composed with state
   only after all exact roots are consumed. Alignment brace depth belongs only
   to `tex-command`.
+- `src/mode/nest.rs`: the actual current semantic level, bounded suspended
+  owners, cold ordered traversal and full mode checkpoints. Direct mode/list
+  access performs no top-row selection; the former live-level slice API and
+  identity-enabling no-op are deleted.
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics. Packing reports consume only
   `PackDiagnosticContext` line numbers and output-routine state; they do not

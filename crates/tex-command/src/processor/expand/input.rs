@@ -2,8 +2,8 @@
 
 use super::ReadSite;
 use crate::input::{
-    InputLevel, InputLevelId, InputStorage, ResidentBoundary, ResidentSourceAdvance,
-    ResidentSourceCharacterRun, SourceNameClass,
+    InputLevel, InputStorage, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
+    SourceNameClass,
 };
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 use crate::processor::end_input::{RetirementHandoff, SourceExhaustionStatus};
@@ -21,7 +21,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(always)]
     pub(super) fn advance_source_token<R>(
         &mut self,
-        resident_index: usize,
         create_control_sequences: bool,
         finish: &mut impl FnMut(
             &mut Self,
@@ -39,7 +38,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let InputLevel {
             frame,
             storage: InputStorage::Source(slot),
-        } = &mut command_state.roots.input.levels.rows[resident_index]
+        } = command_state
+            .roots
+            .input
+            .levels
+            .current
+            .as_mut()
+            .expect("current source input")
         else {
             return Err(CommandError::input_invariant());
         };
@@ -87,7 +92,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// cold/source boundary remain on the scalar transition below.
     pub(super) fn advance_source_character_step<C: MainCharacterConsumer<G, Facts>>(
         &mut self,
-        resident_index: usize,
         maximum: usize,
         consume: &mut C,
     ) -> Result<Option<u32>, CommandError> {
@@ -99,7 +103,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let InputLevel {
             frame,
             storage: InputStorage::Source(slot),
-        } = &mut command_state.roots.input.levels.rows[resident_index]
+        } = command_state
+            .roots
+            .input
+            .levels
+            .current
+            .as_mut()
+            .expect("current source input")
         else {
             return Err(CommandError::input_invariant());
         };
@@ -255,20 +265,20 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             crate::fuel::RawDeliveryKind,
         ) -> Result<R, CommandError>,
     ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
-        let Some(index) = self.command.roots.input.levels.rows.len().checked_sub(1) else {
+        let Some(current) = self.command.roots.input.levels.current.as_ref() else {
             return self.finish_input_boundary(ResidentBoundary::Empty, finish);
         };
         if matches!(
-            self.command.roots.input.levels.rows[index],
+            current,
             InputLevel {
                 storage: InputStorage::Source(_),
                 ..
             }
         ) {
-            return self.advance_source_token(index, create_control_sequences, finish);
+            return self.advance_source_token(create_control_sequences, finish);
         }
         let levels = &mut self.command.roots.input.levels;
-        let row = &mut levels.rows[index];
+        let row = levels.current.as_mut().expect("current input");
         let frame = &mut row.frame;
         if frame.position() < frame.limit() {
             let position = frame.start() as usize + frame.position() as usize;
@@ -301,13 +311,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .map_err(|()| CommandError::input_invariant())?;
             return Ok(None);
         }
-        let identity = InputLevelId(frame.identity());
-        let Some(boundary) = self.command.finish_resident_exhaustion(
-            index,
-            identity,
-            &mut self.observer,
-            &mut self.immediate_write_retirement,
-        ) else {
+        let Some(boundary) = self
+            .command
+            .finish_resident_exhaustion(&mut self.observer, &mut self.immediate_write_retirement)
+        else {
             return Ok(None);
         };
         self.finish_input_boundary(boundary, finish)
@@ -381,7 +388,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .command
                     .input
                     .levels
-                    .last()
+                    .current
+                    .as_ref()
                     .filter(|level| !matches!(level.storage, InputStorage::Source(_)))
                     .is_some_and(|cursor| cursor.identity() == identity)
                 {

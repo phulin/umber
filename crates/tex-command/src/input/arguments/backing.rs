@@ -331,7 +331,7 @@ impl<G> ArgumentArena<G> {
         &mut self,
         writer: &mut ArgumentCursor,
         word: TracedTokenWord,
-        rows: &[super::super::InputLevel<G>],
+        current: Option<&super::super::InputLevel<G>>,
         delimiter: bool,
     ) -> Result<u32, ScratchError> {
         if !delimiter && writer.holdback_len != 0 {
@@ -358,7 +358,7 @@ impl<G> ArgumentArena<G> {
                     | super::super::InputStorage::MacroArgument { .. },
                 ..
             },
-        ) = rows.last()
+        ) = current
             && row.frame.position() != 0
         {
             let at = row.frame.position() - 1;

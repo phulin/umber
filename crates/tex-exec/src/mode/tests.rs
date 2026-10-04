@@ -155,9 +155,8 @@ fn pending_run_admission_with_zero_acceptance_leaves_list_and_scratch_untouched(
 }
 
 #[test]
-fn identity_enabled_pending_accumulation_does_not_capture_mode_identity() {
+fn pending_accumulation_does_not_capture_mode_identity() {
     let mut nest = ModeNest::new();
-    nest.enable_reachable_state_identity();
     nest.push(Mode::Horizontal).expect("horizontal mode");
     super::reset_mode_identity_capture_calls_for_test();
 
@@ -882,7 +881,7 @@ fn nested_mode_lifecycle_keeps_one_page_region_and_stable_source_addresses() {
         assert_eq!(context.page_node_region_id(), owner);
         assert!(
             context
-                .page_node_span(nest.storage.levels[1].list.nodes.span())
+                .page_node_span(nest.storage.current.list.nodes.span())
                 .is_ok()
         );
         let mut nested = nest.pop().expect("pop nested mode");
@@ -916,7 +915,8 @@ fn foreign_cross_generation_mode_span_is_rejected_before_succession() {
     });
     with_context(|context| {
         let mut nest = ModeNest::new();
-        nest.storage.levels[0]
+        nest.storage
+            .current
             .list
             .nodes
             .replace_retained(foreign_root);

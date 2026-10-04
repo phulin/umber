@@ -40,6 +40,12 @@ more than appending one old vector row, so measure short nonempty macros as
 well as dense replacement bodies. Fix any regression at the actual transition
 rather than adding a compatibility or alternate execution path.
 
+Exhaustion selects its real retirement once. An ordinary popped owner returns
+only a genuine replay completion when present; a retained terminal or template
+returns its cold boundary with the existing identity. Do not retire through
+an ambiguous optional result and then inspect the new current owner merely to
+discover whether a pop occurred. Conservation uses this same retirement.
+
 ## Cold traversal and capture
 
 The semantic level order is suspended levels from oldest to newest followed by

@@ -425,7 +425,11 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   final regions. A source row owns one boxed `SourceSlot`
   with backing, line cursor, `everyeof`, ancestry, and retirement state.
   `open_depths` is `\tracingnesting`'s record, borrowed before retirement.
-- `src/input/history.rs` and `src/input/history/tests.rs`: the authoritative generation-tied `InputStack`.
+- `src/input/active.rs`: The actual current input level, suspended owners and
+  borrowed cold traversal. No row-vector or slice dereference facade remains;
+  native readers borrow the current owner directly.
+- `src/input/history.rs` and `src/input/history/tests.rs`: source, token-word and
+  argument owner transitions, cold captures and diagnostic coordinates on `InputStack`.
   The live stack is the only mutable copy; a checkpoint copies it by value at
   quiescence, so rows carry no rollback marker and no transition records an
   inverse. Source-owner changes release displaced owners directly.
@@ -435,7 +439,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   its parameter or ordinary input suffix exactly once; restore releases
   displaced rows and clears their argument regions. Diagnostics borrow the retained
   parameter/replacement span even after its defining group retires.
-  `processor/expand/resident.rs` selects a row and its storage once per run,
+  `processor/expand/resident.rs` borrows the actual current owner and its storage,
   advances the owning frame, and calls a statically selected consumer with word
   and origin scalars. Parameter substitution, exhaustion, and source acquisition
   return only genuine cold transition facts. No token/result carrier or cached
@@ -443,7 +447,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement.
   Ordinary exhausted token, macro-body, and macro-argument rows retire the
-  already-selected resident coordinate directly, release their one storage
+  actual current resident owner directly, release its one storage
   owner, and settle observation/alignment/replay completion from copy-small
   row facts without a retired-level projection or a second pop path. The same
   transition retires a v-template after successful `do_endv`; terminal token

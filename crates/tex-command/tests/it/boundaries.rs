@@ -285,8 +285,9 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     let reader =
         fs::read_to_string(processor.join("expand/input.rs")).expect("shared input reader");
     assert!(reader.contains("self.retire_input_top(identity)"));
-    assert!(stack.contains("fn retire_resident_ordinary_input("));
-    assert!(history.contains("fn finish_resident_exhaustion("));
+    assert!(stack.contains("fn finish_resident_exhaustion("));
+    assert!(!stack.contains("fn retire_resident_ordinary_input("));
+    assert!(!history.contains("fn finish_resident_exhaustion("));
     assert!(history.contains("fn settle_resident_retirement("));
     assert!(history.contains("fn pop_resident("));
     assert!(!stack.contains("RetiredInputLevel"));

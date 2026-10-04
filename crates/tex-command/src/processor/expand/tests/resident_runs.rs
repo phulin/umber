@@ -174,8 +174,8 @@ fn skipped_resident_run_stops_before_the_over_budget_word() {
                 .roots
                 .input
                 .levels
-                .rows
-                .last()
+                .current
+                .as_ref()
                 .expect("resident input")
             else {
                 panic!("resident input expected")

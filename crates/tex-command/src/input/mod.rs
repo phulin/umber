@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
+mod active;
 mod arguments;
 mod history;
 mod levels;
@@ -14,13 +15,14 @@ mod tokenizer;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use active::InputStack;
 pub(crate) use arguments::{
     ArgumentArena, ArgumentCursor, ArgumentRegionId, ArgumentValue, ArgumentWords, MatchedArguments,
 };
 pub use history::BorrowedSourceCharacterRun;
 pub(crate) use history::{
-    InputStack, InputStackContextCoordinate, ResidentRun, ResidentSourceAdvance,
-    ResidentSourceCharacterRun, observed_retirement_reason,
+    InputStackContextCoordinate, ResidentRun, ResidentSourceAdvance, ResidentSourceCharacterRun,
+    observed_retirement_reason,
 };
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
@@ -366,7 +368,7 @@ pub(crate) fn tracked_input_projection<G>(
     }
     stack.u64(input.levels.len() as u64);
     let mut line = ProjectionHasher::new(0x696e_6c69_6e65_0001);
-    for level in &input.levels {
+    for level in input.levels.iter() {
         match level {
             source @ InputLevel {
                 storage: InputStorage::Source(_),
@@ -594,7 +596,8 @@ impl<G> InputState<G> {
     /// then applies the shared two-line pseudoprint arithmetic (§316--§318) to
     /// each selected level.
     pub(crate) fn output_open_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
-        let rendered = self.render_context_for_levels(&self.levels, None, stores);
+        let rendered =
+            self.render_context_for_levels(&self.levels, self.levels.len(), None, stores);
         #[cfg(test)]
         DIAGNOSTIC_CONTEXT_MEASUREMENT.with(|measurement| {
             let mut measurement = measurement.get();
@@ -668,7 +671,7 @@ impl<G> InputState<G> {
         retiring: &InputLevel<G>,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
-        self.render_context_for_levels(&self.levels, Some(retiring), stores)
+        self.render_context_for_levels(&self.levels, self.levels.len(), Some(retiring), stores)
     }
 
     pub(crate) fn output_close_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
@@ -682,12 +685,13 @@ impl<G> InputState<G> {
             )
         });
         let level_count = output_index.unwrap_or_else(|| self.levels.len());
-        self.render_context_for_levels(&self.levels[..level_count], None, stores)
+        self.render_context_for_levels(&self.levels, level_count, None, stores)
     }
 
     fn render_context_for_levels(
         &self,
-        input_levels: &[InputLevel<G>],
+        input_levels: &InputStack<G>,
+        level_count: usize,
         retiring_source: Option<&InputLevel<G>>,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
@@ -700,7 +704,7 @@ impl<G> InputState<G> {
             char::from_u32(stores.int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR) as u32);
         let live_endlinechar =
             char::from_u32(stores.int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32);
-        let project_level = |index: usize| match input_levels.get(index)? {
+        let project_level = |index: usize| match input_levels.level(index)? {
             source @ InputLevel {
                 storage: InputStorage::Source(_),
                 ..
@@ -729,14 +733,14 @@ impl<G> InputState<G> {
                     stores,
                     &self.levels,
                     row,
-                    index + 1 == input_levels.len(),
+                    index + 1 == level_count,
                     widths,
                 ),
             },
         };
         let mut reached_bottom_source = false;
-        for (index, level) in input_levels.iter().enumerate().rev() {
-            let current = index + 1 == input_levels.len();
+        for (index, level) in input_levels.iter().take(level_count).enumerate().rev() {
+            let current = index + 1 == level_count;
             let visible = match level {
                 source @ InputLevel {
                     storage: InputStorage::Source(_),
@@ -783,7 +787,7 @@ impl<G> InputState<G> {
             if selection.display_immediately() {
                 Self::terminal_context_level(line, stores, widths).render_into(widths, &mut output);
             } else {
-                deferred_bottom = Some(input_levels.len());
+                deferred_bottom = Some(level_count);
             }
         }
         if selection.displays_elision_marker() {
@@ -792,7 +796,7 @@ impl<G> InputState<G> {
         if selection.has_deferred_bottom()
             && let Some(index) = deferred_bottom
         {
-            let rendered = if index == input_levels.len() {
+            let rendered = if index == level_count {
                 self.terminal_context_line
                     .as_deref()
                     .map(|line| Self::terminal_context_level(line, stores, widths))

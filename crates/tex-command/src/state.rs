@@ -1225,7 +1225,7 @@ impl<G> CommandState<G> {
                 )
                 && level.retirement() == RetirementBehavior::AwaitingVTemplateRetirement
         };
-        let Some(top) = self.input.levels.last() else {
+        let Some(top) = self.input.levels.current.as_ref() else {
             return Err(AlignmentLifecycleError::VTemplateNotExhausted);
         };
         if retained_v_template(top) {
@@ -1245,7 +1245,7 @@ impl<G> CommandState<G> {
             && self
                 .input
                 .levels
-                .get(self.input.levels.len().saturating_sub(2))
+                .level(self.input.levels.len().saturating_sub(2))
                 .is_some_and(retained_v_template)
         {
             Ok(())
@@ -1608,7 +1608,7 @@ impl<G> CommandState<G> {
         let level @ InputLevel {
             storage: InputStorage::Source(_),
             ..
-        } = self.input.levels.last()?
+        } = self.input.levels.current.as_ref()?
         else {
             return None;
         };
@@ -1715,28 +1715,32 @@ impl<G> CommandState<G> {
     ) -> Option<&crate::input::SourceOpenDepths> {
         #[cfg(test)]
         RETIREMENT_TOP_SOURCE_CHECKS.with(|checks| checks.set(checks.get().saturating_add(1)));
-        self.input.levels.last().and_then(|entry| match entry {
-            source @ InputLevel {
-                storage: InputStorage::Source(_),
-                ..
-            } if source.identity() == identity => source
-                .source_slot()
-                .expect("source input")
-                .open_depths
-                .as_ref(),
-            InputLevel {
-                storage: InputStorage::Source(_),
-                ..
-            }
-            | InputLevel {
-                storage:
-                    InputStorage::List(_)
-                    | InputStorage::StoredList(_)
-                    | InputStorage::MacroBody(_)
-                    | InputStorage::MacroArgument { .. },
-                ..
-            } => None,
-        })
+        self.input
+            .levels
+            .current
+            .as_ref()
+            .and_then(|entry| match entry {
+                source @ InputLevel {
+                    storage: InputStorage::Source(_),
+                    ..
+                } if source.identity() == identity => source
+                    .source_slot()
+                    .expect("source input")
+                    .open_depths
+                    .as_ref(),
+                InputLevel {
+                    storage: InputStorage::Source(_),
+                    ..
+                }
+                | InputLevel {
+                    storage:
+                        InputStorage::List(_)
+                        | InputStorage::StoredList(_)
+                        | InputStorage::MacroBody(_)
+                        | InputStorage::MacroArgument { .. },
+                    ..
+                } => None,
+            })
     }
 
     /// Applies TeX's `\endinput` retirement request to the active physical
@@ -1833,7 +1837,7 @@ impl<G> CommandState<G> {
                 storage: InputStorage::Source(_),
                 ..
             },
-        ) = self.input.levels.last()
+        ) = self.input.levels.current.as_ref()
         else {
             return None;
         };

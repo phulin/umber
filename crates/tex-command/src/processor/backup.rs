@@ -337,8 +337,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                     .command
                                     .input
                                     .levels
-                                    .rows
-                                    .last()
+                                    .current
+                                    .as_ref()
                                     .map(|row| row.identity())
                             }
                             Ok(()) => {}
