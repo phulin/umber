@@ -9,7 +9,6 @@ mod primitive;
 mod resident;
 mod scalar;
 pub use main_control::MainControlConsumer;
-use main_control::MainControlWords;
 mod skipping;
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
@@ -43,14 +42,6 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G> {
         _control_sequence: Option<tex_state::interner::Symbol>,
     ) -> Result<std::ops::ControlFlow<()>, CommandError> {
         unreachable!("this consumer requests a delivery record")
-    }
-
-    fn accepts_native_terminal(
-        &mut self,
-        _processor: &mut Processor,
-        _meaning: &tex_state::meaning::MeaningWord<G>,
-    ) -> bool {
-        true
     }
 
     fn before_action(&mut self, _processor: &mut Processor) {}
@@ -1466,42 +1457,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
                     unreachable!("expanded delivery does not own a character consumer")
                 }
-            }
-        }
-    }
-
-    /// Runs the actual main-control terminal consumer in the canonical reader.
-    /// Unconsumed words and genuine replay/EOF boundaries return to the driver.
-    #[inline(always)]
-    pub fn main_control_until(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-        main_loop_lookahead: bool,
-        consumer: &mut impl MainControlConsumer<Self, G>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        let role = if main_loop_lookahead {
-            ExpandedReaderRole::MainLoopLookahead
-        } else {
-            ExpandedReaderRole::MainControl
-        };
-        loop {
-            let result = self.consume_expanded_with_mode::<false, false>(
-                destination,
-                None,
-                role,
-                &mut MainControlWords(consumer),
-            )?;
-            match result {
-                DeliveryStatus::AlignmentEndTemplate => {
-                    let command = destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?;
-                    self.begin_scalar_alignment_v_template(&command)?;
-                }
-                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
-                    return Ok(DeliveryStatus::Command);
-                }
-                result => return Ok(result),
             }
         }
     }

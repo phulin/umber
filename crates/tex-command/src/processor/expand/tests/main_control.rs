@@ -61,9 +61,14 @@ fn expandable_main_control_delivery_uses_one_caller_owned_command_slot() {
         let ownership_before = crate::command::command_ownership_counters();
         assert_eq!(
             processor
-                .main_control_until(&mut destination, false, &mut ())
+                .consume_expanded_with_mode::<false, false>(
+                    &mut destination,
+                    None,
+                    super::super::ExpandedReaderRole::MainControl,
+                    &mut super::super::DeliveredCommand
+                )
                 .expect("main_control delivery"),
-            crate::DeliveryStatus::Command
+            crate::DeliveryStatus::PendingExpanded
         );
         let settled = destination
             .as_ref()
@@ -138,9 +143,14 @@ fn source_macro_main_control_materializes_only_when_observed() {
             let mut destination = None;
             assert_eq!(
                 processor
-                    .main_control_until(&mut destination, false, &mut ())
+                    .consume_expanded_with_mode::<false, false>(
+                        &mut destination,
+                        None,
+                        super::super::ExpandedReaderRole::MainControl,
+                        &mut super::super::DeliveredCommand
+                    )
                     .expect("source macro main_control"),
-                crate::DeliveryStatus::Command
+                crate::DeliveryStatus::PendingExpanded
             );
             assert_eq!(
                 destination
@@ -276,7 +286,12 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                                 processor.consume_main_control(&mut consume)
                             }
                         } else if main_control {
-                            processor.main_control_until(&mut destination, false, &mut ())
+                            processor.consume_expanded_with_mode::<false, false>(
+                                &mut destination,
+                                None,
+                                super::super::ExpandedReaderRole::MainControl,
+                                &mut super::super::DeliveredCommand,
+                            )
                         } else {
                             processor.get_x_token_into(&mut destination)
                         };
@@ -287,7 +302,11 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                         } else {
                             assert_eq!(
                                 result.expect("template delivery"),
-                                crate::DeliveryStatus::Command
+                                if main_control && !native && expanded {
+                                    crate::DeliveryStatus::PendingExpanded
+                                } else {
+                                    crate::DeliveryStatus::Command
+                                }
                             );
                             if native {
                                 assert!(native_endv);
@@ -361,7 +380,12 @@ fn empty_macro_main_control_reaches_end_without_an_expanded_command() {
         let mut destination = None;
         assert_eq!(
             processor
-                .main_control_until(&mut destination, false, &mut ())
+                .consume_expanded_with_mode::<false, false>(
+                    &mut destination,
+                    None,
+                    super::super::ExpandedReaderRole::MainControl,
+                    &mut super::super::DeliveredCommand
+                )
                 .expect("empty macro main_control"),
             crate::DeliveryStatus::End
         );
@@ -394,7 +418,12 @@ fn unexpandable_main_control_classifies_once_and_reuses_one_slot() {
         let classifications_before = super::super::expanded_classifications();
         assert_eq!(
             processor
-                .main_control_until(&mut destination, false, &mut ())
+                .consume_expanded_with_mode::<false, false>(
+                    &mut destination,
+                    None,
+                    super::super::ExpandedReaderRole::MainControl,
+                    &mut super::super::DeliveredCommand
+                )
                 .expect("main_control delivery"),
             crate::DeliveryStatus::Command
         );
@@ -455,7 +484,12 @@ fn main_loop_lookahead_counts_only_x_token_deliveries() {
 
             assert_eq!(
                 processor
-                    .main_control_until(&mut destination, true, &mut ())
+                    .consume_expanded_with_mode::<false, false>(
+                        &mut destination,
+                        None,
+                        super::super::ExpandedReaderRole::MainLoopLookahead,
+                        &mut super::super::DeliveredCommand
+                    )
                     .expect("raw main-loop exit"),
                 crate::DeliveryStatus::Command
             );
@@ -478,33 +512,6 @@ fn main_loop_lookahead_counts_only_x_token_deliveries() {
 
 #[test]
 fn native_main_control_continues_across_macro_bodies_without_command_records() {
-    struct RelaxCount(usize);
-    impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
-        crate::MainControlConsumer<crate::CommandProcessor<'state, 'host, G, Facts>, G>
-        for RelaxCount
-    {
-        const EXPAND_BOUNDARIES: bool = false;
-
-        fn accepts_native_terminal(
-            &mut self,
-            _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
-            meaning: &MeaningWord<G>,
-        ) -> bool {
-            matches!(meaning, MeaningWord::Static(Meaning::RELAX_WORD))
-        }
-
-        fn consume_native_terminal(
-            &mut self,
-            _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
-            _: tex_state::token::TracedTokenWord,
-            _: &MeaningWord<G>,
-            _: Option<tex_state::interner::Symbol>,
-        ) -> std::ops::ControlFlow<()> {
-            self.0 += 1;
-            std::ops::ControlFlow::Continue(())
-        }
-    }
-
     crate::test_harness::with_universe(|universe| {
         let relax = universe.intern("relax").expect("relax symbol");
         universe
@@ -552,21 +559,27 @@ fn native_main_control_continues_across_macro_bodies_without_command_records() {
             &mut effects,
         );
         let before = crate::command::command_ownership_counters();
-        let mut destination = None;
-        let mut consumed = RelaxCount(0);
+        let mut terminal = None;
+        let mut consumed = 0;
         assert_eq!(
             processor
-                .main_control_until(&mut destination, false, &mut consumed)
+                .consume_main_control(&mut |_, spelling, meaning, _, exceptional| {
+                    assert!(exceptional.is_none());
+                    if matches!(meaning, MeaningWord::Static(Meaning::RELAX_WORD)) {
+                        consumed += 1;
+                        Ok(std::ops::ControlFlow::Continue(()))
+                    } else {
+                        terminal = Some(spelling.semantic_token());
+                        Ok(std::ops::ControlFlow::Break(()))
+                    }
+                })
                 .expect("native continuation"),
             crate::DeliveryStatus::Command
         );
-        assert_eq!(consumed.0, 8);
+        assert_eq!(consumed, 8);
         assert_eq!(processor.fuel.burned(), 13);
         assert_eq!(
-            destination
-                .expect("actual unconsumed terminal")
-                .spelling()
-                .semantic_token(),
+            terminal.expect("actual consumed terminal"),
             Token::Char {
                 ch: 'Z',
                 cat: Catcode::Letter
@@ -575,8 +588,8 @@ fn native_main_control_continues_across_macro_bodies_without_command_records() {
         let after = crate::command::command_ownership_counters();
         assert_eq!(
             after.resolved_writes - before.resolved_writes,
-            1,
-            "only the unconsumed terminal needs a command record"
+            0,
+            "native terminals need no command records"
         );
     });
 }

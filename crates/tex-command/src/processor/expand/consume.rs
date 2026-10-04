@@ -139,7 +139,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             MeaningWord::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED));
                         if Consumer::NATIVE_TERMINAL &&
                             (protected || matches!(native_action, ExpandedCommandAction::Return))
-                            && terminal.accepts_native_terminal(processor, &meaning)
                         {
                             processor.command.roots.alignment.account_literal_catcode(word.literal_catcode());
                             terminal.before_action(processor);

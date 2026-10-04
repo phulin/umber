@@ -1011,12 +1011,15 @@ current loan themselves. Moving the decision must preserve effects produced
 by expansion as well as terminal execution. Adding a parallel dirty-state
 protocol would create another owner to maintain through checkpoint restore.
 
-The old `MainControlConsumer`, `MainControlWords`, `main_control_until` and
-`main_loop_source_step_into` front has no production caller. Its eligibility
-selection and alternate character-boundary reader are deletion candidates;
-the semantic coverage currently invoking that front belongs on the production
-native reader. Deleting this source removes a competing implementation to
-maintain, but the measured native regression must be repaired in the live
-input back edge. Full checkpoints retain authoritative input, mode, group and
-World owners at real returns; ordinary no-op delivery needs no additional
-checkpoint record.
+The old `main_control_until` entry and its `MainControlWords` adapter are
+deleted. The expanded reader has no terminal eligibility hook. Lexical tests
+exercise its actual record consumer directly; native macro-body continuation
+uses the production callback, including its final terminal, with zero command
+records. The remaining `MainControlConsumer` and
+`main_loop_source_step_into` character front has no production caller. Its
+alternate character-boundary coverage belongs on the production native reader
+before that remaining source is deleted. Removing this competing implementation
+reduces code to maintain, while the measured native regression must be repaired
+in the live input back edge. Full checkpoints retain authoritative input,
+mode, group and World owners at real returns; ordinary no-op delivery needs no
+additional checkpoint record.

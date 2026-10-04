@@ -266,9 +266,14 @@ fn empty_macro_delivery_evidence(expansions: usize) -> OrdinaryDeliveryEvidence 
             );
             assert_eq!(
                 processor
-                    .main_control_until(&mut destination, false, &mut ())
+                    .consume_expanded_with_mode::<false, false>(
+                        &mut destination,
+                        None,
+                        super::ExpandedReaderRole::MainControl,
+                        &mut super::DeliveredCommand
+                    )
                     .expect("main-control expanded delivery"),
-                crate::DeliveryStatus::Command
+                crate::DeliveryStatus::PendingExpanded
             );
         }
         #[cfg(feature = "profiling")]
