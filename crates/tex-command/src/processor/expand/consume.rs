@@ -154,10 +154,98 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     } else {
                         native_action = ExpandedCommandAction::Return;
                     }
-                    processor.consume_record_delivery::<OBSERVED, PRESERVE_UNDEFINED, STOP_PROTECTED, Consumer>(
-                        destination, terminal, word, origin, suppress, site, meaning,
-                        resolution, native, native_action, role, &mut expanded,
-                    )
+                    let line = match site {
+                        ReadSite::Source(line) => line,
+                        _ => None,
+                    };
+                    let command = destination.insert(CurrentCommand::from_delivered_parts(
+                        word,
+                        origin,
+                        matches!(site, ReadSite::Source(_)),
+                        line,
+                        suppress,
+                        meaning,
+                        resolution.control_sequence(),
+                    ));
+                    if native {
+                        processor.command.roots.alignment.account_literal_brace(
+                            command, resolution.literal_catcode());
+                    } else {
+                        processor.settle_hot_delivery_in::<OBSERVED>(
+                            command, resolution.literal_catcode())?;
+                    }
+                    if Consumer::RAW_TOKEN
+                        && matches!(
+                            command.alignment_adjustment(),
+                            crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                        )
+                    {
+                        let command = destination.take().expect("alignment delimiter");
+                        processor.begin_scalar_alignment_v_template(&command)?;
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                    terminal.before_action(processor);
+                    let action = if native { native_action } else { classify_hot_command(command) };
+                    let terminal_status = if STOP_PROTECTED
+                        && Self::protected_terminal(command, action)
+                    {
+                        DeliveryStatus::Command
+                    } else {
+                        match terminal.expand(processor, command, action) {
+                            Ok(true) => {
+                                expanded = true;
+                                return Ok(terminal
+                                    .expanded()
+                                    .map_break(|()| DeliveryStatus::Command));
+                            }
+                            Ok(false) => {}
+                            Err(failure) => {
+                                terminal.recover(processor, failure)?;
+                                expanded = true;
+                                return Ok(terminal
+                                    .expanded()
+                                    .map_break(|()| DeliveryStatus::Command));
+                            }
+                        }
+                        if !(PRESERVE_UNDEFINED
+                            && matches!(
+                                action,
+                                ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
+                            ))
+                            && let ExpandedCommandAction::Expand(dispatch) = action
+                        {
+                            processor.execute_expansion_action(command, dispatch)?;
+                            expanded = true;
+                            return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
+                        }
+                        if matches!(role, ExpandedReaderRole::MainControl | ExpandedReaderRole::MainLoopLookahead)
+                            && !expanded
+                            && matches!(action, ExpandedCommandAction::EndTemplate)
+                            && !matches!(
+                                command.alignment_adjustment(),
+                                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                            )
+                        {
+                            destination.take();
+                            processor.insert_frozen_endv()?;
+                            return Ok(ControlFlow::Continue(()));
+                        }
+                        if Consumer::RAW_TOKEN || (role == ExpandedReaderRole::MainLoopLookahead
+                            && !expanded && command.is_main_loop_character()) {
+                            DeliveryStatus::Command
+                        } else {
+                            processor
+                                .finish_terminal_expansion::<OBSERVED>(command, action, expanded)
+                        }
+                    };
+                    match terminal.terminal(processor, destination, terminal_status)? {
+                        ControlFlow::Break(()) => Ok(ControlFlow::Break(terminal_status)),
+                        ControlFlow::Continue(()) => {
+                            destination.take();
+                            expanded = false;
+                            Ok(ControlFlow::Continue(()))
+                        }
+                    }
                 }
             },
             |status| {
@@ -175,127 +263,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             destination.take();
         }
         Ok(status)
-    }
-
-    /// Only consumers demanding an actual command enter this record path.
-    /// Keep its metadata and recovery work out of native reader specializations.
-    #[inline(never)]
-    #[allow(clippy::too_many_arguments)]
-    fn consume_record_delivery<
-        const OBSERVED: bool,
-        const PRESERVE_UNDEFINED: bool,
-        const STOP_PROTECTED: bool,
-        Consumer: ExpandedReaderConsumer<Self, G>,
-    >(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-        terminal: &mut Consumer,
-        word: tex_state::token::TokenWord,
-        origin: tex_state::token::OriginId,
-        suppress: bool,
-        site: ReadSite,
-        meaning: MeaningWord<G>,
-        resolution: PackedMeaningResolution,
-        native: bool,
-        native_action: ExpandedCommandAction,
-        role: ExpandedReaderRole,
-        expanded: &mut bool,
-    ) -> Result<ControlFlow<DeliveryStatus>, CommandError> {
-        let line = match site {
-            ReadSite::Source(line) => line,
-            _ => None,
-        };
-        let command = destination.insert(CurrentCommand::from_delivered_parts(
-            word,
-            origin,
-            matches!(site, ReadSite::Source(_)),
-            line,
-            suppress,
-            meaning,
-            resolution.control_sequence(),
-        ));
-        if native {
-            self.command
-                .roots
-                .alignment
-                .account_literal_brace(command, resolution.literal_catcode());
-        } else {
-            self.settle_hot_delivery_in::<OBSERVED>(command, resolution.literal_catcode())?;
-        }
-        if Consumer::RAW_TOKEN
-            && matches!(
-                command.alignment_adjustment(),
-                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-            )
-        {
-            let command = destination.take().expect("alignment delimiter");
-            self.begin_scalar_alignment_v_template(&command)?;
-            return Ok(ControlFlow::Continue(()));
-        }
-        terminal.before_action(self);
-        let action = if native {
-            native_action
-        } else {
-            classify_hot_command(command)
-        };
-        let terminal_status = if STOP_PROTECTED && Self::protected_terminal(command, action) {
-            DeliveryStatus::Command
-        } else {
-            match terminal.expand(self, command, action) {
-                Ok(true) => {
-                    *expanded = true;
-                    return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
-                }
-                Ok(false) => {}
-                Err(failure) => {
-                    terminal.recover(self, failure)?;
-                    *expanded = true;
-                    return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
-                }
-            }
-            if !(PRESERVE_UNDEFINED
-                && matches!(
-                    action,
-                    ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
-                ))
-                && let ExpandedCommandAction::Expand(dispatch) = action
-            {
-                self.execute_expansion_action(command, dispatch)?;
-                *expanded = true;
-                return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
-            }
-            if matches!(
-                role,
-                ExpandedReaderRole::MainControl | ExpandedReaderRole::MainLoopLookahead
-            ) && !*expanded
-                && matches!(action, ExpandedCommandAction::EndTemplate)
-                && !matches!(
-                    command.alignment_adjustment(),
-                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                )
-            {
-                destination.take();
-                self.insert_frozen_endv()?;
-                return Ok(ControlFlow::Continue(()));
-            }
-            if Consumer::RAW_TOKEN
-                || (role == ExpandedReaderRole::MainLoopLookahead
-                    && !*expanded
-                    && command.is_main_loop_character())
-            {
-                DeliveryStatus::Command
-            } else {
-                self.finish_terminal_expansion::<OBSERVED>(command, action, *expanded)
-            }
-        };
-        match terminal.terminal(self, destination, terminal_status)? {
-            ControlFlow::Break(()) => Ok(ControlFlow::Break(terminal_status)),
-            ControlFlow::Continue(()) => {
-                destination.take();
-                *expanded = false;
-                Ok(ControlFlow::Continue(()))
-            }
-        }
     }
 
     /// e-TeX's `get_x_or_protected` procedure stops on the first
