@@ -13,63 +13,47 @@ pub(super) struct NativeMainControl<'a, const TEXT_BOUNDARY: bool> {
 }
 
 impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
-    // Only the selected substantive command pays for live admission queries.
+    // Admission reads only the selected command's actual immutable facts.
     #[inline(never)]
-    fn accepts_substantive_terminal<'state, 'host, G>(
-        processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
-        meaning: &tex_state::meaning::MeaningWord<G>,
+    fn accepts_substantive_terminal<G>(
+        context: &tex_state::CommandContext<'_, G>,
+        execution: &ExecutionState<G>,
+        code: u64,
     ) -> bool {
-        let word = match meaning {
-            tex_state::meaning::MeaningWord::Font(_) => return true,
-            tex_state::meaning::MeaningWord::Static(word) => *word,
-            tex_state::meaning::MeaningWord::Macro { .. } => return false,
-        };
-        match Meaning::runtime_word_control_code(word) {
-            codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN => processor
-                .with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
-                    matches!(
-                        execution.modes.current_mode(),
-                        Mode::Horizontal
-                            | Mode::RestrictedHorizontal
-                            | Mode::Math
-                            | Mode::DisplayMath
-                    ) && execution.active_alignment.is_none()
-                        && !execution.page_region_succession_pending
-                        && !context.tracked_region_is_active()
-                }),
+        match code {
+            codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN => {
+                matches!(
+                    execution.modes.current_mode(),
+                    Mode::Horizontal | Mode::RestrictedHorizontal | Mode::Math | Mode::DisplayMath
+                ) && execution.active_alignment.is_none()
+                    && !execution.page_region_succession_pending
+                    && !context.tracked_region_is_active()
+            }
             codes::PRIMITIVE_DISPLAY_STYLE
             | codes::PRIMITIVE_TEXT_STYLE
             | codes::PRIMITIVE_SCRIPT_STYLE
             | codes::PRIMITIVE_SCRIPT_SCRIPT_STYLE => {
-                processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
-                    matches!(
-                        execution.modes.current_mode(),
-                        Mode::Math | Mode::DisplayMath
-                    ) && execution.active_alignment.is_none()
-                        && !execution.page_region_succession_pending
-                        && !context.tracked_region_is_active()
-                })
+                matches!(
+                    execution.modes.current_mode(),
+                    Mode::Math | Mode::DisplayMath
+                ) && execution.active_alignment.is_none()
+                    && !execution.page_region_succession_pending
+                    && !context.tracked_region_is_active()
             }
             codes::CHAR_SPACE | codes::PRIMITIVE_BEGIN_GROUP => true,
             codes::CHAR_BEGIN_GROUP => {
-                processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                    !matches!(
-                        execution.modes.current_mode(),
-                        Mode::Math | Mode::DisplayMath
-                    ) && !execution.boxes.output_routine_opening_pending
-                        && !execution.boxes.recovery_simple_group_pending
-                })
+                !matches!(
+                    execution.modes.current_mode(),
+                    Mode::Math | Mode::DisplayMath
+                ) && !execution.boxes.output_routine_opening_pending
+                    && !execution.boxes.recovery_simple_group_pending
             }
             codes::CHAR_END_GROUP => {
-                processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
-                    !execution.boxes.recovery_simple_group_open
-                        && context.innermost_group_kind() == Some(GroupKind::Simple)
-                })
+                !execution.boxes.recovery_simple_group_open
+                    && context.innermost_group_kind() == Some(GroupKind::Simple)
             }
             codes::PRIMITIVE_END_GROUP => {
-                processor.with_execution_owners(|context, _, _, _, _, _, _, _, _| {
-                    context.innermost_group_kind() == Some(GroupKind::SemiSimple)
-                })
+                context.innermost_group_kind() == Some(GroupKind::SemiSimple)
             }
             code => native_assignments::accepts_assignment(code),
         }
@@ -322,7 +306,15 @@ impl<'state, 'host, G, const TEXT_BOUNDARY: bool>
         if !self.continue_native || processor.has_pending_reports() {
             return false;
         }
-        Self::accepts_substantive_terminal(processor, meaning)
+        let word = match meaning {
+            tex_state::meaning::MeaningWord::Font(_) => return true,
+            tex_state::meaning::MeaningWord::Static(word) => *word,
+            tex_state::meaning::MeaningWord::Macro { .. } => return false,
+        };
+        let code = Meaning::runtime_word_control_code(word);
+        processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+            Self::accepts_substantive_terminal(context, execution, code)
+        })
     }
 
     #[inline(always)]
