@@ -653,3 +653,16 @@ and full checkpoint ownership use their existing paths. Non-math-mode
 commands retain missing-dollar recovery. `MathStyleKind`, its duplicate
 four-way conversion and the style variant of `MathRequest` are deleted
 without a replacement carrier or compatibility entry.
+
+## Selected substantive terminal admission
+
+The native main-control consumer keeps `relax` admission and execution inline
+in the common expansion back edge. Other terminal meanings enter a private
+substantive admission switch with only two actual borrowed owners: the
+processor and the meaning. That switch checks the live facts required by its
+selected command, then the existing semantic handler executes it. No command
+record, copied fact packet, cache, callback or continuation is created.
+This bounds the common reader's instruction footprint as direct native
+command cases are added. It does not outline raw command construction or
+pass delivery metadata through an extra ABI; the previous record-construction
+experiment did that and was rejected after paired measurements regressed.

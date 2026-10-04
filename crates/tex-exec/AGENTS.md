@@ -294,7 +294,9 @@ through executor and session; successful results construct no failure payload.
   request or duplicate style enum remains. The consumer continues
   borrowing actual driver operation counts and diagnostic origins. Ordinary
   relax, font selections and simple/semi-simple group words continue inside the canonical
-  expanded reader. Entry and unsave share the actual group helpers; group exit
+  expanded reader. Substantive terminal admission is a private two-owner
+  switch; ordinary relax admission and consumption stay inline in the common
+  reader. Entry and unsave share the actual group helpers; group exit
   rechecks restored tracing parameters. Only actual reporting/failure results
   are returned, without command records. Tracing, leaders,
   character lookahead and flushing retain their actual boundaries. The last
