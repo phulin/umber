@@ -253,8 +253,8 @@ impl<G> DirectDispatch<'_, '_, G> {
             ),
             // TeX82 §1046's `non_math(...)` table: each of these primitives is a
             // math-noad, math-style, or math-delimiter command whose *only*
-            // canonical dispatch is `scan_math_request` (or the
-            // `\left`/`\right`/`\middle` gate) under `Mode::Math`/`DisplayMath`.
+            // canonical dispatch is its arm in the shared mode/packed-command
+            // switch under `Mode::Math`/`DisplayMath`.
             // Reaching this arm therefore proves `mode` is not math, which is
             // exactly tex.web's non-math table; §1047's `insert_dollar_sign`
             // recovers uniformly for the whole family via the same
@@ -305,10 +305,9 @@ impl<G> DirectDispatch<'_, '_, G> {
             // mode take `report_illegal_case` ("You can't use `\eqno' in ...
             // mode"), not `insert_dollar_sign` -- tex.web lists them under the
             // separate Forbidden-cases module even though they share the same
-            // `eq_no` command code as the math-request vocabulary. Reaching this
-            // arm proves `mode` is not `Math`/`DisplayMath` (that gate would
-            // have consumed the primitive first via
-            // `scan_math_request`'s `Request::EquationNumber`);
+            // `eq_no` command code as the math primitive vocabulary. Reaching this
+            // arm proves `mode` is not `Math`/`DisplayMath`: the shared
+            // mode/packed-command switch handles those cases directly.
             // `mmode+eq_no` itself (gated by `privileged`/`cur_group`) is
             // unaffected.
             P::EqNo | P::LeftEqNo => {

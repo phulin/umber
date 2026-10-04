@@ -687,3 +687,119 @@ pub(super) const CHAR_SUPERSCRIPT: u64 =
     Meaning::runtime_word_control_code(Meaning::char_token_word('\0', Catcode::Superscript));
 pub(super) const CHAR_SUBSCRIPT: u64 =
     Meaning::runtime_word_control_code(Meaning::char_token_word('\0', Catcode::Subscript));
+
+pub(super) const PRIMITIVE_MATH_ORD: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathOrd).encode(),
+);
+
+pub(super) const PRIMITIVE_MATH_OP: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathOp).encode(),
+);
+
+pub(super) const PRIMITIVE_MATH_BIN: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathBin).encode(),
+);
+
+pub(super) const PRIMITIVE_MATH_REL: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathRel).encode(),
+);
+
+pub(super) const PRIMITIVE_MATH_OPEN: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathOpen).encode(),
+);
+
+pub(super) const PRIMITIVE_MATH_CLOSE: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathClose).encode(),
+);
+
+pub(super) const PRIMITIVE_MATH_PUNCT: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathPunct).encode(),
+);
+
+pub(super) const PRIMITIVE_MATH_INNER: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathInner).encode(),
+);
+
+pub(super) const PRIMITIVE_UNDERLINE: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Underline).encode(),
+);
+
+pub(super) const PRIMITIVE_OVERLINE: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Overline).encode(),
+);
+
+pub(super) const PRIMITIVE_LIMITS: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Limits).encode(),
+);
+
+pub(super) const PRIMITIVE_NO_LIMITS: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoLimits).encode(),
+);
+
+pub(super) const PRIMITIVE_DISPLAY_LIMITS: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DisplayLimits).encode(),
+);
+
+pub(super) const PRIMITIVE_OVER: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Over).encode(),
+);
+
+pub(super) const PRIMITIVE_ATOP: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Atop).encode(),
+);
+
+pub(super) const PRIMITIVE_ABOVE: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Above).encode(),
+);
+
+pub(super) const PRIMITIVE_OVER_WITH_DELIMS: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OverWithDelims).encode(),
+);
+
+pub(super) const PRIMITIVE_ATOP_WITH_DELIMS: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AtopWithDelims).encode(),
+);
+
+pub(super) const PRIMITIVE_ABOVE_WITH_DELIMS: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AboveWithDelims).encode(),
+);
+
+pub(super) const PRIMITIVE_LEFT: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Left).encode(),
+);
+
+pub(super) const PRIMITIVE_RIGHT: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Right).encode(),
+);
+
+pub(super) const PRIMITIVE_MIDDLE: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Middle).encode(),
+);
+
+pub(super) const PRIMITIVE_MATH_CHOICE: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathChoice).encode(),
+);
+
+pub(super) const PRIMITIVE_RADICAL: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Radical).encode(),
+);
+
+pub(super) const PRIMITIVE_MATH_ACCENT: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathAccent).encode(),
+);
+
+pub(super) const PRIMITIVE_M_SKIP: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MSkip).encode(),
+);
+
+pub(super) const PRIMITIVE_M_KERN: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MKern).encode(),
+);
+
+pub(super) const PRIMITIVE_EQ_NO: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EqNo).encode(),
+);
+
+pub(super) const PRIMITIVE_LEFT_EQ_NO: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LeftEqNo).encode(),
+);

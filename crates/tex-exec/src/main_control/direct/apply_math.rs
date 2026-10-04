@@ -18,20 +18,6 @@ impl<G> DirectDispatch<'_, '_, G> {
         )
     }
 
-    pub(super) fn execute_math(&mut self, operand0: MathRequest) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-        let applied = {
-            self.control.apply_math_request(
-                operand0,
-                self.stores,
-                self.effects,
-                self.output_start.tracked_region_is_active,
-                self.provider,
-            )
-        };
-        self.finish_host(applied)
-    }
-
     pub(super) fn execute_math_delimiter(
         &mut self,
         operand0: MathDelimiterBoundary,

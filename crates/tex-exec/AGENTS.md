@@ -44,6 +44,10 @@ not allocate a vector merely to publish one already-complete node.
   complete-job versus fragment completion, and terminal parking. Ownership
   transitions are direct calls into the private sibling modules below; none is
   a facade or second command front.
+- `src/main_control/math_commands.rs`: Concrete math semantic routines selected
+  directly by the one mode/packed-command switch. They consume real scalar
+  operands and final kinds, preserve live field destinations and group/recovery
+  ordering, and contain no generic request or application dispatcher.
 - `src/main_control/execution_state.rs`: the actual execution, mode, box,
   alignment, math, output and driver owner, disjoint from command input and
   processor loans. Main control owns `CommandState` directly; no interpreter
@@ -290,8 +294,9 @@ through executor and session; successful results construct no failure payload.
 
 - `src/main_control/direct/native.rs`: the main-control terminal consumer,
   including packed math style, defined-symbol and numeric math heads that append final nodes directly.
-  General math dispatch gates its mode once, narrows the actual primitive once and
-  selects scripts by packed category; no ScannedMathScript wrapper remains. The
+  General math heads are arms in this same mode/command switch; no math
+  pre-dispatch, generic request table or request-application switch remains.
+  Selected arms scan real operands and preserve the genuine reporting boundary. The
   retained observed dispatcher shares that append operation; no style scanner
   request or duplicate style enum remains. The consumer continues
   borrowing actual driver operation counts and diagnostic origins. Ordinary

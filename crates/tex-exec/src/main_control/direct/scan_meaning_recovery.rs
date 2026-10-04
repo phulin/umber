@@ -139,9 +139,8 @@ impl<G> DirectDispatch<'_, '_, G> {
             // TeX82 §1046's `non_math(math_given): insert_dollar_sign`, the same
             // recovery the whole math-only vocabulary takes outside math mode.
             // Reaching this arm proves `mode` is not `Math`/`DisplayMath`:
-            // §1154's `mmode+math_given` is dispatched by `scan_command`'s
-            // `scan_math_request` gate, which consumes the meaning
-            // before its outer match runs.
+            // §1154's `mmode+math_given` is an arm in the shared
+            // mode/packed-command switch and cannot reach this recovery.
             Meaning::MathCharGiven(_) => {
                 (processor
                     .recover_missing_math_shift(command)

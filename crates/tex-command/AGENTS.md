@@ -15,8 +15,9 @@ Defined math symbols also append their final noad directly; the scanner no
 longer constructs a request for their already-complete code. Numeric mathchar
 and delimiter heads scan their real restricted integer in native main control;
 the duplicate Character/Delimiter math requests are absent. Remaining math
-operand dispatch receives its actual primitive without a CurrentCommand loan;
-script markers carry only their real kind, without an unused provenance wrapper.
+operand dispatch selects its actual scanner in the executor's one mode/command
+switch. MathRequest, duplicate noad/limit/equation selectors and the mu-material
+wrapper are absent; script markers carry their actual kind.
 
 The bulk character reader resolves its boundary once and offers accepted words
 directly to the main-control consumer. Only declined or exceptional boundaries

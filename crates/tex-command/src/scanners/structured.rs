@@ -74,10 +74,9 @@ pub use input_values::{
     RegisteredInput, ScannedFileName, WriteStreamSelector,
 };
 pub use math_values::{
-    EquationNumberSide, MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize,
-    MathFieldBody, MathFieldEpisode, MathFractionKind, MathLimitKind, MathRequest, MathScriptKind,
-    MathTextFieldKind, ScannedEquationNumber, ScannedMathCharacter, ScannedMathDelimiter,
-    ScannedMathFraction, ScannedMathMuMaterial,
+    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
+    MathFieldEpisode, MathFractionKind, MathScriptKind, ScannedMathCharacter, ScannedMathDelimiter,
+    ScannedMathFraction,
 };
 pub use pdf_values::{
     PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,

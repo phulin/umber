@@ -720,3 +720,26 @@ Script markers use their packed category code and carry only the real
 `MathScriptKind`; the immediately consumed `ScannedMathScript` and its unused
 provenance are deleted. Head reporting still precedes executor-owned math
 field scanning, and live group destinations and recovery ordering are unchanged.
+
+## Direct math commands in the single mode switch
+
+Math heads join the existing mode/packed-command switch. There is no preceding
+math dispatcher, generic scanner request table or request-application switch.
+Each selected arm scans only its real operands and calls its concrete semantic
+routine. Operand-free noad, script, limit, choice and equation-number heads
+carry their actual final kind or side, without a scanner request. Character,
+delimiter, fraction, glue and dimension grammars retain their actual products.
+`MathRequest`, `MathTextFieldKind`, `MathLimitKind`, `ScannedMathMuMaterial`,
+`ScannedEquationNumber` and the duplicate `EquationNumberSide` are deleted,
+along with their factories, mapping and universal application adapter.
+
+The cold math boundary releases the actual processor, publishes demanded head
+and scanner reports, applies the selected routine, and finishes its real host
+boundary. Native completed math heads still append through their reader-owned
+consumer. There is no replacement operation carrier or compatibility path.
+Text-accent recovery retains its separate report-before-number scan; mathaccent
+scans its real number before application. Mu glue preserves the scanner's
+shared-zero identity before its loan ends. Braced fields reserve their parent
+noad before field scanning, keep their actual target through the live group,
+and close through the ordinary group stack. Full checkpoints preserve those
+same mode lists, group frames and field destinations.

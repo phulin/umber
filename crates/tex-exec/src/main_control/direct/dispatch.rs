@@ -59,6 +59,16 @@ impl<G> DirectDispatch<'_, '_, G> {
                     };
                 }
 
+                macro_rules! finish_math {
+                    ($call:expr) => {
+                        finish_scan!({
+                            self.report_scan()?;
+                            let applied = $call;
+                            self.finish_host(applied)
+                        })
+                    };
+                }
+
                 macro_rules! native_semantic {
                     ($receipts:ident, $reset_loop:expr, $apply:expr) => {
                         direct_native_semantic!(
@@ -715,146 +725,270 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // independently consulting live state at a later seam.
                     self.suppress_left_boundary = suppress_left_boundary;
 
-                    if matches!(mode, Mode::Math | Mode::DisplayMath) {
-                        if let Some(
-                            style @ (codes::PRIMITIVE_DISPLAY_STYLE
-                            | codes::PRIMITIVE_TEXT_STYLE
-                            | codes::PRIMITIVE_SCRIPT_STYLE
-                            | codes::PRIMITIVE_SCRIPT_SCRIPT_STYLE),
-                        ) = command_code
-                        {
-                            return retained_completed!(
-                                receipts,
-                                |context, _state, _effects, _fuel, _observer, execution| {
-                                    native::append_math_style(context, execution, style);
-                                    Ok(ReplayStep::Continue)
-                                }
-                            );
-                        }
-
-                        if let ResolvedMeaning::Static(Meaning::MathCharGiven(code)) =
-                            command.meaning()
-                        {
-                            let origin = command.origin();
-                            return retained_completed!(
-                                receipts,
-                                |context, _state, _effects, _fuel, _observer, execution| {
-                                    native::append_math_character_code(
-                                        context,
-                                        execution,
-                                        u32::from(code),
-                                        origin,
-                                    )
-                                    .map(|()| ReplayStep::Continue)
-                                }
-                            );
-                        }
-
-                        if let Some(
-                            numeric @ (codes::PRIMITIVE_MATH_CHAR | codes::PRIMITIVE_DELIMITER),
-                        ) = command_code
-                        {
-                            let class = if numeric == codes::PRIMITIVE_MATH_CHAR {
-                                RestrictedIntegerClass::FifteenBit
-                            } else {
-                                RestrictedIntegerClass::TwentySevenBit
-                            };
-                            let scanned = processor
-                                .scan_restricted_integer(class)
-                                .map_err(command_error)
-                                .map_err(|error| scan_error(error, scan_origin))?;
-                            let value = scanned.value as u32;
-                            let value = if numeric == codes::PRIMITIVE_DELIMITER {
-                                value >> 12
-                            } else {
-                                value
-                            };
-                            return retained_completed!(
-                                receipts,
-                                |context, _state, _effects, _fuel, _observer, execution| {
-                                    native::append_math_character_code(
-                                        context,
-                                        execution,
-                                        value,
-                                        scanned.provenance.primary,
-                                    )
-                                    .map(|()| ReplayStep::Continue)
-                                }
-                            );
-                        }
-
-                        // Math operands are scanned exclusively by `tex-command`.  The replay
-                        // driver receives a typed scalar request and schedules any opaque field
-                        // episode only after this processor borrow has ended.
-                        let primitive = command.static_word().and_then(|word| {
-                            if matches!(
-                                Meaning::runtime_word_class(word),
-                                tex_state::meaning::StaticCommandClass::Unexpandable
-                            ) {
-                                UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(
-                                    word,
-                                ))
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(
-                            primitive @ (UnexpandablePrimitive::Left
-                            | UnexpandablePrimitive::Right
-                            | UnexpandablePrimitive::Middle),
-                        ) = primitive
-                        {
-                            let kind = match primitive {
-                                UnexpandablePrimitive::Left => MathDelimiterBoundaryKind::Left,
-                                UnexpandablePrimitive::Right => MathDelimiterBoundaryKind::Right,
-                                UnexpandablePrimitive::Middle => MathDelimiterBoundaryKind::Middle,
-                                _ => unreachable!(),
-                            };
-                            let boundary = match processor.scan_math_delimiter_boundary(kind) {
-                                Ok(boundary) => boundary,
-                                Err(error) => {
-                                    let error = command_error(error);
-                                    return Err(scan_error(error, scan_origin));
-                                }
-                            };
-                            return {
-                                let (direct_arg0,) = (boundary,);
-                                finish_scan!(self.execute_math_delimiter(direct_arg0))
-                            };
-                        }
-                        if let Some(primitive) = primitive
-                            && let Some(request) = (processor
-                                .scan_math_request(primitive)
-                                .map_err(command_error))
-                            .map_err(|error| scan_error(error, scan_origin))?
-                        {
-                            return {
-                                let (direct_arg0,) = (request,);
-                                finish_scan!(self.execute_math(direct_arg0))
-                            };
-                        }
-                        if command_code == Some(codes::CHAR_SUPERSCRIPT) {
-                            return {
-                                let (direct_arg0,) =
-                                    (MathRequest::Script(MathScriptKind::Superscript),);
-                                finish_scan!(self.execute_math(direct_arg0))
-                            };
-                        }
-                        if command_code == Some(codes::CHAR_SUBSCRIPT) {
-                            return {
-                                let (direct_arg0,) =
-                                    (MathRequest::Script(MathScriptKind::Subscript),);
-                                finish_scan!(self.execute_math(direct_arg0))
-                            };
-                        }
-                    }
-
                     return {
                         match (
                             mode,
                             command_code
                                 .expect("expanded delivery selected a static or font command"),
                         ) {
+                            (
+                                Mode::Math | Mode::DisplayMath,
+                                style @ (codes::PRIMITIVE_DISPLAY_STYLE
+                                | codes::PRIMITIVE_TEXT_STYLE
+                                | codes::PRIMITIVE_SCRIPT_STYLE
+                                | codes::PRIMITIVE_SCRIPT_SCRIPT_STYLE),
+                            ) => {
+                                retained_completed!(
+                                    receipts,
+                                    |context, _state, _effects, _fuel, _observer, execution| {
+                                        native::append_math_style(context, execution, style);
+                                        Ok(ReplayStep::Continue)
+                                    }
+                                )
+                            }
+                            (Mode::Math | Mode::DisplayMath, codes::MATH_GIVEN) => {
+                                let word =
+                                    command.static_word().expect("defined math code is static");
+                                let value = Meaning::runtime_word_operand(word) as u32;
+                                let origin = command.origin();
+                                retained_completed!(
+                                    receipts,
+                                    |context, _state, _effects, _fuel, _observer, execution| {
+                                        native::append_math_character_code(
+                                            context, execution, value, origin,
+                                        )
+                                        .map(|()| ReplayStep::Continue)
+                                    }
+                                )
+                            }
+                            (
+                                Mode::Math | Mode::DisplayMath,
+                                numeric @ (codes::PRIMITIVE_MATH_CHAR | codes::PRIMITIVE_DELIMITER),
+                            ) => {
+                                let class = if numeric == codes::PRIMITIVE_MATH_CHAR {
+                                    RestrictedIntegerClass::FifteenBit
+                                } else {
+                                    RestrictedIntegerClass::TwentySevenBit
+                                };
+                                let scanned = processor
+                                    .scan_restricted_integer(class)
+                                    .map_err(command_error)
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                let value = scanned.value as u32;
+                                let value = if numeric == codes::PRIMITIVE_DELIMITER {
+                                    value >> 12
+                                } else {
+                                    value
+                                };
+                                retained_completed!(
+                                    receipts,
+                                    |context, _state, _effects, _fuel, _observer, execution| {
+                                        native::append_math_character_code(
+                                            context,
+                                            execution,
+                                            value,
+                                            scanned.provenance.primary,
+                                        )
+                                        .map(|()| ReplayStep::Continue)
+                                    }
+                                )
+                            }
+                            (
+                                Mode::Math | Mode::DisplayMath,
+                                delimiter @ (codes::PRIMITIVE_LEFT
+                                | codes::PRIMITIVE_RIGHT
+                                | codes::PRIMITIVE_MIDDLE),
+                            ) => {
+                                let kind = match delimiter {
+                                    codes::PRIMITIVE_LEFT => MathDelimiterBoundaryKind::Left,
+                                    codes::PRIMITIVE_RIGHT => MathDelimiterBoundaryKind::Right,
+                                    _ => MathDelimiterBoundaryKind::Middle,
+                                };
+                                let boundary = processor
+                                    .scan_math_delimiter_boundary(kind)
+                                    .map_err(command_error)
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                finish_scan!(self.execute_math_delimiter(boundary))
+                            }
+                            (
+                                Mode::Math | Mode::DisplayMath,
+                                field @ (codes::PRIMITIVE_MATH_ORD
+                                | codes::PRIMITIVE_MATH_OP
+                                | codes::PRIMITIVE_MATH_BIN
+                                | codes::PRIMITIVE_MATH_REL
+                                | codes::PRIMITIVE_MATH_OPEN
+                                | codes::PRIMITIVE_MATH_CLOSE
+                                | codes::PRIMITIVE_MATH_PUNCT
+                                | codes::PRIMITIVE_MATH_INNER
+                                | codes::PRIMITIVE_UNDERLINE
+                                | codes::PRIMITIVE_OVERLINE),
+                            ) => {
+                                let kind = match field {
+                                    codes::PRIMITIVE_MATH_ORD => NoadKind::Normal(NoadClass::Ord),
+                                    codes::PRIMITIVE_MATH_OP => NoadKind::Normal(NoadClass::Op),
+                                    codes::PRIMITIVE_MATH_BIN => NoadKind::Normal(NoadClass::Bin),
+                                    codes::PRIMITIVE_MATH_REL => NoadKind::Normal(NoadClass::Rel),
+                                    codes::PRIMITIVE_MATH_OPEN => NoadKind::Normal(NoadClass::Open),
+                                    codes::PRIMITIVE_MATH_CLOSE => {
+                                        NoadKind::Normal(NoadClass::Close)
+                                    }
+                                    codes::PRIMITIVE_MATH_PUNCT => {
+                                        NoadKind::Normal(NoadClass::Punct)
+                                    }
+                                    codes::PRIMITIVE_MATH_INNER => {
+                                        NoadKind::Normal(NoadClass::Inner)
+                                    }
+                                    codes::PRIMITIVE_UNDERLINE => NoadKind::Underline,
+                                    codes::PRIMITIVE_OVERLINE => NoadKind::Overline,
+                                    _ => unreachable!("selected math noad kind"),
+                                };
+                                finish_math!(self.control.apply_math_text_field(
+                                    kind,
+                                    self.stores,
+                                    self.effects,
+                                    self.provider
+                                ))
+                            }
+                            (
+                                Mode::Math | Mode::DisplayMath,
+                                script @ (codes::CHAR_SUPERSCRIPT | codes::CHAR_SUBSCRIPT),
+                            ) => {
+                                let kind = if script == codes::CHAR_SUPERSCRIPT {
+                                    MathScriptKind::Superscript
+                                } else {
+                                    MathScriptKind::Subscript
+                                };
+                                finish_math!(self.control.apply_math_script(
+                                    kind,
+                                    self.stores,
+                                    self.effects,
+                                    self.provider
+                                ))
+                            }
+                            (
+                                Mode::Math | Mode::DisplayMath,
+                                limits @ (codes::PRIMITIVE_LIMITS
+                                | codes::PRIMITIVE_NO_LIMITS
+                                | codes::PRIMITIVE_DISPLAY_LIMITS),
+                            ) => {
+                                let kind = match limits {
+                                    codes::PRIMITIVE_LIMITS => LimitType::Limits,
+                                    codes::PRIMITIVE_NO_LIMITS => LimitType::NoLimits,
+                                    _ => LimitType::DisplayLimits,
+                                };
+                                finish_math!(self.control.apply_math_limits(
+                                    kind,
+                                    self.stores,
+                                    self.effects
+                                ))
+                            }
+                            (
+                                Mode::Math | Mode::DisplayMath,
+                                fraction @ (codes::PRIMITIVE_OVER
+                                | codes::PRIMITIVE_ATOP
+                                | codes::PRIMITIVE_ABOVE
+                                | codes::PRIMITIVE_OVER_WITH_DELIMS
+                                | codes::PRIMITIVE_ATOP_WITH_DELIMS
+                                | codes::PRIMITIVE_ABOVE_WITH_DELIMS),
+                            ) => {
+                                let kind = match fraction {
+                                    codes::PRIMITIVE_ABOVE | codes::PRIMITIVE_ABOVE_WITH_DELIMS => {
+                                        MathFractionKind::Above
+                                    }
+                                    codes::PRIMITIVE_ATOP | codes::PRIMITIVE_ATOP_WITH_DELIMS => {
+                                        MathFractionKind::Atop
+                                    }
+                                    _ => MathFractionKind::Over,
+                                };
+                                let with_delimiters = matches!(
+                                    fraction,
+                                    codes::PRIMITIVE_OVER_WITH_DELIMS
+                                        | codes::PRIMITIVE_ATOP_WITH_DELIMS
+                                        | codes::PRIMITIVE_ABOVE_WITH_DELIMS
+                                );
+                                let scanned = processor
+                                    .scan_math_fraction(kind, with_delimiters)
+                                    .map_err(command_error)
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                finish_math!(self.control.apply_math_fraction(
+                                    scanned,
+                                    self.stores,
+                                    self.effects
+                                ))
+                            }
+                            (Mode::Math | Mode::DisplayMath, codes::PRIMITIVE_MATH_CHOICE) => {
+                                finish_math!(self.control.apply_math_choice(
+                                    self.stores,
+                                    self.effects,
+                                    self.output_start.tracked_region_is_active,
+                                    self.provider
+                                ))
+                            }
+                            (Mode::Math | Mode::DisplayMath, codes::PRIMITIVE_RADICAL) => {
+                                let delimiter = processor
+                                    .scan_delimiter(true)
+                                    .map_err(command_error)
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                finish_math!(self.control.apply_math_radical(
+                                    delimiter,
+                                    self.stores,
+                                    self.effects,
+                                    self.provider
+                                ))
+                            }
+                            (Mode::Math | Mode::DisplayMath, codes::PRIMITIVE_ACCENT) => {
+                                finish_math!(self.control.apply_text_accent_in_math(
+                                    self.stores,
+                                    self.effects,
+                                    self.provider
+                                ))
+                            }
+                            (Mode::Math | Mode::DisplayMath, codes::PRIMITIVE_MATH_ACCENT) => {
+                                let character = processor
+                                    .scan_math_character()
+                                    .map_err(command_error)
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                finish_math!(self.control.apply_math_accent(
+                                    character,
+                                    self.stores,
+                                    self.effects,
+                                    self.provider
+                                ))
+                            }
+                            (Mode::Math | Mode::DisplayMath, codes::PRIMITIVE_M_SKIP) => {
+                                let spec = processor
+                                    .scan_glue(true)
+                                    .map_err(command_error)
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                let shared_zero = processor.scanned_glue_shared_zero();
+                                finish_math!(self.control.apply_math_mu_glue(
+                                    spec,
+                                    shared_zero,
+                                    self.stores
+                                ))
+                            }
+                            (Mode::Math | Mode::DisplayMath, codes::PRIMITIVE_M_KERN) => {
+                                let amount = processor
+                                    .scan_mu_dimension()
+                                    .map_err(command_error)
+                                    .map_err(|error| scan_error(error, scan_origin))?;
+                                finish_math!(self.control.apply_math_mu_kern(amount, self.stores))
+                            }
+                            (
+                                Mode::Math | Mode::DisplayMath,
+                                number @ (codes::PRIMITIVE_EQ_NO | codes::PRIMITIVE_LEFT_EQ_NO),
+                            ) => {
+                                let side = if number == codes::PRIMITIVE_LEFT_EQ_NO {
+                                    crate::mode::EqNoSide::Left
+                                } else {
+                                    crate::mode::EqNoSide::Right
+                                };
+                                finish_math!(self.control.apply_math_equation_number(
+                                    side,
+                                    self.stores,
+                                    self.effects
+                                ))
+                            }
                             // §1090 backs up the selected command before everypar or operand scanning.
                             (
                                 Mode::Vertical | Mode::InternalVertical,
@@ -917,7 +1051,7 @@ impl<G> DirectDispatch<'_, '_, G> {
                                 // noad ever appended, so a following `^`/`_` incorrectly saw the
                                 // *enclosing* list's last node (an ordinary character, from *outside*
                                 // the formula) as its attachment target instead of a fresh empty
-                                // nucleus. Reusing the existing `TextField(Ord)` request (the same
+                                // nucleus. Using the actual Ord noad constructor (the same
                                 // completed-field plumbing `\mathord{...}` already drives) is exact:
                                 // `scan_math`'s brace case and `\mathord`'s explicit field scan both
                                 // bottom out in one §1153 `math_group`/`fin_mlist` cycle, and an
@@ -929,9 +1063,12 @@ impl<G> DirectDispatch<'_, '_, G> {
                                     (processor.back_input(*command).map_err(command_error))
                                         .map_err(|error| scan_error(error, scan_origin))?;
                                     return {
-                                        let (direct_arg0,) =
-                                            (MathRequest::TextField(MathTextFieldKind::Ord),);
-                                        finish_scan!(self.execute_math(direct_arg0))
+                                        finish_math!(self.control.apply_math_text_field(
+                                            NoadKind::Normal(NoadClass::Ord),
+                                            self.stores,
+                                            self.effects,
+                                            self.provider,
+                                        ))
                                     };
                                 }
                                 return {

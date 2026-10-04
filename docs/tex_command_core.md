@@ -71,18 +71,15 @@ If a valid TFM reaches the font-bank bound, replay follows TeX.web §567: it
 reports `not loaded: Not enough room left`, retains the provisional
 `nullfont` meaning, and commits no partial font row.
 
-The same boundary has a typed canonical math-request vocabulary for TeX82
-§§691–734 and §1030+: math characters and family selectors, text-field and
-script markers, limit switches, generalized fractions, styles and choices,
-delimiters/radicals/accents, `mu` glue or kerns, and equation-number entry.
-Command processing completes scalar operands (including optional fraction
-delimiters and `mu` units) and retains range recovery/provenance before the
-borrow ends. It also freezes opaque completed math-field and braced-mlist
-episodes, including script attachments, four `\mathchoice` branches, and
-`\left`/`\right`/`\middle` delimiter boundaries. The executor replays those
-episodes only through typed command-state handles, so mlist construction and
-display packaging receive no raw token, input stack, or scanner-status
-capability.
+Math operand grammars remain command-owned. The single mode/packed-command
+switch selects the real character, delimiter, fraction, mu-glue or dimension
+scanner and passes its completed operand directly to the selected semantic
+routine. Operand-free noad, script, limit, choice and equation-number heads
+use their actual final kind or side. No generic math request table or
+request-application switch exists. Braced fields reserve their parent noad
+before scanning, retain their real destination through a live TeX group, and
+close through ordinary main control. Traced heads report before executor-owned
+field scanning; text-accent recovery reports before its numeric operand.
 
 Math-shift pairing is command-owned: entry and display-closing lookahead
 either consumes the second shift or restores a non-shift through the ordinary

@@ -13,11 +13,10 @@ pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::RestrictedIntegerClass;
 pub use scalar::{InternalValue, ScalarProvenance, ScannedScalar};
 pub use structured::{
-    AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
-    FontLoadRequest, FontSizeRecovery, GeneratedFontKind, ImmediateExtension, InputStreamRequest,
-    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
-    MathFieldEpisode, MathFractionKind, MathLimitKind, MathRequest, MathScriptKind,
-    MathTextFieldKind, PdfActionDestination, PdfActionIdentifier, PdfActionSpec, PdfActionTarget,
+    AlignmentCellOpening, ExpandedWriteText, FileNameComponents, FontLoadRequest, FontSizeRecovery,
+    GeneratedFontKind, ImmediateExtension, InputStreamRequest, MathDelimiterBoundary,
+    MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody, MathFieldEpisode, MathFractionKind,
+    MathScriptKind, PdfActionDestination, PdfActionIdentifier, PdfActionSpec, PdfActionTarget,
     PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImagePageBox,
     PdfImagePageSelection, PdfImageRequest, PdfNavigationRequest, PdfObjectRequest,
@@ -25,9 +24,9 @@ pub use structured::{
     RegisteredInput, ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction,
     ScannedBoxKind, ScannedBoxRegister, ScannedBoxShift, ScannedBoxShiftPayload,
     ScannedCharacterDefinition, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
-    ScannedEquationNumber, ScannedFileName, ScannedGeneratedFontDefinition,
-    ScannedInsertConstruction, ScannedLeaderPayload, ScannedMacroDefinition, ScannedMathCharacter,
-    ScannedMathDelimiter, ScannedMathFraction, ScannedMathMuMaterial, ScannedPackingSpec,
-    ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment, ScannedSetBoxPath,
-    ScannedVSplit, StructuredProvenance, TokenRequest, WriteStreamSelector,
+    ScannedFileName, ScannedGeneratedFontDefinition, ScannedInsertConstruction,
+    ScannedLeaderPayload, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
+    ScannedMathFraction, ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec,
+    ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, TokenRequest,
+    WriteStreamSelector,
 };
