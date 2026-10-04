@@ -8,7 +8,7 @@ mod support;
 
 pub(super) use alignment::*;
 pub(super) use conditions::{partoken_context_replays, report_incomplete_conditions};
-pub(super) use groups::{enter_group, unsave_group};
+pub(super) use groups::enter_group;
 pub(super) use operand_values::*;
 pub(super) use pdf::*;
 pub(super) use support::*;

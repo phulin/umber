@@ -118,8 +118,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX82 §785 executes the assignment at the `restart` label on every
     /// pass, including after an ignored `\crcr`, so an idempotent assignment
     /// remains a canonical transition.
-    pub(crate) fn observe_alignment_peek_sentinel(&mut self, announce: bool) {
-        if !announce || !self.is_observed() {
+    pub(crate) fn observe_alignment_peek_sentinel(&mut self) {
+        if !self.is_observed() {
             return;
         }
         self.observe(CommandObservation::Alignment(AlignmentRecord {

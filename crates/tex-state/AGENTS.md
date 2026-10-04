@@ -663,3 +663,8 @@ Generated node construction validates child coordinates directly from the final 
 Scalar math noads with empty scripts occupy only their 32-byte resident record;
 complex noads use final fixed annex words without a payload vector. Their
 shared decoder owns field/header validation for views and semantic hashing.
+
+The admitted command context exposes one `int_param` read. The former
+`untracked_int_param` forwarding alias is deleted; ordinary parameter reads
+already use this same admitted bank without recording a dependency or changing
+checkpoint state.

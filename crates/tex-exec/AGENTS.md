@@ -107,13 +107,10 @@ not allocate a vector merely to publish one already-complete node.
   boxes/builders/leaders, alignment, diagnostics, streams, and
   PDF. Each routine borrows the actual admitted native owners; no operation
   union, readiness phase, context dereference facade, compatibility executor, or universal payload exists. Input stream scanners return a move-only final definition owner for read assignment; no attempt-definition promotion remains.
-- `src/main_control/semantic_owners.rs`: actual semantic-owner admission and
-  ordered diagnostic, mutation, effect, artifact, and paragraph publication.
-  Semantic helpers carry actual optional observer and resource-decline loans;
-  the concrete operation observation buffer remains with its outer owner.
-  Native context-consuming arms complete directly; observation publication is demanded by its actual instrumentation owner. Observation allocates evidence only when requested; deferred page-output
-  evidence has an optional owner created by observed output routines. Provider loans return
-  before propagation of semantic failure.
+- `src/main_control/observations.rs`: demanded ordered mutation, effect and
+  artifact publication after actual host work. Native input and semantic
+  transitions publish evidence at their producers; there is no separate
+  page-output observation owner or deferred application stage.
 - `src/main_control/code_table.rs`: the shared TeX82 code-table value bounds,
   diagnostic, and zero-substitution rule. It returns a scanned value to the
   existing hot or cold assignment committer; it owns no command or table state.
@@ -236,10 +233,9 @@ not allocate a vector merely to publish one already-complete node.
   and box builder, with no abandoned aftergroup delivery or fuel refund.
 - `src/dispatch.rs`: dispatch result, execution statistics, and prepared-page contract.
 - `src/execution_receipt.rs` and `src/execution_receipt/tests.rs`: crate-private
-  typed operation receipts assembled, consumed, and reset in place by the
-  unified executor's optional append-bounded evidence publication seam; every
-  allocating category closes before operation commit while warmed category
-  capacity remains with the operation owner.
+  typed operation receipts assembled and consumed by the unified executor's
+  optional append-bounded evidence publication seam. Every allocating category
+  closes before operation commit.
 - Character admission derives Unicode scripts only for actual OpenType
   shaping fonts. Pending-run constructors accept that already selected script;
   TFM runs use `Common` without per-character Unicode classification. Font
@@ -376,3 +372,16 @@ The actual native consumer owns expansion at character boundaries. Bulk text con
 Native math letters, other characters and character definitions use the retained processor, shared mathcode projection and existing native noad builder. Active mathcodes keep canonical expansion/backup semantics on that processor. Horizontal glyphs return their actual completion from their own arm; math glyphs continue main control, and native assignments perform no glyph-completion test.
 
 Math font validation retains the actual first failure and renders input only on failure at its existing publication barrier. Math lowering borrows CommandState for synchronous undefined-family diagnostics; MathConversionErrorContext and eager diagnostic string clones are deleted. Display/equation packing uses the existing live ExecutionDiagnosticContext. No input mutation or borrowed diagnostic owner crosses lowering or its subsequent group/input transition.
+
+`interpreter/dispatch.rs` keeps common character, space and relax terminals in
+the native inlined callback. `interpreter/dispatch/cold.rs` owns uncommon native
+operations on that same retained processor. This split creates no eligibility
+protocol, command product, compatibility executor or second input loop. Native
+relax flushes its actual pending text directly; its semantic wrapper is deleted.
+
+`interpreter/trace.rs` prints demanded native command traces. It does not
+prepare per-fetch prefixes. `executor_facts.rs` lends the static mode name at
+an actual print and updates the existing shown-mode owner immediately; cold
+shipout processors borrow that same owner directly. Deferred write expansion
+uses TeX82 §1370's no-mode setting at this producer, with no returned trace
+flag or subsequent shown-mode repair.

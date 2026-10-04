@@ -486,9 +486,10 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   rollback snapshots and error payloads; ordinary settlement updates only
   actual source position and literal brace state.
   Main control enters the same canonical expanded word loop and one actual
-  expansion episode. Only a directly fetched raw `end_template` uses its
-  frozen `endv` insertion/reread; a template reached after expansion uses
-  the existing scanner terminal conversion. Raw character lookahead is its
+  expansion episode. `get_x_token` (§380) converts frozen `end_template`
+  to `endv` in place; raw character lookahead uses §381 `x_token`, whose
+  §366/§376 expansion backs and rereads the actual frozen `endv`. Alignment
+  delimiters retain their separate v-template transition. Raw character lookahead is its
   genuine TeX fetch label, not a first-read preflight or eligibility handoff.
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
@@ -883,3 +884,20 @@ the deleted command-valued signature.
 Immediate I/O selection is executor-owned native terminal dispatch. `write.rs`
 retains the real write-text scan and sentinel expansion; the former
 `ImmediateExtension` request union and command reconstruction scanner are deleted.
+
+Native scalar and main-control consumers use concrete synchronous callbacks.
+`consume_main_source_characters` lends the actual source suffix to the live
+horizontal builder with explicit operation and fuel bounds. It shares the
+canonical source cursor and constructs no ordinary command or token list.
+Alignment endv proves its exhausted input independently of §791 cell closure,
+so executor off-save recovery can retain a cell while closing a nested group.
+Brace resets belong to real column and row lookahead rather than cell finish.
+
+Native terminal consumers use statically inlined callbacks in the canonical
+reader. Integer-parameter queries read the existing admitted dense bank directly;
+there is no pass-through untracked-integer alias or tracing cache to synchronize.
+
+Command and conditional trace printers query the executor's live mode prefix
+at the actual print and advance its existing `shown_mode` owner there (TeX82
+§299/§367, with §1370 no-mode during deferred writes). There is no owned prefix
+mailbox, trace-printed flag or tracing preparation before a fetch.

@@ -740,7 +740,6 @@ impl<G> AlignmentDeliveryState<G> {
             .active_cell
             .take()
             .expect("active cell was just checked");
-        self.align_state = TEMPLATE_ALIGN_STATE;
         let delimiter = cell
             .delimiter
             .ok_or(AlignmentLifecycleError::VTemplateNotExhausted)?;

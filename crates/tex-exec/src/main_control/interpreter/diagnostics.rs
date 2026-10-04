@@ -101,8 +101,8 @@ pub(super) fn groups<G>(
         execution.main_loop_active = false;
         let diagnostic = detached_showgroups(
             context,
-            &mut execution.active_alignment,
-            &mut execution.boxes,
+            &execution.active_alignment,
+            &execution.boxes,
             &execution.active_discretionaries,
             &execution.active_math_choices,
             &execution.active_math_left_boundaries,

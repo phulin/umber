@@ -153,19 +153,16 @@ pub(super) fn begin<G>(
             Ok::<_, ExecError>(())
         },
     )?;
-    peek(processor, false, receipts)
+    peek(processor, receipts)
 }
 
 pub(super) fn peek<G>(
     processor: &mut Processor<'_, '_, G>,
-    mut restarting: bool,
     receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<MainControlStep, ExecError> {
     loop {
-        processor
-            .begin_alignment_peek(restarting)
-            .map_err(command_error)?;
-        trace::prepare(processor);
+        processor.begin_alignment_peek().map_err(command_error)?;
+
         let Some(lookahead) = processor
             .next_alignment_lookahead()
             .map_err(command_error)?
@@ -179,7 +176,6 @@ pub(super) fn peek<G>(
                 UnexpandablePrimitive::CrCr,
             )) => {
                 let _ = processor.commit_alignment_lookahead_delivery(lookahead);
-                restarting = true;
             }
             ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                 UnexpandablePrimitive::NoAlign,
@@ -319,7 +315,7 @@ pub(super) fn close_noalign<G>(
             .expect("live noalign group")
             .noalign_open = false
     });
-    peek(processor, true, receipts)
+    peek(processor, receipts)
 }
 
 fn finish<G>(
@@ -395,9 +391,6 @@ pub(super) fn publish_cell_template<G>(
     omit: bool,
 ) {
     if let Some(observer) = observer {
-        if let Some(record) = command.alignment_cell_begin_observation() {
-            observer.committed(CommandObservation::Alignment(record));
-        }
         if omit {
             if let Some(record) = command.alignment_omit_cell_observation(identity) {
                 observer.committed(CommandObservation::Alignment(record));

@@ -11,11 +11,9 @@ pub(super) type ObservationSlot = Option<ObservationBuffer>;
 
 #[derive(Clone, Copy)]
 pub(super) struct OperationOutputStart {
-    pub(super) outer_paragraph_was_active: bool,
     pub(super) artifact_count: usize,
     pub(super) effect_count: usize,
     pub(super) prepared_page_count: usize,
-    pub(super) tracked_region_is_active: bool,
 }
 
 pub(super) struct DirectFailureContext {
@@ -116,23 +114,6 @@ impl<G> MainControl<G> {
             }));
     }
 
-    pub(super) fn capture_first_causal_context(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostics: &[PendingDiagnostic<G>],
-    ) {
-        if self.execution.first_causal_context.is_none()
-            && let Some(cause_kind) = diagnostics.iter().find_map(PendingDiagnostic::causal_kind)
-        {
-            let context = stores.command_context().expect("diagnostic admission");
-            self.execution.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
-                &context,
-                self.command.diagnostic_input_context(8),
-                cause_kind,
-            ));
-        }
-    }
-
     pub(super) fn capture_first_reported_command_error_context(
         &mut self,
         stores: &mut Universe<G>,
@@ -149,31 +130,10 @@ impl<G> MainControl<G> {
         }
     }
 
-    pub(super) fn report_scan_in_context(
-        &mut self,
-        context: &mut CommandContext<'_, G>,
-        effects: &mut DiagnosticEffects,
-        diagnostics: Vec<PendingDiagnostic<G>>,
-    ) -> Result<(), ExecError> {
-        report_scan_on_owners(
-            context,
-            &self.command,
-            &mut self.execution,
-            effects,
-            diagnostics,
-        )
-    }
-
     pub(super) fn operation_evidence_limit_error(&self) -> Option<ExecError> {
         self.operation_observations
             .as_ref()
             .and_then(ObservationBuffer::limit_error)
-            .or_else(|| {
-                self.execution
-                    .page_output_observations
-                    .as_ref()
-                    .and_then(ObservationBuffer::limit_error)
-            })
     }
 
     /// Closes every live receipt category and performs the append-bound check
@@ -501,115 +461,7 @@ impl<G> MainControl<G> {
     }
 }
 
-impl<G> MainControl<G> {
-    pub(super) fn finish_host_owned_step(
-        &mut self,
-        applied: Result<MainControlStep, ExecError>,
-        output_start: OperationOutputStart,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<MainControlStep, ExecError> {
-        let applied = match applied {
-            Ok(applied) => applied,
-            Err(error) => {
-                self.execution.page_output_observations = None;
-                return Err(error);
-            }
-        };
-        // A host-owned application can itself run `fire_pending_page_output`
-        // before reaching this common tail. Retain that already-opened
-        // episode here instead of asking only whether another fire-up is
-        // currently pending; otherwise its observations survive into the
-        // next command step and that command's raw delivery overtakes them.
-        let pending_page_output = PendingPageOutputFacts::capture_runtime(stores);
-        let opens_output_batch = self
-            .execution
-            .page_output_observations
-            .as_ref()
-            .is_some_and(|buffer| !buffer.is_empty())
-            || (pending_page_output.fire_up.is_some()
-                && !self.execution.boxes.output_routine_active);
-        self.fire_pending_page_output(stores, diagnostic_effects, pending_page_output)?;
-        {
-            #[cfg(feature = "profiling")]
-            tex_state::measurement::record_hot_core_phase(
-                tex_state::measurement::HotCorePhase::EvidencePublication,
-            );
-            #[cfg(feature = "profiling")]
-            let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
-                tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
-            );
-            // Host-owned transitions are still complete main-control steps.
-            // In particular, §1145's display-math `init_math` installs
-            // `every_display` here, and §323 traces that list before the next
-            // command is fetched. Leaving the push queued until an ordinary
-            // step reverses those events: the hook's final command is traced
-            // and executed before its own `begin_token_list` trace.
-            if self.command.has_pending_named_token_list_pushes() {
-                publish_named_token_list_pushes(
-                    &mut self.command,
-                    &mut stores.command_context().expect("live generation"),
-                    diagnostic_effects,
-                    &mut self.operation_observations,
-                );
-            }
-            if opens_output_batch {
-                let mut records = Vec::new();
-                // Same order as the ordinary tail: the named token-list push
-                // command state held across the transition, then the shipouts
-                // it committed, then the episode's own records.
-                records.extend(
-                    committed_shipout_observations(output_start.artifact_count, stores)
-                        .into_iter()
-                        .map(CommandObservation::Effect),
-                );
-                records.extend(
-                    committed_stream_effect_observations(
-                        output_start.effect_count,
-                        output_start.prepared_page_count,
-                        stores,
-                        &self.execution.prepared_dvi_pages,
-                    )
-                    .into_iter()
-                    .map(CommandObservation::Effect),
-                );
-                if let Some(mut observations) = self.execution.page_output_observations.take() {
-                    observations.append_to(&mut records);
-                }
-                self.observe_committed(records);
-            }
-            self.execution.page_output_observations = None;
-        }
-        self.finish_paragraph_boundary(output_start.outer_paragraph_was_active, stores);
-        Ok(applied)
-    }
-
-    /// Publishes the ordinary cold paragraph boundary after `end_graf`.
-    pub(super) fn finish_paragraph_boundary(
-        &mut self,
-        outer_paragraph_was_active: bool,
-        stores: &mut Universe<G>,
-    ) {
-        if !outer_paragraph_was_active {
-            return;
-        }
-        if self.execution.paragraph_checkpoint_demand.is_none() {
-            return;
-        }
-        let root_is_active =
-            self.command.current_file_source_id() == self.execution.root_main_source;
-        let context = stores
-            .command_context()
-            .expect("paragraph checkpoint admission");
-        if root_is_active
-            && context.execution_group_depth() == 0
-            && self.execution.modes.current_mode() == Mode::Vertical
-            && self.execution.modes.depth() == 1
-        {
-            self.execution.paragraph_checkpoint_cut = true;
-        }
-    }
-}
+impl<G> MainControl<G> {}
 
 impl<G> MainControl<G> {
     pub(super) fn observe_committed(
@@ -900,39 +752,6 @@ impl ObservationBuffer {
         for record in records {
             self.committed(record);
         }
-    }
-
-    pub(super) fn append(&mut self, other: &mut Self) {
-        let omitted = other.attempted.saturating_sub(other.records.len());
-        self.overflowed |= other.overflowed;
-        self.receipt_overflowed |= other.receipt_overflowed;
-        for record in other.records.drain(..) {
-            self.committed(record);
-        }
-        let consumed = other.receipt.reset_for_next_operation();
-        debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
-        self.attempted = self.attempted.saturating_add(omitted);
-        self.receipt_attempted = self.receipt_attempted.saturating_add(
-            other
-                .receipt_attempted
-                .saturating_sub(other.receipt.record_count()),
-        );
-        self.overflowed |= self.attempted > MAX_OPERATION_EVIDENCE_RECORDS;
-        self.receipt_overflowed |= self.receipt_attempted > MAX_EXECUTION_RECEIPT_RECORDS;
-    }
-
-    pub(super) fn append_to(&mut self, records: &mut Vec<CommandObservation>) {
-        records.append(&mut self.records);
-        let consumed = self.receipt.reset_for_next_operation();
-        debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
-        self.attempted = 0;
-        self.overflowed = false;
-        self.receipt_attempted = 1;
-        self.receipt_overflowed = false;
-    }
-
-    pub(super) fn is_empty(&self) -> bool {
-        self.records.is_empty()
     }
 
     pub(super) fn limit_error(&self) -> Option<ExecError> {

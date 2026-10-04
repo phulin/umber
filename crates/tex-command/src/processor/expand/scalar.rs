@@ -7,25 +7,26 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::MeaningWord;
 use tex_state::token::TracedTokenWord;
 
-type ScalarConsumer<'a, Processor, G> = dyn FnMut(
-        &mut Processor,
+struct ScalarWords<'a, Consume, const MAIN_CONTROL: bool> {
+    consume: &'a mut Consume,
+}
+
+impl<'state, 'host, G, Facts, Consume, const MAIN_CONTROL: bool>
+    ExpandedReaderConsumer<CommandProcessor<'state, 'host, G, Facts>, G>
+    for ScalarWords<'_, Consume, MAIN_CONTROL>
+where
+    Facts: crate::CommandHostFacts<G>,
+    Consume: FnMut(
+        &mut CommandProcessor<'state, 'host, G, Facts>,
         TracedTokenWord,
         &MeaningWord<G>,
         Option<Symbol>,
         Option<&CurrentCommand<G>>,
-    ) -> Result<ControlFlow<()>, CommandError>
-    + 'a;
-
-struct ScalarWords<'a, 'callback, Processor, G, const MAIN_CONTROL: bool> {
-    consume: &'a mut ScalarConsumer<'callback, Processor, G>,
-}
-
-impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>, const MAIN_CONTROL: bool>
-    ExpandedReaderConsumer<CommandProcessor<'state, 'host, G, Facts>, G>
-    for ScalarWords<'_, '_, CommandProcessor<'state, 'host, G, Facts>, G, MAIN_CONTROL>
+    ) -> Result<ControlFlow<()>, CommandError>,
 {
     const NATIVE_TERMINAL: bool = true;
 
+    #[inline(always)]
     fn native_terminal(
         &mut self,
         processor: &mut CommandProcessor<'state, 'host, G, Facts>,
@@ -66,7 +67,13 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>, const MAIN_CONTROL: bo
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn consume_expanded_words(
         &mut self,
-        consume: &mut ScalarConsumer<'_, Self, G>,
+        consume: &mut impl FnMut(
+            &mut Self,
+            TracedTokenWord,
+            &MeaningWord<G>,
+            Option<Symbol>,
+            Option<&CurrentCommand<G>>,
+        ) -> Result<ControlFlow<()>, CommandError>,
     ) -> Result<(), CommandError> {
         let mut destination = None;
         loop {
@@ -74,7 +81,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 &mut destination,
                 None,
                 ExpandedReaderRole::Scanner,
-                &mut ScalarWords::<_, _, false> { consume },
+                &mut ScalarWords::<_, false> { consume },
             )?;
             match result {
                 DeliveryStatus::ReplayCompleted(_) => continue,
@@ -93,14 +100,20 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// recovery lend their demanded record only during consumption.
     pub fn consume_main_control(
         &mut self,
-        consume: &mut ScalarConsumer<'_, Self, G>,
+        consume: &mut impl FnMut(
+            &mut Self,
+            TracedTokenWord,
+            &MeaningWord<G>,
+            Option<Symbol>,
+            Option<&CurrentCommand<G>>,
+        ) -> Result<ControlFlow<()>, CommandError>,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut destination = None;
         self.consume_expanded_with_mode::<false, false>(
             &mut destination,
             None,
             ExpandedReaderRole::MainControl,
-            &mut ScalarWords::<_, _, true> { consume },
+            &mut ScalarWords::<_, true> { consume },
         )
         .map(|status| match status {
             DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
@@ -115,14 +128,20 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// their raw delivery alone, including when observation is requested.
     pub fn consume_main_loop_lookahead(
         &mut self,
-        consume: &mut ScalarConsumer<'_, Self, G>,
+        consume: &mut impl FnMut(
+            &mut Self,
+            TracedTokenWord,
+            &MeaningWord<G>,
+            Option<Symbol>,
+            Option<&CurrentCommand<G>>,
+        ) -> Result<ControlFlow<()>, CommandError>,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut destination = None;
         self.consume_expanded_with_mode::<false, false>(
             &mut destination,
             None,
             ExpandedReaderRole::MainLoopLookahead,
-            &mut ScalarWords::<_, _, true> { consume },
+            &mut ScalarWords::<_, true> { consume },
         )
         .map(|status| match status {
             DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
@@ -130,6 +149,31 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
             status => status,
         })
+    }
+
+    /// Appends source text at §1038's live horizontal label, using the same
+    /// source row, cursor and fuel as scalar input. The consumer never sees
+    /// tokens beyond the caller's operation budget.
+    pub fn consume_main_source_characters(
+        &mut self,
+        maximum: usize,
+        consume: &mut impl crate::MainCharacterConsumer<G, Facts>,
+    ) -> Result<u32, CommandError> {
+        if maximum == 0 || self.is_observed() {
+            return Ok(0);
+        }
+        let Some(index) = self.command.input.levels.rows.len().checked_sub(1) else {
+            return Ok(0);
+        };
+        if !matches!(
+            self.command.input.levels.rows[index].storage,
+            crate::input::InputStorage::Source(_)
+        ) {
+            return Ok(0);
+        }
+        Ok(self
+            .advance_source_character_step(index, maximum, consume)?
+            .unwrap_or(0))
     }
 
     /// Ordinary synchronous consumers back up spelling; exceptional deliveries
@@ -267,7 +311,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     destination,
                     None,
                     ExpandedReaderRole::Scanner,
-                    &mut ScalarWords::<_, _, false> {
+                    &mut ScalarWords::<_, false> {
                         consume: &mut consume,
                     },
                 )?;

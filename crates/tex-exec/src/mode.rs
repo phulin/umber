@@ -641,10 +641,6 @@ impl ModeList {
         self.display_alignment = true;
     }
 
-    pub(crate) const fn has_display_alignment(&self) -> bool {
-        self.display_alignment
-    }
-
     pub fn take_display_alignment(&mut self) -> Option<(PageListId, Option<Scaled>)> {
         if !std::mem::take(&mut self.display_alignment) {
             return None;
@@ -2235,6 +2231,7 @@ impl ModeNest {
         Ok(popped)
     }
 
+    #[inline]
     pub fn current_list(&self) -> &ModeList {
         self.storage
             .levels

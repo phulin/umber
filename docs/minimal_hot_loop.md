@@ -917,3 +917,62 @@ Sections 1241/1269 publish assignment evidence before inserting the saved
 afterassignment word. Message and immediate-write evidence publish with their
 actual output. Page fire-up releases the processor only for its actual World
 output and output-routine selection, before the next ordinary word is read.
+
+## Reader and host-boundary cutover
+
+Main control and scalar scanners lend concrete callbacks to the canonical
+reader. There is no erased callback in native terminal delivery. At the live
+horizontal character label, source text lends its existing line suffix directly
+to the glyph builder. This shares source cursor, origin and fuel ownership with
+scalar input and stops at both fuel and operation budgets. It creates no token
+sequence or character command records. Observed delivery retains its demanded
+per-word evidence.
+
+The remaining command-machine borrow is confined to actual shipout and form
+traversal. It borrows the real mode facts directly; detached and forbidden fact
+variants, ordinary application wrappers and processor reconstruction helpers
+are deleted. Input and output-routine observations publish at their actual
+producers, with no deferred page-output buffer.
+
+Alignment endv proves exhausted v-template input before consulting the real
+group stack (TeX82 §1131). An unclosed nested group enters off-save recovery
+without detaching the cell. Section 791 resets the brace sentinel only when
+scanning another column; row completion uses §785's actual row peek. No
+cell-finish reset or synthetic observation stands between these transitions.
+
+Common terminal handling stays inside the reader's concrete callback. Rare
+native operations are outlined, borrowing that same processor and actual word
+operands. No eligibility result or command reconstruction connects them. Relax
+flushes its actual pending text directly, without an immediately consumed
+optional mode loan or semantic wrapper. Cold error capture is outlined so its
+source freezing and error-carrier moves do not occupy successful terminal
+handling.
+
+Relax is the empty native terminal arm. Its shared character-loop exit flushes
+pending shaping once; no second relax semantic operation follows it. The
+native selector is decoded once and passed through reswitch. Relax's next-fetch
+continuation checks only actual diagnostic/World effects and the host operation
+budget: it cannot close a mode list, prepare a shipout/form, start page output,
+or release page roots. It therefore does not query those owners. Its only
+tracing work when tracing is disabled is the terminal tracing-parameter probe.
+
+The terminal callback and scalar reader's native consumption are statically
+inlined into that same input back edge. Ordinary tracing probes read the
+admitted integer parameter directly; the pass-through `untracked_int_param`
+alias is deleted, so it cannot introduce an out-of-line lookup between the
+constant parameter key and its existing dense bank.
+
+Command tracing is produced at its actual print boundary (TeX82 §299/§367),
+using the live executor mode and `shown_mode`. The host lends the static mode
+name only when that print changes `shown_mode`; deferred writes use §1370's
+actual temporary no-mode setting. No owned prefix is prepared before fetching,
+no prefix mailbox resides in the processor, and no trace-printed flag returns
+to main control to repair the owner afterward. Disabled tracing checks only
+`tracing_commands` at the terminal; conditional tracing reads `tracing_ifs`
+at the conditional producer. Relax therefore has no tracing preparation stage.
+
+At the character-loop lookahead label, §1038 calls `x_token` (§381), whose
+§366/§376 end-template expansion backs and rereads frozen `endv`. Section
+1030's `get_x_token` (§380) converts it in place. These are real TeX input
+transitions; no artificial replacement token is added to ordinary main-control
+fetching. Fuel and observations follow the words actually read at each label.

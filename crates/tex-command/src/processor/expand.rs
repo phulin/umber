@@ -879,7 +879,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                 )
                 && self
-                    .advance_source_character_step(index, consume)?
+                    .advance_source_character_step(index, usize::MAX, consume)?
                     .is_some()
             {
                 return Ok(DeliveryStatus::CharacterRun);

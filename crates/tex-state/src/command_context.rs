@@ -3146,11 +3146,6 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub fn untracked_int_param(&self, parameter: IntParam) -> i32 {
-        self.int_param(parameter)
-    }
-
-    #[must_use]
     pub fn untracked_catcode(&self, ch: char) -> crate::token::Catcode {
         self.catcode(ch)
     }

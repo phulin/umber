@@ -1315,6 +1315,10 @@ pub trait CommandHostFacts<G> {
     fn diagnostic_mode_name(&mut self) -> &'static str {
         "vertical mode"
     }
+    /// TeX82 §299's mode prefix, projected at the actual trace print.
+    /// The executor updates its live shown-mode owner here; deferred writes
+    /// use §1370's temporary no-mode value. Scanner-only hosts have no prefix.
+    fn command_trace_mode_prefix(&mut self, deferred_write: bool) -> Option<&'static str>;
     fn prev_depth(&mut self, state: &tex_state::CommandContext<'_, G>) -> Option<Scaled>;
     fn prev_graf(&mut self) -> Option<i32>;
     fn last_node(&mut self, state: &tex_state::CommandContext<'_, G>) -> Option<LastNodeItem>;
@@ -1330,6 +1334,9 @@ impl<G, Facts: CommandHostFacts<G> + ?Sized> CommandHostFacts<G> for &mut Facts 
     }
     fn diagnostic_mode_name(&mut self) -> &'static str {
         (**self).diagnostic_mode_name()
+    }
+    fn command_trace_mode_prefix(&mut self, deferred_write: bool) -> Option<&'static str> {
+        (**self).command_trace_mode_prefix(deferred_write)
     }
     fn prev_depth(&mut self, state: &tex_state::CommandContext<'_, G>) -> Option<Scaled> {
         (**self).prev_depth(state)
@@ -1369,6 +1376,9 @@ pub trait ResourceProvider<G> {
 pub struct InitialCommandHostFacts;
 
 impl<G> CommandHostFacts<G> for InitialCommandHostFacts {
+    fn command_trace_mode_prefix(&mut self, _deferred_write: bool) -> Option<&'static str> {
+        None
+    }
     fn conditional_state(&mut self) -> ConditionalState {
         ConditionalState::new(ConditionalMode::Vertical, false)
     }

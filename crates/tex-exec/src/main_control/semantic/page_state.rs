@@ -36,37 +36,6 @@ pub(in crate::main_control) fn execute_page_integer<G>(
     }
 }
 
-pub(in crate::main_control) fn execute_relax<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: Option<&mut ModeNest>,
-    diagnostic_effects: &mut DiagnosticEffects,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<MainControlStep, ExecError> {
-    #[cfg(feature = "profiling")]
-    tex_state::measurement::record_hot_core_phase(
-        tex_state::measurement::HotCorePhase::SemanticApply,
-    );
-    #[cfg(feature = "profiling")]
-    let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
-        tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
-    );
-    {
-        // TeX82 §1030 reaches §1045's do-nothing arm only after leaving
-        // the ligature loop. The command itself has no list effect, but
-        // it is still a word boundary: `?\\relax\\char96` must not form
-        // the `?`` ligature across the relax.
-        if let Some(modes) = modes {
-            crate::box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                diagnostic_effects,
-                fuel,
-            )?;
-        }
-        Ok(MainControlStep::Continue)
-    }
-}
-
 pub(in crate::main_control) fn execute_end<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     initex: bool,

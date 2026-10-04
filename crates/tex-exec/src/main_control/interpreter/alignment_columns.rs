@@ -140,7 +140,7 @@ pub(super) fn finish_cell<G>(
             };
             let row = extra || delimiter == AlignmentCellDelimiter::Row;
             if row {
-                let mut geometry = pack_geometry_sink(command, observer);
+                let mut geometry = pack_geometry_sink(command, reborrow_observer(&mut observer));
                 finish_replay_alignment_row(
                     active,
                     &mut execution.modes,
@@ -151,6 +151,7 @@ pub(super) fn finish_cell<G>(
                 )?;
                 active.column = 0;
                 schedule_everycr(command, context);
+                command.publish_named_token_list_pushes(context, effects, observer);
             } else {
                 let templates =
                     active
@@ -165,6 +166,11 @@ pub(super) fn finish_cell<G>(
                     .map_err(|_| ExecError::MissingToken {
                         context: "alignment next-cell lifecycle",
                     })?;
+                if let Some(observer) = observer.as_mut()
+                    && let Some(record) = command.alignment_cell_begin_observation()
+                {
+                    observer.committed(CommandObservation::Alignment(record));
+                }
                 if delimiter == AlignmentCellDelimiter::Tab {
                     begin_replay_alignment_cell(active, &mut execution.modes, context, effects)?;
                 }
@@ -173,7 +179,7 @@ pub(super) fn finish_cell<G>(
         },
     )?;
     if row {
-        return alignment::peek(processor, false, receipts);
+        return alignment::peek(processor, receipts);
     }
     let opening = processor
         .scan_alignment_next_cell_opening()
@@ -212,7 +218,7 @@ pub(super) fn close_display<G>(
     receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<MainControlStep, ExecError> {
     let mut result = None;
-    trace::prepare(processor);
+
     processor.consume_main_control(&mut |processor, spelling, meaning, symbol, exceptional| {
         if let tex_state::meaning::MeaningWord::Static(word) = meaning {
             let code = Meaning::runtime_word_control_code(*word);
@@ -225,10 +231,10 @@ pub(super) fn close_display<G>(
         };
         if assignment {
             processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| execution.set_box_forbidden_depth += 1);
-            let step = dispatch::execute(processor, spelling, meaning, symbol, exceptional, receipts, 0);
+            let step = dispatch::execute(processor, spelling, meaning, symbol, exceptional, receipts, codes::of(meaning));
             processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| execution.set_box_forbidden_depth -= 1);
             if let Err(error) = step { result = Some(Err(error)); return Ok(ControlFlow::Break(())); }
-            trace::prepare(processor);
+
             return Ok(ControlFlow::Continue(()));
         }
         let shift = matches!(meaning, tex_state::meaning::MeaningWord::Static(word) if Meaning::runtime_word_control_code(*word) == codes::CHAR_MATH_SHIFT);

@@ -268,37 +268,16 @@ fn write_prints_a_control_character_equal_to_newlinechar_as_a_physical_newline()
     // `print`, whose stream selector recognizes `newlinechar` before the
     // non-printable-character `^^` rendering used for diagnostic strings.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
-        crate::test_harness::assign_int_param(
-            stores,
-            IntParam::NEWLINE_CHAR,
-            10,
-            tex_state::AssignmentScope::Global,
-        )
-        .expect("integer parameter assignment");
-        let tokens = allocate_tokens(
-            stores,
-            &[
-                Token::Char {
-                    ch: 'A',
-                    cat: Catcode::Letter,
-                },
-                Token::Char {
-                    ch: '\n',
-                    cat: Catcode::Other,
-                },
-                Token::Char {
-                    ch: 'B',
-                    cat: Catcode::Letter,
-                },
-            ],
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\newlinechar=10\catcode10=12\immediate\write16{A^^JB}\end",
         );
-
-        assert_eq!(
-            admitted!(stores, |context| write_text(&tokens, context)),
-            "A\nB\n"
-        );
+        run_to_end(&mut control, stores);
+        assert!(terminal_text(stores).contains("A\nB\n"));
     });
 }
+
 #[test]
 fn terminal_write_uses_live_line_width_and_breaks_after_message() {
     // TeX82 §§58/62/1370: stream 16 is a temporary print selector. Its text
@@ -650,10 +629,9 @@ fn immediate_openout_applies_one_print_nl_after_an_open_log_line() {
 }
 #[test]
 fn character_loop_uses_current_font_and_page_output_keeps_selected_break() {
-    // TeX82 §§552/1030/1034/1036: the post-apply handoff distinguishes a
-    // present character from nullfont's empty range, preserves an interrupted
-    // fetch's existing parking, and carries §1012's selected break without
-    // keeping the admitted command facade alive.
+    // TeX82 §§552/1030/1034/1036: native glyph admission distinguishes a
+    // present character from nullfont's empty range. Page output captures
+    // §1012's selected break from its actual owner.
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let font = admitted!(stores, |context| {
@@ -666,12 +644,6 @@ fn character_loop_uses_current_font_and_page_output_keeps_selected_break() {
         context
             .assign_current_font(font, tex_state::AssignmentScope::Global)
             .expect("test font assignment");
-        context.record_best_page_break(0, Scaled::from_raw(0), 0);
-        context.record_page_fire_up(0);
-
-        let pending = PendingPageOutputFacts::capture(&context);
-        assert!(pending.fire_up.is_some());
-        assert!(!pending.resume_after_output);
         drop(context);
         let mut control = MainControl::tex82_initex(stores);
         control
@@ -679,7 +651,10 @@ fn character_loop_uses_current_font_and_page_output_keeps_selected_break() {
             .modes
             .push(Mode::Horizontal)
             .expect("horizontal mode");
-        control.resume_character_loop(stores, Some('A'));
+        register_source(&mut control, b"AA");
+        control
+            .advance_with_observer(stores, &mut ObservationRecorder::default())
+            .expect("native character delivery");
         assert!(control.execution.main_loop_active);
         stores
             .command_context()
@@ -689,8 +664,17 @@ fn character_loop_uses_current_font_and_page_output_keeps_selected_break() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("nullfont assignment");
-        control.resume_character_loop(stores, Some('A'));
+        control
+            .advance_with_observer(stores, &mut ObservationRecorder::default())
+            .expect("native character delivery");
         assert!(!control.execution.main_loop_active);
+        let mut context = stores.command_context().expect("page output facts");
+        context.record_best_page_break(0, Scaled::from_raw(0), 0);
+        context.record_page_fire_up(0);
+
+        let pending = PendingPageOutputFacts::capture(&context);
+        assert!(pending.fire_up.is_some());
+        assert!(!pending.resume_after_output);
     });
 }
 #[test]

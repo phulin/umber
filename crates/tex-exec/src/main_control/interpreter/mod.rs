@@ -53,15 +53,17 @@ pub(super) fn run<G>(
     while *completed_operations < remaining_operations {
         let lookahead = processor
             .with_execution_owners(|_, _, _, _, _, execution, _, _, _| execution.main_loop_active);
-        trace::prepare(processor);
+
         let mut completion = None;
         let observing = processor.is_observed();
-        let mut consume =
+        let mut consume = {
+            #[inline(always)]
             |processor: &mut Processor<'_, '_, G>,
              spelling: TracedTokenWord,
              meaning: &tex_state::meaning::MeaningWord<G>,
              control_sequence: Option<Symbol>,
              exceptional: Option<&tex_command::CurrentCommand<G>>| {
+                let code = codes::of(meaning);
                 match dispatch::execute(
                     processor,
                     spelling,
@@ -69,30 +71,61 @@ pub(super) fn run<G>(
                     control_sequence,
                     exceptional,
                     observation_receipts,
-                    0,
+                    code,
                 ) {
                     Ok(MainControlStep::Continue) => {
                         *completed_operations += 1;
-                        trace::prepare(processor);
-                        let (next_lookahead, host_boundary) = processor.with_execution_owners(
+                        let (mut next_lookahead, host_boundary) = processor.with_execution_owners(
                             |context, _, effects, _, _, execution, _, _, _| {
-                                (
-                                    execution.main_loop_active,
-                                    context.effect_pos() != initial_effect_pos
-                                        || execution.paragraph_checkpoint_cut
-                                        || execution.prepared_shipout.is_some()
-                                        || execution.prepared_pdf_form.is_some()
-                                        || effects.has_first_recoverable()
-                                        || (!execution.boxes.output_routine_active
-                                            && (context.page_fire_up().is_some()
-                                                || context
-                                                    .page_builder_resume_after_output_pending())),
-                                )
+                                // Relax can only flush character shaping or publish a
+                                // demanded scanner/trace diagnostic. It cannot close a
+                                // mode list, start page output or prepare a World job.
+                                let diagnostic_boundary = context.effect_pos()
+                                    != initial_effect_pos
+                                    || effects.has_first_recoverable();
+                                if code == codes::RELAX {
+                                    (false, diagnostic_boundary)
+                                } else {
+                                    (
+                                        execution.main_loop_active,
+                                        diagnostic_boundary
+                                            || execution.paragraph_checkpoint_cut
+                                            || execution.prepared_shipout.is_some()
+                                            || execution.prepared_pdf_form.is_some()
+                                            || (execution.page_region_succession_pending
+                                                && !execution.modes.retains_page_node_handles())
+                                            || (!execution.boxes.output_routine_active
+                                                && (context.page_fire_up().is_some()
+                                                    || context
+                                                        .page_builder_resume_after_output_pending(
+                                                        ))),
+                                    )
+                                }
                             },
                         );
                         if host_boundary {
                             completion = Some(Ok(MainControlStep::Continue));
                             return Ok(ControlFlow::Break(()));
+                        }
+                        if next_lookahead && !observing {
+                            let mut characters = characters::MainSourceAdmission {
+                                etex_extended: processor.profile() == CommandProfile::ETEX26,
+                                error: None,
+                            };
+                            let appended = processor.consume_main_source_characters(
+                                remaining_operations - *completed_operations,
+                                &mut characters,
+                            )?;
+                            *completed_operations += appended as usize;
+                            if appended != 0 {
+                                next_lookahead = processor.with_execution_owners(
+                                    |_, _, _, _, _, execution, _, _, _| execution.main_loop_active,
+                                );
+                            }
+                            if let Some(error) = characters.error {
+                                completion = Some(Err(error));
+                                return Ok(ControlFlow::Break(()));
+                            }
                         }
                         if !observing
                             && next_lookahead == lookahead
@@ -109,7 +142,8 @@ pub(super) fn run<G>(
                     }
                 }
                 Ok(ControlFlow::Break(()))
-            };
+            }
+        };
         let status = if lookahead {
             processor.consume_main_loop_lookahead(&mut consume)
         } else {

@@ -778,11 +778,7 @@ pub(crate) fn trace_penalty_array<G>(
 }
 
 fn tokens_text<G>(stores: &mut CommandContext<'_, G>, tokens: Option<TokenListId<G>>) -> String {
-    tokens_text_at(
-        stores,
-        tokens,
-        stores.untracked_int_param(IntParam::ESCAPE_CHAR),
-    )
+    tokens_text_at(stores, tokens, stores.int_param(IntParam::ESCAPE_CHAR))
 }
 
 fn tokens_text_at<G>(
@@ -949,7 +945,7 @@ pub(crate) fn trace_provisional_meaning_write<G>(
     }
     let mut name = String::new();
     stores.append_token_show_text(token, &mut name);
-    let escape_char = stores.untracked_int_param(IntParam::ESCAPE_CHAR);
+    let escape_char = stores.int_param(IntParam::ESCAPE_CHAR);
     let old_text = meaning_value_text_at(stores, old, escape_char);
     let new_text = meaning_value_text_at(stores, ResolvedMeaning::Static(new), escape_char);
     trace_scalar(

@@ -20,20 +20,6 @@ pub(crate) struct RemovedLastBox {
     pub(crate) shift_reset: bool,
 }
 
-pub(crate) fn take_last_box<G, F>(
-    nest: &mut ModeNest,
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut DiagnosticEffects,
-    fuel: &mut tex_command::CommandFuel,
-    error_context: F,
-) -> Result<Option<Node>, ExecError>
-where
-    F: FnOnce(&CommandContext<'_, G>) -> Result<String, ExecError>,
-{
-    take_last_box_with_segment(nest, stores, diagnostic_effects, fuel, error_context)
-        .map(|removed| removed.map(|removed| removed.node))
-}
-
 /// Returns an exclusively removed tail's original root and construction
 /// segment when the mode-list owner can prove that both describe this box.
 pub(crate) fn take_last_box_with_segment<G, F>(

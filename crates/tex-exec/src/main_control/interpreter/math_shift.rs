@@ -164,16 +164,10 @@ pub(super) fn prepare_list<G>(
 }
 
 pub(super) fn probe_end<G>(processor: &mut Processor<'_, '_, G>) -> Result<(), ExecError> {
-    trace::prepare(processor);
     let paired = processor
         .scan_display_end_math_shift()
         .map_err(command_error)?;
     report_scan(processor)?;
-    if processor.command_trace_printed() {
-        processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-            execution.shown_mode = Some(execution.modes.current_mode())
-        });
-    }
     if !paired {
         processor.with_execution_owners(|context, command, effects, _, _, _, _, _, _| {
             crate::error_report::report_error(

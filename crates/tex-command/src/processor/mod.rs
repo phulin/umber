@@ -278,10 +278,7 @@ pub struct CommandProcessor<
     /// Nesting of TeX82's artificial deferred-write expansion episode.
     /// This is operational call-stack state, never snapshot state.
     pub(crate) write_expansion_depth: u32,
-    command_trace_mode_prefix: Option<String>,
-    command_trace_printed: bool,
     synchronous_error_reported: bool,
-    command_trace_count: usize,
     /// TeX82 §365's temporary permission belongs exclusively to the next
     /// source-tokenization step. Canonical token and command delivery never
     /// inspect it.
@@ -573,17 +570,15 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
     }
 
     fn print_command_trace_text(&mut self, command: String, conditional_suffix: String) {
-        let mode_prefix = self.command_trace_mode_prefix.take();
+        let mode_prefix = self.trace_mode_prefix();
         let mut text = String::from("{");
-        if let Some(mode_prefix) = mode_prefix.as_deref() {
+        if let Some(mode_prefix) = mode_prefix {
             text.push_str(mode_prefix);
             text.push_str(": ");
         }
         text.push_str(&command);
         text.push_str(&conditional_suffix);
         text.push('}');
-        self.command_trace_printed = true;
-        self.command_trace_count = self.command_trace_count.saturating_add(1);
         // A recoverable error raised inside §366's expansion is synchronous:
         // §82 finishes before §380 fetches and traces the next command. When
         // its World-facing report is queued, queue this later trace behind it
@@ -604,26 +599,11 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
         self.publish_diagnostics_before_operand_scan();
     }
 
-    /// Supplies §299's mode prefix for the next command trace in this
-    /// processor episode. Expansion may consume it before main control sees
-    /// the resulting unexpandable command.
-    pub fn set_command_trace_mode_prefix(&mut self, mode_prefix: Option<String>) {
-        self.command_trace_printed = false;
-        self.command_trace_mode_prefix = mode_prefix;
-    }
-
-    /// Claims TeX82 §299's pending mode prefix for an expansion-side command
-    /// trace and records that `shown_mode` must advance in the executor.
-    pub(crate) fn claim_command_trace_mode_prefix(&mut self) -> Option<String> {
-        self.command_trace_printed = true;
-        self.command_trace_count = self.command_trace_count.saturating_add(1);
-        self.command_trace_mode_prefix.take()
-    }
-
-    /// Whether this processor episode crossed a command-trace boundary.
-    #[must_use]
-    pub const fn command_trace_printed(&self) -> bool {
-        self.command_trace_printed
+    /// Projects §299's prefix and advances shown_mode at the trace producer.
+    pub(crate) fn trace_mode_prefix(&mut self) -> Option<&'static str> {
+        self.host
+            .facts
+            .command_trace_mode_prefix(self.command.expanding_deferred_write())
     }
 
     /// Whether delivery left anything main control must publish before it
@@ -633,7 +613,6 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
     #[must_use]
     pub fn has_pending_reports(&self) -> bool {
         self.synchronous_error_reported
-            || self.command_trace_printed
             || !self.command.semantic_diagnostics.is_empty()
             || !self.diagnostic_effects.is_empty()
             || self.diagnostic_effects.has_first_recoverable()
@@ -689,15 +668,6 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
         Ok(())
     }
 
-    /// Number of §299 command traces printed during this processor episode.
-    ///
-    /// Nested operations use this to distinguish a trace they emitted from
-    /// an earlier main-control trace in the same borrow.
-    #[must_use]
-    pub const fn command_trace_count(&self) -> usize {
-        self.command_trace_count
-    }
-
     /// Borrows every ownership domain needed by one command operation.
     #[must_use]
     pub fn new(
@@ -740,10 +710,7 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
             scanned_glue_register: None,
             scanned_glue_shared_zero: false,
             write_expansion_depth: 0,
-            command_trace_mode_prefix: None,
-            command_trace_printed: false,
             synchronous_error_reported: false,
-            command_trace_count: 0,
             create_source_control_sequences: false,
         }
     }
@@ -791,8 +758,9 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
     /// Reads a live integer parameter while main control selects an
     /// assignment policy for a completed command operation.
     #[must_use]
+    #[inline(always)]
     pub fn int_param(&self, parameter: tex_state::env::banks::IntParam) -> i32 {
-        self.state.untracked_int_param(parameter)
+        self.state.int_param(parameter)
     }
 
     /// Installs a non-fallible external semantic observer for this bounded

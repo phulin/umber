@@ -692,17 +692,14 @@ impl<G> InputState<G> {
         stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
         let widths = stores.error_context_widths();
-        let error_context_lines =
-            stores.untracked_int_param(tex_state::env::banks::IntParam::new(54));
+        let error_context_lines = stores.int_param(tex_state::env::banks::IntParam::new(54));
         let mut selection = ErrorContextSelection::new(error_context_lines);
         let mut deferred_bottom = None;
         let mut output = String::new();
-        let newlinechar = char::from_u32(
-            stores.untracked_int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR) as u32,
-        );
-        let live_endlinechar = char::from_u32(
-            stores.untracked_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32,
-        );
+        let newlinechar =
+            char::from_u32(stores.int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR) as u32);
+        let live_endlinechar =
+            char::from_u32(stores.int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32);
         let project_level = |index: usize| match input_levels.get(index)? {
             source @ InputLevel {
                 storage: InputStorage::Source(_),

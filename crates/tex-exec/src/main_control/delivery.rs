@@ -70,24 +70,3 @@ pub(super) fn scan_code_table_operands<G, Facts: tex_command::CommandHostFacts<G
     .value;
     Ok((character, value))
 }
-
-/// TeX82 §1030's `if tracing_commands>0 then show_cur_cmd_chr` at `reswitch`,
-/// reached after `big_switch` and after cases such as §1045 `ignore_spaces`
-/// fetch a replacement command. §1211's prefix loop does not return to that
-/// label, so its internal fetches remain untraced.
-pub(super) fn prepare_command_trace<G, Facts: tex_command::CommandHostFacts<G>>(
-    processor: &mut CommandProcessor<'_, '_, G, Facts>,
-    mode: Mode,
-    shown_mode: Option<Mode>,
-) {
-    // The mode text is owned because expansion may retain it until a later
-    // command in this processor episode.  Do not allocate that ownership when
-    // neither command nor conditional tracing can consume the prefix: this is
-    // the ordinary production path and this boundary is crossed once per
-    // main-control operation.
-    let tracing_can_consume_prefix = processor.int_param(IntParam::TRACING_COMMANDS) > 0
-        || processor.int_param(IntParam::TRACING_IFS) > 0;
-    let mode_prefix = (tracing_can_consume_prefix && shown_mode != Some(mode))
-        .then(|| mode_text_for_command_trace(mode).into());
-    processor.set_command_trace_mode_prefix(mode_prefix);
-}

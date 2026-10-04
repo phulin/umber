@@ -19,8 +19,8 @@ and root completion policy. `main_control/discretionary.rs` applies the live
 `\discretionary` and `\-` groups and parts on the same mode/node owners.
 Their operand scanners belong to `tex-command`.
 
-`main_control/semantic_owners.rs` lends real owners and publishes ordered
-semantic evidence only when requested. `main_control/host_boundaries.rs`
+`main_control/observations.rs` publishes ordered semantic evidence only when
+requested. Native arms borrow actual owners directly. `main_control/host_boundaries.rs`
 handles demanded diagnostic/error publication and eligible outer-paragraph
 checkpoints. Scanner consumers reclaim their own scratch; no successful-command
 settlement or cleanup stage exists. Failure latches the session; replay restores every aggregate

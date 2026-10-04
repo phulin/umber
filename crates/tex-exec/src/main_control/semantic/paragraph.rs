@@ -75,6 +75,7 @@ pub(in crate::main_control) fn execute_set_language<G>(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // borrows actual disjoint owners; no temporary owner bundle
 pub(in crate::main_control) fn execute_mark<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
@@ -111,6 +112,7 @@ pub(in crate::main_control) fn execute_mark<G>(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // borrows actual disjoint owners; no temporary owner bundle
 pub(in crate::main_control) fn execute_paragraph<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,

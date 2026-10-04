@@ -14,16 +14,6 @@ pub(in crate::main_control) const fn assignment_scope(
     }
 }
 
-pub(in crate::main_control) fn command_pack_context<G>(
-    command: &CommandMachine<'_, '_, G>,
-) -> crate::pack_report::PackDiagnosticContext {
-    crate::pack_report::PackDiagnosticContext {
-        current_line: i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
-        pack_begin_line: 0,
-        output_routine_active: command.output_routine_active,
-    }
-}
-
 /// Borrows the live command for a kernel that reports before this command's
 /// input stack can change; §311's context text renders only on report.
 pub(in crate::main_control) fn command_diagnostic_context<G>(
@@ -35,28 +25,6 @@ pub(in crate::main_control) fn command_diagnostic_context<G>(
         output_routine_active,
         state,
     )
-}
-
-/// Materializes a scan-time context coordinate against the live `state`.
-pub(in crate::main_control) fn render_diagnostic_context<G>(
-    state: &CommandState<G>,
-    stores: &tex_state::CommandContext<'_, G>,
-    coordinate: tex_command::DiagnosticContextCoordinate,
-) -> Result<String, ExecError> {
-    state
-        .render_diagnostic_context(coordinate, stores)
-        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDiagnosticContext))
-}
-
-pub(in crate::main_control) fn render_diagnostic_coordinate<G>(
-    command: &CommandMachine<'_, '_, G>,
-    stores: &tex_state::CommandContext<'_, G>,
-    coordinate: tex_command::DiagnosticContextCoordinate,
-) -> Result<String, ExecError> {
-    command
-        .state
-        .render_diagnostic_context(coordinate, stores)
-        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDiagnosticContext))
 }
 
 /// Applies TeX82 §1055's unscoped box-register dimension mutation through
@@ -78,70 +46,6 @@ pub(in crate::main_control) fn print_display_content<G>(
     let mut diagnostic = stores.begin_online_diagnostic(diagnostic_effects);
     diagnostic.print_nl("").print_rendered(content);
     diagnostic.end_open();
-}
-
-/// TeX82 §282's `insert_token` arm, the only way an `\aftergroup` token ever
-/// re-enters the input, plus e-TeX 2.6 etex.ch [15.282]'s optimized form.
-///
-/// §282 is `unsave`'s `@<Clear off top level from |save_stack|@>`: it walks
-/// the level downwards and, for every `insert_token` entry, runs
-/// §326 `@<Insert token |p| into \TeX's input@>`. TeX82 applies one full
-/// `back_input` per token. In extended mode e-TeX applies that full operation
-/// only to the first token and links every remaining token directly onto the
-/// resulting `backed_up` list.
-///
-/// Because §282 clears the level from the top down while `\aftergroup` saved
-/// from the bottom up, the last-saved token is backed up first and ends up
-/// deepest, so rereading restores save order. `CommandState` hands the payload
-/// over in save order, so backing it up in reverse reproduces both the input
-/// structure and the order `unsave` observes it in.
-pub(in crate::main_control) fn warn_cross_file_group_close<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-) {
-    let (level, frame) = {
-        let frames = stores.group_frames();
-        (frames.len(), frames.last().copied())
-    };
-    let Some(frame) = frame else {
-        return;
-    };
-    let mut processor = command.processor(stores);
-    processor.warn_cross_file_group_close(level, frame.kind().group_text(), frame.entered_line());
-    drop(processor);
-}
-
-/// Releases the single pending after-assignment token only after the typed
-/// assignment has committed. TeX82 §1269 assigns it to `cur_tok` and invokes
-/// §325 `back_input`, so it must use the ordinary canonical backup level.
-pub(in crate::main_control) fn schedule_afterassignment<G>(
-    command: &mut CommandState<G>,
-    fuel: &mut tex_command::CommandFuel,
-    capabilities: &mut CommandHostCapabilities,
-    host_facts: &mut dyn tex_command::CommandHostFacts<G>,
-    observations: &mut ObservationSlot,
-    diagnostic_effects: &mut DiagnosticEffects,
-    stores: &mut tex_state::CommandContext<'_, G>,
-) -> Result<(), ExecError> {
-    let token = {
-        command
-            .take_afterassignment(stores)
-            .expect("afterassignment uses the synchronized command generation")
-    };
-    let Some(token) = token else {
-        return Ok(());
-    };
-    let mut processor = command_processor(
-        command,
-        fuel,
-        capabilities,
-        host_facts,
-        observations,
-        diagnostic_effects,
-        stores,
-    );
-    let result = processor.back_input_token(token);
-    result.map_err(command_error)
 }
 
 /// Applies TeX82 §1214's `\globaldefs` override to a prefixed assignment's
@@ -510,6 +414,7 @@ pub(in crate::main_control) fn glue_scale(
 /// and replays §1047's `insert_dollar_sign` instead. `\vrule` in math mode
 /// (§1056's `mmode+vrule`) is an ordinary direct contribution and falls
 /// through the `else` branch below like any other mode.
+#[allow(clippy::too_many_arguments)] // borrows actual disjoint owners; no temporary owner bundle
 pub(in crate::main_control) fn begin_replay_box<G>(
     construction: ScannedBoxConstruction,
     target: Option<PendingSetBox>,
@@ -605,10 +510,10 @@ pub(in crate::main_control) fn commit_box_normal_paragraph<G>(
             crate::paragraph_end::normal_paragraph(modes, stores, diagnostic_effects);
         },
     );
-    if let Some(record) = record {
-        if let Some(receipts) = receipts {
-            receipts.push(record);
-        }
+    if let Some(record) = record
+        && let Some(receipts) = receipts
+    {
+        receipts.push(record);
     }
 }
 
@@ -638,6 +543,7 @@ pub(in crate::main_control) fn read_box_register<G>(
     Some(root)
 }
 
+#[allow(clippy::too_many_arguments)] // borrows actual disjoint owners; no temporary owner bundle
 pub(in crate::main_control) fn box_end<G>(
     context: BoxContext,
     node: Option<Node>,
@@ -715,22 +621,20 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
                 .expect("box assignment transfers its admitted construction")
         },
     );
-    if receipt {
-        if let Some(receipts) = receipts {
-            receipts.push(MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name(format!("box:{}", target.index)),
-                value: ObservationValue::Name(
-                    if traced_box.is_some() {
-                        "occupied"
-                    } else {
-                        "void"
-                    }
-                    .into(),
-                ),
-                global: target.global,
-            });
-        }
+    if receipt && let Some(receipts) = receipts {
+        receipts.push(MutationRecord {
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("box:{}", target.index)),
+            value: ObservationValue::Name(
+                if traced_box.is_some() {
+                    "occupied"
+                } else {
+                    "void"
+                }
+                .into(),
+            ),
+            global: target.global,
+        });
     }
 }
 
@@ -756,6 +660,7 @@ pub(in crate::main_control) fn append_shifted_box<G>(
     crate::vertical::build_page_if_outer_vertical(modes, stores, effects, command)
 }
 
+#[allow(clippy::too_many_arguments)] // borrows actual disjoint owners; no temporary owner bundle
 pub(in crate::main_control) fn apply_scanned_rule<G>(
     command: &mut CommandState<G>,
     effects: &mut DiagnosticEffects,
@@ -1461,13 +1366,6 @@ pub(in crate::main_control) fn message_tokens_text<G>(
 /// TeX82 §1297's `token_show(temp_head)` through the active selector.
 #[cfg(test)]
 pub(in crate::main_control) fn show_tokens_text<G>(
-    stores: &tex_state::CommandContext<'_, G>,
-    tokens: tex_state::TokenListId<G>,
-) -> String {
-    show_tokens_tokens_text(stores, tokens)
-}
-
-pub(in crate::main_control) fn show_tokens_tokens_text<G>(
     stores: &tex_state::CommandContext<'_, G>,
     tokens: tex_state::TokenListId<G>,
 ) -> String {

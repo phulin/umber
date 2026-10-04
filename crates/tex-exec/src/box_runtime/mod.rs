@@ -10,8 +10,8 @@ mod packaging;
 mod vsplit;
 
 pub(crate) use packaging::{
-    RemovedLastBox, first_box_node, hpack_page_list_with_diagnostics, hpack_with_overfull_rule,
-    take_last_box, take_last_box_with_segment,
+    first_box_node, hpack_page_list_with_diagnostics, hpack_with_overfull_rule,
+    take_last_box_with_segment,
 };
 pub(crate) use vsplit::split_vbox_register;
 
@@ -21,9 +21,7 @@ pub(crate) use hmode::{
     commit_current_list, control_space_glue_spec, fixed_infinite_glue, flush_pending_hchars,
     flush_pending_hchars_with_fuel, flush_pending_hchars_without_right_boundary,
 };
-pub(crate) use leaders::{
-    append_leader_contribution, leader_glue_kind, payload_from_node, take_register_payload,
-};
+pub(crate) use leaders::{append_leader_contribution, payload_from_node};
 pub(crate) use material::{
     append_box_node_to_current_list, append_box_node_with_segment, append_generated_inline_box,
     apply_box_shift_delta, execute_delete_last, execute_scanned_saved_vertical_discards,

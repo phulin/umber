@@ -1459,11 +1459,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
         let level = self.command.conditions.frames.len();
         let name = self.conditional_kind_text(frame);
-        let mode_prefix = self.claim_command_trace_mode_prefix();
+        let mode_prefix = self.trace_mode_prefix();
         if !self.command.semantic_diagnostics.is_empty() {
             let mut text = String::from("{");
             if let Some(mode_prefix) = mode_prefix {
-                text.push_str(&mode_prefix);
+                text.push_str(mode_prefix);
                 text.push_str(": ");
             }
             text.push_str(&name);
@@ -1483,7 +1483,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut diagnostic = self.begin_diagnostic();
         diagnostic.print_char('{');
         if let Some(mode_prefix) = mode_prefix {
-            diagnostic.print(&mode_prefix).print(": ");
+            diagnostic.print(mode_prefix).print(": ");
         }
         diagnostic
             .print(&name)
@@ -1551,7 +1551,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let Some(meaning) = static_meaning(&meaning) else {
             return String::new();
         };
-        if self.state.untracked_int_param(IntParam::TRACING_IFS) <= 0 {
+        if self.state.int_param(IntParam::TRACING_IFS) <= 0 {
             return String::new();
         }
         if let Meaning::ExpandablePrimitive(primitive) = meaning

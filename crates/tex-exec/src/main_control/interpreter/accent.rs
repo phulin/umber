@@ -106,7 +106,7 @@ fn scan_base<G>(
                         symbol,
                         exceptional,
                         receipts,
-                        0,
+                        codes::of(meaning),
                     );
                     processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
                         execution.set_box_forbidden_depth -= 1;

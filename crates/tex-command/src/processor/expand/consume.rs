@@ -216,6 +216,23 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             expanded = true;
                             return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                         }
+                        if !Consumer::RAW_TOKEN
+                            && role == ExpandedReaderRole::MainLoopLookahead
+                            && matches!(action, ExpandedCommandAction::EndTemplate)
+                            && !matches!(command.alignment_adjustment(),
+                                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_))
+                        {
+                            // §1038 uses x_token (§381), whose expand (§366/§376)
+                            // backs frozen endv. Only get_x_token (§380) changes
+                            // the command in place. This is actual TeX input.
+                            processor.back_input_token(tex_state::token::TracedTokenWord::pack(
+                                processor.state.frozen_endv_token(),
+                                tex_state::token::OriginId::UNKNOWN,
+                            ))?;
+                            destination.take();
+                            expanded = true;
+                            return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
+                        }
                         if Consumer::RAW_TOKEN || (role == ExpandedReaderRole::MainLoopLookahead
                             && !expanded && command.is_main_loop_character()) {
                             DeliveryStatus::Command

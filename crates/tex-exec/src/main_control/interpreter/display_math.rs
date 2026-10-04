@@ -205,18 +205,12 @@ fn resume<G>(
         Ok::<_, ExecError>(())
     })?;
     if scan_space {
-        trace::prepare(processor);
         processor.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
             let space = matches!(meaning, tex_state::meaning::MeaningWord::Static(word) if Meaning::runtime_word_control_code(*word) == codes::CHAR_SPACE);
             if !space { processor.back_consumed_word(spelling, exceptional)?; }
             Ok(ControlFlow::Break(()))
         }).map_err(command_error)?;
         report_scan(processor)?;
-        if processor.command_trace_printed() {
-            processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                execution.shown_mode = Some(execution.modes.current_mode())
-            });
-        }
     }
     processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
         let diagnostic = command.output_open_context(context);

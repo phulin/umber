@@ -130,7 +130,6 @@ impl<G> CommandState<G> {
     /// suspension.
     #[must_use]
     pub fn alignment_suspend_observation(&self) -> Option<AlignmentRecord> {
-        let saved = self.alignment.align_stack.last().copied();
         self.alignment
             .suspended
             .last()
@@ -140,7 +139,7 @@ impl<G> CommandState<G> {
                 nesting: u32::try_from(self.alignment.suspended.len())
                     .ok()
                     .filter(|depth| *depth != 0),
-                align_state: saved.unwrap_or(self.alignment.align_state),
+                align_state: self.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
             })
@@ -292,26 +291,6 @@ impl<G> CommandState<G> {
                 delimiter: None,
                 previous_align_state: None,
             })
-    }
-
-    /// Returns TeX82 §791 `fin_col`'s committed state change.
-    #[must_use]
-    pub fn alignment_cell_finish_observation(
-        &self,
-        alignment: AlignmentIdentity,
-    ) -> Option<crate::AlignmentRecord> {
-        let cell = self.alignment.active_cell.as_ref()?;
-        if cell.alignment != alignment || cell.v_level.is_none() {
-            return None;
-        }
-        Some(crate::AlignmentRecord {
-            transition: "state_change",
-            alignment: Some(alignment.raw()),
-            nesting: self.alignment_observation_nesting(),
-            align_state: 1_000_000,
-            delimiter: None,
-            previous_align_state: None,
-        })
     }
 
     /// Takes the command-owned observation published when `fin_col` changes

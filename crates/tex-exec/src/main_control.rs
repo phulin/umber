@@ -8,10 +8,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentIdentity, AlignmentRequest,
-    AlignmentRequestResult, CommandError, CommandHostCapabilities, CommandHostContext,
-    CommandProcessor, CommandProfile, CommandState, FatalError, FontLoadRequest, FontResource,
-    GeneratedFontKind, MathFieldBody, MathFractionKind, MathScriptKind, PdfImageRequest,
-    PdfImageResource, PreparedAlignmentCellTemplates, RegisteredSourceKind, ResourceFulfillment,
+    CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
+    CommandState, FatalError, FontLoadRequest, FontResource, GeneratedFontKind, MathFieldBody,
+    MathFractionKind, MathScriptKind, PdfImageRequest, PdfImageResource,
+    PreparedAlignmentCellTemplates, RegisteredSourceKind, ResourceFulfillment,
     ResourceInstallOutcome, ResourceNeed, ResourceProvider, RestrictedIntegerClass,
     ScannedBoxConstruction, ScannedBoxKind, ScannedGeneratedFontDefinition,
     ScannedInsertConstruction, ScannedPackingSpec, SourceRegistration, SourceRegistrationError,
@@ -68,9 +68,9 @@ mod executor_facts;
 use execution_state::ExecutionState;
 mod host_boundaries;
 mod interpreter;
+mod observations;
 mod root_source;
 mod semantic;
-mod semantic_owners;
 
 use code_table::recover_code_table_value;
 
@@ -112,66 +112,6 @@ fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
     match meaning {
         ResolvedMeaning::Static(meaning) => meaning,
         ResolvedMeaning::Macro { .. } => Meaning::Undefined,
-    }
-}
-
-/// Writes TeX82 §404's next nonblank, non-relax expanded command into the
-/// executor's final command slot.
-///
-/// The command core owns every delivery and expansion transition. Main
-/// control owns only this reswitch/prefix classification and never returns a
-/// completed command through an intermediate convenience envelope.
-fn next_non_blank_non_relax_x_token_into<G, Facts: tex_command::CommandHostFacts<G>>(
-    processor: &mut CommandProcessor<'_, '_, G, Facts>,
-    destination: &mut Option<tex_command::CurrentCommand<G>>,
-) -> Result<tex_command::DeliveryStatus, CommandError> {
-    loop {
-        match processor.get_x_token_into(destination)? {
-            tex_command::DeliveryStatus::End => return Ok(tex_command::DeliveryStatus::End),
-            tex_command::DeliveryStatus::Command => {}
-            _ => unreachable!("ordinary expanded delivery returns only commands"),
-        }
-        let command = destination
-            .as_ref()
-            .expect("command status initializes destination");
-        if !matches!(
-            static_meaning(command.meaning()),
-            Meaning::CharToken {
-                cat: Catcode::Space,
-                ..
-            } | Meaning::Relax
-        ) {
-            return Ok(tex_command::DeliveryStatus::Command);
-        }
-        *destination = None;
-    }
-}
-
-/// Writes TeX82 §406's next nonblank expanded command into the reswitch
-/// destination while preserving `\relax`.
-fn next_non_blank_x_token_into<G, Facts: tex_command::CommandHostFacts<G>>(
-    processor: &mut CommandProcessor<'_, '_, G, Facts>,
-    destination: &mut Option<tex_command::CurrentCommand<G>>,
-) -> Result<tex_command::DeliveryStatus, CommandError> {
-    loop {
-        match processor.get_x_token_into(destination)? {
-            tex_command::DeliveryStatus::End => return Ok(tex_command::DeliveryStatus::End),
-            tex_command::DeliveryStatus::Command => {}
-            _ => unreachable!("ordinary expanded delivery returns only commands"),
-        }
-        let command = destination
-            .as_ref()
-            .expect("command status initializes destination");
-        if !matches!(
-            static_meaning(command.meaning()),
-            Meaning::CharToken {
-                cat: Catcode::Space,
-                ..
-            }
-        ) {
-            return Ok(tex_command::DeliveryStatus::Command);
-        }
-        *destination = None;
     }
 }
 
@@ -546,95 +486,11 @@ struct CommandMachine<'a, 'provider, G> {
     capabilities: &'a mut CommandHostCapabilities,
     resource_provider: Option<&'provider mut dyn ResourceProvider<G>>,
     declined_resource_attempt: Option<&'a mut Option<ResourceNeed>>,
-    host_facts: CommandMachineHostFacts<'a, G>,
+    host_facts: ExecutorHostFacts<'a, G>,
     observations: Option<&'a mut dyn CommandObserver>,
-    assignment_receipts: Option<&'a mut Vec<MutationRecord>>,
     diagnostic_effects: &'a mut DiagnosticEffects,
-    shown_mode: &'a mut Option<Mode>,
-    /// tex.web's `init`/`tini` compile-time split, which Umber carries as a
-    /// session flag: §1252's `\patterns` and §1335's `\dump` are the two
-    /// commands whose whole behavior it selects.
-    initex: bool,
     emit_dvi_override: Option<bool>,
-    prepared_shipout: &'a mut Option<PreparedShipout>,
     output_routine_active: bool,
-}
-
-enum CommandMachineHostFacts<'a, G> {
-    Live(ExecutorHostFacts<'a, G>),
-    /// Semantic application can perform source-only command operations while
-    /// mutating the mode nest. A nested expansion explicitly lends that nest
-    /// through `with_processor_for_modes`, so no stale projection is cached.
-    Detached {
-        pdf_ignore_depth: Option<tex_state::PrimitiveHandle<G>>,
-        telemetry: &'a mut crate::EpisodeTelemetry,
-    },
-    /// Hot semantic application cannot scan or expand. Keeping that boundary
-    /// explicit lets it borrow the mode nest mutably without manufacturing a
-    /// stale projection merely to fill an unused provider.
-    Forbidden,
-}
-
-impl<G> tex_command::CommandHostFacts<G> for CommandMachineHostFacts<'_, G> {
-    fn conditional_state(&mut self) -> tex_command::ConditionalState {
-        match self {
-            Self::Live(facts) => tex_command::CommandHostFacts::conditional_state(facts),
-            Self::Detached { .. } => {
-                panic!("nested expansion must lend its live mode facts")
-            }
-            Self::Forbidden => panic!("semantic application cannot query command host facts"),
-        }
-    }
-
-    fn space_factor(&mut self) -> Option<i32> {
-        match self {
-            Self::Live(facts) => tex_command::CommandHostFacts::space_factor(facts),
-            Self::Detached { .. } => {
-                panic!("nested expansion must lend its live mode facts")
-            }
-            Self::Forbidden => panic!("semantic application cannot query command host facts"),
-        }
-    }
-
-    fn prev_depth(&mut self, state: &CommandContext<'_, G>) -> Option<Scaled> {
-        match self {
-            Self::Live(facts) => tex_command::CommandHostFacts::prev_depth(facts, state),
-            Self::Detached { .. } => {
-                panic!("nested expansion must lend its live mode facts")
-            }
-            Self::Forbidden => panic!("semantic application cannot query command host facts"),
-        }
-    }
-
-    fn prev_graf(&mut self) -> Option<i32> {
-        match self {
-            Self::Live(facts) => tex_command::CommandHostFacts::prev_graf(facts),
-            Self::Detached { .. } => {
-                panic!("nested expansion must lend its live mode facts")
-            }
-            Self::Forbidden => panic!("semantic application cannot query command host facts"),
-        }
-    }
-
-    fn last_node(&mut self, state: &CommandContext<'_, G>) -> Option<tex_command::LastNodeItem> {
-        match self {
-            Self::Live(facts) => tex_command::CommandHostFacts::last_node(facts, state),
-            Self::Detached { .. } => {
-                panic!("nested expansion must lend its live mode facts")
-            }
-            Self::Forbidden => panic!("semantic application cannot query command host facts"),
-        }
-    }
-
-    fn last_node_type(&mut self, state: &CommandContext<'_, G>) -> i32 {
-        match self {
-            Self::Live(facts) => tex_command::CommandHostFacts::last_node_type(facts, state),
-            Self::Detached { .. } => {
-                panic!("nested expansion must lend its live mode facts")
-            }
-            Self::Forbidden => panic!("semantic application cannot query command host facts"),
-        }
-    }
 }
 
 fn reborrow_observer<'loan>(
@@ -646,10 +502,9 @@ fn reborrow_observer<'loan>(
 }
 
 impl<G> CommandMachine<'_, '_, G> {
-    fn with_processor_for_modes<R>(
+    fn with_processor<R>(
         &mut self,
         context: &mut tex_state::CommandContext<'_, G>,
-        modes: &ModeNest,
         use_processor: impl FnOnce(
             &mut CommandProcessor<'_, '_, G, &mut dyn tex_command::CommandHostFacts<G>>,
         ) -> R,
@@ -666,67 +521,30 @@ impl<G> CommandMachine<'_, '_, G> {
             output_routine_active,
             ..
         } = self;
-        match host_facts {
-            CommandMachineHostFacts::Live(facts) => {
-                let observer = reborrow_observer(observations);
-                let host = match resource_provider.as_deref_mut() {
-                    Some(provider) => CommandHostContext::with_facts_and_resource_provider(
-                        capabilities,
-                        facts as &mut dyn tex_command::CommandHostFacts<G>,
-                        provider,
-                        declined_resource_attempt
-                            .as_deref_mut()
-                            .expect("provider owns its decline loan"),
-                    ),
-                    None => CommandHostContext::with_facts(
-                        capabilities,
-                        facts as &mut dyn tex_command::CommandHostFacts<G>,
-                    ),
-                };
-                let mut processor =
-                    CommandProcessor::new(state, context, host, fuel, observer, diagnostic_effects);
-                processor.set_output_routine_active(*output_routine_active);
-                use_processor(&mut processor)
-            }
-            CommandMachineHostFacts::Detached {
-                pdf_ignore_depth,
-                telemetry,
-            } => {
-                let observer = reborrow_observer(observations);
-                let mut facts = ExecutorHostFacts {
-                    modes,
-                    pdf_ignore_depth: *pdf_ignore_depth,
-                    telemetry,
-                };
-                let host = match resource_provider.as_deref_mut() {
-                    Some(provider) => CommandHostContext::with_facts_and_resource_provider(
-                        capabilities,
-                        &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
-                        provider,
-                        declined_resource_attempt
-                            .as_deref_mut()
-                            .expect("provider owns its decline loan"),
-                    ),
-                    None => CommandHostContext::with_facts(
-                        capabilities,
-                        &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
-                    ),
-                };
-                let mut processor =
-                    CommandProcessor::new(state, context, host, fuel, observer, diagnostic_effects);
-                processor.set_output_routine_active(*output_routine_active);
-                use_processor(&mut processor)
-            }
-            CommandMachineHostFacts::Forbidden => {
-                panic!("hot semantic application cannot construct a processor")
-            }
-        }
+        let observer = reborrow_observer(observations);
+        let host = match resource_provider.as_deref_mut() {
+            Some(provider) => CommandHostContext::with_facts_and_resource_provider(
+                capabilities,
+                host_facts as &mut dyn tex_command::CommandHostFacts<G>,
+                provider,
+                declined_resource_attempt
+                    .as_deref_mut()
+                    .expect("provider owns its decline loan"),
+            ),
+            None => CommandHostContext::with_facts(
+                capabilities,
+                host_facts as &mut dyn tex_command::CommandHostFacts<G>,
+            ),
+        };
+        let mut processor =
+            CommandProcessor::new(state, context, host, fuel, observer, diagnostic_effects);
+        processor.set_output_routine_active(*output_routine_active);
+        use_processor(&mut processor)
     }
 
-    fn with_processor_for_modes_and_diagnostics<R>(
+    fn with_processor_and_diagnostics<R>(
         &mut self,
         context: &mut tex_state::CommandContext<'_, G>,
-        modes: &ModeNest,
         diagnostic_effects: &mut DiagnosticEffects,
         use_processor: impl FnOnce(
             &mut CommandProcessor<'_, '_, G, &mut dyn tex_command::CommandHostFacts<G>>,
@@ -743,99 +561,25 @@ impl<G> CommandMachine<'_, '_, G> {
             output_routine_active,
             ..
         } = self;
-        match host_facts {
-            CommandMachineHostFacts::Live(facts) => {
-                let observer = reborrow_observer(observations);
-                let host = match resource_provider.as_deref_mut() {
-                    Some(provider) => CommandHostContext::with_facts_and_resource_provider(
-                        capabilities,
-                        facts as &mut dyn tex_command::CommandHostFacts<G>,
-                        provider,
-                        declined_resource_attempt
-                            .as_deref_mut()
-                            .expect("provider owns its decline loan"),
-                    ),
-                    None => CommandHostContext::with_facts(
-                        capabilities,
-                        facts as &mut dyn tex_command::CommandHostFacts<G>,
-                    ),
-                };
-                let mut processor =
-                    CommandProcessor::new(state, context, host, fuel, observer, diagnostic_effects);
-                processor.set_output_routine_active(*output_routine_active);
-                use_processor(&mut processor)
-            }
-            CommandMachineHostFacts::Detached {
-                pdf_ignore_depth,
-                telemetry,
-            } => {
-                let observer = reborrow_observer(observations);
-                let mut facts = ExecutorHostFacts {
-                    modes,
-                    pdf_ignore_depth: *pdf_ignore_depth,
-                    telemetry,
-                };
-                let host = match resource_provider.as_deref_mut() {
-                    Some(provider) => CommandHostContext::with_facts_and_resource_provider(
-                        capabilities,
-                        &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
-                        provider,
-                        declined_resource_attempt
-                            .as_deref_mut()
-                            .expect("provider owns its decline loan"),
-                    ),
-                    None => CommandHostContext::with_facts(
-                        capabilities,
-                        &mut facts as &mut dyn tex_command::CommandHostFacts<G>,
-                    ),
-                };
-                let mut processor =
-                    CommandProcessor::new(state, context, host, fuel, observer, diagnostic_effects);
-                processor.set_output_routine_active(*output_routine_active);
-                use_processor(&mut processor)
-            }
-            CommandMachineHostFacts::Forbidden => {
-                panic!("hot semantic application cannot construct a processor")
-            }
-        }
-    }
-
-    fn publish_named_token_list_pushes(&mut self, context: &mut tex_state::CommandContext<'_, G>) {
-        let observer = reborrow_observer(&mut self.observations);
-        self.state
-            .publish_named_token_list_pushes(context, self.diagnostic_effects, observer);
-    }
-
-    fn processor<'episode, 'admission>(
-        &'episode mut self,
-        context: &'episode mut tex_state::CommandContext<'admission, G>,
-    ) -> CommandProcessor<'episode, 'admission, G, &'episode mut dyn tex_command::CommandHostFacts<G>>
-    {
-        let observer = reborrow_observer(&mut self.observations);
-        let host = match self.resource_provider.as_deref_mut() {
+        let observer = reborrow_observer(observations);
+        let host = match resource_provider.as_deref_mut() {
             Some(provider) => CommandHostContext::with_facts_and_resource_provider(
-                self.capabilities,
-                &mut self.host_facts as &mut dyn tex_command::CommandHostFacts<G>,
+                capabilities,
+                host_facts as &mut dyn tex_command::CommandHostFacts<G>,
                 provider,
-                self.declined_resource_attempt
+                declined_resource_attempt
                     .as_deref_mut()
                     .expect("provider owns its decline loan"),
             ),
             None => CommandHostContext::with_facts(
-                self.capabilities,
-                &mut self.host_facts as &mut dyn tex_command::CommandHostFacts<G>,
+                capabilities,
+                host_facts as &mut dyn tex_command::CommandHostFacts<G>,
             ),
         };
-        let mut processor = CommandProcessor::new(
-            self.state,
-            context,
-            host,
-            self.fuel,
-            observer,
-            self.diagnostic_effects,
-        );
-        processor.set_output_routine_active(self.output_routine_active);
-        processor
+        let mut processor =
+            CommandProcessor::new(state, context, host, fuel, observer, diagnostic_effects);
+        processor.set_output_routine_active(*output_routine_active);
+        use_processor(&mut processor)
     }
 
     fn shipout_geometry_sink(&mut self) -> MainControlShipoutGeometrySink<'_, G> {
@@ -843,33 +587,6 @@ impl<G> CommandMachine<'_, '_, G> {
             command: self.state,
             observations: reborrow_observer(&mut self.observations),
         }
-    }
-
-    fn retain_assignment_mutation(&mut self, record: MutationRecord) {
-        if let Some(receipts) = self.assignment_receipts.as_mut() {
-            receipts.push(record);
-        } else if let Some(observations) = self.observations.as_mut() {
-            observations.committed(CommandObservation::Mutation(record));
-        }
-    }
-
-    /// Retains one semantic record at the current hot-operation commit seam.
-    ///
-    /// Definition scanning records the replacement text through the command
-    /// processor. e-TeX then installs its protected-macro marker while the
-    /// hot operation owns the live definition, so that marker's canonical
-    /// token-list transition belongs immediately before the meaning mutation.
-    fn retain_hot_observation(&mut self, observation: CommandObservation) {
-        if let Some(observations) = self.observations.as_mut() {
-            observations.committed(observation);
-        }
-    }
-
-    /// Whether this operation has a consumer for detached mutation evidence.
-    /// Hot semantic handlers consult this before resolving names or walking
-    /// macro bodies; live state and `\tracingassigns` remain unconditional.
-    const fn observes_mutations(&self) -> bool {
-        self.assignment_receipts.is_some() || self.observations.is_some()
     }
 }
 
@@ -1184,6 +901,7 @@ impl<G> MainControl<G> {
         let mut command_context = stores.command_context().expect("live generation");
         let mut host_facts = ExecutorHostFacts {
             modes: &self.execution.modes,
+            shown_mode: &mut self.execution.shown_mode,
             pdf_ignore_depth: self.execution.pdf_ignore_depth,
             telemetry: &mut self.execution.episode_telemetry,
         };
@@ -1574,7 +1292,6 @@ impl<G> MainControl<G> {
         self.execution.startup_terminal_line.clear();
         self.execution.terminal_line_was_empty = None;
         self.execution.root_main_source = root_main_source;
-        self.execution.page_output_observations = None;
         self.operation_observations = None;
         self.execution.operation_receipt_start = None;
         self.execution.error_operation_committed = false;
@@ -1886,23 +1603,6 @@ impl<G> MainControl<G> {
         }
     }
 
-    /// Prepares executor-owned mode facts for one topology-stable operation.
-    ///
-    /// The returned scope proves that delivery, scanning, and application use
-    /// the same effective-tail projection. It cannot enter an operation frame
-    /// or a suspension, so a cold re-entry prepares from authoritative state
-    /// again.
-    /// Lends the whole command machine at once, for helpers that build their
-    /// own processor rather than being handed one. A caller that must keep
-    /// another of main control's fields borrowed at the same time builds the
-    /// bundle from those fields directly instead.
-    fn command_machine<'operation>(
-        &'operation mut self,
-        diagnostic_effects: &'operation mut DiagnosticEffects,
-    ) -> CommandMachine<'operation, 'operation, G> {
-        self.command_machine_with_resource_provider(diagnostic_effects, None)
-    }
-
     fn command_machine_with_resource_provider<'operation, 'provider>(
         &'operation mut self,
         diagnostic_effects: &'operation mut DiagnosticEffects,
@@ -1914,21 +1614,21 @@ impl<G> MainControl<G> {
             capabilities: &mut self.capabilities,
             resource_provider,
             declined_resource_attempt: Some(&mut self.declined_resource_attempt),
-            host_facts: CommandMachineHostFacts::Live(ExecutorHostFacts {
+            host_facts: ExecutorHostFacts {
                 modes: &self.execution.modes,
+                shown_mode: &mut self.execution.shown_mode,
                 pdf_ignore_depth: self.execution.pdf_ignore_depth,
                 telemetry: &mut self.execution.episode_telemetry,
-            }),
+            },
             observations: self
                 .operation_observations
                 .as_mut()
                 .map(|buffer| buffer as &mut dyn CommandObserver),
-            assignment_receipts: None,
+
             diagnostic_effects,
-            shown_mode: &mut self.execution.shown_mode,
-            initex: self.execution.initex,
+
             emit_dvi_override: self.execution.emit_dvi_override,
-            prepared_shipout: &mut self.execution.prepared_shipout,
+
             output_routine_active: self.execution.boxes.output_routine_active,
         }
     }
@@ -2467,6 +2167,7 @@ impl<G> MainControl<G> {
                 let mut context = stores.command_context().expect("live generation");
                 let mut host_facts = ExecutorHostFacts {
                     modes: &self.execution.modes,
+                    shown_mode: &mut self.execution.shown_mode,
                     pdf_ignore_depth: self.execution.pdf_ignore_depth,
                     telemetry: &mut self.execution.episode_telemetry,
                 };
@@ -2609,36 +2310,6 @@ impl<G> MainControl<G> {
         }
     }
 
-    /// Executes one command inside a host-owned direct episode.
-    ///
-    /// TeX82 §1211's `prefixed_command` remains the assignment dispatcher
-    /// when §1228's numeric assignments occur inside a replayed math or
-    /// discretionary field. If the enclosing operation is observed, route
-    /// the nested command through the same executor-observation seam so its
-    /// committed `word_define` is not reduced to command/scanner records.
-    fn execute_nested_operation(
-        &mut self,
-        stores: &mut Universe<G>,
-        settled: Option<tex_command::CurrentCommand<G>>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        tracked_region_is_active: bool,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<MainControlStep, ExecError> {
-        let result = self.apply_operation(
-            stores,
-            settled,
-            diagnostic_effects,
-            tracked_region_is_active,
-            resource_provider,
-        );
-        if result.is_ok()
-            && let Some(error) = self.operation_evidence_limit_error()
-        {
-            return Err(error);
-        }
-        result
-    }
-
     /// TeX82 §§1006--1028's typed page/output boundary.  The page builder
     /// and packing stay here with the mode nest; `CommandProcessor` alone
     /// installs the selected output token-list replay.
@@ -2721,30 +2392,28 @@ impl<G> MainControl<G> {
                         capabilities: &mut self.capabilities,
                         resource_provider: None,
                         declined_resource_attempt: Some(&mut self.declined_resource_attempt),
-                        host_facts: CommandMachineHostFacts::Live(ExecutorHostFacts {
+                        host_facts: ExecutorHostFacts {
                             modes: &self.execution.modes,
+                            shown_mode: &mut self.execution.shown_mode,
                             pdf_ignore_depth: self.execution.pdf_ignore_depth,
                             telemetry: &mut self.execution.episode_telemetry,
-                        }),
+                        },
                         observations: self
                             .operation_observations
                             .as_mut()
                             .map(|buffer| buffer as &mut dyn CommandObserver),
-                        assignment_receipts: None,
+
                         diagnostic_effects,
-                        shown_mode: &mut self.execution.shown_mode,
-                        initex: self.execution.initex,
+
                         emit_dvi_override: self.execution.emit_dvi_override,
-                        prepared_shipout: &mut self.execution.prepared_shipout,
+
                         output_routine_active: self.execution.boxes.output_routine_active,
                     };
-                    let publication =
-                        shipout_replay_box(page, stores, &mut command, &self.execution.modes)?;
+                    let publication = shipout_replay_box(page, stores, &mut command)?;
                     // Detached output no longer owns runtime nodes. Establish
                     // the complete next-page owner before allowing the old
                     // region to retire; the outer vertical mode is rootless
                     // throughout the default output path.
-                    drop(command);
                     self.execution.page_region_succession_pending = true;
                     self.finish_pending_page_region_succession(stores);
                     if let Some(receipt) = publication.and_then(|publication| publication.dvi) {
@@ -2757,18 +2426,9 @@ impl<G> MainControl<G> {
                     continue;
                 }
                 crate::page_output::SelectedPageOutput::UserRoutine => {
-                    let enclosing = self.operation_observations.take();
-                    if enclosing.is_some() {
-                        self.operation_observations = Some(ObservationBuffer::default());
-                        publish_named_token_list_pushes(
-                            &mut self.command,
-                            &mut context,
-                            diagnostic_effects,
-                            &mut self.operation_observations,
-                        );
-                    }
                     let mut host_facts = ExecutorHostFacts {
                         modes: &self.execution.modes,
+                        shown_mode: &mut self.execution.shown_mode,
                         pdf_ignore_depth: self.execution.pdf_ignore_depth,
                         telemetry: &mut self.execution.episode_telemetry,
                     };
@@ -2791,15 +2451,6 @@ impl<G> MainControl<G> {
                     // persistent interpreter. Retire its borrow facade before
                     // opening the matching semantic group and mode barriers.
                     drop(processor);
-                    if enclosing.is_some() {
-                        let mut deferred =
-                            std::mem::replace(&mut self.operation_observations, enclosing)
-                                .unwrap_or_default();
-                        self.execution
-                            .page_output_observations
-                            .get_or_insert_with(ObservationBuffer::default)
-                            .append(&mut deferred);
-                    }
                     opened?;
                     enter_group(
                         &mut context,
@@ -2820,8 +2471,7 @@ impl<G> MainControl<G> {
         Ok(())
     }
 
-    /// TeX82 §1207's missing-display-closer recovery for any non-math-shift
-    /// command left by do_assignments.
+    /// Executes one command while publishing its demanded semantic evidence.
     pub fn advance_with_observer(
         &mut self,
         stores: &mut Universe<G>,
@@ -2985,66 +2635,6 @@ impl<G> MainControl<G> {
         self.execution.job_body_effect_end
     }
 
-    fn apply_operation(
-        &mut self,
-        stores: &mut Universe<G>,
-        command: Option<tex_command::CurrentCommand<G>>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        tracked_region_is_active: bool,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<MainControlStep, ExecError> {
-        if let Some(command) = command {
-            self.interpret_fetched(
-                stores,
-                command,
-                None,
-                diagnostic_effects,
-                tracked_region_is_active,
-                resource_provider,
-            )
-        } else {
-            self.interpret_chunk(
-                stores,
-                diagnostic_effects,
-                tracked_region_is_active,
-                resource_provider,
-                1,
-                &mut 0,
-            )
-        }
-    }
-
-    fn apply_error_stop_transition(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<(), ExecError> {
-        let Some(request) = diagnostic_effects.take_error_stop_recovery() else {
-            return Ok(());
-        };
-        let mut context = stores
-            .command_context()
-            .expect("error-stop transition has a live generation");
-        let mut host_facts = ExecutorHostFacts {
-            modes: &self.execution.modes,
-            pdf_ignore_depth: self.execution.pdf_ignore_depth,
-            telemetry: &mut self.execution.episode_telemetry,
-        };
-        let mut processor = command_processor(
-            &mut self.command,
-            self.fuel.fuel_mut(),
-            &mut self.capabilities,
-            &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
-            &mut self.operation_observations,
-            diagnostic_effects,
-            &mut context,
-        );
-        processor.set_output_routine_active(self.execution.boxes.output_routine_active);
-        processor
-            .apply_error_stop_recovery(request)
-            .map_err(command_error)
-    }
-
     /// Completes one canonically delivered operation. Common unexpandable
     /// families scan and apply here without a
     /// universal DTO; cold and barrier families enter a borrow-typed execution
@@ -3078,6 +2668,7 @@ impl<G> MainControl<G> {
             let mut context = stores.command_context().expect("live generation");
             let mut host_facts = ExecutorHostFacts {
                 modes: &self.execution.modes,
+                shown_mode: &mut self.execution.shown_mode,
                 pdf_ignore_depth: self.execution.pdf_ignore_depth,
                 telemetry: &mut self.execution.episode_telemetry,
             };
@@ -3143,6 +2734,7 @@ impl<G> MainControl<G> {
         let mut context = stores.command_context().expect("live generation");
         let mut host_facts = ExecutorHostFacts {
             modes: &self.execution.modes,
+            shown_mode: &mut self.execution.shown_mode,
             pdf_ignore_depth: self.execution.pdf_ignore_depth,
             telemetry: &mut self.execution.episode_telemetry,
         };
@@ -3325,46 +2917,6 @@ fn math_character_code<G>(stores: &mut CommandContext<'_, G>, ch: char) -> u32 {
         DependencyValue::Integer(i64::from(code)),
     );
     code
-}
-
-/// TeX82 §1155's `set_math_char`, entered from every §1154 case that derives
-/// its code from a character's `math_code`.
-///
-/// ```text
-/// procedure set_math_char(@!c:integer);
-/// begin if c>=@'100000 then
-///   @<Treat |cur_chr| as an active character@>
-/// else  begin p:=new_noad; ... end;
-/// end;
-/// ```
-///
-/// The `c>=@'100000` branch is not a diagnostic or a discard: §1155's own
-/// commentary says "the |cur_chr| is treated as an active character and
-/// nothing is appended", and §1152 then expands that active character in
-/// place and backs its result up for main control to reread. Plain TeX's
-/// ``\mathcode`\'="8000`` is the reason the branch exists at all, so a math
-/// list built without it silently loses every `\prime`.
-///
-/// Only §1154's `letter`/`other_char`/`char_given`/`char_num` cases can
-/// reach the branch: §1224's `\mathchardef` and §436's `scan_fifteen_bit_int`
-/// bound `\mathchar` and `\mathaccent` to fifteen bits, and §437's
-/// `scan_twenty_seven_bit_int` bounds `\delimiter`'s `cur_val div @'10000`
-/// to the same range, so those callers append unconditionally.
-fn set_math_char<G>(
-    ch: char,
-    origin: tex_state::token::OriginId,
-    stores: &mut CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-) -> Result<(), ExecError> {
-    let code = math_character_code(stores, ch);
-    if code >= 0x8000 {
-        let mut processor = command.processor(stores);
-        let treated = processor.treat_as_active_character(ch, origin);
-        treated.map_err(command_error)?;
-        return Ok(());
-    }
-    append_math_char(modes.current_list_mutation(), stores, code, origin)
 }
 
 /// tex.web §687's `scripts_allowed(#)==(type(#)>=ord_noad)and(type(#)<left_noad)`.

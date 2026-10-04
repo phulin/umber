@@ -194,12 +194,7 @@ pub(super) fn penalty<G>(
             context,
             Node::Penalty(amount),
         );
-        crate::vertical::build_page_if_outer_vertical(
-            &mut execution.modes,
-            context,
-            effects,
-            command,
-        )?;
+        crate::vertical::build_page_if_outer_vertical(&execution.modes, context, effects, command)?;
         Ok(MainControlStep::Continue)
     })
 }

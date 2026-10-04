@@ -127,7 +127,6 @@ pub(super) fn close<G>(
                     _ => unreachable!("selected vertical package"),
                 })
             };
-            drop(geometry);
             if kind == ReplayBoxKind::VCenter {
                 let boxed = context.publish_page_nodes([node]);
                 execution.modes.current_list_mutation().push(
@@ -201,7 +200,7 @@ pub(super) fn close<G>(
                     )?;
                 }
                 crate::vertical::build_page_if_outer_vertical(
-                    &mut execution.modes,
+                    &execution.modes,
                     context,
                     effects,
                     command,
@@ -278,7 +277,6 @@ fn close_insertion<G>(
                 PackSpec::Natural,
                 params,
             );
-            drop(geometry);
             crate::box_runtime::flush_pending_hchars_with_fuel(
                 &mut execution.modes,
                 context,
@@ -321,7 +319,7 @@ fn close_insertion<G>(
             execution.main_loop_active = false;
             context.publish_diagnostic_effects_before_synchronous_print(effects);
             crate::vertical::build_page_if_outer_vertical_with_error_context(
-                &mut execution.modes,
+                &execution.modes,
                 context,
                 effects,
                 &page_context,

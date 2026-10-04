@@ -148,20 +148,6 @@ impl ExecutionReceipt {
         }
     }
 
-    /// Consumes one operation's projection while retaining its warmed storage
-    /// for the next operation owned by the same observation buffer.
-    pub(crate) fn reset_for_next_operation(&mut self) -> ConsumedExecutionReceipt {
-        let consumed = self.consumed_projection();
-        self.mutations.clear();
-        self.resources.clear();
-        self.effects.semantic.clear();
-        self.effects.world.clear();
-        self.artifacts.clear();
-        self.diagnostics.clear();
-        self.termination = OperationTermination::Continue;
-        consumed
-    }
-
     /// Consumes the typed projection at the observer publication seam.
     ///
     /// Reading every category here is deliberate: the receipt is an active

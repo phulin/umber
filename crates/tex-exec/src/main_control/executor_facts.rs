@@ -16,6 +16,7 @@ pub(super) struct EffectiveTailFacts {
 /// operational counter, and returns before the processor can suspend.
 pub(super) struct ExecutorHostFacts<'episode, G, Modes = &'episode ModeNest> {
     pub(super) modes: Modes,
+    pub(super) shown_mode: &'episode mut Option<Mode>,
     pub(super) pdf_ignore_depth: Option<tex_state::PrimitiveHandle<G>>,
     pub(super) telemetry: &'episode mut crate::EpisodeTelemetry,
 }
@@ -23,7 +24,7 @@ pub(super) struct ExecutorHostFacts<'episode, G, Modes = &'episode ModeNest> {
 // Both implementations read their actual owner. The macro shares query
 // semantics without constructing a projection for each request.
 macro_rules! implement_host_facts {
-    (($($implementation:tt)*), $this:ident, $modes:expr, $telemetry:expr, $ignore_depth:expr) => {
+    (($($implementation:tt)*), $this:ident, $modes:expr, $telemetry:expr, $ignore_depth:expr, $shown_mode:expr) => {
         $($implementation)* {
     fn conditional_state(&mut $this) -> tex_command::ConditionalState {
         ($telemetry).record_host_fact_query();
@@ -39,6 +40,18 @@ macro_rules! implement_host_facts {
             Mode::RestrictedHorizontal => "restricted horizontal mode",
             Mode::Math => "math mode",
             Mode::DisplayMath => "display math mode",
+        }
+    }
+
+    fn command_trace_mode_prefix(&mut $this, deferred_write: bool) -> Option<&'static str> {
+        ($telemetry).record_host_fact_query();
+        let mode = if deferred_write { None } else { Some(($modes).current_mode()) };
+        let shown = $shown_mode;
+        if *shown == mode {
+            None
+        } else {
+            *shown = mode;
+            Some(mode.map_or("no mode", mode_text_for_command_trace))
         }
     }
 
@@ -98,7 +111,8 @@ implement_host_facts!(
     self,
     self.modes.borrow(),
     self.telemetry,
-    self.pdf_ignore_depth
+    self.pdf_ignore_depth,
+    &mut *self.shown_mode
 );
 
 implement_host_facts!(
@@ -106,7 +120,8 @@ implement_host_facts!(
     self,
     &self.modes,
     self.episode_telemetry,
-    self.pdf_ignore_depth
+    self.pdf_ignore_depth,
+    &mut self.shown_mode
 );
 
 /// Samples TeX82 §424 and e-TeX [26.424] from one effective-tail walk.

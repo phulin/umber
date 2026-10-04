@@ -10,6 +10,7 @@ impl<G> MainControl<G> {
             .expect("tracked control projection");
         let mut facts = ExecutorHostFacts {
             modes: &self.execution.modes,
+            shown_mode: &mut self.execution.shown_mode,
             pdf_ignore_depth: self.execution.pdf_ignore_depth,
             telemetry: &mut self.execution.episode_telemetry,
         };
@@ -55,26 +56,6 @@ impl<G> MainControl<G> {
 }
 
 impl<G> MainControl<G> {
-    pub(in crate::main_control) fn resume_character_loop(
-        &mut self,
-        stores: &mut Universe<G>,
-        character: Option<char>,
-    ) {
-        let context = stores.command_context().expect("character loop admission");
-        self.execution.main_loop_active = character.is_some_and(|ch| {
-            matches!(
-                self.execution.modes.current_mode(),
-                Mode::Horizontal | Mode::RestrictedHorizontal
-            ) && u8::try_from(u32::from(ch)).ok().is_some_and(|code| {
-                context
-                    .font_char_metrics(context.current_font(), code)
-                    .is_some()
-            })
-        });
-    }
-}
-
-impl<G> MainControl<G> {
     pub(in crate::main_control) fn interpret_chunk(
         &mut self,
         stores: &mut Universe<G>,
@@ -109,7 +90,7 @@ impl<G> MainControl<G> {
             if let Some(cursor) = cursor {
                 processor.resume_delivery_cursor(cursor);
             }
-            trace::prepare(processor);
+
             dispatch::execute(
                 processor,
                 command.spelling(),
@@ -117,7 +98,7 @@ impl<G> MainControl<G> {
                 command.control_sequence(),
                 Some(&command),
                 receipts,
-                0,
+                codes::of(command.native_meaning()),
             )
         })
     }
@@ -139,12 +120,9 @@ impl<G> MainControl<G> {
         }
         let observing = self.operation_observations.is_some();
         let output_start = observing.then(|| OperationOutputStart {
-            outer_paragraph_was_active: self.execution.modes.current_mode() == Mode::Horizontal
-                && self.execution.modes.depth() == 2,
             artifact_count: stores.world().committed_artifacts().len(),
             effect_count: stores.world().effect_records().len(),
             prepared_page_count: self.execution.prepared_dvi_pages.len(),
-            tracked_region_is_active: tracked,
         });
         let mut receipts = observing.then(Vec::new);
         let mut context = stores
@@ -227,15 +205,11 @@ impl<G> MainControl<G> {
                 };
                 let mut command =
                     self.command_machine_with_resource_provider(effects, provider.take());
-                let modes = match &command.host_facts {
-                    CommandMachineHostFacts::Live(facts) => facts.modes,
-                    _ => unreachable!("actual form traverses the live mode owner"),
-                };
+                let _modes = command.host_facts.modes;
                 let mut geometry = DetachedShipoutGeometry::default();
                 let staged = publish_immediate_pdf_form(
                     form,
                     &mut command,
-                    modes,
                     stores,
                     &resolver,
                     demand,
@@ -263,11 +237,7 @@ impl<G> MainControl<G> {
                 let staged = {
                     let mut command =
                         self.command_machine_with_resource_provider(effects, provider.take());
-                    let modes = match &command.host_facts {
-                        CommandMachineHostFacts::Live(facts) => facts.modes,
-                        _ => unreachable!("actual shipout borrows the live mode owner"),
-                    };
-                    let staged = shipout_replay_box(shipout, stores, &mut command, modes);
+                    let staged = shipout_replay_box(shipout, stores, &mut command);
                     *provider = command.resource_provider.take();
                     staged
                 };
@@ -291,18 +261,24 @@ impl<G> MainControl<G> {
                 result = Ok(self.handle_root_end_of_input(stores));
             }
         }
+        if result.is_ok() {
+            // Closing the last mode-list root admits real page-owner rotation.
+            // Do it before a new paragraph allocates into that owner, even
+            // when no page-builder invocation remains to resume.
+            self.finish_pending_page_region_succession(stores);
+        }
         if result.is_ok() && !self.execution.boxes.output_routine_active {
             let pending = PendingPageOutputFacts::capture_runtime(stores);
-            if pending.is_pending() {
-                if let Err(error) = self.fire_pending_page_output(stores, effects, pending) {
-                    result = Err(error);
-                }
+            if pending.is_pending()
+                && let Err(error) = self.fire_pending_page_output(stores, effects, pending)
+            {
+                result = Err(error);
             }
         }
-        if result.is_ok() {
-            if let Some(output_start) = output_start {
-                self.publish_semantic_observations(stores, output_start, None, receipts.take());
-            }
+        if result.is_ok()
+            && let Some(output_start) = output_start
+        {
+            self.publish_semantic_observations(stores, output_start, None, receipts.take());
         }
         if ended_job && let Some(observations) = self.operation_observations.as_mut() {
             observations.committed(CommandObservation::Effect(engine_termination_effect()));

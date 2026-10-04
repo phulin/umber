@@ -71,6 +71,7 @@ pub(super) fn scan<G>(
                         exceptional,
                         receipts,
                         prefixes,
+                        code,
                     ));
                     return Ok(ControlFlow::Break(()));
                 }

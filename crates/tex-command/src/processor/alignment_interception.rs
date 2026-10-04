@@ -85,15 +85,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         };
         self.start_alignment_v_template(alignment, saved_delimiter, delimiter_line)
     }
-    /// Completes TeX82 §1131's `do_endv` input-stack proof and cell
-    /// transition. The processor performs the proof because `loc_field=null`
-    /// for stored token lists can only be decided while the immutable token
-    /// store is borrowed; the persistent command state deliberately owns no
-    /// such store capability.
-    pub fn finish_alignment_cell(
-        &mut self,
+    /// Proves TeX82 §1131's exhausted v-template input before either
+    /// closing the cell or recovering an unclosed nested group.
+    pub fn validate_alignment_v_template(
+        &self,
         alignment: crate::AlignmentIdentity,
-    ) -> Result<crate::FinishedAlignmentCell, CommandError> {
+    ) -> Result<(), CommandError> {
         let v_level = self
             .command
             .alignment
@@ -121,6 +118,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 "(interwoven alignment preambles are not allowed)",
             )));
         }
+        Ok(())
+    }
+
+    /// Completes §791's cell transition after §1131's input proof.
+    pub fn finish_alignment_cell(
+        &mut self,
+        alignment: crate::AlignmentIdentity,
+    ) -> Result<crate::FinishedAlignmentCell, CommandError> {
+        self.validate_alignment_v_template(alignment)?;
         // TeX82 §791 performs this independently of §1131's input-stack
         // proof: another preamble may leave the expected exhausted frame in
         // place while its brace sentinel is interwoven with the active cell.

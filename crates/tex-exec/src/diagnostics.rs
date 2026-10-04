@@ -434,26 +434,6 @@ pub(crate) struct ShowGroupsDiagnostic {
     pub(crate) frames: Vec<ShowGroupFrame>,
 }
 
-pub(crate) fn render_showgroups(diagnostic: &ShowGroupsDiagnostic) -> String {
-    let mut text = String::from("\n");
-    for frame in diagnostic.frames.iter().rev() {
-        text.push_str("\n### ");
-        text.push_str(group_kind_text(frame.kind));
-        text.push_str(" (level ");
-        text.push_str(&frame.level.to_string());
-        text.push(')');
-        if frame.entered_line != 0 {
-            text.push_str(" entered at line ");
-            text.push_str(&frame.entered_line.to_string());
-        }
-        text.push_str(" (");
-        text.push_str(&frame.context);
-        text.push(')');
-    }
-    text.push_str("\n### bottom level");
-    text
-}
-
 /// Emits e-TeX 2.6 [49.1292]'s `show_save_groups` display through the shared
 /// §245 diagnostic selector, followed by §1293's ordinary show completion.
 pub(crate) fn execute_showgroups<G>(

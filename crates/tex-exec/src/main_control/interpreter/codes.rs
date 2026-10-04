@@ -1,5 +1,15 @@
 //! Compile-time keys over the native packed meaning encoding.
 use super::*;
+
+#[inline(always)]
+pub(super) fn of<G>(meaning: &tex_state::meaning::MeaningWord<G>) -> u64 {
+    match meaning {
+        tex_state::meaning::MeaningWord::Static(word) => Meaning::runtime_word_control_code(*word),
+        tex_state::meaning::MeaningWord::Font(_) => FONT,
+        tex_state::meaning::MeaningWord::Macro { .. } => unreachable!("expanded terminal"),
+    }
+}
+
 pub(super) const CHAR_BEGIN_GROUP: u64 =
     Meaning::runtime_word_control_code(Meaning::char_token_word('\0', Catcode::BeginGroup));
 pub(super) const PRIMITIVE_BEGIN_GROUP: u64 = Meaning::runtime_word_control_code(
@@ -604,11 +614,6 @@ pub(super) const PRIMITIVE_PATTERNS: u64 = Meaning::runtime_word_control_code(
 pub(super) const PRIMITIVE_HYPHENATION: u64 = Meaning::runtime_word_control_code(
     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Hyphenation).encode(),
 );
-pub(super) const UNEXPANDABLE_MIN: u64 = Meaning::runtime_word_control_code(
-    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Def).encode(),
-);
-pub(super) const UNEXPANDABLE_MAX: u64 = UNEXPANDABLE_MIN + u16::MAX as u64;
-
 pub(super) const PRIMITIVE_GLOBAL: u64 = Meaning::runtime_word_control_code(
     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global).encode(),
 );

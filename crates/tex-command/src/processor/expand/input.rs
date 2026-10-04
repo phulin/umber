@@ -78,18 +78,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    /// Performs one source-character step for `main_character_run`.
+    /// Appends a borrowed source prefix through the live character consumer.
     ///
     /// An eligible physical line lends its retained suffix to `admit` first;
     /// the executor stops at the first lexical or metric boundary. A lexical
     /// first byte falls through to the scalar tokenizer without reopening a
     /// processor or selecting a second top row. Stored source rows and every
     /// cold/source boundary remain on the scalar transition below.
-    #[cold]
-    #[inline(never)]
     pub(super) fn advance_source_character_step<C: MainCharacterConsumer<G, Facts>>(
         &mut self,
         resident_index: usize,
+        maximum: usize,
         consume: &mut C,
     ) -> Result<Option<u32>, CommandError> {
         let command_state = &mut *self.command;
@@ -114,7 +113,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .borrow_character_run()
             .map_err(|()| CommandError::input_invariant())?
         {
-            let available = usize::try_from(fuel.remaining()).unwrap_or(usize::MAX);
+            let available = usize::try_from(fuel.remaining())
+                .unwrap_or(usize::MAX)
+                .min(maximum);
             if available == 0 {
                 return Err(fuel.charge().expect_err("zero remaining fuel is exhausted"));
             }
@@ -188,9 +189,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
         }
 
+        let mut remaining = maximum;
         let run = slot
             .advance_character_run(frame, state, |state, ch, origin| {
                 fuel.charge()?;
+                remaining -= 1;
                 Ok(consume
                     .admit(
                         state,
@@ -199,7 +202,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         execution,
                         MainCharacterInput::Scalar { ch, origin },
                     )
-                    .continue_run())
+                    .continue_run()
+                    && remaining != 0)
             })
             .map_err(|()| CommandError::input_invariant())?;
         match run {

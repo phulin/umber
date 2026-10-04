@@ -1,8 +1,6 @@
 //! Cold alignment lifecycle and diagnostic projection.
 
 use super::super::*;
-use super::groups::enter_group;
-use super::support::*;
 
 pub(in crate::main_control) fn report_extra_alignment_tab<G>(
     command: &CommandState<G>,

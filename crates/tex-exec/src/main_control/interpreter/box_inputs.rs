@@ -443,7 +443,6 @@ pub(super) fn split<G>(
                 split.height,
                 &split.split_context,
             )?;
-            drop(geometry);
             finish_region(
                 destination,
                 node,

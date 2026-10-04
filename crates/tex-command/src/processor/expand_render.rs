@@ -122,7 +122,7 @@ pub(crate) fn append_string_text<G>(
 ) {
     match token {
         Token::Cs(symbol) => {
-            let escape = state.untracked_int_param(IntParam::ESCAPE_CHAR);
+            let escape = state.int_param(IntParam::ESCAPE_CHAR);
             if let Some(ch) = char::from_u32(u32::try_from(escape).unwrap_or(u32::MAX)) {
                 text.push(ch);
             }
@@ -638,7 +638,7 @@ pub fn append_print_esc_text<G>(
     name: &str,
     text: &mut String,
 ) {
-    if let Ok(escape) = u8::try_from(state.untracked_int_param(IntParam::ESCAPE_CHAR)) {
+    if let Ok(escape) = u8::try_from(state.int_param(IntParam::ESCAPE_CHAR)) {
         text.push(char::from(escape));
     }
     text.push_str(name);

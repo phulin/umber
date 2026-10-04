@@ -56,7 +56,7 @@ pub(super) fn no_boundary<G>(
                 symbol,
                 exceptional,
                 receipts,
-                0,
+                codes::of(meaning),
             ));
             Ok(ControlFlow::Break(()))
         })
@@ -90,7 +90,7 @@ pub(super) fn ignore_spaces<G>(
                 symbol,
                 exceptional,
                 receipts,
-                0,
+                codes::of(meaning),
             ));
             Ok(ControlFlow::Break(()))
         })
@@ -108,7 +108,6 @@ pub(super) fn ignore_spaces<G>(
 pub(super) struct MainSourceAdmission {
     pub(super) etex_extended: bool,
     pub(super) error: Option<ExecError>,
-    pub(super) applied: bool,
 }
 
 impl<G> tex_command::MainCharacterConsumer<G, &mut ExecutionState<G>> for MainSourceAdmission {
@@ -132,7 +131,6 @@ impl<G> tex_command::MainCharacterConsumer<G, &mut ExecutionState<G>> for MainSo
                 );
                 match result {
                     Ok(admitted) => {
-                        self.applied |= admitted.count != 0;
                         // A lexical tail still belongs to §1038's main-loop
                         // label: the next scalar delivery may be a
                         // `char_given`/`char_num` command that must not gain a
@@ -179,7 +177,6 @@ impl<G> tex_command::MainCharacterConsumer<G, &mut ExecutionState<G>> for MainSo
                 }
             }
             tex_command::MainCharacterInput::Scalar { ch, origin } => {
-                self.applied = true;
                 if let Err(error) = append_native_character(
                     context,
                     diagnostic_effects,

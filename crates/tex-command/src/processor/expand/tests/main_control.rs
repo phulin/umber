@@ -180,11 +180,16 @@ fn source_macro_main_control_materializes_only_when_observed() {
     });
 }
 
-// TeX's direct main-control fetch inserts/rereads frozen endv. Once a
-// macro has expanded, or in a scanner, get_x_token converts it inline.
+// TeX82 §380 changes cur_cs/cur_cmd to frozen endv in place. Only actual
+// input words consume fuel; there is no backed-up replacement token.
 #[test]
 fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
-    for (main_control, native) in [(false, false), (true, false), (true, true)] {
+    for (main_control, native, lookahead) in [
+        (false, false, false),
+        (true, false, false),
+        (true, true, false),
+        (true, true, true),
+    ] {
         for expanded in [false, true] {
             for observed in [false, true] {
                 for fuel_cut in [false, true] {
@@ -208,8 +213,7 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                                 AssignmentScope::Global,
                             )
                             .expect("macro meaning");
-                        let insertion = main_control && !expanded;
-                        let charges = if expanded || insertion { 2 } else { 1 };
+                        let charges = (if expanded { 2 } else { 1 }) + u64::from(lookahead);
                         let mut command = CommandState::default();
                         crate::test_harness::push(
                             &mut command,
@@ -252,15 +256,25 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                         let mut destination = None;
                         let mut native_endv = false;
                         let result = if native {
-                            processor.consume_main_control(&mut |_, spelling, meaning, _, _| {
-                                assert!(spelling.semantic_token().is_frozen_endv());
-                                assert_eq!(
-                                    meaning.resolve(),
-                                    tex_state::meaning::ResolvedMeaning::Static(Meaning::EndV)
-                                );
-                                native_endv = true;
-                                Ok(std::ops::ControlFlow::Break(()))
-                            })
+                            let mut consume =
+                                |_: &mut crate::CommandProcessor<'_, '_, _, _>,
+                                 spelling: tex_state::token::TracedTokenWord,
+                                 meaning: &MeaningWord<_>,
+                                 _: Option<tex_state::interner::Symbol>,
+                                 _: Option<&crate::CurrentCommand<_>>| {
+                                    assert!(spelling.semantic_token().is_frozen_endv());
+                                    assert_eq!(
+                                        meaning.resolve(),
+                                        tex_state::meaning::ResolvedMeaning::Static(Meaning::EndV)
+                                    );
+                                    native_endv = true;
+                                    Ok(std::ops::ControlFlow::Break(()))
+                                };
+                            if lookahead {
+                                processor.consume_main_loop_lookahead(&mut consume)
+                            } else {
+                                processor.consume_main_control(&mut consume)
+                            }
                         } else if main_control {
                             processor.main_control_until(&mut destination, false, &mut ())
                         } else {
@@ -306,7 +320,7 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                             let backups = observer.0.iter().filter(|record| matches!(record,
                                 CommandObservation::Input(input) if input.transition == InputTransition::Backup
                             )).count();
-                            assert_eq!(backups, usize::from(insertion));
+                            assert_eq!(backups, usize::from(lookahead));
                         } else if !observed {
                             assert!(observer.0.is_empty());
                         }

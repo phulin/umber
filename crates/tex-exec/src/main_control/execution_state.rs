@@ -124,7 +124,6 @@ pub(super) struct ExecutionState<G> {
     /// direct step, then TeX82 §§1025/323's `output_text` push. Every step
     /// drains it before the following step can deliver the routine's
     /// scanner-owned opening brace.
-    pub(super) page_output_observations: Option<ObservationBuffer>,
     /// Live-store boundaries used to close the typed receipt before the
     /// direct operation commits. Absent for ordinary execution.
     pub(super) operation_receipt_start: Option<OperationReceiptStart>,
@@ -239,7 +238,6 @@ impl<G> ExecutionState<G> {
             terminal_line_was_empty: None,
             root_completion: RootCompletionPolicy::default(),
             root_main_source: None,
-            page_output_observations: None,
             operation_receipt_start: None,
             error_operation_committed: false,
             prepared_dvi_pages: PreparedDviPages::default(),

@@ -1,17 +1,7 @@
 //! Demanded command tracing reads native meanings and the actual mode owner.
 use super::*;
 
-pub(super) fn prepare<G>(processor: &mut Processor<'_, '_, G>) {
-    if processor.int_param(IntParam::TRACING_COMMANDS) > 0
-        || processor.int_param(IntParam::TRACING_IFS) > 0
-    {
-        let (mode, shown) = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-            (execution.modes.current_mode(), execution.shown_mode)
-        });
-        prepare_command_trace(processor, mode, shown);
-    }
-}
-
+#[inline(always)]
 pub(super) fn command<G>(
     processor: &mut Processor<'_, '_, G>,
     code: u64,
@@ -19,29 +9,29 @@ pub(super) fn command<G>(
     symbol: Option<Symbol>,
 ) {
     if processor.int_param(IntParam::TRACING_COMMANDS) <= 0 {
-        if processor.command_trace_printed() {
-            processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                execution.shown_mode = Some(execution.modes.current_mode())
-            });
-        }
         return;
     }
-    let (mode, suppress) = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-        let mode = execution.modes.current_mode();
+    print_command(processor, code, meaning, symbol);
+}
+
+#[cold]
+fn print_command<G>(
+    processor: &mut Processor<'_, '_, G>,
+    code: u64,
+    meaning: &tex_state::meaning::MeaningWord<G>,
+    symbol: Option<Symbol>,
+) {
+    let suppress = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
         let raw_character = execution.main_loop_active
             && matches!(
                 code,
                 codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN | codes::PRIMITIVE_CHAR
             );
-        let suppress = raw_character
+        raw_character
             || execution.boxes.pending_leader.is_some()
-            || (execution.boxes.output_routine_opening_pending && code == codes::CHAR_BEGIN_GROUP);
-        (mode, suppress)
+            || (execution.boxes.output_routine_opening_pending && code == codes::CHAR_BEGIN_GROUP)
     });
     if !suppress {
-        processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-            execution.shown_mode = Some(mode)
-        });
         processor.print_command_trace(tex_command::PrintCommand::from_native(meaning, symbol));
     }
 }
