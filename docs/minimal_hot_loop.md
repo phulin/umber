@@ -601,3 +601,22 @@ Schema decoding reports `InvalidRange`, child admission reports `InvalidRegion`,
 and schema failures keep priority when both fail. Failed reservations restore
 the exact node and annex suffix and prior builder root. Successful construction
 retains the authoritative dependency floors for checkpoints and region moves.
+
+## Borrowed math font-parameter sources
+
+Appendix G parameter acquisition borrows each actual symbol and extension
+font once for each math size. The pure kernel receives a statically dispatched
+scalar reader over that borrow, then reads its required numbered parameters.
+It does not readmit font identity or construct a generic state-cell result for
+every parameter. The existing math-parameter snapshot remains the kernel's
+final arithmetic input, without an additional cache or parameter array.
+
+Mapped classic fonts retain their immutable original-TFM overrides. Unmapped
+fonts read their authoritative live dimension-bank cells, including mutations,
+growth, group restoration and full checkpoint restoration. The state borrow
+prevents mutation while the reader is live; no source is cached across a
+mutation or checkpoint boundary. Invalid or absent numbered dimensions retain
+their existing zero-value policy. General dimension reads project the actual
+scalar directly, while generic journal reads retain the complete typed bank
+cell needed for save and restore. The replaced scalar math-parameter trait
+method and command-context getter are deleted.

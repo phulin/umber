@@ -70,8 +70,8 @@ impl MathTypesetState for KernelState {
         NULL_FONT
     }
 
-    fn font_parameter(&self, _font: FontId, _number: u16) -> Scaled {
-        Scaled::from_raw(0)
+    fn font_parameters(&self, _font: FontId) -> impl Fn(u16) -> Scaled {
+        |_| Scaled::from_raw(0)
     }
 
     fn font_next_larger(&self, _font: FontId, _code: u8) -> Option<u8> {

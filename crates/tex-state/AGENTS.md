@@ -107,7 +107,9 @@ Definition-owned parameter programs expose literal delimiter views only for none
   one pending register take abandoned by checkpoint restore, bounded history-preservation copies, and lifecycle tests.
 - `src/env/restoration.rs`: native save-stack unsave in classic chronology and lazy e-TeX sparse-marker chain order. It consumes the original typed entries without merge scratch or a restoration vector.
 - `src/env/font_runtime.rs`: Direct-index generation-owned mutable per-font
-  dimensions, character settings, PDF code tables, and ligature state.
+  dimensions, character settings, PDF code tables, and ligature state. Scalar
+  dimension readers borrow the actual row once and project values directly;
+  generic journal reads retain the typed cell and its restoration metadata.
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
 - `src/expansion_diagnostic.rs`: Detached recoverable expansion diagnostic
   values shared by command expansion and execution-side presentation.

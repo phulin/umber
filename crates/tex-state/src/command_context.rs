@@ -2631,13 +2631,15 @@ impl<'a, G> CommandContext<'a, G> {
         self.font_dimen(id, number)
     }
 
-    #[must_use]
-    pub fn classic_math_parameter(&self, id: crate::ids::FontId, number: u16) -> Scaled {
-        self.resident
-            .fonts
-            .get(id)
-            .classic_math_parameter_override(number)
-            .unwrap_or_else(|| self.font_dimen(id, u32::from(number)))
+    pub fn classic_math_parameters(&self, id: crate::ids::FontId) -> impl Fn(u16) -> Scaled {
+        let font = self.resident.fonts.get(id);
+        let dimensions = self.admitted.state_ref().font_dimen_reader(id);
+        move |number| {
+            font.classic_math_parameter_override(number)
+                .unwrap_or_else(|| {
+                    dimensions(u32::from(number)).unwrap_or_else(|_| Scaled::from_raw(0))
+                })
+        }
     }
 
     #[must_use]

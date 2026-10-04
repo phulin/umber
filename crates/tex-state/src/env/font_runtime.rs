@@ -342,6 +342,20 @@ impl FontRuntimeBank {
         Ok(())
     }
 
+    pub(crate) fn dimen_reader(&self, font: u32) -> impl Fn(u32) -> Result<Scaled, BankError> {
+        let parameters = self.row(font).map(|row| row.parameters.as_slice());
+        move |number| {
+            let index = number
+                .checked_sub(1)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or(BankError::IndexOutOfBounds)?;
+            parameters?
+                .get(index)
+                .map(|cell| cell.value)
+                .ok_or(BankError::IndexOutOfBounds)
+        }
+    }
+
     pub(crate) fn read(&self, cell: FontRuntimeCell) -> Result<BankCellValue, BankError> {
         let value = match cell {
             FontRuntimeCell::ParameterCount(font) => {

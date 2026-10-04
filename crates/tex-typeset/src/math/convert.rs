@@ -1087,7 +1087,7 @@ pub(crate) fn make_character_nucleus<S: MathTypesetState>(
         return ctx.layout.empty();
     };
     *delta = fetched.metrics.italic_correction;
-    if text_char && ctx.state.font_parameter(fetched.font, 2).raw() != 0 {
+    if text_char && ctx.state.font_parameters(fetched.font)(2).raw() != 0 {
         *delta = Scaled::from_raw(0);
     }
     let character = MathNode::Char {

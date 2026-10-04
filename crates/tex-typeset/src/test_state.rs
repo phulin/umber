@@ -332,8 +332,15 @@ impl MathTypesetState for TestState {
         self.math_family_font(size, family)
     }
 
-    fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
-        self.font_parameter_value(font, u32::from(number))
+    fn font_parameters(&self, font: FontId) -> impl Fn(u16) -> Scaled {
+        let parameters = &self.font(font).parameters;
+        move |number| {
+            number
+                .checked_sub(1)
+                .and_then(|index| parameters.get(usize::from(index)))
+                .copied()
+                .unwrap_or_else(|| Scaled::from_raw(0))
+        }
     }
 
     fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {

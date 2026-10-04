@@ -564,8 +564,8 @@ impl<G> MathTypesetState for LoweredMathSink<'_, '_, G> {
         self.stores.math_family_font(size, family)
     }
 
-    fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
-        self.stores.classic_math_parameter(font, number)
+    fn font_parameters(&self, font: FontId) -> impl Fn(u16) -> Scaled {
+        self.stores.classic_math_parameters(font)
     }
 
     fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {

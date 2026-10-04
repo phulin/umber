@@ -201,7 +201,7 @@ pub(super) fn make_math_accent(
         accent_metrics = next_metrics;
     }
 
-    let x_height = ctx.state.font_parameter(accent_font, 5);
+    let x_height = ctx.state.font_parameters(accent_font)(5);
     let mut delta = if accentee_height < x_height {
         accentee_height
     } else {

@@ -102,8 +102,8 @@ impl<G> MathTypesetState for TypesetContext<'_, '_, G> {
         self.state.math_family_font(size, family)
     }
 
-    fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
-        self.state.classic_math_parameter(font, number)
+    fn font_parameters(&self, font: FontId) -> impl Fn(u16) -> Scaled {
+        self.state.classic_math_parameters(font)
     }
 
     fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {

@@ -256,6 +256,8 @@ not allocate a vector merely to publish one already-complete node.
   it is an ownership guard, not a packaged scanner or executor continuation.
 - `src/typeset_context.rs`: crate-private pure-kernel trait adapter over one
   already-admitted `CommandContext`; it owns no state, owner, or arena root.
+  Math font-parameter readers borrow actual live font storage for the kernel
+  call rather than resolving font identity for each numbered parameter.
 - `src/**/tests.rs` and crate-local `#[cfg(test)]` modules: active semantic,
   replay, diagnostic, state, and exact-operand regression coverage selected by
   the library test target.

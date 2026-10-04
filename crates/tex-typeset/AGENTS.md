@@ -25,7 +25,8 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/metrics.rs`: neutral metric-event IR and shared horizontal, vertical, and wide accumulators; domain modules retain glue, breakpoint, font-expansion, and observation policy.
 - `src/test_state.rs`: test-only value projection over an explicitly separate
   node pool and page-material region, copied font/parameter values, and narrow
-  borrowed typesetting traits; it is not a runtime or `Universe` facade.
+  borrowed typesetting traits, including scalar math-parameter readers over
+  actual font storage; it is not a runtime or `Universe` facade.
 - `src/math/arithmetic.rs`: shared checked scaled-arithmetic guards for Appendix G.
 - `src/math/rebox.rs`: shared TeX82 §715 exact-width math-box centering and vertical-source packaging.
 - `src/packing.rs`: hpack/vpack/vtop kernels over page-arena list coordinates,

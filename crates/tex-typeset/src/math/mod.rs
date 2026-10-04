@@ -49,7 +49,7 @@ pub(crate) use variants::variant_box;
 /// Immutable state access needed by the math typesetting kernel.
 pub trait MathTypesetState: TypesetState {
     fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId;
-    fn font_parameter(&self, font: FontId, number: u16) -> Scaled;
+    fn font_parameters(&self, font: FontId) -> impl Fn(u16) -> Scaled;
     fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8>;
     fn font_extensible_recipe(&self, font: FontId, code: u8) -> Option<MetricExtensibleRecipe>;
     fn lig_kern_command(

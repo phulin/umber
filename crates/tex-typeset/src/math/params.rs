@@ -119,12 +119,13 @@ impl SizeParams {
     pub fn read(state: &impl MathTypesetState, size: MathFontSize) -> Self {
         let symbols = state.math_family_font(size, 2);
         let extension = state.math_family_font(size, 3);
+        let symbol_parameters = state.font_parameters(symbols);
         if let MathMetricsSource::OpenType(math) = state.math_metrics_source(symbols) {
             let c = |constant| math.constant(constant);
             return Self {
                 symbols: SymbolParams {
                     math_x_height: c(MathConstant::AccentBaseHeight),
-                    math_quad: state.font_parameter(symbols, 6),
+                    math_quad: symbol_parameters(6),
                     num1: c(MathConstant::FractionNumeratorDisplayStyleShiftUp),
                     num2: c(MathConstant::FractionNumeratorShiftUp),
                     num3: c(MathConstant::FractionNumeratorShiftUp),
@@ -166,25 +167,26 @@ impl SizeParams {
                 },
             };
         }
+        let extension_parameters = state.font_parameters(extension);
         Self {
             symbols: SymbolParams {
-                math_x_height: state.font_parameter(symbols, 5),
-                math_quad: state.font_parameter(symbols, 6),
-                num1: state.font_parameter(symbols, 8),
-                num2: state.font_parameter(symbols, 9),
-                num3: state.font_parameter(symbols, 10),
-                denom1: state.font_parameter(symbols, 11),
-                denom2: state.font_parameter(symbols, 12),
-                sup1: state.font_parameter(symbols, 13),
-                sup2: state.font_parameter(symbols, 14),
-                sup3: state.font_parameter(symbols, 15),
-                sub1: state.font_parameter(symbols, 16),
-                sub2: state.font_parameter(symbols, 17),
-                sup_drop: state.font_parameter(symbols, 18),
-                sub_drop: state.font_parameter(symbols, 19),
-                delim1: state.font_parameter(symbols, 20),
-                delim2: state.font_parameter(symbols, 21),
-                axis_height: state.font_parameter(symbols, 22),
+                math_x_height: symbol_parameters(5),
+                math_quad: symbol_parameters(6),
+                num1: symbol_parameters(8),
+                num2: symbol_parameters(9),
+                num3: symbol_parameters(10),
+                denom1: symbol_parameters(11),
+                denom2: symbol_parameters(12),
+                sup1: symbol_parameters(13),
+                sup2: symbol_parameters(14),
+                sup3: symbol_parameters(15),
+                sub1: symbol_parameters(16),
+                sub2: symbol_parameters(17),
+                sup_drop: symbol_parameters(18),
+                sub_drop: symbol_parameters(19),
+                delim1: symbol_parameters(20),
+                delim2: symbol_parameters(21),
+                axis_height: symbol_parameters(22),
                 subscript_top_max: None,
                 superscript_bottom_min: None,
                 sub_superscript_gap_min: None,
@@ -192,12 +194,12 @@ impl SizeParams {
                 space_after_script: None,
             },
             extension: ExtensionParams {
-                default_rule_thickness: state.font_parameter(extension, 8),
-                big_op_spacing1: state.font_parameter(extension, 9),
-                big_op_spacing2: state.font_parameter(extension, 10),
-                big_op_spacing3: state.font_parameter(extension, 11),
-                big_op_spacing4: state.font_parameter(extension, 12),
-                big_op_spacing5: state.font_parameter(extension, 13),
+                default_rule_thickness: extension_parameters(8),
+                big_op_spacing1: extension_parameters(9),
+                big_op_spacing2: extension_parameters(10),
+                big_op_spacing3: extension_parameters(11),
+                big_op_spacing4: extension_parameters(12),
+                big_op_spacing5: extension_parameters(13),
                 fraction_numerator_gap_min: None,
                 fraction_numerator_display_gap_min: None,
                 fraction_denominator_gap_min: None,
