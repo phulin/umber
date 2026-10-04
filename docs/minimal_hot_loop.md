@@ -1029,14 +1029,16 @@ The old `main_control_until` entry and its `MainControlWords` adapter are
 deleted. The expanded reader has no terminal eligibility hook. Lexical tests
 exercise its actual record consumer directly; native macro-body continuation
 uses the production callback, including its final terminal, with zero command
-records. The remaining `MainControlConsumer` and
-`main_loop_source_step_into` character front has no production caller. Its
-alternate character-boundary coverage belongs on the production native reader
-before that remaining source is deleted. Removing this competing implementation
-reduces code to maintain, while the measured native regression must be repaired
-in the live input back edge. Full checkpoints retain authoritative input,
-mode, group and World owners at real returns; ordinary no-op delivery needs no
-additional checkpoint record.
+records. The remaining `MainControlConsumer`, command-valued
+`main_loop_source_step_into` front and its alternate character-boundary reader
+are deleted, along with their unused character-run statuses. Their useful
+coverage now exercises `consume_main_loop_lookahead` and
+`consume_main_source_characters` directly: native prefix continuation, exact
+fuel cuts, body and argument replay, checkpoint restoration, live source
+catcodes, UTF-8 and superscript boundaries, bounded source admission and scalar
+fallback. These tests demand zero ordinary command records. Full checkpoints
+retain authoritative input, mode, group and World owners at real returns;
+ordinary no-op delivery needs no additional checkpoint record.
 
 ## Native continuation accounting
 

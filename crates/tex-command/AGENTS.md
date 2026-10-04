@@ -814,13 +814,12 @@ that status before clearing it. Synthetic warning serials, `ScannerState`,
 Alignment keeps its real partial builder, while definition/absorption statuses
 carry no unused builder identities.
 
-- `src/processor/expand/main_control.rs`: the remaining character-boundary
-  consumer used by the legacy character-admission tests. Production main
-  control uses the synchronous native reader in `scalar.rs`; the obsolete
-  `main_control_until` entry, `MainControlWords` adapter and expanded-reader
-  terminal eligibility hook are deleted. Lexical delivery tests exercise the
-  shared reader's actual record consumer directly, while native continuation
-  tests use the production callback and demand no command records.
+- `src/processor/expand/tests/main_loop.rs`: Production native lookahead and
+  source-suffix coverage for lexical boundaries, live catcodes, operation limits,
+  scalar fallback, macro body/argument fuel, checkpoint replay and expansion
+  without ordinary command records. The competing `MainControlConsumer`,
+  character-boundary implementation, command-valued source front and unused
+  character-run delivery statuses are deleted.
 
 Scalar scans retain only the actual typed value and diagnostic primary origin.
 There is no recovery enum or pass-through recovery bookkeeping in integer,

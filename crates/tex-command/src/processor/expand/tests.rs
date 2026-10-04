@@ -48,7 +48,6 @@ struct RecordingCharacterConsumer {
     characters: String,
     origins: Vec<OriginId>,
     fallback_borrowed: bool,
-    stop_after: Option<usize>,
 }
 
 impl<G, Facts> crate::MainCharacterConsumer<G, Facts> for RecordingCharacterConsumer {
@@ -89,7 +88,7 @@ impl<G, Facts> crate::MainCharacterConsumer<G, Facts> for RecordingCharacterCons
             crate::MainCharacterInput::Scalar { ch, origin } => {
                 self.characters.push(ch);
                 self.origins.push(origin);
-                crate::CharacterRunAdmission::new(1, self.stop_after != Some(self.characters.len()))
+                crate::CharacterRunAdmission::new(1, true)
             }
         }
     }

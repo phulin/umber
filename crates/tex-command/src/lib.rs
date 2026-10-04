@@ -127,7 +127,7 @@ pub use processor::{
     AlignmentLifecycleError, AlignmentLookahead, AlignmentPreamble, AlignmentRequest,
     AlignmentRequestResult, CharacterRunAdmission, CharacterRunFallback, CommandDeliveryCursor,
     CommandProcessor, DeliveryStatus, FinishedAlignmentCell, MainCharacterConsumer,
-    MainCharacterInput, MainControlConsumer, PreparedAlignmentCellTemplates, PrintCommand,
+    MainCharacterInput, PreparedAlignmentCellTemplates, PrintCommand,
     append_character_command_text, append_command_token_text, append_print_cmd_chr_text,
     append_print_esc_text, character_command_text, command_token_text, print_cmd_chr_text,
     print_esc_text,

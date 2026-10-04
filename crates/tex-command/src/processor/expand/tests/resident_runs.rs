@@ -206,11 +206,7 @@ fn resident_character_stop_resumes_without_reselecting_each_word() {
         let mut fuel = crate::CommandFuelLedger::new(4097).expect("run fuel");
         let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
-        let mut consumer = RecordingCharacterConsumer {
-            stop_after: Some(17),
-            ..Default::default()
-        };
-        let mut destination = None;
+        let mut characters = String::new();
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
@@ -218,28 +214,64 @@ fn resident_character_stop_resumes_without_reselecting_each_word() {
             &mut fuel,
             &mut effects,
         );
+        let writes = crate::command::command_ownership_counters().resolved_writes;
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("resident admission"),
-            crate::DeliveryStatus::CharacterRun
+                .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
+                    assert!(exceptional.is_none());
+                    let Token::Char {
+                        ch,
+                        cat: Catcode::Letter,
+                    } = spelling.semantic_token()
+                    else {
+                        panic!("native prefix stopped after its operation budget");
+                    };
+                    characters.push(ch);
+                    Ok(if characters.len() == 17 {
+                        std::ops::ControlFlow::Break(())
+                    } else {
+                        std::ops::ControlFlow::Continue(())
+                    })
+                })
+                .expect("native prefix"),
+            crate::DeliveryStatus::Command
         );
-        assert!(destination.is_none());
-        assert_eq!(consumer.characters.len(), 17);
+        assert_eq!(characters.len(), 17);
+        assert_eq!(processor.fuel.burned(), 17);
+        let mut tail = None;
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("resident admission"),
-            crate::DeliveryStatus::CharacterRunBoundary
+                .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
+                    assert!(exceptional.is_none());
+                    match spelling.semantic_token() {
+                        Token::Char {
+                            ch,
+                            cat: Catcode::Letter,
+                        } => {
+                            characters.push(ch);
+                            Ok(std::ops::ControlFlow::Continue(()))
+                        }
+                        token => {
+                            tail = Some(token);
+                            Ok(std::ops::ControlFlow::Break(()))
+                        }
+                    }
+                })
+                .expect("native continuation"),
+            crate::DeliveryStatus::Command
         );
-        assert_eq!(consumer.characters, "x".repeat(4096));
-        assert!(matches!(
-            destination.expect("space boundary").meaning(),
-            tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
-                cat: Catcode::Space,
-                ..
+        assert_eq!(characters, "x".repeat(4096));
+        assert_eq!(
+            tail,
+            Some(Token::Char {
+                ch: ' ',
+                cat: Catcode::Space
             })
-        ));
+        );
+        assert_eq!(
+            crate::command::command_ownership_counters().resolved_writes,
+            writes
+        );
         drop(processor);
         assert_eq!(fuel.burned(), 4097);
     });
@@ -261,8 +293,7 @@ fn resident_character_fuel_failure_preserves_exact_consumed_prefix() {
             let mut fuel = crate::CommandFuelLedger::new(limit).expect("bounded fuel");
             let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
             let mut context = universe.command_context().expect("command context");
-            let mut consumer = RecordingCharacterConsumer::default();
-            let mut destination = None;
+            let mut characters = String::new();
             let mut processor = crate::test_harness::processor(
                 &mut command,
                 &mut context,
@@ -270,13 +301,28 @@ fn resident_character_fuel_failure_preserves_exact_consumed_prefix() {
                 &mut fuel,
                 &mut effects,
             );
+            let writes = crate::command::command_ownership_counters().resolved_writes;
             assert!(
                 processor
-                    .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
+                    .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
+                        assert!(exceptional.is_none());
+                        let Token::Char {
+                            ch,
+                            cat: Catcode::Letter,
+                        } = spelling.semantic_token()
+                        else {
+                            panic!("letter input");
+                        };
+                        characters.push(ch);
+                        Ok(std::ops::ControlFlow::Continue(()))
+                    })
                     .is_err()
             );
-            assert_eq!(consumer.characters, &"abcdefg"[..limit as usize]);
-            assert!(destination.is_none());
+            assert_eq!(characters, &"abcdefg"[..limit as usize]);
+            assert_eq!(
+                crate::command::command_ownership_counters().resolved_writes,
+                writes
+            );
             drop(processor);
             assert_eq!(fuel.burned(), limit);
         });

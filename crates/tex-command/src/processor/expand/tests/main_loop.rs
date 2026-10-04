@@ -1,397 +1,205 @@
-//! Character-run and source-step ownership, fuel, and rollback.
+//! Actual native lookahead and source-suffix ownership, fuel, and rollback.
 
 use super::*;
+use std::ops::ControlFlow;
 
 #[test]
-fn main_loop_character_run_resolves_only_its_non_character_tail() {
-    crate::test_harness::with_universe(|universe| {
-        let mut command = CommandState::default();
-        crate::test_harness::push(
-            &mut command,
-            [
-                Token::Char {
-                    ch: 'A',
-                    cat: Catcode::Letter,
-                },
-                Token::Char {
-                    ch: 'b',
-                    cat: Catcode::Other,
-                },
-                Token::Char {
-                    ch: ' ',
-                    cat: Catcode::Space,
-                },
-            ],
-        );
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::new(3).expect("character-run fuel");
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-        let ownership_before = crate::command::command_ownership_counters();
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
-        let mut destination = None;
-        let mut consumer = RecordingCharacterConsumer::default();
-        assert_eq!(
-            processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("borrowed character run"),
-            crate::DeliveryStatus::CharacterRunBoundary
-        );
-        assert_eq!(consumer.characters, "Ab");
-        assert!(matches!(
-            destination.as_ref().expect("tail command").meaning(),
-            tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
-                cat: Catcode::Space,
-                ..
-            })
-        ));
-        drop(processor);
-        assert_eq!(
-            fuel.burned(),
-            3,
-            "two run characters and the consumed tail each cost one charge"
-        );
-        let ownership_after = crate::command::command_ownership_counters();
-        assert_eq!(
-            ownership_after.resolved_writes - ownership_before.resolved_writes,
-            1,
-            "the borrowed characters never become CurrentCommand values"
-        );
-    });
-}
-
-#[test]
-fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
-    crate::test_harness::with_universe(|universe| {
-        let mut command = CommandState::default();
-        let source = command
-            .register_source(crate::SourceRegistration::new(
-                crate::RegisteredSourceKind::Generated,
-                &b"xab c"[..],
-            ))
-            .expect("source registration");
-        command
-            .open_registered_source(source)
-            .expect("source opening");
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::new(4).expect("source character-run fuel");
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
-
-        let first = crate::test_harness::expect_raw_command(&mut processor);
-        assert_eq!(
-            first.spelling().semantic_token(),
-            Token::Char {
-                ch: 'x',
-                cat: Catcode::Letter,
-            }
-        );
-        processor
-            .command
-            .profile_reset_input_source_context_counters();
-        let ownership_before = crate::command::command_ownership_counters();
-        let mut destination = None;
-        let mut consumer = RecordingCharacterConsumer::default();
-        assert_eq!(
-            processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("source character run"),
-            crate::DeliveryStatus::CharacterRun
-        );
-        assert_eq!(consumer.characters, "ab");
-        assert_eq!(consumer.origins.len(), 2);
-        assert_ne!(consumer.origins[0], consumer.origins[1]);
-        assert!(destination.is_none());
-        assert_eq!(
-            processor.command.profile_input_source_context_counters(),
-            (0, 0, 0, 1)
-        );
-        assert_eq!(
-            processor.fuel.burned(),
-            3,
-            "the deferred space tail remains uncharged until its owner fetches it"
-        );
-        let ownership_after = crate::command::command_ownership_counters();
-        assert_eq!(
-            ownership_after.resolved_writes - ownership_before.resolved_writes,
-            0
-        );
-
-        assert_eq!(
-            processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("scalar source boundary"),
-            crate::DeliveryStatus::CharacterRunBoundary
-        );
-        assert!(matches!(
-            destination.as_ref().expect("space boundary").meaning(),
-            tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
-                cat: Catcode::Space,
-                ..
-            })
-        ));
-        drop(processor);
-        assert_eq!(
-            fuel.burned(),
-            4,
-            "the initial source character plus the run and tail each cost one charge"
-        );
-    });
-}
-
-#[test]
-fn main_loop_source_step_settles_zero_prefix_without_reopening_source() {
-    crate::test_harness::with_universe(|universe| {
-        let mut command = CommandState::default();
-        let source = command
-            .register_source(crate::SourceRegistration::new(
-                crate::RegisteredSourceKind::Generated,
-                &b"xab "[..],
-            ))
-            .expect("source registration");
-        command
-            .open_registered_source(source)
-            .expect("source opening");
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::new(3).expect("source character-run fuel");
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
-        crate::test_harness::expect_raw_command(&mut processor);
-        processor
-            .command
-            .profile_reset_input_source_context_counters();
-        let mut consumer = RecordingCharacterConsumer {
-            fallback_borrowed: true,
-            ..RecordingCharacterConsumer::default()
-        };
-        let mut destination = None;
-        assert_eq!(
-            processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("source metric boundary"),
-            crate::DeliveryStatus::CharacterRun
-        );
-        assert_eq!(consumer.characters, "a");
-        assert_eq!(
-            processor.command.profile_input_source_context_counters(),
-            (0, 0, 0, 1)
-        );
-        drop(processor);
-        assert_eq!(fuel.burned(), 2);
-        assert!(destination.is_none());
-    });
-}
-
-#[test]
-fn main_loop_source_step_sends_utf8_boundary_to_scalar_tokenizer() {
-    crate::test_harness::with_universe(|universe| {
-        let mut command =
-            CommandState::new(CommandProfile::unicode_extended(CommandDialect::Tex82));
-        let source = command
-            .register_source(crate::SourceRegistration::new(
-                crate::RegisteredSourceKind::Generated,
-                "Aλ".as_bytes(),
-            ))
-            .expect("source registration");
-        command
-            .open_registered_source(source)
-            .expect("source opening");
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::new(3).expect("source character-run fuel");
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
-
-        assert_eq!(
-            crate::test_harness::expect_raw_command(&mut processor)
-                .spelling()
-                .semantic_token(),
-            Token::Char {
-                ch: 'A',
-                cat: Catcode::Letter,
-            }
-        );
-        let mut destination = None;
-        let mut consumer = RecordingCharacterConsumer::default();
-        assert_eq!(
-            processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("UTF-8 scalar boundary"),
-            crate::DeliveryStatus::CharacterRunBoundary
-        );
-        assert!(consumer.characters.is_empty());
-        assert_eq!(
-            destination
-                .as_ref()
-                .expect("decoded scalar command")
-                .spelling()
-                .semantic_token(),
-            Token::Char {
-                ch: 'λ',
-                cat: Catcode::Other,
-            }
-        );
-    });
-}
-
-#[test]
-fn main_loop_source_step_sends_superscript_boundary_to_scalar_tokenizer() {
-    crate::test_harness::with_universe(|universe| {
-        universe
-            .assign_code(
-                tex_state::env::CodeTableKind::Catcode,
-                '^',
-                i64::from(Catcode::Superscript as u8),
-                AssignmentScope::Global,
-            )
-            .expect("superscript catcode");
-        let mut command = CommandState::default();
-        let source = command
-            .register_source(crate::SourceRegistration::new(
-                crate::RegisteredSourceKind::Generated,
-                &b"A^^41"[..],
-            ))
-            .expect("source registration");
-        command
-            .open_registered_source(source)
-            .expect("source opening");
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::new(5).expect("source character-run fuel");
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
-
-        assert_eq!(
-            crate::test_harness::expect_raw_command(&mut processor)
-                .spelling()
-                .semantic_token(),
-            Token::Char {
-                ch: 'A',
-                cat: Catcode::Letter,
-            }
-        );
-        let mut destination = None;
-        let mut consumer = RecordingCharacterConsumer::default();
-        assert_eq!(
-            processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("superscript scalar boundary"),
-            crate::DeliveryStatus::CharacterRunBoundary
-        );
-        assert!(consumer.characters.is_empty());
-        assert_eq!(
-            destination
-                .as_ref()
-                .expect("reduced scalar command")
-                .spelling()
-                .semantic_token(),
-            Token::Char {
-                ch: 'A',
-                cat: Catcode::Letter,
-            }
-        );
-    });
-}
-
-#[test]
-fn main_loop_source_step_uses_live_catcode_at_run_boundary() {
-    crate::test_harness::with_universe(|universe| {
-        universe
-            .assign_code(
-                tex_state::env::CodeTableKind::Catcode,
-                'b',
-                i64::from(Catcode::Space as u8),
-                AssignmentScope::Global,
-            )
-            .expect("space catcode");
-        let mut command = CommandState::default();
-        let source = command
-            .register_source(crate::SourceRegistration::new(
-                crate::RegisteredSourceKind::Generated,
-                &b"Ab"[..],
-            ))
-            .expect("source registration");
-        command
-            .open_registered_source(source)
-            .expect("source opening");
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::new(2).expect("source character-run fuel");
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
-
-        assert_eq!(
-            crate::test_harness::expect_raw_command(&mut processor)
-                .spelling()
-                .semantic_token(),
-            Token::Char {
-                ch: 'A',
-                cat: Catcode::Letter,
-            }
-        );
-        let mut destination = None;
-        let mut consumer = RecordingCharacterConsumer::default();
-        assert_eq!(
-            processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("catcode scalar boundary"),
-            crate::DeliveryStatus::CharacterRunBoundary
-        );
-        assert!(consumer.characters.is_empty());
-        assert_eq!(
-            destination
-                .as_ref()
-                .expect("space-catcode command")
-                .spelling()
-                .semantic_token(),
+fn main_source_suffix_yields_lexical_boundaries_to_the_native_reader() {
+    for (source, prefix, boundary, space_a) in [
+        (
+            "xab c%",
+            "ab",
             Token::Char {
                 ch: ' ',
                 cat: Catcode::Space,
+            },
+            false,
+        ),
+        (
+            "Aλ%",
+            "",
+            Token::Char {
+                ch: 'λ',
+                cat: Catcode::Other,
+            },
+            false,
+        ),
+        (
+            "A^^61%",
+            "",
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            false,
+        ),
+        (
+            "Aab%",
+            "",
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            true,
+        ),
+    ] {
+        crate::test_harness::with_universe(|universe| {
+            universe
+                .assign_code(
+                    tex_state::env::CodeTableKind::Catcode,
+                    '^',
+                    i64::from(Catcode::Superscript as u8),
+                    AssignmentScope::Global,
+                )
+                .expect("superscript catcode");
+            let mut command =
+                CommandState::new(CommandProfile::unicode_extended(CommandDialect::Tex82));
+            let source_id = command
+                .register_source(crate::SourceRegistration::new(
+                    crate::RegisteredSourceKind::Generated,
+                    source.as_bytes(),
+                ))
+                .expect("source registration");
+            command
+                .open_registered_source(source_id)
+                .expect("source input");
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(8).expect("source fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            crate::test_harness::expect_raw_command(&mut processor);
+            if space_a {
+                processor
+                    .with_execution_owners(|context, _, _, _, _, _, _, _, _| {
+                        context.assign_code(
+                            tex_state::env::CodeTableKind::Catcode,
+                            'a',
+                            i64::from(Catcode::Space as u8),
+                            AssignmentScope::Global,
+                        )
+                    })
+                    .expect("live catcode change");
             }
+            processor
+                .command
+                .profile_reset_input_source_context_counters();
+            let writes = crate::command::command_ownership_counters().resolved_writes;
+            let mut characters = RecordingCharacterConsumer::default();
+            let count = processor
+                .consume_main_source_characters(usize::MAX, &mut characters)
+                .expect("source suffix");
+            assert_eq!(count as usize, prefix.len(), "source={source}");
+            assert_eq!(characters.characters, prefix, "source={source}");
+            if !prefix.is_empty() {
+                assert_eq!(
+                    processor.command.profile_input_source_context_counters(),
+                    (0, 0, 0, 1)
+                );
+                assert_ne!(characters.origins[0], characters.origins[1]);
+            }
+            let mut tail = None;
+            assert_eq!(
+                processor
+                    .consume_main_loop_lookahead(&mut |_, spelling, meaning, _, exceptional| {
+                        assert!(exceptional.is_none());
+                        tail = Some((spelling.semantic_token(), meaning.character()));
+                        Ok(ControlFlow::Break(()))
+                    })
+                    .expect("native lexical boundary"),
+                crate::DeliveryStatus::Command
+            );
+            assert_eq!(
+                tail,
+                Some((
+                    boundary,
+                    match boundary {
+                        Token::Char { ch, cat } => Some((ch, cat)),
+                        _ => unreachable!(),
+                    }
+                )),
+                "source={source}"
+            );
+            assert_eq!(
+                crate::command::command_ownership_counters().resolved_writes,
+                writes
+            );
+            drop(processor);
+            assert_eq!(fuel.burned(), 2 + prefix.len() as u64, "source={source}");
+        });
+    }
+}
+
+#[test]
+fn source_scalar_fallback_and_operation_limit_advance_one_cursor() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"xabcdef%"[..],
+            ))
+            .expect("source");
+        command
+            .open_registered_source(source)
+            .expect("source input");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(7).expect("fuel");
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
         );
+        crate::test_harness::expect_raw_command(&mut processor);
+        let writes = crate::command::command_ownership_counters().resolved_writes;
+        let mut characters = RecordingCharacterConsumer::default();
+        assert_eq!(
+            processor
+                .consume_main_source_characters(2, &mut characters)
+                .expect("bounded suffix"),
+            2
+        );
+        assert_eq!(characters.characters, "ab");
+        characters.fallback_borrowed = true;
+        for expected in ["abc", "abcd"] {
+            assert_eq!(
+                processor
+                    .consume_main_source_characters(2, &mut characters)
+                    .expect("scalar fallback"),
+                1
+            );
+            assert_eq!(characters.characters, expected);
+        }
+        characters.fallback_borrowed = false;
+        assert_eq!(
+            processor
+                .consume_main_source_characters(2, &mut characters)
+                .expect("remaining suffix"),
+            2
+        );
+        assert_eq!(characters.characters, "abcdef");
+        assert!(characters.origins.windows(2).all(|pair| pair[0] != pair[1]));
+        assert_eq!(
+            crate::command::command_ownership_counters().resolved_writes,
+            writes
+        );
+        drop(processor);
+        assert_eq!(fuel.burned(), 7);
     });
 }
 
 #[test]
-fn main_loop_character_run_charges_resident_macro_body_once_per_character() {
+fn native_macro_body_charges_each_word_once() {
     crate::test_harness::with_universe(|universe| {
         let body_tokens = [
             Token::Char {
@@ -437,29 +245,45 @@ fn main_loop_character_run_charges_resident_macro_body_once_per_character() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut destination = None;
-        let mut consumer = RecordingCharacterConsumer::default();
+        let writes = crate::command::command_ownership_counters().resolved_writes;
+        let mut delivered = Vec::new();
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("macro body character run"),
-            crate::DeliveryStatus::CharacterRunBoundary
+                .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
+                    assert!(exceptional.is_none());
+                    delivered.push(spelling);
+                    Ok(if delivered.len() == 4 {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
+                    })
+                })
+                .expect("native lookahead"),
+            crate::DeliveryStatus::Command
         );
-        assert_eq!(consumer.characters, "Abc");
-        assert!(matches!(
-            destination.as_ref().expect("macro body tail").meaning(),
-            tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
-                cat: Catcode::Space,
-                ..
-            })
-        ));
+        assert_eq!(
+            delivered
+                .iter()
+                .map(|word| word.semantic_token())
+                .collect::<Vec<_>>(),
+            body_tokens
+        );
+        assert_eq!(
+            crate::command::command_ownership_counters().resolved_writes,
+            writes
+        );
+        assert!(
+            delivered
+                .iter()
+                .all(|word| word.origin() == OriginId::UNKNOWN)
+        );
         drop(processor);
         assert_eq!(fuel.burned(), 4);
     });
 }
 
 #[test]
-fn main_loop_character_run_charges_macro_argument_chars_once() {
+fn native_macro_argument_charges_each_word_once() {
     crate::test_harness::with_universe(|universe| {
         let argument_tokens = [
             Token::Char {
@@ -525,23 +349,41 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut destination = None;
-        let mut consumer = RecordingCharacterConsumer::default();
+        let writes = crate::command::command_ownership_counters().resolved_writes;
+        let mut delivered = Vec::new();
         assert_eq!(
             processor
-                .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                .expect("macro argument character run"),
-            crate::DeliveryStatus::CharacterRun
+                .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
+                    assert!(exceptional.is_none());
+                    delivered.push(spelling);
+                    Ok(if delivered.len() == 3 {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
+                    })
+                })
+                .expect("native lookahead"),
+            crate::DeliveryStatus::Command
         );
-        assert_eq!(consumer.characters, "Abc");
-        assert!(destination.is_none());
+        assert_eq!(
+            delivered
+                .iter()
+                .map(|word| word.semantic_token())
+                .collect::<Vec<_>>(),
+            argument_tokens
+        );
+        assert_eq!(
+            crate::command::command_ownership_counters().resolved_writes,
+            writes
+        );
+        assert_eq!(delivered, traced);
         drop(processor);
         assert_eq!(fuel.burned(), 3);
     });
 }
 
 #[test]
-fn main_loop_character_run_restore_keeps_fuel_monotonic() {
+fn native_lookahead_restore_keeps_fuel_monotonic() {
     crate::test_harness::with_universe(|universe| {
         let tokens = [
             Token::Char {
@@ -571,23 +413,40 @@ fn main_loop_character_run_restore_keeps_fuel_monotonic() {
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let mut destination = None;
-            let mut consumer = RecordingCharacterConsumer::default();
+            let writes = crate::command::command_ownership_counters().resolved_writes;
+            let mut delivered = Vec::new();
             assert_eq!(
                 processor
-                    .main_loop_source_step_into(&mut destination, &mut consumer, &mut ())
-                    .expect("character run retry"),
-                crate::DeliveryStatus::CharacterRun
+                    .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
+                        assert!(exceptional.is_none());
+                        delivered.push(spelling);
+                        Ok(if delivered.len() == 2 {
+                            ControlFlow::Break(())
+                        } else {
+                            ControlFlow::Continue(())
+                        })
+                    })
+                    .expect("native lookahead"),
+                crate::DeliveryStatus::Command
             );
-            assert_eq!(consumer.characters, "Ab");
+            assert_eq!(
+                delivered
+                    .iter()
+                    .map(|word| word.semantic_token())
+                    .collect::<Vec<_>>(),
+                tokens
+            );
+            assert_eq!(
+                crate::command::command_ownership_counters().resolved_writes,
+                writes
+            );
             drop(processor);
             assert_eq!(fuel.burned(), expected_burned);
-
             if expected_burned == 2 {
                 drop(context);
                 command
                     .restore_summary(&summary, universe)
-                    .expect("restore reinstalls the character row");
+                    .expect("restore actual input");
             }
         }
     });
@@ -646,106 +505,6 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
         );
         assert_eq!(processor.command.delivery_mode, persistent_mode);
     });
-}
-
-#[test]
-fn main_loop_native_boundary_consumes_the_word_without_a_command_record() {
-    crate::test_harness::with_universe(|universe| {
-        let relax = universe.intern("relax").expect("relax symbol");
-        universe
-            .assign_meaning(
-                relax,
-                tex_state::MeaningWord::scalar(Meaning::RELAX_WORD),
-                AssignmentScope::Global,
-            )
-            .expect("relax meaning");
-        for boundary in [
-            Token::Char {
-                ch: ' ',
-                cat: Catcode::Space,
-            },
-            Token::Cs(relax.symbol()),
-        ] {
-            let mut command = CommandState::default();
-            crate::test_harness::push(
-                &mut command,
-                [
-                    Token::Char {
-                        ch: 'A',
-                        cat: Catcode::Letter,
-                    },
-                    Token::Char {
-                        ch: 'b',
-                        cat: Catcode::Other,
-                    },
-                    boundary,
-                ],
-            );
-            let mut capabilities = CommandHostCapabilities::default();
-            let mut fuel = crate::CommandFuelLedger::new(3).expect("text and terminal fuel");
-            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
-            let mut context = universe.command_context().expect("command context");
-            let before = crate::command::command_ownership_counters();
-            let mut processor = crate::test_harness::processor(
-                &mut command,
-                &mut context,
-                &mut capabilities,
-                &mut fuel,
-                &mut effects,
-            );
-            let mut destination = None;
-            let mut characters = RecordingCharacterConsumer::default();
-            let mut native = NativeBoundary::<false>(None);
-            assert_eq!(
-                processor
-                    .main_loop_source_step_into(&mut destination, &mut characters, &mut native)
-                    .expect("native boundary consumes directly"),
-                crate::DeliveryStatus::CharacterRunBoundary,
-            );
-            assert_eq!(characters.characters, "Ab");
-            assert_eq!(native.0, Some(TokenWord::pack(boundary)));
-            assert!(destination.is_none());
-            drop(processor);
-            assert_eq!(fuel.burned(), 3);
-            assert_eq!(
-                crate::command::command_ownership_counters().resolved_writes,
-                before.resolved_writes
-            );
-        }
-    });
-}
-
-struct NativeBoundary<const EXPAND: bool>(Option<TokenWord>);
-impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>, const EXPAND: bool>
-    crate::MainControlConsumer<crate::CommandProcessor<'state, 'host, G, Facts>, G>
-    for NativeBoundary<EXPAND>
-{
-    const EXPAND_BOUNDARIES: bool = EXPAND;
-
-    fn accepts_native_terminal(
-        &mut self,
-        _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
-        meaning: &tex_state::MeaningWord<G>,
-    ) -> bool {
-        meaning.scalar_word().is_some_and(|word| {
-            word == Meaning::RELAX_WORD
-                || Meaning::runtime_word_character(word).is_some_and(|(_, cat)| {
-                    cat == Catcode::Space
-                        || (EXPAND && matches!(cat, Catcode::Letter | Catcode::Other))
-                })
-        })
-    }
-
-    fn consume_native_terminal(
-        &mut self,
-        _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
-        spelling: tex_state::token::TracedTokenWord,
-        _: &tex_state::MeaningWord<G>,
-        _: Option<tex_state::interner::Symbol>,
-    ) -> std::ops::ControlFlow<()> {
-        assert!(self.0.replace(spelling.token_word()).is_none());
-        std::ops::ControlFlow::Break(())
-    }
 }
 
 #[test]
@@ -826,41 +585,36 @@ fn execution_character_boundaries_expand_without_constructing_commands() {
                 &mut fuel,
                 &mut effects,
             );
-            let mut destination = None;
-            let mut characters = RecordingCharacterConsumer::default();
-            let mut native = NativeBoundary::<true>(None);
-            for _ in 0..16 {
-                let status = processor
-                    .main_loop_source_step_into(&mut destination, &mut characters, &mut native)
-                    .expect("native expansion boundary");
-                assert!(
-                    destination.is_none(),
-                    "source={source}, status={status:?}, command={:?}",
-                    destination
-                        .as_ref()
-                        .map(|command| (command.spelling().semantic_token(), command.meaning()))
-                );
-                assert_eq!(processor.command.transient.active_expansion_depth, 0);
-                if status == crate::DeliveryStatus::CharacterRunBoundary {
-                    let word = native.0.take().expect("native terminal boundary");
-                    match word.semantic_token() {
-                        Token::Char {
-                            ch,
-                            cat: Catcode::Letter | Catcode::Other,
-                        } => characters.characters.push(ch),
-                        Token::Cs(symbol) if symbol == relax => {
-                            native.0 = Some(word);
-                            break;
-                        }
-                        terminal => panic!("unexpected terminal {terminal:?}"),
-                    }
-                } else {
-                    assert_eq!(status, crate::DeliveryStatus::CharacterRun);
-                }
-            }
-            assert_eq!(native.0, Some(TokenWord::pack(Token::Cs(relax))));
+            let mut characters = String::new();
+            let mut terminal = None;
             assert_eq!(
-                characters.characters,
+                processor
+                    .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
+                        assert!(exceptional.is_none(), "source={source}");
+                        match spelling.semantic_token() {
+                            Token::Char {
+                                ch,
+                                cat: Catcode::Letter | Catcode::Other,
+                            } => {
+                                characters.push(ch);
+                                Ok(ControlFlow::Continue(()))
+                            }
+                            Token::Cs(symbol) if symbol == relax => {
+                                terminal = Some(spelling.token_word());
+                                Ok(ControlFlow::Break(()))
+                            }
+                            token => {
+                                panic!("unexpected native terminal {token:?}, source={source}")
+                            }
+                        }
+                    })
+                    .expect("native expansion"),
+                crate::DeliveryStatus::Command
+            );
+            assert_eq!(processor.command.transient.active_expansion_depth, 0);
+            assert_eq!(terminal, Some(TokenWord::pack(Token::Cs(relax))));
+            assert_eq!(
+                characters,
                 if source.contains("\\empty") && !source.contains("expandafter") {
                     "ac"
                 } else {

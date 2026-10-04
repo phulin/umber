@@ -6,7 +6,6 @@ mod backup;
 pub(crate) mod delivery_mode;
 mod end_input;
 pub(crate) mod expand;
-pub use expand::MainControlConsumer;
 mod expand_convert;
 mod expand_input;
 mod expand_pdf;
@@ -81,12 +80,6 @@ impl<G> AlignmentLookahead<G> {
 pub enum DeliveryStatus {
     End,
     Command,
-    /// One or more ordinary main-loop characters were consumed directly and
-    /// the input boundary remains for the next delivery episode.
-    CharacterRun,
-    /// A character run was consumed and its first non-character tail is
-    /// resident but has not entered expanded-command classification yet.
-    CharacterRunBoundary,
     PendingExpanded,
     ReplayCompleted(crate::CommandReplayEpisode),
     AlignmentEndTemplate,

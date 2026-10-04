@@ -3,12 +3,10 @@
 mod collect;
 mod consume;
 mod input;
-mod main_control;
 mod once;
 mod primitive;
 mod resident;
 mod scalar;
-pub use main_control::MainControlConsumer;
 mod skipping;
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
@@ -16,11 +14,8 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::CommandError;
 use crate::command::CurrentCommand;
-use crate::input::{InputLevel, InputStorage};
 
-use super::{
-    AlignmentLookahead, CommandProcessor, DeliveryStatus, MainCharacterConsumer, MainCharacterInput,
-};
+use super::{AlignmentLookahead, CommandProcessor, DeliveryStatus};
 
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
@@ -196,19 +191,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         );
         self.record_consumed_word(kind, word.requires_meaning_lookup());
         word.literal_catcode()
-    }
-
-    #[inline(always)]
-    fn settle_hot_delivery(
-        &mut self,
-        command: &mut CurrentCommand<G>,
-        literal_catcode: Option<Catcode>,
-    ) -> Result<(), CommandError> {
-        if self.is_observed() {
-            self.settle_hot_delivery_in::<true>(command, literal_catcode)
-        } else {
-            self.settle_hot_delivery_in::<false>(command, literal_catcode)
-        }
     }
 
     #[inline(always)]
@@ -667,229 +649,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    fn finish_character_boundary<N: MainControlConsumer<Self, G>>(
-        &mut self,
-        word: TokenWord,
-        origin: OriginId,
-        suppress: bool,
-        site: ReadSite,
-        kind: crate::fuel::RawDeliveryKind,
-        destination: &mut Option<CurrentCommand<G>>,
-        native: &mut N,
-    ) -> Result<std::ops::ControlFlow<DeliveryStatus>, CommandError> {
-        self.fuel.charge()?;
-        let (meaning, control_sequence) = self.resolve_token_word(word);
-        self.record_consumed_word(kind, word.requires_meaning_lookup());
-        if !self.is_observed()
-            && !self
-                .command
-                .delivery_mode
-                .requires_semantic_settlement(suppress, meaning.is_outer())
-        {
-            if matches!(site, ReadSite::Source(_))
-                && let Some(location) = self.pending_diagnostic_location.take()
-            {
-                self.command.set_last_diagnostic_location(Some(location));
-            }
-            if N::EXPAND_BOUNDARIES
-                && let Some((flags, definition)) = meaning.macro_parts()
-            {
-                let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
-                match self.activate_read_macro(word, origin, flags, definition, name) {
-                    Ok(())
-                    | Err(
-                        CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument,
-                    ) => {}
-                    Err(failure) => return Err(failure),
-                }
-                return Ok(std::ops::ControlFlow::Continue(()));
-            }
-            let action = classify_native_command(word, &meaning);
-            if N::EXPAND_BOUNDARIES
-                && let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) =
-                    action
-            {
-                self.expand_primitive(
-                    primitive,
-                    TracedTokenWord::from_parts(word, origin),
-                    control_sequence,
-                    true,
-                )?;
-                return Ok(std::ops::ControlFlow::Continue(()));
-            }
-            if matches!(action, ExpandedCommandAction::Return)
-                && native.accepts_native_terminal(self, &meaning)
-            {
-                self.command
-                    .roots
-                    .alignment
-                    .account_literal_catcode(word.literal_catcode());
-                let _ = native.consume_native_terminal(
-                    self,
-                    TracedTokenWord::from_parts(word, origin),
-                    &meaning,
-                    control_sequence,
-                );
-                return Ok(std::ops::ControlFlow::Break(
-                    DeliveryStatus::CharacterRunBoundary,
-                ));
-            }
-        }
-        let line = match site {
-            ReadSite::Source(line) => line,
-            _ => None,
-        };
-        let command = destination.insert(CurrentCommand::from_delivered_parts(
-            word,
-            origin,
-            matches!(site, ReadSite::Source(_)),
-            line,
-            suppress,
-            meaning,
-            control_sequence,
-        ));
-        self.settle_hot_delivery(command, word.literal_catcode())?;
-        Ok(std::ops::ControlFlow::Break(
-            DeliveryStatus::CharacterRunBoundary,
-        ))
-    }
-
-    /// Admits ordinary characters within one selected native span. The first
-    /// boundary token is consumed directly into its final execution command.
-    #[inline(always)]
-    pub(super) fn main_character_run(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-        consume: &mut impl MainCharacterConsumer<G, Facts>,
-        native: &mut impl MainControlConsumer<Self, G>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        debug_assert!(destination.is_none());
-        let mut consumed_characters = false;
-        loop {
-            let allows_characters = self.command.delivery_mode.allows_character_run()
-                && self
-                    .state
-                    .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
-                    <= 1;
-            #[cfg(feature = "profiling")]
-            let kind = match self.command.roots.input.levels.current.as_ref() {
-                Some(
-                    row @ crate::input::InputLevel {
-                        storage:
-                            crate::input::InputStorage::List(_)
-                            | crate::input::InputStorage::StoredList(_)
-                            | crate::input::InputStorage::MacroBody(_)
-                            | crate::input::InputStorage::MacroArgument { .. },
-                        ..
-                    },
-                ) if matches!(
-                    row.storage,
-                    crate::input::InputStorage::MacroArgument { .. }
-                ) =>
-                {
-                    crate::fuel::RawDeliveryKind::MacroArgument
-                }
-                _ => crate::fuel::RawDeliveryKind::StoredToken,
-            };
-            let selected = self.consume_resident_input(
-                &mut |_| Ok(()),
-                &mut |state, fuel, effects, _, execution, word, origin, _, _, _| {
-                    let Token::Char {
-                        ch,
-                        cat: Catcode::Letter | Catcode::Other,
-                    } = word.semantic_token()
-                    else {
-                        return std::ops::ControlFlow::Continue(false);
-                    };
-                    if !allows_characters || !fuel.try_charge() {
-                        return std::ops::ControlFlow::Continue(false);
-                    }
-                    consumed_characters = true;
-                    #[cfg(feature = "profiling")]
-                    fuel.record_raw_run(false, kind, 1);
-                    let admission = consume.admit(
-                        state,
-                        fuel,
-                        effects,
-                        execution,
-                        MainCharacterInput::Scalar { ch, origin },
-                    );
-                    if admission.continue_run() {
-                        std::ops::ControlFlow::Continue(true)
-                    } else {
-                        std::ops::ControlFlow::Break(std::ops::ControlFlow::Break(
-                            DeliveryStatus::CharacterRun,
-                        ))
-                    }
-                },
-                &mut |processor, word, origin, suppress, site, kind| {
-                    processor.finish_character_boundary(
-                        word,
-                        origin,
-                        suppress,
-                        site,
-                        kind,
-                        destination,
-                        native,
-                    )
-                },
-            )?;
-            match selected {
-                Some(std::ops::ControlFlow::Break(status)) => return Ok(status),
-                Some(std::ops::ControlFlow::Continue(())) => continue,
-                None => {}
-            }
-            if consumed_characters
-                && self
-                    .command
-                    .roots
-                    .input
-                    .levels
-                    .current
-                    .as_ref()
-                    .is_none_or(|row| row.stored_is_exhausted() == Some(true))
-            {
-                return Ok(DeliveryStatus::CharacterRun);
-            }
-            if matches!(
-                self.command.roots.input.levels.current.as_ref(),
-                Some(InputLevel {
-                    storage: InputStorage::Source(_),
-                    ..
-                })
-            ) && self
-                .advance_source_character_step(usize::MAX, consume)?
-                .is_some()
-            {
-                return Ok(DeliveryStatus::CharacterRun);
-            }
-            if let Some(result) = self.advance_input_boundary(
-                self.create_source_control_sequences,
-                &mut |processor, word, origin, suppress, site, kind| {
-                    processor.finish_character_boundary(
-                        word,
-                        origin,
-                        suppress,
-                        site,
-                        kind,
-                        destination,
-                        native,
-                    )
-                },
-            )? {
-                match result {
-                    std::ops::ControlFlow::Break(status)
-                    | std::ops::ControlFlow::Continue(std::ops::ControlFlow::Break(status)) => {
-                        return Ok(status);
-                    }
-                    std::ops::ControlFlow::Continue(std::ops::ControlFlow::Continue(())) => {}
-                }
-            }
-        }
-    }
-
     /// Replay-aware raw delivery is a cold entry for the same raw owner. The
     /// public ordinary wrapper consumes completion statuses; replay callers
     /// keep them visible.
@@ -949,9 +708,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
                     return Ok(DeliveryStatus::Command);
                 }
-                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
-                    unreachable!("protected delivery has no character consumer")
-                }
             }
 
             let command = destination
@@ -978,9 +734,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .take()
                         .ok_or_else(CommandError::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
-                }
-                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
-                    unreachable!("protected delivery has no character consumer")
                 }
             }
         }
@@ -1119,9 +872,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     return Ok(DeliveryStatus::Command);
                 }
                 DeliveryStatus::End | DeliveryStatus::Command => return Ok(result),
-                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
-                    unreachable!("expanded delivery does not own a character consumer")
-                }
             }
         }
     }
@@ -1308,9 +1058,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     // same x-token operation after the continuation retires.
                     pending = None;
                 }
-                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
-                    unreachable!("active-character delivery has no character consumer")
-                }
             }
         }
     }
@@ -1444,34 +1191,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::End
                 | DeliveryStatus::Command
                 | DeliveryStatus::ReplayCompleted(_) => return Ok(result),
-                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
-                    unreachable!("expanded delivery does not own a character consumer")
-                }
             }
-        }
-    }
-
-    /// Lends one main-control source step to the direct list admission, then
-    /// settles scalar input through the same owner when the borrowed prefix is
-    /// unavailable.  The source row is selected once by `main_character_run`;
-    /// this entry never probes it and re-enters a second delivery loop.
-    pub fn main_loop_source_step_into<
-        C: MainCharacterConsumer<G, Facts>,
-        N: MainControlConsumer<Self, G>,
-    >(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-        consume: &mut C,
-        native: &mut N,
-    ) -> Result<DeliveryStatus, CommandError> {
-        debug_assert!(destination.is_none());
-        debug_assert!(!self.is_observed());
-        if N::EXPAND_BOUNDARIES {
-            self.with_expanded_delivery(destination, |processor, destination| {
-                processor.main_character_run(destination, consume, native)
-            })
-        } else {
-            self.main_character_run(destination, consume, native)
         }
     }
 

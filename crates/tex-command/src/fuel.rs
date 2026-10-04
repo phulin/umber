@@ -184,16 +184,6 @@ impl CommandFuel {
         Ok(())
     }
 
-    /// Charges one transition when the budget still funds it. A batched
-    /// consumer uses this to stop before an unfunded word and leave that word
-    /// to ordinary delivery, whose [`Self::charge`] reports the exhaustion.
-    #[inline(always)]
-    pub(crate) fn try_charge(&mut self) -> bool {
-        let funded = self.remaining != 0;
-        self.remaining -= u64::from(funded);
-        funded
-    }
-
     /// Number of command transitions still available to a bounded operation.
     #[must_use]
     pub const fn remaining(&self) -> u64 {
