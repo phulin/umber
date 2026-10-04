@@ -13,6 +13,15 @@ engine per job/checkpoint family. Independent jobs and format admissions have
 independent generations. Accepted alternates and retained named roots are cold
 histories, not another mutable eqtb or interpreter.
 
+Fixed parameter and math-family banks belong inline to the admitted dense
+state, just as the classical register prefix already does. Their array lengths
+are part of their types; a separate heap allocation supplies no independent
+lifetime or checkpoint authority. Reads address the actual cell through the
+dense-state borrow, including the tracing parameter read on ordinary commands.
+The cells retain their existing values, group levels and checkpoint epochs;
+assignment, first-touch journals and restoration continue to address those
+same cells. No tracing cache or deferred synchronization is introduced.
+
 ## Persistent interpreter replacement
 
 The command-processing core is replaced as one implementation. The existing

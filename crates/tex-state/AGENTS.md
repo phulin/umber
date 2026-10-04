@@ -126,7 +126,7 @@ Definition-owned parameter programs expose literal delimiter views only for none
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
 - `src/expansion_diagnostic.rs`: Detached recoverable expansion diagnostic
   values shared by command expansion and execution-side presentation.
-- `src/env/banks.rs`: Fixed boxed-array parameter/font banks with no dynamic
+- `src/env/banks.rs`: Fixed inline-array parameter/font banks with no dynamic
   length or capacity, page/index dense banks,
   dense-prefix/paged-overflow register banks, typed parameter ids, and the
   runtime-only per-cell save serial used by direct checkpoint first-touch.
