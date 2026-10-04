@@ -19,17 +19,6 @@ use tex_typeset::math::{
 #[cfg(test)]
 mod tests;
 
-/// Detached TeX82 §82 input context for an error raised while converting
-/// an already-complete math list.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct MathConversionErrorContext(String);
-
-impl MathConversionErrorContext {
-    pub(crate) fn new(rendered: String) -> Self {
-        Self(rendered)
-    }
-}
-
 pub(crate) fn finish_math_list_node<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
@@ -97,7 +86,7 @@ pub(crate) fn finish_inline_math_list_node<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     list: MathListNode,
     insert_penalties: bool,
-    error_context: MathConversionErrorContext,
+    error_context: &tex_command::CommandState<G>,
 ) -> (PageListId, u64) {
     let (list, family_mask) = finish_math_list_node_with_reads(
         stores,
@@ -105,7 +94,7 @@ pub(crate) fn finish_inline_math_list_node<G>(
         geometry,
         list,
         insert_penalties,
-        Some(&error_context),
+        Some(error_context),
     );
     (stores.publish_unique_page_list(list), family_mask)
 }
@@ -116,7 +105,7 @@ fn finish_math_list_node_with_reads<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     list: MathListNode,
     insert_penalties: bool,
-    error_context: Option<&MathConversionErrorContext>,
+    error_context: Option<&tex_command::CommandState<G>>,
 ) -> (UniquePageList, u64) {
     let mut sink = LoweredMathSink::new(stores, diagnostic_effects, geometry, error_context);
     let params = MathParams::read(&sink);
@@ -168,7 +157,7 @@ pub(super) fn convert_math_hlist_with_error_context<G>(
     style: Style,
     penalties: bool,
     params: &MathParams,
-    error_context: Option<&MathConversionErrorContext>,
+    error_context: Option<&tex_command::CommandState<G>>,
 ) -> PageListId {
     let mut sink = LoweredMathSink::new(stores, diagnostic_effects, geometry, error_context);
     convert_math_hlist_with_sink(&mut sink, input, style, penalties, params)
@@ -190,7 +179,7 @@ struct LoweredMathSink<'a, 'ctx, G> {
     stores: &'a mut CommandContext<'ctx, G>,
     diagnostic_effects: &'a mut DiagnosticEffects,
     geometry: &'a mut dyn crate::geometry::PackGeometrySink,
-    error_context: Option<&'a MathConversionErrorContext>,
+    error_context: Option<&'a tex_command::CommandState<G>>,
     root_nodes: PageListId,
     glue_cache: Vec<(GlueSpec, GlueSpec)>,
     family_mask: Cell<u64>,
@@ -201,7 +190,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
         stores: &'a mut CommandContext<'ctx, G>,
         diagnostic_effects: &'a mut DiagnosticEffects,
         geometry: &'a mut dyn crate::geometry::PackGeometrySink,
-        error_context: Option<&'a MathConversionErrorContext>,
+        error_context: Option<&'a tex_command::CommandState<G>>,
     ) -> Self {
         Self {
             stores,
@@ -676,6 +665,9 @@ impl<G> LoweredMathSink<'_, '_, G> {
             tex_state::math::MathFontSize::Script => "\\scriptfont",
             tex_state::math::MathFontSize::ScriptScript => "\\scriptscriptfont",
         };
+        let context = self
+            .error_context
+            .map(|command| command.output_open_context(self.stores));
         let mut report = self.stores.print_err("");
         report
             .print(size)
@@ -690,8 +682,8 @@ impl<G> LoweredMathSink<'_, '_, G> {
             "plain TeX doesn't allow \\it or \\sl in subscripts. Proceed,",
             "and I'll try to forget that I needed that character.",
         ]);
-        if let Some(context) = self.error_context {
-            report.context(context.0.clone());
+        if let Some(context) = context {
+            report.context(context);
         }
         let _ = report.error();
     }
@@ -735,6 +727,9 @@ impl<G> LoweredMathSink<'_, '_, G> {
                         tex_state::math::MathFontSize::Script => "\\scriptfont",
                         tex_state::math::MathFontSize::ScriptScript => "\\scriptscriptfont",
                     };
+                    let context = self
+                        .error_context
+                        .map(|command| command.output_open_context(self.stores));
                     let mut report = self.stores.print_err("");
                     report
                         .print(size)
@@ -752,8 +747,8 @@ impl<G> LoweredMathSink<'_, '_, G> {
                         "plain TeX doesn't allow \\it or \\sl in subscripts. Proceed,",
                         "and I'll try to forget that I needed that character.",
                     ]);
-                    if let Some(context) = self.error_context {
-                        report.context(context.0.clone());
+                    if let Some(context) = context {
+                        report.context(context);
                     }
                     let _ = report.error();
                 }

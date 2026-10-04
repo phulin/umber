@@ -832,3 +832,5 @@ Execution-owned character boundaries expand native macros and primitives in the 
 Active mathcode treatment consumes its synthetic native spelling and backs the actual expanded word in src/processor/expand/scalar.rs, without charging the synthetic token or constructing ordinary commands. Genuine observed, undefined, end-template and alignment treatment retains its required delivery facts. The unused CurrentCommand::resolve convenience constructor is deleted; fixtures use the actual delivery constructor.
 
 Resident token rows hold their native packed frame directly. TokenRowHeader, its constructor and the additional field projection are deleted; behavior/retirement project from the actual row, and stored_common lends that row. Native checkpoints copy the actual frame, with no header adapter or compatibility type.
+
+Diagnostic input coordinates project the existing next-level identity for push/pop validity. The duplicate row_admissions field and hot increment are deleted. InputStack's context epoch changes only for checkpoint/candidate replacement and source-owner rebind; actual top/scalar facts and that cold epoch preserve stale diagnostic rejection.

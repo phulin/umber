@@ -111,6 +111,7 @@ impl<G> InputCapture<G> {
 /// Copy-small projection of context-relevant state outside the input rows.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputScalarContextCoordinate {
+    next_level_identity: u64,
     retained_file_line_number: i32,
     pending_source_frontier: u64,
     pending_source_count: usize,
@@ -185,6 +186,7 @@ impl<G> InputState<G> {
 
     pub(crate) fn diagnostic_scalar_coordinate(&self) -> InputScalarContextCoordinate {
         InputScalarContextCoordinate {
+            next_level_identity: self.next_level_identity,
             retained_file_line_number: self.retained_file_line_number,
             pending_source_frontier: self.next_source_identity,
             pending_source_count: self.pending_sources.len(),

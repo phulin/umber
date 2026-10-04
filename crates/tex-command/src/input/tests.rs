@@ -270,6 +270,52 @@ fn source_advance_invalidates_a_diagnostic_coordinate() {
 }
 
 #[test]
+fn unread_push_pop_rejects_a_diagnostic_coordinate() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        command.set_terminal_context_line("unchanged input");
+        let coordinate = command.diagnostic_context_coordinate();
+        crate::test_harness::push(
+            &mut command,
+            [Token::Char {
+                ch: 'x',
+                cat: Catcode::Other,
+            }],
+        );
+        command
+            .pop_input_level_at_end_of_job()
+            .expect("unread insertion retires");
+        let stores = universe.command_context().expect("diagnostic context");
+        assert_eq!(
+            command.render_diagnostic_context(coordinate, &stores),
+            Err(crate::StaleDiagnosticContext)
+        );
+        let current = command.diagnostic_context_coordinate();
+        assert!(command.render_diagnostic_context(current, &stores).is_ok());
+    });
+}
+
+#[test]
+fn same_state_checkpoint_restore_rejects_a_diagnostic_coordinate() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        command.set_terminal_context_line("unchanged input");
+        let checkpoint = command.publish_summary(universe).expect("checkpoint");
+        let coordinate = command.diagnostic_context_coordinate();
+        command
+            .restore_summary(&checkpoint, universe)
+            .expect("same-state restore");
+        let stores = universe.command_context().expect("diagnostic context");
+        assert_eq!(
+            command.render_diagnostic_context(coordinate, &stores),
+            Err(crate::StaleDiagnosticContext)
+        );
+        let current = command.diagnostic_context_coordinate();
+        assert!(command.render_diagnostic_context(current, &stores).is_ok());
+    });
+}
+
+#[test]
 fn push_pop_aba_and_context_scalars_reject_old_coordinates() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();

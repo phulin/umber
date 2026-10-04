@@ -3774,13 +3774,10 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
-        let math_font_context = self
-            .command
-            .output_open_context(&stores.command_context().expect("math-font admission"));
         let rejected = crate::math::reject_invalid_math_fonts_at_outer_barrier(
             stores,
             diagnostic_effects,
-            math_font_context,
+            &self.command,
         )?;
         let content = take_finished_math_list(&mut self.execution.modes, stores)?;
         Ok(if rejected {
@@ -3988,15 +3985,10 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<(), ExecError> {
         let mut content = take_finished_math_list(&mut self.execution.modes, stores)?;
-        let diagnostic_text = self
-            .command
-            .output_open_context(&stores.command_context().expect("inline-math admission"));
-        let conversion_error_context =
-            crate::math::MathConversionErrorContext::new(diagnostic_text.clone());
         if crate::math::reject_invalid_math_fonts_at_outer_barrier(
             stores,
             diagnostic_effects,
-            diagnostic_text,
+            &self.command,
         )? {
             content = tex_state::page_node_arena::PageListId::empty();
         }
@@ -4023,7 +4015,7 @@ impl<G> MainControl<G> {
                 content,
             },
             insert_penalties,
-            conversion_error_context,
+            &self.command,
         );
         let nodes = context.reclaim_unique_page_list(nodes);
         self.execution
@@ -4081,17 +4073,13 @@ impl<G> MainControl<G> {
         ExecError,
     > {
         let mut context = stores.command_context().expect("equation-number admission");
-        let diagnostic_text = self.command.output_open_context(&context);
-        let conversion_error_context =
-            crate::math::MathConversionErrorContext::new(diagnostic_text.clone());
-        let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::new(
+        let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::live(
             self.command
                 .current_file_line_number()
                 .try_into()
                 .unwrap_or(i32::MAX),
-            0,
             false,
-            diagnostic_text,
+            &self.command,
         );
         let mut geometry = pack_geometry_sink(
             &self.command,
@@ -4106,7 +4094,7 @@ impl<G> MainControl<G> {
             &diagnostic_context,
             eq.side,
             content,
-            Some(&conversion_error_context),
+            Some(&self.command),
         );
         unsave_group(
             &mut context,
@@ -4195,22 +4183,16 @@ impl<G> MainControl<G> {
         display_level: Option<crate::mode::ModeLevelSummary>,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
-        let diagnostic_text = self
-            .command
-            .output_open_context(&stores.command_context().expect("display-math admission"));
-        let conversion_error_context =
-            crate::math::MathConversionErrorContext::new(diagnostic_text.clone());
         // TeX82 §§1195--1196 converts and packs the display while the
         // closing math shift is still current, so §661's `line` is the
         // shift's live input line rather than a source-free zero.
-        let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::new(
+        let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::live(
             self.command
                 .current_file_line_number()
                 .try_into()
                 .unwrap_or(i32::MAX),
-            0,
             false,
-            diagnostic_text.clone(),
+            &self.command,
         );
         // TeX82 §1194 performs this check before every display `fin_mlist`,
         // including the saved outer mlist after an equation number.
@@ -4218,7 +4200,7 @@ impl<G> MainControl<G> {
             && crate::math::reject_invalid_math_fonts_at_outer_barrier(
                 stores,
                 diagnostic_effects,
-                diagnostic_text,
+                &self.command,
             )?
         {
             content = tex_state::page_node_arena::PageListId::empty();
@@ -4256,7 +4238,7 @@ impl<G> MainControl<G> {
             content,
             eq_no,
             prototype,
-            Some(&conversion_error_context),
+            Some(&self.command),
         )?;
         unsave_group(
             &mut context,

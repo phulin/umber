@@ -626,3 +626,15 @@ Observed treatment and genuine undefined, end-template or alignment demands keep
 Every resident input row stores its actual packed frame directly beside its token storage. The one-field TokenRowHeader wrapper and its constructor are deleted. Behavior and retirement projections belong to the resident row; checkpoints copy the native frame, and source/input cursors access it directly. There is no replacement header type or compatibility accessor.
 
 The public packed-token frame constructor is a small checked field initializer and is inlined across crate boundaries. A macro's constant frame kind, flags and zero position can then be written into its final row, rather than calling a generic constructor and copying its temporary return through additional stack locations. Frame bounds, source context, identities, retirement and peak-use accounting remain authoritative.
+
+## Diagnostic input validity
+
+Diagnostic coordinates project the existing next input-level identity when captured. Every real source, replacement, parameter or replay push already advances that identity, so a later push/pop cannot validate an older coordinate. No separate admission counter is stored or updated on input pushes.
+
+The existing input context epoch changes only when source owners are rebound, checkpoints replace input, or candidate stacks exchange authority. It rejects coordinates from the prior input even when restore reinstates the same level identities and positions. Together the native identity frontier, this cold epoch and the actual top/scalar projections preserve stale-context rejection without a second hot counter.
+
+## Math diagnostic demand
+
+Font validation determines its actual failure once before rendering error context. Successful validation allocates no diagnostic string; a failure renders while command input is still live, publishes earlier effects at the existing barrier, and reports that same failure without rescanning fonts.
+
+Math lowering borrows the actual command state for its synchronous error reports. The detached MathConversionErrorContext string wrapper and eager copies are deleted. Inline, display and equation-number conversion do not mutate command input during lowering; undefined-family reports render the borrowed input only at their error boundary. Display packing uses the existing live execution diagnostic context, preserving line scalars and report chronology without pre-rendering source text. No diagnostic owner survives the synchronous conversion or crosses its following input scan or group unwind.

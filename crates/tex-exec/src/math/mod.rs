@@ -7,10 +7,7 @@ use tex_state::CommandContext;
 use tex_state::math::MathFontSize;
 
 pub(crate) use lower::finish_math_lists_owned;
-pub(crate) use lower::{
-    MathConversionErrorContext, finish_inline_math_list_node,
-    finish_math_list_node_to_shipout_scratch,
-};
+pub(crate) use lower::{finish_inline_math_list_node, finish_math_list_node_to_shipout_scratch};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MathFontFailure {
@@ -70,19 +67,6 @@ pub(super) fn math_font_failure<G>(stores: &mut CommandContext<'_, G>) -> Option
     None
 }
 
-pub(crate) fn reject_invalid_math_fonts<G>(
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    context: String,
-) -> Result<bool, crate::ExecError> {
-    let Some(failure) = math_font_failure(stores) else {
-        return Ok(false);
-    };
-    let (message, help) = failure.report();
-    crate::error_report::report_error(stores, diagnostic_effects, message, &help, context)?;
-    Ok(true)
-}
-
 /// Reports §1194's font failure only after publishing diagnostics which the
 /// caller already completed earlier in the same canonical operation.
 ///
@@ -93,23 +77,32 @@ pub(crate) fn reject_invalid_math_fonts<G>(
 pub(crate) fn reject_invalid_math_fonts_at_outer_barrier<G>(
     stores: &mut tex_state::Universe<G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    context: String,
+    command: &tex_command::CommandState<G>,
 ) -> Result<bool, crate::ExecError> {
-    let invalid = {
+    let failure = {
         let mut admitted = stores.command_context().expect("math-font admission");
-        math_font_failure(&mut admitted).is_some()
+        math_font_failure(&mut admitted)
     };
-    if !invalid {
+    let Some(failure) = failure else {
         return Ok(false);
-    }
+    };
+    let context = command.output_open_context(
+        &stores
+            .command_context()
+            .expect("math-font context admission"),
+    );
     stores
         .world_mut()
         .publish_diagnostic_effects_preserving(diagnostic_effects);
-    reject_invalid_math_fonts(
+    let (message, help) = failure.report();
+    crate::error_report::report_error(
         &mut stores
             .command_context()
             .expect("math-font report admission"),
         diagnostic_effects,
+        message,
+        &help,
         context,
-    )
+    )?;
+    Ok(true)
 }

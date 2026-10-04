@@ -451,13 +451,12 @@ fn record_source_owner_slot_lookup() {
 ///
 /// Rows below the semantic top are immutable while buried. Their source
 /// context is copied into every descendant frame, so a generated-source
-/// rebind is also visible in the top frame. `row_admissions` prevents a
-/// push/pop ABA from making an older coordinate name the exposed row again;
-/// it is monotonic across checkpoint installs.
+/// rebind is also visible in the top frame. The context epoch rejects owners
+/// displaced by restore or rebind. The enclosing scalar coordinate uses the
+/// existing input-level identity frontier to reject push/pop ABA.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputStackContextCoordinate {
-    row_admissions: u64,
-    source_owner_swaps: u64,
+    context_epoch: u64,
     top: DiagnosticInputTop,
 }
 
@@ -555,8 +554,7 @@ pub(crate) struct InputStack<G> {
     /// Native live parameter count for TeX capacity/high-water bookkeeping.
     pub(crate) parameter_count: usize,
     occupied_source_buffer_slots: usize,
-    row_admissions: u64,
-    source_owner_swaps: u64,
+    context_epoch: u64,
 }
 
 impl<G> Default for InputStack<G> {
@@ -567,8 +565,7 @@ impl<G> Default for InputStack<G> {
             arguments: super::ArgumentArena::default(),
             parameter_count: 0,
             occupied_source_buffer_slots: 0,
-            row_admissions: 0,
-            source_owner_swaps: 0,
+            context_epoch: 0,
         }
     }
 }
@@ -644,14 +641,12 @@ impl<G> InputStack<G> {
             arguments: super::ArgumentArena::default(),
             parameter_count: self.parameter_count,
             occupied_source_buffer_slots: self.occupied_source_buffer_slots,
-            row_admissions: 0,
-            source_owner_swaps: 0,
+            context_epoch: 0,
         }
     }
 
-    /// Replaces the live rows with a copy of a captured stack. Admission and
-    /// owner-swap counters stay monotonic so no diagnostic coordinate taken
-    /// before the install can name a row after it.
+    /// Replaces the live rows with a copy of a captured stack. The cold context
+    /// epoch advances so coordinates captured before restore cannot name its rows.
     pub(crate) fn install_checkpoint(&mut self, capture: &Self) {
         self.arguments.clear();
         self.rows.clear();
@@ -660,8 +655,7 @@ impl<G> InputStack<G> {
         self.words.clone_from(&capture.words);
         self.parameter_count = capture.parameter_count;
         self.occupied_source_buffer_slots = capture.occupied_source_buffer_slots;
-        self.row_admissions = self.row_admissions.saturating_add(1);
-        self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
+        self.context_epoch = self.context_epoch.saturating_add(1);
     }
 
     /// Whether any macro activation is live.
@@ -822,17 +816,10 @@ impl<G> InputStack<G> {
         })
     }
 
-    /// Advances the diagnostic-coordinate counters past `past`, so no
+    /// Advances the diagnostic context epoch past `past`, so no
     /// coordinate captured from a sibling stack validates against this one.
     pub(crate) fn continue_context_epoch(&mut self, past: &Self) {
-        self.row_admissions = self
-            .row_admissions
-            .max(past.row_admissions)
-            .saturating_add(1);
-        self.source_owner_swaps = self
-            .source_owner_swaps
-            .max(past.source_owner_swaps)
-            .saturating_add(1);
+        self.context_epoch = self.context_epoch.max(past.context_epoch).saturating_add(1);
     }
 
     pub(crate) fn diagnostic_context_coordinate(&self) -> InputStackContextCoordinate {
@@ -862,8 +849,7 @@ impl<G> InputStack<G> {
             },
         };
         InputStackContextCoordinate {
-            row_admissions: self.row_admissions,
-            source_owner_swaps: self.source_owner_swaps,
+            context_epoch: self.context_epoch,
             top,
         }
     }
@@ -916,7 +902,7 @@ impl<G> InputStack<G> {
             rebound = true;
         }
         if rebound {
-            self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
+            self.context_epoch = self.context_epoch.saturating_add(1);
             self.refresh_occupied_source_buffer_slots();
         }
         rebound
@@ -986,7 +972,7 @@ impl<G> InputStack<G> {
                 source_context.role(),
             )));
         }
-        self.source_owner_swaps = self.source_owner_swaps.saturating_add(1);
+        self.context_epoch = self.context_epoch.saturating_add(1);
         self.replace_source_buffer_slots(prior_buffer_slots, current_buffer_slots);
         true
     }
@@ -1394,7 +1380,6 @@ impl<G> InputStack<G> {
 
     #[inline(always)]
     fn push_row(&mut self, value: InputLevel<G>) {
-        self.row_admissions = self.row_admissions.saturating_add(1);
         if let InputLevel::Source(source) = &value {
             self.occupied_source_buffer_slots = self
                 .occupied_source_buffer_slots

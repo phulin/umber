@@ -33,7 +33,7 @@ fn glue_parameter_value<G>(stores: &CommandContext<'_, G>, parameter: GlueParam)
         .map_or(GlueSpec::ZERO, |id| stores.glue(id))
 }
 
-use super::lower::{MathConversionErrorContext, convert_math_hlist_with_error_context};
+use super::lower::convert_math_hlist_with_error_context;
 
 mod prototype;
 #[cfg(test)]
@@ -54,7 +54,7 @@ pub(crate) fn finish_eq_no<G>(
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     side: EqNoSide,
     content: tex_state::page_node_arena::PageListId,
-    error_context: Option<&MathConversionErrorContext>,
+    error_context: Option<&tex_command::CommandState<G>>,
 ) -> FinishedEqNo {
     let params = MathParams::read(&crate::typeset_context::TypesetContext::new(stores));
     let list = convert_math_hlist_with_error_context(
@@ -91,7 +91,7 @@ pub(crate) fn finish_display_math<G>(
     content: tex_state::page_node_arena::PageListId,
     eq_no: Option<FinishedEqNo>,
     prototype: Option<BoxNode>,
-    error_context: Option<&MathConversionErrorContext>,
+    error_context: Option<&tex_command::CommandState<G>>,
 ) -> Result<(), ExecError> {
     let (display_content, mut eq_box, left_eq_no) = match eq_no {
         Some(eq_no) => (content, Some(eq_no.boxed), eq_no.side == EqNoSide::Left),
