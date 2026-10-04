@@ -16,10 +16,6 @@ its scanner/application ownership, and the deletion of eligibility handoffs.
 `current_mode_owner.md` specifies the actual current semantic level, suspended
 mode owners, native list access and full-checkpoint capture/restore ordering.
 
-`native_command_opcode.md` specifies direct stored dispatch opcodes within the
-existing two-word meaning and preserves complete opaque coordinates and the
-scalar value domain.
-
 `native_command_ownership.md` defines direct continuation without a successful
 command settlement/cleanup stage: consumers release scratch, native stack
 changes record usage, and actual tracing and semantic events own their work.

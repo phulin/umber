@@ -254,7 +254,7 @@ pub(super) fn close_display<G>(
 
                 return Ok(ControlFlow::Continue(()));
             }
-            let shift = meaning.control_code() == Some(codes::CHAR_MATH_SHIFT);
+            let shift = meaning.control_code() == codes::CHAR_MATH_SHIFT;
             result = Some(if shift {
                 math_shift::apply(processor, spelling, meaning, symbol, exceptional)
             } else {

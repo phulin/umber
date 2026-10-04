@@ -117,6 +117,52 @@ fn scalar_words_keep_their_value_when_opcodes_overlap_coordinate_commands() {
 }
 
 #[test]
+fn native_dispatch_preserves_scalar_domain_and_semantic_classification() {
+    for opcode in 0..=u8::MAX {
+        for flags in [0_u64, 1, 8, 0x80, 0xa5, 0xff] {
+            for operand in [
+                0,
+                1,
+                255,
+                256,
+                265,
+                65_006,
+                65_007,
+                OPERAND_MASK,
+                ExpandablePrimitive::EndTemplate as u64,
+            ] {
+                let scalar = ((opcode as u64) << super::OPCODE_SHIFT)
+                    | (flags << super::FLAGS_SHIFT)
+                    | operand;
+                let native = MeaningWord::<()>::scalar(scalar);
+                assert_eq!(native.scalar_word(), Some(scalar));
+                assert!(!native.is_macro());
+                assert!(!native.is_font());
+                assert_eq!(native.is_undefined(), opcode == super::OP_UNDEFINED);
+                assert_eq!(
+                    native.control_code(),
+                    Meaning::runtime_word_control_code(scalar)
+                );
+                assert_eq!(native.is_outer(), scalar == Meaning::END_TEMPLATE_WORD);
+                let primitive = if opcode == super::OP_EXPANDABLE_PRIMITIVE {
+                    ExpandablePrimitive::from_operand(operand)
+                } else {
+                    None
+                };
+                assert_eq!(native.expandable_primitive(), primitive);
+                let primitive = if opcode == super::OP_UNEXPANDABLE_PRIMITIVE {
+                    UnexpandablePrimitive::from_operand(operand)
+                } else {
+                    None
+                };
+                assert_eq!(native.unexpandable_primitive(), primitive);
+                assert_eq!(native.character(), Meaning::runtime_word_character(scalar));
+            }
+        }
+    }
+}
+
+#[test]
 fn macro_meanings_carry_only_generation_typed_definition_ids() {
     with_generation(|mut generation| {
         let definition = generation

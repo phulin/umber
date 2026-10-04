@@ -465,13 +465,6 @@ impl<G> CurrentCommand<G> {
         self.command.scalar_word()
     }
 
-    /// Small native family/selector key for the sole mode/command switch.
-    #[must_use]
-    #[inline]
-    pub fn control_code(&self) -> Option<u64> {
-        self.command.control_code()
-    }
-
     /// Returns the control-sequence identity, if this spelling resolves via
     /// a control-sequence meaning cell.
     #[must_use]

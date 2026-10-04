@@ -18,7 +18,7 @@ pub(super) fn scan<G>(
                                       meaning,
                                       control_sequence,
                                       exceptional| {
-            let code = meaning.control_code().expect("expanded prefix operand");
+            let code = meaning.control_code();
             match code {
                 codes::RELAX | codes::CHAR_SPACE => return Ok(ControlFlow::Continue(())),
                 codes::PRIMITIVE_GLOBAL => prefixes |= GLOBAL,

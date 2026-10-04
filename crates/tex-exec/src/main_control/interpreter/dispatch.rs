@@ -50,22 +50,20 @@ pub(super) fn enter<G>(
             | codes::PRIMITIVE_CHAR
             | codes::PRIMITIVE_NO_BOUNDARY
     ) {
-        processor
-            .with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
-                if execution.main_loop_active
-                    || execution.modes.current_list().pending_hchars().is_some()
-                {
+        let execution = processor.host_facts();
+        if execution.main_loop_active || execution.modes.current_list().pending_hchars().is_some() {
+            processor
+                .with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
                     execution.main_loop_active = false;
                     crate::box_runtime::flush_pending_hchars_with_fuel(
                         &mut execution.modes,
                         context,
                         effects,
                         fuel,
-                    )?;
-                }
-                Ok::<_, ExecError>(())
-            })
-            .map_err(|error| capture_error(processor, spelling, error))?;
+                    )
+                })
+                .map_err(|error| capture_error(processor, spelling, error))?;
+        }
     }
     trace::command(processor, code, meaning, control_sequence);
     Ok(())

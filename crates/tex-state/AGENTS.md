@@ -300,7 +300,9 @@ Definition-owned parameter programs expose literal delimiter views only for none
   format loading.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning/native.rs`: Two-word native command encoding, complete font
-  identity/definition-coordinate projections and demanded cold decoding. No
+  identity/definition-coordinate projections, direct primitive/character
+  queries and demanded cold decoding. Dispatch keys have no optional wrapper.
+  Scalar flags and character payloads retain their natural packed positions. No
   enum tag, extra registry, identity truncation or ordinary root acquisition.
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed compact
   macro definition keys. The token resolver copies each borrowed native row

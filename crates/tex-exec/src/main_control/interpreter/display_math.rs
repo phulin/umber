@@ -207,7 +207,7 @@ fn resume<G>(
     if scan_space {
         processor
             .consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-                let space = meaning.control_code() == Some(codes::CHAR_SPACE);
+                let space = meaning.control_code() == codes::CHAR_SPACE;
                 if !space {
                     processor.back_consumed_word(spelling, exceptional)?;
                 }

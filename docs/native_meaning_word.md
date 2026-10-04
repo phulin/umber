@@ -49,6 +49,27 @@ projections; they must not introduce a decoded native-kind enum that is created
 and immediately consumed. Decoded `Meaning` and `ResolvedMeaning` remain at
 the existing demanded diagnostic and observation boundaries.
 
+Expansion tests the actual native family byte and reads a primitive's real
+operand directly. Character scanners read the retained character/category
+payload. Neither request constructs a scalar-word projection and a static
+command class solely to classify the same value again. Terminal dispatch
+returns a scalar key without an optional wrapper or fallback font selector.
+
+Compared with the current-input/current-mode owner implementation, the retained
+direct projections reduce matched INITEX marginal instructions from 193 to 188
+for relax, 822 to 815 for a two-relax macro body, 1,231 to 1,213 for an empty
+group, and 2,438 to 2,399 for a count assignment. Empty macros and argument
+matching remain essentially unchanged. These are modest gains; the older
+relax baseline and the clean pdfTeX reference remain faster.
+
+Flattening every selector/category into a 16-bit stored dispatch opcode was
+tested and rejected: it rearranged literal payloads, complicated complete
+scalar-domain encoding, and increased ordinary delivery instructions. The
+retained encoding preserves literal payloads and full scalar flags directly.
+Read-only terminal entry borrows actual host facts; only a real character
+flush borrows the mutable execution owners. This avoids a callback handoff
+whose inlining changed when the interpreter's generated code changed.
+
 The implementation must preserve the complete native suite, the existing
 ordered canonical comparison and full checkpoint/group restoration. Matched
 instruction and cycle measurements diagnose the resulting reader and macro

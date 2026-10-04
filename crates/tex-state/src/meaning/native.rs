@@ -1,9 +1,11 @@
 //! Native command words retain complete opaque identities without an enum tag.
 
 use super::{
-    DefinitionRef, FLAGS_SHIFT, FontId, Meaning, MeaningFlags, OP_FONT, OP_MACRO, OPCODE_SHIFT,
-    OPERAND_MASK, ResolvedMeaning,
+    DefinitionRef, ExpandablePrimitive, FLAGS_SHIFT, FontId, Meaning, MeaningFlags,
+    OP_EXPANDABLE_PRIMITIVE, OP_FONT, OP_MACRO, OP_UNDEFINED, OP_UNEXPANDABLE_PRIMITIVE,
+    OPCODE_SHIFT, OPERAND_MASK, ResolvedMeaning, UnexpandablePrimitive,
 };
+use crate::token::Catcode;
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
 
@@ -112,12 +114,43 @@ impl<G> MeaningWord<G> {
     /// Classifies the actual command without projecting a coordinate.
     #[must_use]
     #[inline(always)]
-    pub const fn control_code(&self) -> Option<u64> {
+    pub const fn control_code(&self) -> u64 {
         match self.opcode() {
-            OP_MACRO => None,
-            RAW_SCALAR => Some(Meaning::runtime_word_control_code(self.coordinate.get())),
-            _ => Some(Meaning::runtime_word_control_code(self.command)),
+            RAW_SCALAR => Meaning::runtime_word_control_code(self.coordinate.get()),
+            _ => Meaning::runtime_word_control_code(self.command),
         }
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub const fn is_undefined(&self) -> bool {
+        self.opcode() == OP_UNDEFINED
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub const fn expandable_primitive(&self) -> Option<ExpandablePrimitive> {
+        if self.opcode() == OP_EXPANDABLE_PRIMITIVE {
+            ExpandablePrimitive::from_operand(self.command & OPERAND_MASK)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub const fn unexpandable_primitive(&self) -> Option<UnexpandablePrimitive> {
+        if self.opcode() == OP_UNEXPANDABLE_PRIMITIVE {
+            UnexpandablePrimitive::from_operand(self.command & OPERAND_MASK)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub const fn character(&self) -> Option<(char, Catcode)> {
+        Meaning::runtime_word_character(self.command)
     }
 
     #[must_use]

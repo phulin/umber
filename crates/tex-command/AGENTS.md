@@ -163,7 +163,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   provider type. No runtime initial/borrowed enum or fact cache enters command
   state or a replay round. Native semantic callbacks use `with_execution_owners`
   to lend the actual capabilities, observer, provider and matching decline owner;
-  no copied host or substitute ledger is installed.
+  no copied host or substitute ledger is installed. Read-only host facts borrow
+  their actual owner directly; a no-op predicate must not lend every mutable
+  execution owner through a callback.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine
   semantics that survive loading an older format, capabilities, stable
@@ -210,6 +212,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   projections on the actual delivered command. Diagnostic preflight can borrow
   its actual native meaning directly without a decode/re-encode handoff. No separately classified
   command-word type or cached class is constructed by resolution.
+  Primitive and character projections inspect the native word directly;
+  expansion constructs neither a scalar projection nor a static command class.
+  The unused `CurrentCommand` dispatch-key forwarding API is deleted.
 - `src/command/identity.rs`: demanded diagnostic/observer command identity and
   canonical conversion/xray selectors on that same actual command.
 - `src/direct_command_delivery.rs`: profiling-only mixed-meaning structural

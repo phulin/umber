@@ -2,8 +2,7 @@
 
 use super::CurrentCommand;
 use tex_state::meaning::{
-    ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord, StaticCommandClass,
-    UnexpandablePrimitive,
+    ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord, UnexpandablePrimitive,
 };
 use tex_state::token::Catcode;
 
@@ -24,30 +23,12 @@ impl<G> CurrentCommand<G> {
 
     #[inline(always)]
     pub(crate) const fn expandable_primitive(&self) -> Option<ExpandablePrimitive> {
-        if let Some(word) = self.command.scalar_word()
-            && matches!(
-                Meaning::runtime_word_class(word),
-                StaticCommandClass::Expandable
-            )
-        {
-            ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
-        } else {
-            None
-        }
+        self.command.expandable_primitive()
     }
 
     #[inline(always)]
     pub(crate) const fn unexpandable_primitive(&self) -> Option<UnexpandablePrimitive> {
-        if let Some(word) = self.command.scalar_word()
-            && matches!(
-                Meaning::runtime_word_class(word),
-                StaticCommandClass::Unexpandable
-            )
-        {
-            UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
-        } else {
-            None
-        }
+        self.command.unexpandable_primitive()
     }
 
     /// Decodes only a static meaning at its semantic consumer. Font and macro
@@ -59,9 +40,7 @@ impl<G> CurrentCommand<G> {
 
     #[inline(always)]
     pub(crate) fn character(&self) -> Option<(char, Catcode)> {
-        self.command
-            .scalar_word()
-            .and_then(Meaning::runtime_word_character)
+        self.command.character()
     }
 
     pub(crate) fn character_catcode(&self) -> Option<Catcode> {

@@ -617,6 +617,13 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
             || self.diagnostic_effects.has_pending_reports()
     }
 
+    /// Borrows the actual host facts without projecting unrelated owners.
+    #[must_use]
+    #[inline(always)]
+    pub fn host_facts(&self) -> &Facts {
+        &self.host.facts
+    }
+
     /// Reborrows the actual owners for a completed source-free native command.
     /// Synchronous scanners have returned before their caller can invoke this.
     /// The observer is reborrowed alongside the actual semantic owners, so

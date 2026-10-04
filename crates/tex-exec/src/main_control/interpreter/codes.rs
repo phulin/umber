@@ -3,7 +3,7 @@ use super::*;
 
 #[inline(always)]
 pub(super) fn of<G>(meaning: &tex_state::meaning::MeaningWord<G>) -> u64 {
-    meaning.control_code().expect("expanded terminal")
+    meaning.control_code()
 }
 
 pub(super) const CHAR_BEGIN_GROUP: u64 =

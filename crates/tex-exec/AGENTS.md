@@ -83,6 +83,9 @@ not allocate a vector merely to publish one already-complete node.
   each interpreter invocation. Ordinary driver entry has no command slot;
   diagnostic preflight dispatches only its genuinely already-fetched record. Every selected terminal enters this native switch, including alignment
   recovery and endv. There is no selected-command fallback.
+  Terminal dispatch reads a scalar key without an optional wrapper or fallback
+  font selector. Entry inspects the actual host facts directly; it lends
+  mutable execution owners only when pending characters require a real flush.
 - `src/main_control/interpreter/box_inputs.rs`: the one native `scan_box`
   operand selection and actual destinations. Direct register handoffs create
   no temporary construction mark; lastbox removal precedes destination
