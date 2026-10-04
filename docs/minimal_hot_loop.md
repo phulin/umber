@@ -530,3 +530,19 @@ Ordinary-pair processing owns its single adjacency decision in `make_ord`.
 The first pass calls that processor directly after bin normalization; the
 processor leaves other nodes unchanged. The preliminary ordinary-kind and
 adjacency probes and their immediately consumed Boolean helper are deleted.
+
+## Direct packing measurements
+
+Packing consumes actual borrowed glyph coordinates for width, height and depth
+measurement. Glyph traversal uses the existing `DirectNodeView` scalar
+projection, so ligature provenance and whole logical nodes are not materialized
+solely for measurement. Other dimension-bearing nodes match their actual
+`NodeView` fields. Vertical measurement ignores glyphs before requesting a
+logical projection. Leader dimensions, discretionary replacement dimensions,
+image sizes, font mapping and missing-character fallback retain their existing
+packing rules.
+
+`PackedNode` and its immediately consumed conversion are deleted, together
+with the full-node clone before horizontal measurement. Box and vertical
+dimension accessors project their actual node variants directly. No replacement
+packing enum, font cache or separate node collection is added.

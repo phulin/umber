@@ -287,38 +287,6 @@ impl NodeView<'static> {
     }
 }
 
-/// Dimension-bearing projection shared by page-arena and operation buffers.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PackedNode<'a> {
-    Glyph {
-        font: crate::ids::FontId,
-        ch: char,
-    },
-    Kern {
-        amount: crate::scaled::Scaled,
-        kind: Option<crate::node::KernKind>,
-    },
-    Glue {
-        spec: GlueSpec,
-        leader: Option<&'a crate::node::LeaderPayload<PageListId>>,
-    },
-    Rule {
-        width: Option<crate::scaled::Scaled>,
-        height: Option<crate::scaled::Scaled>,
-        depth: Option<crate::scaled::Scaled>,
-    },
-    Box(crate::node::BoxNode<PageListId>),
-    Unset(crate::node::UnsetNode<PageListId>),
-    Disc(PageListId),
-    Image {
-        width: crate::scaled::Scaled,
-        height: crate::scaled::Scaled,
-        depth: crate::scaled::Scaled,
-    },
-    Math(crate::scaled::Scaled),
-    Ignored,
-}
-
 impl NodeView<'_> {
     pub(crate) fn tex_memory_words(&self, etex_node_sizes: bool) -> (usize, usize) {
         let synctex_extra = usize::from(etex_node_sizes) * 2;
@@ -436,65 +404,11 @@ impl NodeView<'_> {
     }
 
     #[must_use]
-    pub fn packed(&self) -> PackedNode<'_> {
-        match self {
-            Self::Char { font, ch, .. } | Self::Lig { font, ch, .. } => PackedNode::Glyph {
-                font: *font,
-                ch: *ch,
-            },
-            Self::Kern { amount, kind } => PackedNode::Kern {
-                amount: *amount,
-                kind: Some(*kind),
-            },
-            Self::MarginKern { amount, .. } => PackedNode::Kern {
-                amount: *amount,
-                kind: None,
-            },
-            Self::Glue { spec, leader, .. } => PackedNode::Glue {
-                spec: *spec,
-                leader: leader.as_ref(),
-            },
-            Self::Rule {
-                width,
-                height,
-                depth,
-            } => PackedNode::Rule {
-                width: *width,
-                height: *height,
-                depth: *depth,
-            },
-            Self::HList(value) | Self::VList(value) => PackedNode::Box(*value),
-            Self::Unset(value) => PackedNode::Unset(*value),
-            Self::Disc { replace, .. } => PackedNode::Disc(*replace),
-            Self::Whatsit(
-                crate::node::Whatsit::PdfRefXForm {
-                    width,
-                    height,
-                    depth,
-                    ..
-                }
-                | crate::node::Whatsit::PdfRefXImage {
-                    width,
-                    height,
-                    depth,
-                    ..
-                },
-            ) => PackedNode::Image {
-                width: *width,
-                height: *height,
-                depth: *depth,
-            },
-            Self::MathOn(value) | Self::MathOff(value) => PackedNode::Math(*value),
-            _ => PackedNode::Ignored,
-        }
-    }
-
-    #[must_use]
     pub fn vertical_dimensions(&self) -> Option<(crate::scaled::Scaled, crate::scaled::Scaled)> {
-        match self.packed() {
-            PackedNode::Box(node) => Some((node.height, node.depth)),
-            PackedNode::Unset(node) => Some((node.height, node.depth)),
-            PackedNode::Rule { height, depth, .. } => Some((
+        match self {
+            Self::HList(node) | Self::VList(node) => Some((node.height, node.depth)),
+            Self::Unset(node) => Some((node.height, node.depth)),
+            Self::Rule { height, depth, .. } => Some((
                 height.unwrap_or(crate::scaled::Scaled::from_raw(0)),
                 depth.unwrap_or(crate::scaled::Scaled::from_raw(0)),
             )),
@@ -504,8 +418,8 @@ impl NodeView<'_> {
 
     #[must_use]
     pub fn box_node(&self) -> Option<crate::node::BoxNode<PageListId>> {
-        match self.packed() {
-            PackedNode::Box(node) => Some(node),
+        match self {
+            Self::HList(node) | Self::VList(node) => Some(*node),
             _ => None,
         }
     }

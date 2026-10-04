@@ -29,7 +29,7 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/math/arithmetic.rs`: shared checked scaled-arithmetic guards for Appendix G.
 - `src/math/rebox.rs`: shared TeX82 §715 exact-width math-box centering and vertical-source packaging.
 - `src/packing.rs`: hpack/vpack/vtop kernels over page-arena list coordinates,
-  pack parameters, measurements, glue setting, and diagnostics.
+  pack parameters, direct borrowed glyph measurements, glue setting, and diagnostics. Packing matches actual node fields without a PackedNode carrier or whole-node clone.
 - `src/packing/tests.rs`: unit tests for badness, packing dimensions, glue settings, diagnostics, and vtop behavior.
 - `src/vertical_break.rs`: pure TeX.web `vert_break` page/split breakpoint costing over immutable vertical lists.
 - `src/vertical_break/tests/planned.rs`: direct TeX82 vertical-break depth, cost, forced-end, and tie-policy tests.

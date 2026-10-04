@@ -1,8 +1,8 @@
 use tex_state::glue::Order;
 use tex_state::node::Node;
 use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Sign, UnsetKind};
+use tex_state::node_view::NodeCursor;
 use tex_state::node_view::NodeView;
-use tex_state::node_view::{NodeCursor, PackedNode};
 use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
@@ -355,43 +355,48 @@ fn common_diagnostics(
 
 fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
-    nodes.for_each(|node| {
-        match node.clone().packed() {
-            PackedNode::Glyph { font, ch } => {
-                let metrics = match node {
-                    NodeView::Char { .. } => u8::try_from(ch as u32)
-                        .ok()
-                        .and_then(|code| {
-                            if state.font_uses_tfm_metrics(font) {
-                                state.font_characters(font)[usize::from(code)]
-                            } else {
-                                state.font_character_metrics(font, ch)
-                            }
-                        })
-                        .or_else(|| state.font_character_metrics(font, ch)),
-                    _ => state.font_character_metrics(font, ch),
-                };
-                if let Some(metrics) = metrics {
-                    meas.observe_horizontal(
-                        MetricEvent::Glyph {
-                            width: metrics.width,
-                            height: metrics.height,
-                            depth: metrics.depth,
-                        },
-                        MetricOverflow::PACKING,
-                    );
-                }
+    nodes.for_each_direct(|direct| {
+        if let Some((font, ch)) = direct.glyph() {
+            let metrics = if direct.kind() == Some(tex_state::node::NodeKind::Char) {
+                u8::try_from(ch as u32)
+                    .ok()
+                    .and_then(|code| {
+                        if state.font_uses_tfm_metrics(font) {
+                            state.font_characters(font)[usize::from(code)]
+                        } else {
+                            state.font_character_metrics(font, ch)
+                        }
+                    })
+                    .or_else(|| state.font_character_metrics(font, ch))
+            } else {
+                state.font_character_metrics(font, ch)
+            };
+            if let Some(metrics) = metrics {
+                meas.observe_horizontal(
+                    MetricEvent::Glyph {
+                        width: metrics.width,
+                        height: metrics.height,
+                        depth: metrics.depth,
+                    },
+                    MetricOverflow::PACKING,
+                );
             }
-            PackedNode::Kern { amount, .. } => {
+            return;
+        }
+        let Some(node) = direct.view() else {
+            return;
+        };
+        match node {
+            NodeView::Kern { amount, .. } | NodeView::MarginKern { amount, .. } => {
                 meas.observe_horizontal(MetricEvent::Kern(amount), MetricOverflow::PACKING);
             }
-            PackedNode::Glue { spec, leader } => {
+            NodeView::Glue { spec, leader, .. } => {
                 meas.observe_horizontal(MetricEvent::Glue(spec), MetricOverflow::PACKING);
                 if let Some(leader) = leader {
-                    add_hleader_perpendicular_dimensions(&mut meas, leader);
+                    add_hleader_perpendicular_dimensions(&mut meas, &leader);
                 }
             }
-            PackedNode::Rule {
+            NodeView::Rule {
                 width,
                 height,
                 depth,
@@ -405,7 +410,7 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
                     MetricOverflow::PACKING,
                 );
             }
-            PackedNode::Box(box_node) => {
+            NodeView::HList(box_node) | NodeView::VList(box_node) => {
                 meas.observe_horizontal(
                     MetricEvent::Box {
                         width: box_node.width,
@@ -416,7 +421,7 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
                     MetricOverflow::PACKING,
                 );
             }
-            PackedNode::Unset(unset) => {
+            NodeView::Unset(unset) => {
                 meas.observe_horizontal(
                     MetricEvent::Box {
                         width: unset.width,
@@ -427,11 +432,20 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
                     MetricOverflow::PACKING,
                 );
             }
-            PackedNode::Image {
-                width,
-                height,
-                depth,
-            } => {
+            NodeView::Whatsit(
+                tex_state::node::Whatsit::PdfRefXForm {
+                    width,
+                    height,
+                    depth,
+                    ..
+                }
+                | tex_state::node::Whatsit::PdfRefXImage {
+                    width,
+                    height,
+                    depth,
+                    ..
+                },
+            ) => {
                 meas.observe_horizontal(
                     MetricEvent::Image {
                         width,
@@ -441,16 +455,16 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
                     MetricOverflow::PACKING,
                 );
             }
-            PackedNode::Disc(replace) => {
+            NodeView::Disc { replace, .. } => {
                 let replacement = measure_hlist(state, state.page_nodes(replace));
                 // A discretionary replacement contributes its natural box
                 // dimensions here, but its inner glue is not outer hpack glue.
                 meas.merge_horizontal_dimensions(replacement, MetricOverflow::PACKING);
             }
-            PackedNode::Math(width) => {
+            NodeView::MathOn(width) | NodeView::MathOff(width) => {
                 meas.observe_horizontal(MetricEvent::Math(width), MetricOverflow::PACKING);
             }
-            PackedNode::Ignored => {}
+            _ => {}
         }
     });
     meas
@@ -462,70 +476,87 @@ fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement
 
 fn measure_vlist(_state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
-    nodes.for_each(|node| match node.packed() {
-        PackedNode::Box(box_node) => {
-            meas.observe_vertical(
-                MetricEvent::Box {
-                    width: box_node.width,
-                    height: box_node.height,
-                    depth: box_node.depth,
-                    shift: box_node.shift,
-                },
-                MetricOverflow::PACKING,
-            );
+    nodes.for_each_direct(|direct| {
+        if matches!(
+            direct.kind(),
+            Some(tex_state::node::NodeKind::Char | tex_state::node::NodeKind::Lig)
+        ) {
+            return;
         }
-        PackedNode::Unset(unset) => {
-            meas.observe_vertical(
-                MetricEvent::Box {
-                    width: unset.width,
-                    height: unset.height,
-                    depth: unset.depth,
-                    shift: Scaled::from_raw(0),
-                },
-                MetricOverflow::PACKING,
-            );
-        }
-        PackedNode::Rule {
-            width,
-            height,
-            depth,
-        } => {
-            meas.observe_vertical(
-                MetricEvent::Rule {
-                    width: width.unwrap_or(Scaled::from_raw(0)),
-                    height: height.unwrap_or(Scaled::from_raw(0)),
-                    depth: depth.unwrap_or(Scaled::from_raw(0)),
-                },
-                MetricOverflow::PACKING,
-            );
-        }
-        PackedNode::Kern { amount, .. } => {
-            meas.observe_vertical(MetricEvent::Kern(amount), MetricOverflow::PACKING);
-        }
-        PackedNode::Glue { spec, leader } => {
-            meas.observe_vertical(MetricEvent::Glue(spec), MetricOverflow::PACKING);
-            if let Some(leader) = leader {
-                add_vleader_perpendicular_dimensions(&mut meas, leader);
+        let Some(node) = direct.view() else {
+            return;
+        };
+        match node {
+            NodeView::HList(box_node) | NodeView::VList(box_node) => {
+                meas.observe_vertical(
+                    MetricEvent::Box {
+                        width: box_node.width,
+                        height: box_node.height,
+                        depth: box_node.depth,
+                        shift: box_node.shift,
+                    },
+                    MetricOverflow::PACKING,
+                );
             }
-        }
-        PackedNode::Image {
-            width,
-            height,
-            depth,
-        } => {
-            meas.observe_vertical(
-                MetricEvent::Image {
+            NodeView::Unset(unset) => {
+                meas.observe_vertical(
+                    MetricEvent::Box {
+                        width: unset.width,
+                        height: unset.height,
+                        depth: unset.depth,
+                        shift: Scaled::from_raw(0),
+                    },
+                    MetricOverflow::PACKING,
+                );
+            }
+            NodeView::Rule {
+                width,
+                height,
+                depth,
+            } => {
+                meas.observe_vertical(
+                    MetricEvent::Rule {
+                        width: width.unwrap_or(Scaled::from_raw(0)),
+                        height: height.unwrap_or(Scaled::from_raw(0)),
+                        depth: depth.unwrap_or(Scaled::from_raw(0)),
+                    },
+                    MetricOverflow::PACKING,
+                );
+            }
+            NodeView::Kern { amount, .. } | NodeView::MarginKern { amount, .. } => {
+                meas.observe_vertical(MetricEvent::Kern(amount), MetricOverflow::PACKING);
+            }
+            NodeView::Glue { spec, leader, .. } => {
+                meas.observe_vertical(MetricEvent::Glue(spec), MetricOverflow::PACKING);
+                if let Some(leader) = leader {
+                    add_vleader_perpendicular_dimensions(&mut meas, &leader);
+                }
+            }
+            NodeView::Whatsit(
+                tex_state::node::Whatsit::PdfRefXForm {
                     width,
                     height,
                     depth,
+                    ..
+                }
+                | tex_state::node::Whatsit::PdfRefXImage {
+                    width,
+                    height,
+                    depth,
+                    ..
                 },
-                MetricOverflow::PACKING,
-            );
+            ) => {
+                meas.observe_vertical(
+                    MetricEvent::Image {
+                        width,
+                        height,
+                        depth,
+                    },
+                    MetricOverflow::PACKING,
+                );
+            }
+            _ => {}
         }
-        PackedNode::Glyph { .. }
-        | PackedNode::Disc(_)
-        | PackedNode::Math(_)
-        | PackedNode::Ignored => {}
     });
     meas
 }
