@@ -305,6 +305,8 @@ Definition-owned parameter programs expose literal delimiter views only for none
   actual word; stored words and capabilities retain their native encodings.
   Scalar character/category projections read that same native word directly,
   preserving character aliases without decoding unrelated meaning variants.
+  Validated literal token payloads transfer directly into the character meaning
+  encoder without a character/category decode and re-encode.
 - `src/meaning/tests.rs`: Static codec, primitive, typed macro-meaning, and
   complete native selector/family non-aliasing tests.
 - `src/measurement.rs`, `src/measurement/hot_core.rs`, and
@@ -531,12 +533,13 @@ Definition-owned parameter programs expose literal delimiter views only for none
   which writes the consumer's final native `MeaningWord` without class
   construction and returns only the resolved control-sequence identity. Lookup
   classification and literal categories remain projections of the input word;
-  no resolution-metadata result is constructed. Inline-small
+  no resolution-metadata result is constructed. Non-active literal payloads
+  transfer directly; only active characters decode their scalar for live lookup. Inline-small
   rooted traced-token buffers with
   sparse provenance ownership and spillover storage. Generated runs sharing
   one origin pack every word against its id and move that structural root into
   the sparse owner set once; they never clone it per token before deduplication.
-- `src/token/tests.rs`: Unit tests for token constructors, catcodes, parameter tokens, and display/debug behavior.
+- `src/token/tests.rs`: Token constructors, catcodes, parameter tokens, display/debug behavior, direct literal resolution across Unicode boundaries, and active-character live binding lookup.
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
 - `src/universe.rs`: Public session/generation aggregate, typed scalar
   mutation and allocation facade, generation-free page scheduling and native

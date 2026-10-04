@@ -743,3 +743,16 @@ shared-zero identity before its loan ends. Braced fields reserve their parent
 noad before field scanning, keep their actual target through the live group,
 and close through the ordinary group stack. Full checkpoints preserve those
 same mode lists, group frames and field destinations.
+
+## Literal payload transfer
+
+An admitted `TokenWord` and a static character meaning share the same low
+payload: Unicode scalar shifted four bits, then category. Non-active literal
+resolution transfers that validated payload directly into its final static
+meaning word. It does not construct a character/category pair, validate the
+scalar a second time or index the category table to immediately re-encode it.
+The meaning encoder owns the payload packing and the public character encoder
+uses that same authority. Active category 13 retains its actual scalar/name
+lookup and live dense meaning read. Token construction and format admission
+still validate scalars and category operands, including rejection of malformed
+format tokens; there is no alternate representation or compatibility decoder.

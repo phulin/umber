@@ -1402,11 +1402,14 @@ impl Meaning {
     #[must_use]
     #[inline(always)]
     pub const fn char_token_word(ch: char, cat: Catcode) -> u64 {
-        pack(
-            OP_CHAR_TOKEN,
-            MeaningFlags::EMPTY,
-            ((ch as u64) << 4) | cat as u64,
-        )
+        Self::char_token_payload_word(((ch as u32) << 4) | cat as u32)
+    }
+
+    /// Encodes the already-validated scalar/category payload of a literal token.
+    #[must_use]
+    #[inline(always)]
+    pub(crate) const fn char_token_payload_word(payload: u32) -> u64 {
+        pack(OP_CHAR_TOKEN, MeaningFlags::EMPTY, payload as u64)
     }
 
     /// Encodes this meaning into `opcode:8 | flags:8 | operand:48`.

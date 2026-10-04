@@ -217,3 +217,79 @@ fn packed_token_decode_rejects_unrepresentable_payloads() {
     assert_eq!(bad_param_ten.unpack(), None);
     assert_eq!(bad_char_scalar.unpack(), None);
 }
+
+#[test]
+fn packed_literal_resolution_preserves_all_nonactive_categories_and_unicode_scalars() {
+    use crate::meaning::{Meaning, MeaningWord};
+    let budget = InternerBudget::new(16, 16, 256).expect("budget");
+    crate::with_universe(budget, |universe| {
+        let context = universe.command_context().expect("literal admission");
+        for cat in super::ALL_CATCODES {
+            if cat == Catcode::Active {
+                continue;
+            }
+            for ch in ['\0', 'x', 'λ', '🙂', '\u{d7ff}', '\u{e000}', '\u{10ffff}'] {
+                let word = TokenWord::pack(Token::Char { ch, cat });
+                let mut target = MeaningWord::Static(Meaning::UNDEFINED_WORD);
+                assert_eq!(
+                    context.write_packed_token_command_into(word, &mut target),
+                    None
+                );
+                let MeaningWord::Static(resolved) = target else {
+                    panic!("literal resolution must preserve a static character");
+                };
+                assert_eq!(
+                    Meaning::from_runtime_word(resolved),
+                    Meaning::CharToken { ch, cat }
+                );
+            }
+        }
+    })
+    .expect("fresh universe");
+}
+
+#[test]
+fn packed_active_character_resolution_reads_its_live_binding() {
+    use crate::meaning::{Meaning, MeaningWord};
+    let budget = InternerBudget::new(16, 16, 256).expect("budget");
+    crate::with_universe(budget, |universe| {
+        let symbol = universe
+            .intern_active_character('🙂')
+            .expect("active spelling")
+            .symbol();
+        let mut context = universe.command_context().expect("active admission");
+        let word = TokenWord::pack(Token::Char {
+            ch: '🙂',
+            cat: Catcode::Active,
+        });
+        for ch in ['a', 'z'] {
+            context
+                .assign_meaning(
+                    symbol,
+                    MeaningWord::Static(Meaning::CharGiven(ch).encode()),
+                    crate::AssignmentScope::Global,
+                )
+                .expect("active binding");
+            let mut target = MeaningWord::Static(Meaning::UNDEFINED_WORD);
+            assert_eq!(
+                context.write_packed_token_command_into(word, &mut target),
+                Some(symbol)
+            );
+            let MeaningWord::Static(resolved) = target else {
+                panic!("active character binding has its assigned static meaning");
+            };
+            assert_eq!(Meaning::from_runtime_word(resolved), Meaning::CharGiven(ch));
+        }
+        let mut target = MeaningWord::Static(Meaning::RELAX_WORD);
+        let unregistered = TokenWord::pack(Token::Char {
+            ch: 'λ',
+            cat: Catcode::Active,
+        });
+        assert_eq!(
+            context.write_packed_token_command_into(unregistered, &mut target),
+            None
+        );
+        assert_eq!(target, MeaningWord::Static(Meaning::UNDEFINED_WORD));
+    })
+    .expect("fresh universe");
+}

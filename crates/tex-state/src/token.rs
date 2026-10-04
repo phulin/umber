@@ -392,24 +392,21 @@ impl<G> crate::CommandContext<'_, G> {
         let payload = word.0 & TokenWord::PAYLOAD_MASK;
         match kind {
             TokenWord::KIND_CHAR => {
-                let raw_cat = (payload & 0xF) as usize;
-                let ch = char::from_u32(payload >> TokenWord::CATCODE_BITS)
-                    .expect("packed token scalar is valid");
-                let cat = ALL_CATCODES[raw_cat];
-                let control_sequence = (cat == Catcode::Active)
-                    .then(|| self.active_character_symbol(ch))
-                    .flatten();
-                if cat == Catcode::Active {
+                if payload & 0xF == Catcode::Active as u32 {
+                    let ch = char::from_u32(payload >> TokenWord::CATCODE_BITS)
+                        .expect("packed token scalar is valid");
+                    let control_sequence = self.active_character_symbol(ch);
                     if let Some(symbol) = control_sequence {
                         self.compact_control_sequence_meaning_word(symbol)
                             .write_command_into(target);
                     } else {
                         target.write_static_meaning_word(Meaning::UNDEFINED_WORD);
                     }
+                    control_sequence
                 } else {
-                    target.write_static_meaning_word(Meaning::char_token_word(ch, cat));
+                    target.write_static_meaning_word(Meaning::char_token_payload_word(payload));
+                    None
                 }
-                control_sequence
             }
             TokenWord::KIND_CS => {
                 let symbol = Symbol::from_packed_slot(payload);
