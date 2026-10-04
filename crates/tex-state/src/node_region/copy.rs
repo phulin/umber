@@ -83,6 +83,9 @@ pub(super) struct CopyContext<'a> {
 }
 
 impl FixedBatchPublisher<'_> {
+    // Publication runs after descendant copies return. Keep its bounded batch
+    // arrays out of every suspended recursive copy frame.
+    #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn publish(
         &mut self,
@@ -608,6 +611,8 @@ impl<'a> CopyContext<'a> {
         .ok_or(ForkArenaError::InvalidRange)
     }
 
+    // Variable-body codec scratch must not inflate the fixed-box recursion.
+    #[inline(never)]
     fn relocate_variable_record(
         &mut self,
         slot: usize,

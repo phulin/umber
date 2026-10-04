@@ -668,3 +668,8 @@ The admitted command context exposes one `int_param` read. The former
 `untracked_int_param` forwarding alias is deleted; ordinary parameter reads
 already use this same admitted bank without recording a dependency or changing
 checkpoint state.
+
+Recursive fixed-box copying keeps batch publication and variable-body codecs
+outlined. Their bounded local buffers run after descendant copying returns;
+they must not become scratch in every suspended fixed-box ancestor frame.
+The existing small-stack recursive-copy test validates that placement.
