@@ -354,21 +354,12 @@ impl ReplayBoxKind {
 struct ActiveReplayAlignment<G> {
     identity: AlignmentIdentity,
     kind: AlignmentKind,
-    /// TeX82 §774's `save_cs_ptr`: the delivered control sequence whose
-    /// meaning began this alignment, retained for §338 runaway diagnostics.
-    owner: Option<tex_state::interner::Symbol>,
     /// TeX82 §645's `scan_spec` result, kept from `init_align` until §805
     /// packages the preamble prototype box with it.
     packing: AlignmentPackSpec,
     columns: Vec<PreparedAlignmentCellTemplates<G>>,
     repeat_start: Option<usize>,
     column: usize,
-    preamble_opening_pending: bool,
-    preamble_start_pending: bool,
-    cell_opening_pending: bool,
-    next_cell_opening_pending: bool,
-    align_peek_pending: bool,
-    align_peek_after_noalign: bool,
     noalign_open: bool,
     /// Scalar lifecycle evidence for the rows and cells whose material has
     /// already moved into the alignment level. The page arena is the sole
@@ -1587,7 +1578,6 @@ impl<G> MainControl<G> {
         self.operation_observations = None;
         self.execution.operation_receipt_start = None;
         self.execution.error_operation_committed = false;
-        self.execution.completed_replay_episode = None;
         self.execution.prepared_dvi_pages = PreparedDviPages::default();
         self.execution.prepared_shipout = None;
         self.execution.prepared_pdf_form = None;
@@ -2072,7 +2062,6 @@ impl<G> MainControl<G> {
     ) -> Result<(), ExecError> {
         self.ensure_not_halted()?;
         let finished = matches!(request, AlignmentRequest::Finish(_));
-        let preamble = matches!(request, AlignmentRequest::Preamble(_));
         let identity = match request {
             AlignmentRequest::Begin(identity)
             | AlignmentRequest::Preamble(identity)
@@ -2111,12 +2100,6 @@ impl<G> MainControl<G> {
                     })?;
                 self.execution.active_alignment = Some(outer);
             }
-        }
-        if preamble
-            && let Some(active) = self.execution.active_alignment.as_mut()
-            && active.identity == identity
-        {
-            active.preamble_opening_pending = false;
         }
         Ok(())
     }
@@ -2839,331 +2822,6 @@ impl<G> MainControl<G> {
 
     /// TeX82 §1207's missing-display-closer recovery for any non-math-shift
     /// command left by do_assignments.
-    fn recover_display_alignment_closer(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<MainControlStep, ExecError> {
-        let Some((nodes, aux_prev_depth)) = self
-            .execution
-            .modes
-            .current_list_mutation()
-            .take_display_alignment()
-        else {
-            return Err(ExecError::MissingToken {
-                context: "display alignment recovery",
-            });
-        };
-
-        // §1207 calls back_error before resume_after_display. The backup
-        // level must already be live when §82 renders context, and ordinary
-        // main control must retry the command in the resumed paragraph.
-        let context = self
-            .command
-            .output_open_context(&stores.command_context().expect("live generation"));
-        crate::error_report::report_error(
-            &mut stores
-                .command_context()
-                .expect("display diagnostic admission"),
-            diagnostic_effects,
-            "Missing $$ inserted",
-            &[
-                "Displays can use special alignments (like \\eqalignno)",
-                "only if nothing but the alignment itself is between $$'s.",
-            ],
-            context,
-        )?;
-        self.finish_display_alignment(
-            stores,
-            diagnostic_effects,
-            crate::align::FinishedAlignment {
-                nodes,
-                aux_prev_depth,
-                aux_space_factor: None,
-            },
-            resource_provider,
-        )?;
-        Ok(MainControlStep::Continue)
-    }
-
-    fn scan_display_end(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<bool, ExecError> {
-        // TeX82 §§1185/1194's `fin_mlist` has already popped the display
-        // level. Publish that live nest before §1197's nested expansion
-        // episode: capabilities were last sampled at the start of the outer
-        // main-control step, when the current mode was still display math.
-        self.ensure_primitive_handles(stores);
-        let mode = self.execution.modes.current_mode();
-        let shown_mode = self.execution.shown_mode;
-        let mut context = stores
-            .command_context()
-            .expect("display-end scan requires a live generation");
-        let provider = resource_provider.take();
-        let mut machine = self.command_machine_with_resource_provider(diagnostic_effects, provider);
-        let mut processor = machine.processor(&mut context);
-        prepare_command_trace(&mut processor, mode, shown_mode);
-        let paired = processor
-            .scan_display_end_math_shift()
-            .map_err(command_error)?;
-        let command_trace_printed = processor.command_trace_printed();
-        drop(processor);
-        if command_trace_printed {
-            *machine.shown_mode = Some(mode);
-        }
-        let provider = machine.resource_provider.take();
-        drop(machine);
-        *resource_provider = provider;
-        drop(context);
-        Ok(paired)
-    }
-
-    fn finish_display_alignment(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        finished: crate::align::FinishedAlignment,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<(), ExecError> {
-        self.finish_display_alignment_inner(
-            stores,
-            diagnostic_effects,
-            finished,
-            true,
-            resource_provider,
-        )
-    }
-
-    fn finish_display_alignment_inner(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        finished: crate::align::FinishedAlignment,
-        scan_optional_space: bool,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<(), ExecError> {
-        let mut context = stores
-            .command_context()
-            .expect("display-alignment admission");
-        let mut level = crate::box_runtime::commit_current_list(
-            &mut self.execution.modes,
-            &mut context,
-            diagnostic_effects,
-            self.fuel.fuel_mut(),
-        )?;
-        let interrupt =
-            level
-                .list_mutation()
-                .take_display_interrupt()
-                .ok_or(ExecError::MissingToken {
-                    context: "display alignment interrupt",
-                })?;
-        crate::math::display::finish_display_alignment(
-            &mut self.execution.modes,
-            &mut context,
-            finished,
-        )?;
-        unsave_group(
-            &mut context,
-            &mut self.command_machine(diagnostic_effects),
-            GroupKind::MathShift,
-        )
-        .map_err(|_| ExecError::MissingToken {
-            context: "display alignment group",
-        })?;
-        self.execution.active_math_shifts.pop();
-        drop(context);
-        self.resume_display_inner(
-            stores,
-            diagnostic_effects,
-            interrupt.active_directions,
-            scan_optional_space,
-            resource_provider,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)] // display completion owns independent mode/PDF/replay state
-    fn resume_display_inner(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        directions: Vec<tex_state::node::Direction>,
-        scan_optional_space: bool,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<(), ExecError> {
-        let prev = self
-            .execution
-            .modes
-            .enclosing_vertical_prev_graf()
-            .checked_add(3)
-            .expect("display prev_graf overflow");
-        self.execution.modes.set_enclosing_vertical_prev_graf(prev);
-        self.execution.modes.push_at_line(
-            Mode::Horizontal,
-            self.command
-                .current_file_line_number()
-                .try_into()
-                .unwrap_or(i32::MAX),
-        )?;
-        // §1200's `push_nest` sets `mode_line:=line` like every other one, so
-        // the paragraph fragment that follows a display reports its own
-        // over/underfull lines as §663's "in paragraph at lines A--B" rather
-        // than falling back to "detected at line B" for want of a
-        // `pack_begin_line`.
-        let (language, left, right) = {
-            let context = stores.command_context().expect("live generation");
-            crate::box_runtime::hmode::current_hyphen_context(&context)
-        };
-        self.execution
-            .modes
-            .current_list_mutation()
-            .begin_paragraph_hyphen_context(language, left, right);
-        self.execution
-            .modes
-            .current_list_mutation()
-            .set_space_factor(1000);
-        self.execution.modes.current_list_mutation().append(
-            &mut stores
-                .command_context()
-                .expect("display direction admission"),
-            directions.into_iter().map(Node::Direction),
-        );
-        if scan_optional_space {
-            self.scan_optional_space(stores, diagnostic_effects, resource_provider)?;
-        }
-        let mut context = stores.command_context().expect("display-resume admission");
-        let error_context = self.command.output_open_context(&context);
-        crate::math::display::build_page_after_display_resume(
-            &self.execution.modes,
-            &mut context,
-            diagnostic_effects,
-            &error_context,
-        )
-    }
-
-    /// TeX82 §443's `@<Scan an optional space@>`: `get_x_token; if
-    /// cur_cmd<>spacer then back_input`.
-    ///
-    /// §1200's `resume_after_display` ends with this scan, after `push_nest`
-    /// and before its `build_page`. Skipping it left the space that follows a
-    /// closing `$$` to reach main control as ordinary interword glue, so the
-    /// resumed paragraph was no longer null and §1096's `if head=tail then
-    /// pop_nest {null paragraphs are ignored}` never fired: the enclosing
-    /// vertical list gained an empty line box and its interline glue
-    /// (`umber2-johp.231`). The scan is a plain `get_x_token`, so a macro
-    /// following the display is expanded here exactly as TeX82 expands it.
-    fn scan_optional_space(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<(), ExecError> {
-        let mode = self.execution.modes.current_mode();
-        let shown_mode = self.execution.shown_mode;
-        let mut context = stores
-            .command_context()
-            .expect("optional-space scan requires a live generation");
-        let provider = resource_provider.take();
-        let mut machine = self.command_machine_with_resource_provider(diagnostic_effects, provider);
-        let mut processor = machine.processor(&mut context);
-        let mut diagnostics = Vec::new();
-        // TeX82 §§299/1200: resume_after_display has already pushed the new
-        // horizontal mode when its scanner expands this token. The expansion
-        // therefore owns the same pending mode prefix as every other
-        // get_x_token boundary, including §1197's staged display-end probe.
-        prepare_command_trace(&mut processor, mode, shown_mode);
-        let mut destination = None;
-        let fetched = processor.get_x_token_into(&mut destination);
-        let command_trace_printed = processor.command_trace_printed();
-        match fetched {
-            Ok(tex_command::DeliveryStatus::Command)
-                if !matches!(
-                    destination
-                        .as_ref()
-                        .expect("command status initializes destination")
-                        .meaning(),
-                    ResolvedMeaning::Static(Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    })
-                ) =>
-            {
-                let command = destination
-                    .take()
-                    .expect("command status initializes destination");
-                processor.back_input(command).map_err(command_error)?;
-            }
-            Ok(tex_command::DeliveryStatus::End | tex_command::DeliveryStatus::Command) => {}
-            Ok(_) => unreachable!("ordinary expanded delivery returns only commands"),
-            Err(err) => return Err(command_error(err)),
-        }
-        diagnostics.extend(
-            processor
-                .take_semantic_diagnostics()
-                .into_iter()
-                .map(PendingDiagnostic::Command),
-        );
-        drop(processor);
-        if command_trace_printed {
-            *machine.shown_mode = Some(mode);
-        }
-        let provider = machine.resource_provider.take();
-        drop(machine);
-        *resource_provider = provider;
-        drop(context);
-        // §1200 performs this expanded fetch synchronously before §1125's
-        // page builder. Diagnostics produced by expansion therefore belong
-        // to this nested scanner boundary; leaving them on CommandState<G> lets
-        // the following outer main-control step report them only after
-        // build_page has emitted its tracingpages state.
-        self.capture_first_causal_context(stores, &diagnostics);
-        report_pending_diagnostics(stores, diagnostic_effects, diagnostics)
-    }
-
-    fn command_scan_math_character(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<tex_command::ScannedMathCharacter, ExecError> {
-        let mut context = stores.command_context().expect("live generation");
-        let mut host_facts = ExecutorHostFacts {
-            modes: &self.execution.modes,
-            pdf_ignore_depth: self.execution.pdf_ignore_depth,
-            telemetry: &mut self.execution.episode_telemetry,
-        };
-        let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
-            command_processor_with_resource_provider(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
-                provider,
-                &mut self.declined_resource_attempt,
-                &mut self.operation_observations,
-                diagnostic_effects,
-                &mut context,
-            )
-        } else {
-            command_processor(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
-                &mut self.operation_observations,
-                diagnostic_effects,
-                &mut context,
-            )
-        };
-        processor.scan_math_character().map_err(command_error)
-    }
-
-    /// Atomic observed variant of [`Self::advance`]. Observations are held
-    /// until both command delivery and executor application have committed.
     pub fn advance_with_observer(
         &mut self,
         stores: &mut Universe<G>,
@@ -4101,28 +3759,6 @@ fn report_missing_vsplit_to<G>(
 /// §1197 reaches this through `back_error`, and the scanner's probe
 /// (`scan_display_end_math_shift`) has already put the offending token back,
 /// so only the report itself is left to issue.
-fn report_unpaired_display_end<G>(
-    command: &CommandState<G>,
-    diagnostic_effects: &mut DiagnosticEffects,
-    stores: &mut Universe<G>,
-) -> Result<(), ExecError> {
-    let mut stores = stores
-        .command_context()
-        .expect("display diagnostic admission");
-    let context = command.output_open_context(&stores);
-    crate::error_report::report_error(
-        &mut stores,
-        diagnostic_effects,
-        "Display math should end with $$",
-        &[
-            "The `$' that I just saw supposedly matches a previous `$$'.",
-            "So I shall assume that you typed `$$' both times.",
-        ],
-        context,
-    )?;
-    Ok(())
-}
-
 /// Copy-small page-output state captured while the operation's authoritative
 /// command context is already admitted.
 #[derive(Clone, Copy, Default)]

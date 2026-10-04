@@ -88,20 +88,36 @@ pub(super) fn message<G>(
         .map_err(command_error)?
         .tokens;
     report_scan(processor)?;
-    processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
-        execution.main_loop_active = false;
-        let text = token_text(context, command, &tokens)?;
-        command
-            .discard_attempt_tokens(tokens)
-            .expect("consumed message owner");
-        if error {
-            let display = command.output_open_context(context);
-            issue_error_message(context, effects, &text, display)?;
-        } else {
-            issue_terminal_message(context, &text);
-        }
-        Ok::<_, ExecError>(())
-    })?;
+    processor.with_execution_owners(
+        |context, command, effects, _, observer, execution, _, _, _| {
+            execution.main_loop_active = false;
+            let text = token_text(context, command, &tokens)?;
+            command
+                .discard_attempt_tokens(tokens)
+                .expect("consumed message owner");
+            if error {
+                let display = command.output_open_context(context);
+                issue_error_message(context, effects, &text, display)?;
+            } else {
+                context.publish_diagnostic_effects_before_synchronous_print(effects);
+                issue_terminal_message(context, &text);
+                if let Some(observer) = observer {
+                    observer.committed(CommandObservation::Effect(EffectRecord {
+                        kind: ObservationEffectKind::Message,
+                        channel: "terminal".into(),
+                        value: ObservationValue::Bytes(
+                            command
+                                .profile()
+                                .encode_output_text(&text)
+                                .expect("message belongs to the active character domain"),
+                        ),
+                        source: None,
+                    }));
+                }
+            }
+            Ok::<_, ExecError>(())
+        },
+    )?;
     if error {
         recovery::finish_error_dialogue(processor)?;
     }
@@ -209,39 +225,56 @@ pub(super) fn write<G>(
             .tokens
     };
     report_scan(processor)?;
-    processor.with_execution_owners(|context, command, effects, fuel, _, execution, _, _, _| {
-        execution.main_loop_active = false;
-        if immediate {
-            let text = token_text(context, command, &tokens)?;
-            command
-                .discard_attempt_tokens(tokens)
-                .expect("consumed immediate write owner");
-            let mut text = crate::diagnostics::print_text_with_newlinechar(context, &text);
-            text.push('\n');
-            let bytes = command
-                .profile()
-                .encode_output_text(&text)
-                .expect("write text belongs to the active command character domain");
-            if let Some(sink) = immediate_write_sink(stream, context) {
-                context.publish_immediate_write(effects, sink, &text, &bytes);
+    processor.with_execution_owners(
+        |context, command, effects, fuel, observer, execution, _, _, _| {
+            execution.main_loop_active = false;
+            if immediate {
+                let text = token_text(context, command, &tokens)?;
+                if let Some(observer) = observer {
+                    observer.committed(CommandObservation::Effect(EffectRecord {
+                        kind: ObservationEffectKind::Write,
+                        channel: write_effect_channel(replay_write_sink(stream)),
+                        value: ObservationValue::Tokens(
+                            command
+                                .attempt_token_words(&tokens)
+                                .expect("live expanded write")
+                                .iter()
+                                .map(|word| observed_macro_token(word.semantic_token(), context))
+                                .collect(),
+                        ),
+                        source: None,
+                    }));
+                }
+                command
+                    .discard_attempt_tokens(tokens)
+                    .expect("consumed immediate write owner");
+                let mut text = crate::diagnostics::print_text_with_newlinechar(context, &text);
+                text.push('\n');
+                let bytes = command
+                    .profile()
+                    .encode_output_text(&text)
+                    .expect("write text belongs to the active command character domain");
+                if let Some(sink) = immediate_write_sink(stream, context) {
+                    context.publish_immediate_write(effects, sink, &text, &bytes);
+                }
+                return Ok(MainControlStep::Continue);
             }
-            return Ok(MainControlStep::Continue);
-        }
 
-        let tokens = publication::publish_tokens(command, context, tokens)?;
-        let tokens = context.node_token_list(&tokens);
-        crate::box_runtime::append_whatsit(
-            &mut execution.modes,
-            context,
-            effects,
-            fuel,
-            Whatsit::DeferredWrite {
-                sink: replay_write_sink(stream),
-                tokens,
-            },
-        )?;
-        Ok(MainControlStep::Continue)
-    })
+            let tokens = publication::publish_tokens(command, context, tokens)?;
+            let tokens = context.node_token_list(&tokens);
+            crate::box_runtime::append_whatsit(
+                &mut execution.modes,
+                context,
+                effects,
+                fuel,
+                Whatsit::DeferredWrite {
+                    sink: replay_write_sink(stream),
+                    tokens,
+                },
+            )?;
+            Ok(MainControlStep::Continue)
+        },
+    )
 }
 
 pub(super) fn special<G>(
@@ -396,6 +429,6 @@ pub(super) fn read<G>(
                 context, effects, receipts, target, definition, global,
             )
         })?;
-    processor.complete_assignment().map_err(command_error)?;
+    assignments::complete(processor, receipts)?;
     Ok(step)
 }

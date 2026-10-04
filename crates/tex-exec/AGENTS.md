@@ -76,8 +76,8 @@ not allocate a vector merely to publish one already-complete node.
   `glue_identity.rs` owns TeX pointer reassignment; `driver.rs` owns actual
   projection/high-water observations and admits the actual processor once for
   each interpreter invocation. Ordinary driver entry has no command slot;
-  diagnostic preflight dispatches only its genuinely already-fetched record. Missing selected-command and real input-boundary wiring
-  remains a compile-time cutover gap, not a runtime fallback.
+  diagnostic preflight dispatches only its genuinely already-fetched record. Every selected terminal enters this native switch, including alignment
+  recovery and endv. There is no selected-command fallback.
 - `src/main_control/interpreter/box_inputs.rs`: the one native `scan_box`
   operand selection and actual destinations. Direct register handoffs create
   no temporary construction mark; lastbox removal precedes destination
@@ -91,8 +91,13 @@ not allocate a vector merely to publish one already-complete node.
   list packaging and display probes on the live processor. Font diagnostics
   publish before the synchronous report without re-admitting World. Native
   unsave restores parameters before resumed input. The former math-shift
-  pairing packet and root math executors are deleted; only unported
-  alignment recovery still retains its old display-close helper.
+  pairing packet and root math executors are deleted; the old alignment display-close helpers are deleted.
+- `src/main_control/interpreter/alignment.rs`, `alignment_columns.rs` and
+  `alignment_recovery.rs`: live preamble publication directly into the actual
+  alignment, row and column selection, native entry unsave, noalign closure
+  and canonical brace/delimiter repair. The old alignment executors,
+  preamble/cell phase enum and pending scanner flags are deleted. Input
+  interception and endv proof retain their command-core authority.
 - The former `src/main_control/direct/` directory is deleted completely,
   including its dispatcher owner and processor reconstruction adapters. Do not
   restore it or add an equivalent compatibility dispatcher. Genuine opcode,

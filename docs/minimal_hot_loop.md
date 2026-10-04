@@ -896,3 +896,24 @@ font diagnostics publish before their synchronous error dialogue through the
 current admitted World. Opening and closing math produce no pairing request,
 processor reconstruction or ordinary owner re-admission. Only actual display
 interrupts and equation-number roots survive between body commands.
+
+## Native alignment transitions
+
+Alignment entry scans its packing specification and preamble on the live
+processor, publishes templates once into their retained owners, then enters
+canonical row lookahead. Template-end and endv remain command-core input
+transitions. The executor restores the entry group through that same processor
+before packaging its actual cell, then selects the next column or row directly. No ordinary
+command product, processor reconstruction, post-command settlement or pending
+preamble/cell scanner mailbox carries these transitions. Noalign body close
+ends its actual paragraph, unsaves its native group and resumes row lookahead.
+The final alignment closes both real save levels before final packaging.
+
+Canonical input and publication order belong to their producers. TeX82 §380
+converts a physical endtemplate to endv in place; it creates no backed-up
+input frame. Section 1090 checks the command-owned alignment brace count before
+paragraph closure. Section 791 restores the entry group before cell packaging.
+Sections 1241/1269 publish assignment evidence before inserting the saved
+afterassignment word. Message and immediate-write evidence publish with their
+actual output. Page fire-up releases the processor only for its actual World
+output and output-routine selection, before the next ordinary word is read.

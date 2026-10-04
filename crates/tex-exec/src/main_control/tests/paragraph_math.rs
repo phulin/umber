@@ -391,10 +391,12 @@ fn display_resume_snapshots_hyphenation_context_for_following_paragraph() {
             )
             .expect("hyphenation parameter assignment");
         }
-        let mut effects = DiagnosticEffects::new();
-        control
-            .resume_display_inner(stores, &mut effects, Vec::new(), false, &mut None)
-            .expect("display resume");
+        register_source(&mut control, br"$$x$$\relax");
+        for _ in 0..4 {
+            control
+                .advance(stores)
+                .expect("native display entry and resume");
+        }
         assert_eq!(control.execution.modes.current_mode(), Mode::Horizontal);
         assert_eq!(
             control

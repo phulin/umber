@@ -11,14 +11,17 @@ pub(super) fn begin<G>(processor: &mut Processor<'_, '_, G>) -> Result<MainContr
             effects,
             fuel,
         )?;
+        Ok::<(), ExecError>(())
+    })?;
+    open_part(processor)?;
+    processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
         execution.active_discretionaries.push(ActiveDiscretionary {
             parts: [tex_state::page_node_arena::PageListSpan::empty(); 3],
             completed: 0,
             rejected: false,
         });
-        Ok::<(), ExecError>(())
-    })?;
-    open_part(processor)
+    });
+    Ok(MainControlStep::Continue)
 }
 
 fn open_part<G>(processor: &mut Processor<'_, '_, G>) -> Result<MainControlStep, ExecError> {

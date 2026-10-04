@@ -132,7 +132,6 @@ pub(super) struct ExecutionState<G> {
     /// its direct-operation roots. Observed drivers use this narrow query to
     /// publish the committed receipt even though the typed result is `Err`.
     pub(super) error_operation_committed: bool,
-    pub(super) completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     /// Detached DVI receipts whose artifact commits have survived an entire
     /// direct operation. This replay state is published only after its
     /// corresponding World artifact/effect roots commit.
@@ -243,7 +242,6 @@ impl<G> ExecutionState<G> {
             page_output_observations: None,
             operation_receipt_start: None,
             error_operation_committed: false,
-            completed_replay_episode: None,
             prepared_dvi_pages: PreparedDviPages::default(),
             prepared_shipout: None,
             prepared_pdf_form: None,

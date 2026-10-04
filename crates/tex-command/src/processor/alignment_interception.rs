@@ -133,6 +133,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .finish_alignment_cell_after_input_proof(alignment)
             .map_err(|_| CommandError::input_invariant())
     }
+    /// TeX82 §1090 consults the live brace count before paragraph closure.
+    pub fn alignment_brace_state(&self) -> i32 {
+        self.command.alignment.align_state
+    }
+
     fn saved_alignment_delimiter(
         command: &CurrentCommand<G>,
     ) -> Result<crate::AlignmentCellDelimiter, CommandError> {

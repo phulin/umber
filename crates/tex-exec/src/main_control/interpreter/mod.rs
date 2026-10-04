@@ -8,6 +8,9 @@ use super::*;
 use std::ops::ControlFlow;
 
 mod accent;
+mod alignment;
+mod alignment_columns;
+mod alignment_recovery;
 mod arithmetic;
 mod assignments;
 mod box_inputs;
@@ -45,6 +48,8 @@ pub(super) fn run<G>(
     completed_operations: &mut usize,
     observation_receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<MainControlStep, ExecError> {
+    let initial_effect_pos =
+        processor.with_execution_owners(|context, _, _, _, _, _, _, _, _| context.effect_pos());
     while *completed_operations < remaining_operations {
         let lookahead = processor
             .with_execution_owners(|_, _, _, _, _, execution, _, _, _| execution.main_loop_active);
@@ -73,7 +78,8 @@ pub(super) fn run<G>(
                             |context, _, effects, _, _, execution, _, _, _| {
                                 (
                                     execution.main_loop_active,
-                                    execution.paragraph_checkpoint_cut
+                                    context.effect_pos() != initial_effect_pos
+                                        || execution.paragraph_checkpoint_cut
                                         || execution.prepared_shipout.is_some()
                                         || execution.prepared_pdf_form.is_some()
                                         || effects.has_first_recoverable()
@@ -141,7 +147,9 @@ fn report_scan<G>(processor: &mut Processor<'_, '_, G>) -> Result<(), ExecError>
                     execution,
                     effects,
                     diagnostics,
-                )
+                )?;
+                context.publish_diagnostic_effects_before_synchronous_print(effects);
+                Ok::<(), ExecError>(())
             },
         )?;
         recovery::finish_error_dialogue(processor)?;
@@ -155,7 +163,8 @@ fn finish_input_boundary<G>(
 ) -> Result<MainControlStep, ExecError> {
     match status {
         tex_command::DeliveryStatus::End => Ok(MainControlStep::EndOfInput),
-        tex_command::DeliveryStatus::ReplayCompleted(_) => Ok(MainControlStep::Continue),
+        tex_command::DeliveryStatus::ReplayCompleted(_)
+        | tex_command::DeliveryStatus::AlignmentEndTemplate => Ok(MainControlStep::Continue),
         _ => unreachable!("canonical terminal reader handles alignment and scalar boundaries"),
     }
 }

@@ -1781,7 +1781,7 @@ fn box_construction_targets_specs_hooks_shifts_leaders_and_register_matrix() {
                     assert_eq!(count_register(recovery, 0), 7);
                     assert!(register_shapes(recovery, 2).is_some());
                     assert!(terminal(recovery).contains("Missing { inserted"));
-                    assert!(terminal(recovery).contains("Improper \\setbox"));
+                    assert!(terminal(recovery).contains("A <box> was supposed to be here"));
                 },
             );
         },
@@ -2543,7 +2543,11 @@ fn box_forbidden_shift_lastbox_vsplit_and_recovery_ownership_matrix() {
                     ));
                     let errors = terminal(recovery);
                     assert_eq!(errors.matches("Missing { inserted").count(), 1, "{errors}");
-                    assert_eq!(errors.matches("Improper \\setbox").count(), 1, "{errors}");
+                    assert_eq!(
+                        errors.matches("A <box> was supposed to be here").count(),
+                        1,
+                        "{errors}"
+                    );
                 },
             );
         },

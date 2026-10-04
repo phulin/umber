@@ -809,3 +809,26 @@ pub(super) const CHAR_PARAMETER: u64 =
 pub(super) const END_CS_NAME: u64 = Meaning::runtime_word_control_code(
     Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndCsName).encode(),
 );
+
+pub(super) const END_V: u64 = Meaning::runtime_word_control_code(Meaning::END_V_WORD);
+
+pub(super) const CHAR_ALIGN_TAB: u64 =
+    Meaning::runtime_word_control_code(Meaning::char_token_word('&', Catcode::AlignmentTab));
+pub(super) const PRIMITIVE_CR: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr).encode(),
+);
+pub(super) const PRIMITIVE_CR_CR: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr).encode(),
+);
+pub(super) const PRIMITIVE_SPAN: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span).encode(),
+);
+pub(super) const PRIMITIVE_OMIT: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit).encode(),
+);
+pub(super) const PRIMITIVE_NO_ALIGN: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign).encode(),
+);
+
+pub(super) const CHAR_CAR_RET: u64 =
+    Meaning::runtime_word_control_code(Meaning::char_token_word('\0', Catcode::EndLine));

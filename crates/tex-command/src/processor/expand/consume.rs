@@ -216,18 +216,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             expanded = true;
                             return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                         }
-                        if matches!(role, ExpandedReaderRole::MainControl | ExpandedReaderRole::MainLoopLookahead)
-                            && !expanded
-                            && matches!(action, ExpandedCommandAction::EndTemplate)
-                            && !matches!(
-                                command.alignment_adjustment(),
-                                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                            )
-                        {
-                            destination.take();
-                            processor.insert_frozen_endv()?;
-                            return Ok(ControlFlow::Continue(()));
-                        }
                         if Consumer::RAW_TOKEN || (role == ExpandedReaderRole::MainLoopLookahead
                             && !expanded && command.is_main_loop_character()) {
                             DeliveryStatus::Command
@@ -318,19 +306,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(Some(DeliveryStatus::Command));
         }
         let action = action.unwrap_or_else(|| classify_hot_command(&command));
-        if matches!(
-            role,
-            ExpandedReaderRole::MainControl | ExpandedReaderRole::MainLoopLookahead
-        ) && matches!(action, ExpandedCommandAction::EndTemplate)
-            && !matches!(
-                command.alignment_adjustment(),
-                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-            )
-        {
-            self.insert_frozen_endv()?;
-            return Ok(None);
-        }
-
         if let ExpandedCommandAction::Expand(dispatch) = action {
             self.execute_expansion_action(&mut command, dispatch)?;
             return Ok(None);

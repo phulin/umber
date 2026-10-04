@@ -48,11 +48,11 @@ pub(super) fn publish_tokens<G, T: TokenRequest<tex_command::AttemptTokenListId>
 }
 pub(super) fn publish_alignment_preamble<G>(
     command: &mut CommandState<G>,
-    stores: &mut Universe<G>,
-    alignment: AlignmentIdentity,
-) -> Result<PreparedAlignmentPreamble<G>, ExecError> {
+    stores: &mut CommandContext<'_, G>,
+    active: &mut ActiveReplayAlignment<G>,
+) -> Result<(), ExecError> {
     let preamble = command
-        .take_completed_alignment_preamble(alignment)
+        .take_completed_alignment_preamble(active.identity)
         .map_err(|_| ExecError::MissingToken {
             context: "completed alignment preamble",
         })?;
@@ -103,7 +103,7 @@ pub(super) fn publish_alignment_preamble<G>(
             .expect("validated template consumed");
         published
     };
-    let columns = preamble
+    active.columns = preamble
         .columns
         .into_iter()
         .map(|column| PreparedAlignmentCellTemplates {
@@ -111,11 +111,14 @@ pub(super) fn publish_alignment_preamble<G>(
             v_template: publish(column.v_template),
         })
         .collect();
-    Ok(PreparedAlignmentPreamble {
-        alignment,
-        columns,
-        tabskips: preamble.tabskips,
-        default_tabskip: preamble.default_tabskip,
-        repeat_start: preamble.repeat_start,
-    })
+    active.tabskips = preamble.tabskips;
+    active.default_tabskip = preamble.default_tabskip;
+    active.repeat_start = preamble.repeat_start;
+    active.column = 0;
+    if active.columns.is_empty() {
+        return Err(ExecError::MissingToken {
+            context: "first alignment preamble column",
+        });
+    }
+    Ok(())
 }

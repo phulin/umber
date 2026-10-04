@@ -1,8 +1,4 @@
 //! Concrete semantic routines called by the sole main-control engine.
-mod alignment;
-pub(super) use alignment::*;
-mod alignment_recovery;
-pub(super) use alignment_recovery::*;
 mod assignments;
 pub(super) use assignments::*;
 mod boxes;

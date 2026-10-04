@@ -119,6 +119,21 @@ pub(super) fn close_tex_group<G>(
             });
             Ok(MainControlStep::Continue)
         }
+        (codes::CHAR_END_GROUP, Some(GroupKind::Align)) => {
+            alignment_recovery::missing_cr(processor, exceptional)
+        }
+        (codes::CHAR_END_GROUP, Some(GroupKind::NoAlign)) => {
+            let mode = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                execution.modes.current_mode()
+            });
+            if partoken_context_replays(processor, mode, 2) {
+                processor
+                    .recover_stop_for_vertical_mode(spelling, exceptional)
+                    .map_err(command_error)?;
+                return Ok(MainControlStep::Continue);
+            }
+            alignment::close_noalign(processor, receipts)
+        }
         (codes::CHAR_END_GROUP, Some(GroupKind::Math)) => math::close_field(processor),
         (codes::CHAR_END_GROUP, Some(GroupKind::MathChoice)) => math::close_choice(processor),
         (codes::CHAR_END_GROUP, Some(GroupKind::Disc)) => discretionary::close_part(processor),

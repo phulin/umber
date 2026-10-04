@@ -15,6 +15,7 @@ use crate::{
 };
 
 use super::*;
+use tex_state::InputReadState;
 mod etex_diagnostic_tracing;
 #[path = "tests/material_property_matrices.rs"]
 mod material_property_matrices;

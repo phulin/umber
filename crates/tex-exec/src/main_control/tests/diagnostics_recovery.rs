@@ -69,11 +69,11 @@ fn setbox_rejects_non_box_command_with_assignment_context_diagnostic() {
         run_to_end(&mut control, stores);
 
         let terminal = terminal_text(stores);
-        assert!(terminal.contains("Improper \\setbox"), "{terminal}");
         assert!(
-            !terminal.contains("A <box> was supposed to be here"),
+            terminal.contains("A <box> was supposed to be here"),
             "{terminal}"
         );
+        assert!(!terminal.contains("Improper \\setbox"), "{terminal}");
         assert!(stores.copy_box_to_page(0).is_none());
         assert_eq!(stores.count(0).expect("count register"), 7);
         assert_eq!(stores.count(1).expect("count register"), 9);
@@ -87,9 +87,10 @@ fn forbidden_setbox_reports_before_reading_the_following_command() {
     // context; it subsequently executes once and the destination stays void.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
-            br"\nonstopmode\tracingonline=1\tracingcommands=2\accent65\setbox0=\count0=7 X\end",
+            br"\nonstopmode\font\f=cmr10 \f\tracingonline=1\tracingcommands=2\accent65\setbox0=\count0=7 X\end",
         );
 
         run_to_end(&mut control, stores);

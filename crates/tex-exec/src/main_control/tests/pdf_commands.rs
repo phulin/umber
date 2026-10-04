@@ -628,7 +628,7 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
             register_source(&mut control, source);
             assert!(matches!(
                 control.advance(stores),
-                Err(ExecError::PdfExtensionInDviMode("pdfobj"))
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfobj"))
             ));
             assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
             assert_eq!(
@@ -652,7 +652,7 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
         register_source(&mut control, br"\immediate\pdfobj reserveobjnum");
         assert!(matches!(
             control.advance(stores),
-            Err(ExecError::PdfImmediateReservedObject)
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfImmediateReservedObject)
         ));
         assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
     });
@@ -855,7 +855,7 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
 
         assert!(matches!(
             control.advance(stores),
-            Err(ExecError::PdfExtensionInDviMode("pdfxform"))
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfxform"))
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
         assert!(stores.copy_box_to_page(9).is_some());
@@ -987,7 +987,7 @@ fn immediate_pdf_image_rejects_direct_retry_after_resource_need() {
 
         assert!(matches!(
             control.advance(stores),
-            Err(ExecError::PdfExtensionInDviMode("pdfximage"))
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfximage"))
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
         assert!(
@@ -1853,9 +1853,7 @@ fn pdfsnapy_rejects_negative_width_after_consuming_the_complete_glue() {
         register_source(&mut control, br"\pdfsnapy -1pt plus 2fil");
         assert!(matches!(
             control.advance(stores),
-            Err(ExecError::PdfNavigation(
-                "pdfTeX error (ext1): negative snap glue"
-            ))
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfNavigation("pdfTeX error (ext1): negative snap glue"))
         ));
         assert!(current_list_owner_vec(&control, stores).is_empty());
     });
@@ -2163,7 +2161,7 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
             register_source(&mut dvi_control, br"\pdffakespace");
             assert!(matches!(
                 dvi_control.advance(dvi_stores),
-                Err(ExecError::PdfExtensionInDviMode("pdffakespace"))
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdffakespace"))
             ));
             assert!(current_list_owner_vec(&dvi_control, dvi_stores).is_empty());
         });
@@ -2326,7 +2324,7 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
             register_source(&mut dvi_control, br"\pdfrunninglinkon");
             assert!(matches!(
                 dvi_control.advance(dvi_stores),
-                Err(ExecError::PdfExtensionInDviMode("pdfrunninglinkon"))
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrunninglinkon"))
             ));
             assert!(current_list_owner_vec(&dvi_control, dvi_stores).is_empty());
         });
@@ -2473,7 +2471,7 @@ fn pdfspacefont_rejects_prefixes_and_dvi_mode_before_scanning() {
             register_source(&mut dvi_control, br"\pdfspacefont{unscanned}");
             assert!(matches!(
                 dvi_control.advance(dvi_stores),
-                Err(ExecError::PdfExtensionInDviMode("pdfspacefont"))
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfspacefont"))
             ));
         });
     });

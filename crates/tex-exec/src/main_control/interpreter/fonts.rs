@@ -21,7 +21,7 @@ pub(super) fn define<G>(
         },
     )?;
     recovery::finish_error_dialogue(processor)?;
-    processor.complete_assignment().map_err(command_error)?;
+    assignments::complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -116,7 +116,7 @@ pub(super) fn generated<G>(
             )
         })?;
     recovery::finish_error_dialogue(processor)?;
-    processor.complete_assignment().map_err(command_error)?;
+    assignments::complete(processor, receipts)?;
     Ok(step)
 }
 

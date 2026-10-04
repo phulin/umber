@@ -25,7 +25,7 @@ pub(super) fn tokens<G>(
             )
         },
     )?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -52,7 +52,7 @@ pub(super) fn code_table<G>(
         },
     )?;
     recovery::finish_error_dialogue(processor)?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -88,7 +88,7 @@ pub(super) fn character_definition<G>(
                 global,
             )
         })?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -117,7 +117,7 @@ pub(super) fn register_definition<G>(
             )
         },
     )?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -158,7 +158,7 @@ pub(super) fn glue_parameter<G>(
             semantic::execute_glue_param(context, effects, command, receipts, index, value, global)
         },
     )?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -176,7 +176,7 @@ pub(super) fn count<G>(
             execution.main_loop_active = false;
             semantic::execute_count(context, effects, receipts, index, value, global)
         })?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -194,7 +194,7 @@ pub(super) fn dimension<G>(
             execution.main_loop_active = false;
             semantic::execute_dimen(context, effects, receipts, index, value, global)
         })?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -213,7 +213,7 @@ pub(super) fn integer_parameter<G>(
             semantic::execute_int_param(context, effects, command, receipts, index, value, global)
         },
     )?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -232,7 +232,7 @@ pub(super) fn dimension_parameter<G>(
             semantic::execute_dimen_param(context, effects, command, receipts, index, value, global)
         },
     )?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -294,7 +294,7 @@ pub(super) fn glue_register<G>(
             }
             Ok::<MainControlStep, ExecError>(step)
         })?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -330,7 +330,7 @@ pub(super) fn definition<G>(
             )
         },
     )?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -353,7 +353,7 @@ pub(super) fn bind<G>(
             )?;
             definition_assignments::apply_let(target, meaning, global, context, effects, receipts)
         })?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -411,6 +411,23 @@ pub(super) fn penalties<G>(
             execution.main_loop_active = false;
             semantic::execute_penalty_array(context, effects, receipts, kind, &values, global)
         })?;
-    processor.complete_assignment().map_err(command_error)?;
+    complete(processor, receipts)?;
     Ok(step)
+}
+
+/// §1269 publishes the actual write before backing the saved token.
+pub(super) fn complete<G>(
+    processor: &mut Processor<'_, '_, G>,
+    receipts: &mut Option<Vec<MutationRecord>>,
+) -> Result<(), ExecError> {
+    if let Some(receipts) = receipts {
+        processor.with_execution_owners(|_, _, _, _, observer, _, _, _, _| {
+            if let Some(observer) = observer {
+                for receipt in receipts.drain(..) {
+                    observer.committed(CommandObservation::Mutation(receipt));
+                }
+            }
+        });
+    }
+    processor.complete_assignment().map_err(command_error)
 }

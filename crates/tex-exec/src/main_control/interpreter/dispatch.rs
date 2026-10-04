@@ -11,15 +11,87 @@ pub(super) fn execute<'state, 'host, G>(
     observation_receipts: &mut Option<Vec<MutationRecord>>,
     prefixes: u8,
 ) -> Result<MainControlStep, ExecError> {
+    if processor.has_pending_reports() {
+        report_scan(processor)?;
+    }
+    let code = match meaning {
+        MeaningWord::Static(word) => Meaning::runtime_word_control_code(*word),
+        MeaningWord::Font(_) => codes::FONT,
+        MeaningWord::Macro { .. } => unreachable!("expanded terminal"),
+    };
+    if !matches!(
+        code,
+        codes::CHAR_LETTER
+            | codes::CHAR_OTHER
+            | codes::CHAR_GIVEN
+            | codes::PRIMITIVE_CHAR
+            | codes::PRIMITIVE_NO_BOUNDARY
+    ) {
+        processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
+            if execution.main_loop_active {
+                execution.main_loop_active = false;
+                crate::box_runtime::flush_pending_hchars_with_fuel(
+                    &mut execution.modes,
+                    context,
+                    effects,
+                    fuel,
+                )?;
+            }
+            Ok::<_, ExecError>(())
+        })?;
+    }
+    trace::command(processor, code, meaning, control_sequence);
+    reswitch(
+        processor,
+        spelling,
+        meaning,
+        control_sequence,
+        exceptional,
+        observation_receipts,
+        prefixes,
+    )
+}
+
+pub(super) fn reswitch<'state, 'host, G>(
+    processor: &mut Processor<'state, 'host, G>,
+    spelling: TracedTokenWord,
+    meaning: &MeaningWord<G>,
+    control_sequence: Option<Symbol>,
+    exceptional: Option<&tex_command::CurrentCommand<G>>,
+    observation_receipts: &mut Option<Vec<MutationRecord>>,
+    prefixes: u8,
+) -> Result<MainControlStep, ExecError> {
+    execute_inner(
+        processor,
+        spelling,
+        meaning,
+        control_sequence,
+        exceptional,
+        observation_receipts,
+        prefixes,
+    )
+    .map_err(|error| {
+        let error = error.capture_command_origin(spelling.origin());
+        processor.with_execution_owners(|context, command, _, _, _, _, _, _, _| {
+            error.freeze_diagnostic_origin(context, command.diagnostic_input_context(8))
+        })
+    })
+}
+
+fn execute_inner<'state, 'host, G>(
+    processor: &mut Processor<'state, 'host, G>,
+    spelling: TracedTokenWord,
+    meaning: &MeaningWord<G>,
+    control_sequence: Option<Symbol>,
+    exceptional: Option<&tex_command::CurrentCommand<G>>,
+    observation_receipts: &mut Option<Vec<MutationRecord>>,
+    prefixes: u8,
+) -> Result<MainControlStep, ExecError> {
     let code = match meaning {
         MeaningWord::Static(word) => Meaning::runtime_word_control_code(*word),
         MeaningWord::Font(_) => codes::FONT,
         MeaningWord::Macro { .. } => unreachable!("expanded reader delivers a terminal"),
     };
-    if processor.has_pending_reports() {
-        report_scan(processor)?;
-    }
-    trace::command(processor, code, meaning, control_sequence);
     match code {
         codes::PRIMITIVE_GLOBAL
         | codes::PRIMITIVE_LONG
@@ -32,6 +104,87 @@ pub(super) fn execute<'state, 'host, G>(
                 _ => MeaningFlags::PROTECTED.bits(),
             };
             prefixes::scan(processor, prefixes | flag, observation_receipts)
+        }
+        codes::END_V => {
+            let (mode, active) =
+                processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                    (
+                        execution.modes.current_mode(),
+                        execution.active_alignment.is_some(),
+                    )
+                });
+            if matches!(mode, Mode::Math | Mode::DisplayMath) {
+                recovery::insert_math_shift(
+                    processor,
+                    spelling,
+                    meaning,
+                    control_sequence,
+                    exceptional,
+                )
+            } else if active {
+                alignment_columns::finish_cell(processor, observation_receipts)
+            } else {
+                recovery::off_save(processor, spelling, meaning, control_sequence, exceptional)
+            }
+        }
+        codes::CHAR_ALIGN_TAB
+        | codes::CHAR_CAR_RET
+        | codes::PRIMITIVE_CR
+        | codes::PRIMITIVE_CR_CR
+        | codes::PRIMITIVE_SPAN => alignment_recovery::delimiter(processor, spelling, exceptional),
+        codes::PRIMITIVE_NO_ALIGN | codes::PRIMITIVE_OMIT => {
+            alignment_recovery::misplaced(processor, code == codes::PRIMITIVE_OMIT)
+        }
+        codes::PRIMITIVE_H_ALIGN | codes::PRIMITIVE_V_ALIGN => {
+            let (mode, group) =
+                processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+                    (
+                        execution.modes.current_mode(),
+                        context.innermost_group_kind(),
+                    )
+                });
+            if code == codes::PRIMITIVE_H_ALIGN {
+                if mode == Mode::Horizontal {
+                    processor
+                        .recover_stop_for_vertical_mode(spelling, exceptional)
+                        .map_err(command_error)?;
+                    return Ok(MainControlStep::Continue);
+                }
+                if mode == Mode::RestrictedHorizontal {
+                    return recovery::off_save(
+                        processor,
+                        spelling,
+                        meaning,
+                        control_sequence,
+                        exceptional,
+                    );
+                }
+                if mode == Mode::Math {
+                    return recovery::illegal_case(
+                        processor,
+                        spelling,
+                        meaning,
+                        control_sequence,
+                        exceptional,
+                    );
+                }
+            }
+            if matches!(mode, Mode::Math | Mode::DisplayMath) && group != Some(GroupKind::MathShift)
+            {
+                return recovery::off_save(
+                    processor,
+                    spelling,
+                    meaning,
+                    control_sequence,
+                    exceptional,
+                );
+            }
+            alignment::begin(
+                processor,
+                code == codes::PRIMITIVE_V_ALIGN,
+                control_sequence,
+                observation_receipts,
+            )
         }
         codes::PRIMITIVE_SET_BOX => {
             let global = effective_global(
@@ -286,7 +439,7 @@ pub(super) fn execute<'state, 'host, G>(
                     semantic::execute_page_dimension(context, effects, dimension, value)
                 },
             )?;
-            processor.complete_assignment().map_err(command_error)?;
+            assignments::complete(processor, observation_receipts)?;
             Ok(step)
         }
         codes::PAGE_INTEGER => {
@@ -302,7 +455,7 @@ pub(super) fn execute<'state, 'host, G>(
                     semantic::execute_page_integer(context, effects, integer, value)
                 },
             )?;
-            processor.complete_assignment().map_err(command_error)?;
+            assignments::complete(processor, observation_receipts)?;
             Ok(step)
         }
         codes::PRIMITIVE_BATCH_MODE
@@ -338,7 +491,7 @@ pub(super) fn execute<'state, 'host, G>(
                 },
             )?;
             recovery::finish_error_dialogue(processor)?;
-            processor.complete_assignment().map_err(command_error)?;
+            assignments::complete(processor, observation_receipts)?;
             Ok(step)
         }
         codes::PRIMITIVE_PATTERNS | codes::PRIMITIVE_HYPHENATION => {
@@ -445,7 +598,7 @@ pub(super) fn execute<'state, 'host, G>(
                     semantic::execute_prev_depth(context, &mut execution.modes, effects, value)
                 },
             )?;
-            processor.complete_assignment().map_err(command_error)?;
+            assignments::complete(processor, observation_receipts)?;
             Ok(step)
         }
         codes::PRIMITIVE_SPACE_FACTOR | codes::PRIMITIVE_PREV_GRAF => {
@@ -493,7 +646,7 @@ pub(super) fn execute<'state, 'host, G>(
                 },
             )?;
             recovery::finish_error_dialogue(processor)?;
-            processor.complete_assignment().map_err(command_error)?;
+            assignments::complete(processor, observation_receipts)?;
             Ok(step)
         }
         codes::PRIMITIVE_QUIT_V_MODE => {
@@ -801,7 +954,7 @@ pub(super) fn execute<'state, 'host, G>(
                     )
                 },
             )?;
-            processor.complete_assignment().map_err(command_error)?;
+            assignments::complete(processor, observation_receipts)?;
             Ok(step)
         }
         codes::PRIMITIVE_UN_PENALTY | codes::PRIMITIVE_UN_KERN | codes::PRIMITIVE_UN_SKIP => {
@@ -963,7 +1116,7 @@ pub(super) fn execute<'state, 'host, G>(
                     semantic::execute_font_select(context, effects, *font, global)
                 },
             )?;
-            processor.complete_assignment().map_err(command_error)?;
+            assignments::complete(processor, observation_receipts)?;
             Ok(step)
         }
         codes::CHAR_BEGIN_GROUP | codes::PRIMITIVE_BEGIN_GROUP => {
@@ -1656,13 +1809,14 @@ pub(super) fn execute<'state, 'host, G>(
                         return Ok(MainControlStep::Continue);
                     }
                     Mode::RestrictedHorizontal => {
-                        return recovery::off_save(
-                            processor,
-                            spelling,
-                            meaning,
-                            control_sequence,
-                            exceptional,
-                        );
+                        processor.with_execution_owners(|context, command, effects, _, _, _, _, _, _| {
+                            report_escaped_error(context, effects, "You can't use `", "hrule", "' here except with leaders", &[
+                                "To put a horizontal rule in an hbox or an alignment,",
+                                "you should use \\leaders or \\hrulefill (see The TeXbook).",
+                            ], command.output_open_context(context))
+                        })?;
+                        recovery::finish_error_dialogue(processor)?;
+                        return Ok(MainControlStep::Continue);
                     }
                     _ => {}
                 }
@@ -1791,6 +1945,11 @@ pub(super) fn execute<'state, 'host, G>(
             let mode = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
                 execution.modes.current_mode()
             });
+            if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
+                && processor.alignment_brace_state() < 0
+            {
+                recovery::off_save(processor, spelling, meaning, control_sequence, exceptional)?;
+            }
             match mode {
                 Mode::Math | Mode::DisplayMath => recovery::insert_math_shift(
                     processor,
@@ -1947,14 +2106,7 @@ pub(super) fn execute<'state, 'host, G>(
             };
             math::equation_number(processor, side, spelling)
         }
-        _ => execute_selected_command(
-            processor,
-            code,
-            spelling,
-            meaning,
-            control_sequence,
-            exceptional,
-        ),
+        _ => recovery::illegal_case(processor, spelling, meaning, control_sequence, exceptional),
     }
 }
 

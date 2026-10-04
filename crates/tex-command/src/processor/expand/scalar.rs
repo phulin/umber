@@ -16,13 +16,13 @@ type ScalarConsumer<'a, Processor, G> = dyn FnMut(
     ) -> Result<ControlFlow<()>, CommandError>
     + 'a;
 
-struct ScalarWords<'a, 'callback, Processor, G> {
+struct ScalarWords<'a, 'callback, Processor, G, const MAIN_CONTROL: bool> {
     consume: &'a mut ScalarConsumer<'callback, Processor, G>,
 }
 
-impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
+impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>, const MAIN_CONTROL: bool>
     ExpandedReaderConsumer<CommandProcessor<'state, 'host, G, Facts>, G>
-    for ScalarWords<'_, '_, CommandProcessor<'state, 'host, G, Facts>, G>
+    for ScalarWords<'_, '_, CommandProcessor<'state, 'host, G, Facts>, G, MAIN_CONTROL>
 {
     const NATIVE_TERMINAL: bool = true;
 
@@ -47,7 +47,11 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
             .ok_or_else(CommandError::input_invariant)?;
         if status == DeliveryStatus::AlignmentEndTemplate {
             processor.begin_scalar_alignment_v_template(command)?;
-            return Ok(ControlFlow::Continue(()));
+            return Ok(if MAIN_CONTROL && processor.is_observed() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            });
         }
         (self.consume)(
             processor,
@@ -70,7 +74,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 &mut destination,
                 None,
                 ExpandedReaderRole::Scanner,
-                &mut ScalarWords { consume },
+                &mut ScalarWords::<_, _, false> { consume },
             )?;
             match result {
                 DeliveryStatus::ReplayCompleted(_) => continue,
@@ -96,7 +100,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut destination,
             None,
             ExpandedReaderRole::MainControl,
-            &mut ScalarWords { consume },
+            &mut ScalarWords::<_, _, true> { consume },
         )
         .map(|status| match status {
             DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
@@ -118,7 +122,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut destination,
             None,
             ExpandedReaderRole::MainLoopLookahead,
-            &mut ScalarWords { consume },
+            &mut ScalarWords::<_, _, true> { consume },
         )
         .map(|status| match status {
             DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
@@ -263,7 +267,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     destination,
                     None,
                     ExpandedReaderRole::Scanner,
-                    &mut ScalarWords {
+                    &mut ScalarWords::<_, _, false> {
                         consume: &mut consume,
                     },
                 )?;

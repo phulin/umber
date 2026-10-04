@@ -27,7 +27,7 @@ pub(super) fn set_box<G>(
             report_improper_setbox(command.output_open_context(context), context, effects)
         })?;
         recovery::finish_error_dialogue(processor)?;
-        processor.complete_assignment().map_err(command_error)?;
+        assignments::complete(processor, receipts)?;
         return Ok(MainControlStep::Continue);
     }
     let step = scan(
@@ -35,7 +35,7 @@ pub(super) fn set_box<G>(
         Destination::Register(SetBoxTarget { index, global }),
         receipts,
     )?;
-    processor.complete_assignment().map_err(command_error)?;
+    assignments::complete(processor, receipts)?;
     Ok(step)
 }
 

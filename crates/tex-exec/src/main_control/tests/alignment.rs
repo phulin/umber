@@ -1264,10 +1264,9 @@ fn observed_alignment_resource_need_rejects_same_control_retry() {
             "alignment resource need must be reached in bounds"
         );
         let observations_at_need = retried.0.len();
-        assert_eq!(
-            retried_control.pending_resource_site(),
-            None,
-            "alignment resource suspension leaves no scanner continuation"
+        assert!(
+            retried_control.pending_resource_site().is_some(),
+            "alignment resource suspension retains the triggering input origin"
         );
         retried_control
             .capabilities_mut()

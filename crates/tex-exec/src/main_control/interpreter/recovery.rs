@@ -9,7 +9,35 @@ pub(super) fn illegal_case<G>(
     control_sequence: Option<Symbol>,
     exceptional: Option<&tex_command::CurrentCommand<G>>,
 ) -> Result<MainControlStep, ExecError> {
-    let site = processor.capture_consumed_site(spelling, meaning, control_sequence, exceptional);
+    let mut site =
+        processor.capture_consumed_site(spelling, meaning, control_sequence, exceptional);
+    processor.with_execution_owners(|context, command, _, _, _, execution, _, _, _| {
+        let frozen = crate::FrozenDiagnosticContext::capture(
+            context,
+            command.diagnostic_input_context(8),
+            "command-recoverable",
+        );
+        site.context = Some(tex_state::diagnostic::DiagnosticContext {
+            input_frame_count: frozen.input_frame_count,
+            input_frame_tail: frozen.input_frame_tail,
+            group_depth: frozen.group_depth,
+            group_tail: frozen
+                .group_tail
+                .into_iter()
+                .map(|group| tex_state::diagnostic::DiagnosticGroup {
+                    kind: group.kind,
+                    entered_line: group.entered_line,
+                })
+                .collect(),
+        });
+        if execution.first_causal_context.is_none() {
+            execution.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
+                context,
+                command.diagnostic_input_context(8),
+                "command-recoverable",
+            ));
+        }
+    });
     processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
         execution.main_loop_active = false;
         let display = command.output_open_context(context);

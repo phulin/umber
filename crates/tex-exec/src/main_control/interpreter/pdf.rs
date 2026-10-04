@@ -21,7 +21,7 @@ pub(super) fn font_code<G>(
                 context, effects, receipts, table, font, character, value,
             )
         })?;
-    processor.complete_assignment().map_err(command_error)?;
+    assignments::complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -36,7 +36,7 @@ pub(super) fn no_ligatures<G>(
             execution.main_loop_active = false;
             semantic::execute_pdf_no_ligatures(context, effects, receipts, font)
         })?;
-    processor.complete_assignment().map_err(command_error)?;
+    assignments::complete(processor, receipts)?;
     Ok(step)
 }
 
@@ -80,6 +80,18 @@ pub(super) fn font_action<G>(
     processor: &mut Processor<'_, '_, G>,
     primitive: UnexpandablePrimitive,
 ) -> Result<MainControlStep, ExecError> {
+    if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        let name = match primitive {
+            UnexpandablePrimitive::PdfFontAttr => Some("pdffontattr"),
+            UnexpandablePrimitive::PdfIncludeChars => Some("pdfincludechars"),
+            UnexpandablePrimitive::PdfMapFile => Some("pdfmapfile"),
+            UnexpandablePrimitive::PdfMapLine => Some("pdfmapline"),
+            _ => None,
+        };
+        if let Some(name) = name {
+            return Err(ExecError::PdfExtensionInDviMode(name));
+        }
+    }
     let font = if matches!(
         primitive,
         UnexpandablePrimitive::PdfFontAttr

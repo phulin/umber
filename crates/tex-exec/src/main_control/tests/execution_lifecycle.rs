@@ -471,10 +471,8 @@ fn native_terminal_continuation_preserves_the_actual_operation_budget() {
                 let mut completed = 0;
                 assert!(matches!(
                     control
-                        .execute_control_chunk(
+                        .interpret_chunk(
                             stores,
-                            None,
-                            None,
                             &mut effects,
                             false,
                             &mut provider,
@@ -485,9 +483,8 @@ fn native_terminal_continuation_preserves_the_actual_operation_budget() {
                     MainControlStep::Continue
                 ));
                 assert_eq!(
-                    completed,
-                    budget - 1,
-                    "the driver owns the final operation at its budget boundary: {source:?}, budget={budget}"
+                    completed, budget,
+                    "the live interpreter owns every completed operation at its budget boundary: {source:?}, budget={budget}"
                 );
                 assert_eq!(
                     admitted!(stores, |context| context.count(0).expect("count register")),
@@ -540,10 +537,8 @@ fn native_terminals_after_text_refresh_delivery_and_preserve_group_restoration()
                 for _ in 0..256 {
                     let mut completed = 0;
                     let step = control
-                        .execute_control_chunk(
+                        .interpret_chunk(
                             stores,
-                            None,
-                            None,
                             &mut effects,
                             false,
                             &mut provider,
@@ -602,10 +597,8 @@ fn native_first_character_preserves_the_completed_character_loop_state() {
             let mut completed = 0;
             assert!(matches!(
                 control
-                    .execute_control_chunk(
+                    .interpret_chunk(
                         stores,
-                        None,
-                        None,
                         &mut effects,
                         false,
                         &mut provider,
@@ -615,7 +608,10 @@ fn native_first_character_preserves_the_completed_character_loop_state() {
                     .expect("consume one native first character"),
                 MainControlStep::Continue
             ));
-            assert_eq!(completed, 0, "the driver owns the budget-cut character");
+            assert_eq!(
+                completed, 1,
+                "the interpreter owns the budget-cut character"
+            );
             assert!(control.execution.main_loop_active, "first={first}");
             assert!(
                 control
@@ -691,10 +687,8 @@ fn native_math_characters_and_active_mathcodes_preserve_budget_boundaries() {
             let mut completed = 0;
             assert!(matches!(
                 control
-                    .execute_control_chunk(
+                    .interpret_chunk(
                         stores,
-                        None,
-                        None,
                         &mut effects,
                         false,
                         &mut provider,
@@ -704,7 +698,10 @@ fn native_math_characters_and_active_mathcodes_preserve_budget_boundaries() {
                     .expect("native math characters"),
                 MainControlStep::Continue
             ));
-            assert_eq!(completed, budget - 1, "driver owns the final operation");
+            assert_eq!(
+                completed, budget,
+                "the live interpreter counts the complete budget"
+            );
             assert_eq!(control.execution.modes.current_mode(), Mode::Math);
             assert!(!control.execution.main_loop_active);
             let characters = admitted!(stores, |context| {

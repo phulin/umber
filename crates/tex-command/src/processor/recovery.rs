@@ -202,13 +202,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// `align_error` from `main_control`, not from `get_next`.
     pub fn recover_align_error(
         &mut self,
-        command: CurrentCommand<G>,
+        spelling: TracedTokenWord,
+        exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<Option<Token>, CommandError> {
         let previous = self.command.alignment.align_state;
         if previous.unsigned_abs() > 2 {
             return Ok(None);
         }
-        self.back_input(command)?;
+        self.back_consumed_word(spelling, exceptional)?;
         let recovery = self
             .command
             .alignment

@@ -134,6 +134,6 @@ pub(super) fn execute_arithmetic<'state, 'host, G>(
         })
         .map_err(command_error)?;
     completed.ok_or(ExecError::UnsupportedAssignmentTarget)??;
-    processor.complete_assignment().map_err(command_error)?;
+    assignments::complete(processor, receipts)?;
     Ok(MainControlStep::Continue)
 }

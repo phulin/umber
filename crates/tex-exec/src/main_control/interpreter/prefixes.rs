@@ -63,7 +63,7 @@ pub(super) fn scan<G>(
                         }
                         prefixes &= GLOBAL;
                     }
-                    completion = Some(dispatch::execute(
+                    completion = Some(dispatch::reswitch(
                         processor,
                         spelling,
                         meaning,

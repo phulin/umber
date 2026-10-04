@@ -186,6 +186,10 @@ impl<G> MainControl<G> {
         let mut result = interpret(&mut processor, &mut receipts);
         drop(processor);
         drop(context);
+        if result.is_err() {
+            self.capture_first_reported_command_error_context(stores);
+        }
+        let ended_job = self.execution.pending_job_end.is_some();
         if let Some((dump, incomplete)) = self.execution.pending_job_end.take() {
             if self.execution.initex && dump {
                 let mut context = stores.command_context().expect("format dump accounting");
@@ -202,9 +206,6 @@ impl<G> MainControl<G> {
                 .world_mut()
                 .publish_diagnostic_effects_preserving(effects);
             self.end_of_job_final_cleanup(stores, dump, incomplete);
-            if let Some(observations) = self.operation_observations.as_mut() {
-                observations.committed(CommandObservation::Effect(engine_termination_effect()));
-            }
         }
         if result.is_ok()
             && let Some(form) = self.execution.prepared_pdf_form.take()
@@ -290,10 +291,21 @@ impl<G> MainControl<G> {
                 result = Ok(self.handle_root_end_of_input(stores));
             }
         }
+        if result.is_ok() && !self.execution.boxes.output_routine_active {
+            let pending = PendingPageOutputFacts::capture_runtime(stores);
+            if pending.is_pending() {
+                if let Err(error) = self.fire_pending_page_output(stores, effects, pending) {
+                    result = Err(error);
+                }
+            }
+        }
         if result.is_ok() {
             if let Some(output_start) = output_start {
                 self.publish_semantic_observations(stores, output_start, None, receipts.take());
             }
+        }
+        if ended_job && let Some(observations) = self.operation_observations.as_mut() {
+            observations.committed(CommandObservation::Effect(engine_termination_effect()));
         }
         result
     }
