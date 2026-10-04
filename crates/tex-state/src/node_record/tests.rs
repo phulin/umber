@@ -883,3 +883,153 @@ fn every_whatsit_subtype_round_trips() {
         assert_eq!(record.decode_owned(annex.view()), Some(node));
     }
 }
+
+#[test]
+fn borrowed_math_noad_view_preserves_fields_and_rejects_rolled_back_annex() {
+    let mut annex = AnnexHarness::new();
+    let mark = annex.arena.operation_mark(&annex.pool);
+    let expected = MathNoad {
+        kind: NoadKind::Accent {
+            accent: MathChar {
+                family: 15,
+                character: '^',
+                origin: OriginId::from_raw(91),
+            },
+        },
+        nucleus: MathField::MathChar(MathChar {
+            family: 3,
+            character: 'x',
+            origin: OriginId::from_raw(92),
+        }),
+        subscript: MathField::SubBox(PageListId::empty()),
+        superscript: MathField::SubMlist(PageListId::empty()),
+    };
+    let record = NodeRecord::encode_owned(Node::MathNoad(expected.clone()), &mut annex.writer());
+    let view = crate::page_node_arena::PageMaterialNodeRef::new(&record, annex.view());
+    let Some(crate::node_view::NodeView::MathNoad(actual)) = view.view() else {
+        panic!("noad view must expose its actual fields");
+    };
+    assert_eq!(actual, expected);
+    let MathField::MathChar(nucleus) = actual.nucleus else {
+        panic!("character nucleus")
+    };
+    assert_eq!(nucleus.origin, OriginId::from_raw(92));
+    let NoadKind::Accent { accent } = actual.kind else {
+        panic!("accent noad")
+    };
+    assert_eq!(accent.origin, OriginId::from_raw(91));
+    annex
+        .arena
+        .restore_operation(&mut annex.pool, mark)
+        .expect("rollback noad annex");
+    let current = NodeRecord::encode_owned(Node::MathNoad(expected), &mut annex.writer());
+    assert!(
+        crate::page_node_arena::PageMaterialNodeRef::new(&record, annex.view())
+            .view()
+            .is_none()
+    );
+    assert!(
+        crate::page_node_arena::PageMaterialNodeRef::new(&current, annex.view())
+            .view()
+            .is_some()
+    );
+}
+
+#[test]
+fn scalar_noads_are_inline_leaves_without_annex_publication() {
+    let kinds = [
+        NoadKind::Normal(NoadClass::Ord),
+        NoadKind::Normal(NoadClass::Inner),
+        NoadKind::Operator(LimitType::Limits),
+        NoadKind::Radical { delimiter: 19 },
+        NoadKind::Accent {
+            accent: MathChar {
+                family: 2,
+                character: '^',
+                origin: OriginId::from_raw(91),
+            },
+        },
+        NoadKind::LeftDelimiter { delimiter: 20 },
+        NoadKind::RightDelimiter { delimiter: 21 },
+        NoadKind::MiddleDelimiter { delimiter: 22 },
+        NoadKind::Underline,
+        NoadKind::Overline,
+        NoadKind::VCenter,
+    ];
+    let character = MathChar {
+        family: 3,
+        character: 'λ',
+        origin: OriginId::from_raw(92),
+    };
+    for kind in kinds {
+        for nucleus in [
+            MathField::Empty,
+            MathField::MathChar(character),
+            MathField::MathTextChar(character),
+        ] {
+            let mut annex = AnnexHarness::new();
+            let counters = annex.arena.counters();
+            let pages = annex.pool.page_count();
+            let node = Node::MathNoad(MathNoad::new(kind.clone(), nucleus));
+            let record = NodeRecord::encode_owned(node.clone(), &mut annex.writer());
+            assert_eq!(
+                annex.arena.counters(),
+                counters,
+                "inline noad published annex words"
+            );
+            assert_eq!(annex.pool.page_count(), pages);
+            assert!(record.is_inline_leaf());
+            assert!(!record.has_fixed_copy_payload());
+            assert_eq!(record.decode_owned(annex.view()), Some(node.clone()));
+            assert_eq!(
+                record.semantic_identity(annex.view()),
+                crate::node_sequence::semantic_node_identity(&node)
+            );
+            let noad = record.math_noad(annex.view()).expect("inline noad fields");
+            if let MathField::MathChar(ch) | MathField::MathTextChar(ch) = noad.nucleus {
+                assert_eq!(ch.origin, character.origin);
+            }
+            if let NoadKind::Accent { accent } = noad.kind {
+                assert_eq!(accent.origin, OriginId::from_raw(91));
+            }
+            let copied = record
+                .reencode_same_region(&mut annex.pool, &mut annex.arena, |_| {
+                    panic!("inline noad has no child")
+                })
+                .expect("inline noad copy");
+            assert_eq!(copied, (record, None));
+            assert_eq!(annex.arena.counters(), counters);
+        }
+    }
+}
+
+#[test]
+fn scalar_noad_annex_encoding_is_rejected() {
+    let mut annex = AnnexHarness::new();
+    let mut body = [0; 36];
+    encode_noad_kind(
+        (&mut body[..3]).try_into().expect("kind width"),
+        NoadKind::Normal(NoadClass::Ord),
+    );
+    encode_math_field(
+        (&mut body[3..14]).try_into().expect("field width"),
+        MathField::MathChar(MathChar {
+            family: 0,
+            character: 'a',
+            origin: OriginId::UNKNOWN,
+        }),
+    );
+    let record = NodeRecord::with_key(
+        NodeKind::MathNoad,
+        0,
+        0,
+        annex.writer().append_fixed::<MathNoadPayload>(&body),
+    );
+    assert!(record.math_noad(annex.view()).is_none());
+    assert!(record.decode_owned(annex.view()).is_none());
+    assert!(
+        crate::page_node_arena::PageMaterialNodeRef::new(&record, annex.view())
+            .view()
+            .is_none()
+    );
+}

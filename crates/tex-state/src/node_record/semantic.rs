@@ -296,16 +296,7 @@ fn decode_noad_semantic(
     record: NodeRecord<PageMaterialLane>,
     annex: NodeAnnexView<'_>,
 ) -> MathNoad<PageListId> {
-    let payload = annex
-        .resolve_fixed_array::<MathNoadPayload, 36>(key_from_record(record))
-        .expect("published math noad");
-    let mut cursor = 0;
-    MathNoad {
-        kind: decode_noad_kind(&payload, &mut cursor).expect("noad kind"),
-        nucleus: decode_math_field(&payload, &mut cursor).expect("nucleus"),
-        subscript: decode_math_field(&payload, &mut cursor).expect("subscript"),
-        superscript: decode_math_field(&payload, &mut cursor).expect("superscript"),
-    }
+    record.math_noad(annex).expect("published math noad")
 }
 
 fn decode_fraction_semantic(

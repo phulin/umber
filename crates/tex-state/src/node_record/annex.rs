@@ -301,46 +301,63 @@ pub(super) fn decode_box_payload(words: &[u32]) -> Option<BoxNode<PageListId>> {
     Some(value)
 }
 
-pub(super) fn encode_math_field(destination: &mut Vec<u32>, field: MathField<PageListId>) {
+pub(super) fn encode_scalar_math_field(
+    destination: &mut [u32; 4],
+    field: MathField<PageListId>,
+) -> bool {
     match field {
-        MathField::Empty => destination.extend([0; 11]),
+        MathField::Empty => *destination = [0; 4],
         MathField::MathChar(value) | MathField::MathTextChar(value) => {
             let tag = if matches!(field, MathField::MathChar(_)) {
                 1
             } else {
                 2
             };
-            destination.extend([
+            *destination = [
                 tag,
                 u32::from(value.family),
                 value.character as u32,
                 value.origin.raw(),
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-            ]);
+            ];
         }
-        MathField::SubBox(list) | MathField::SubMlist(list) => {
-            let tag = if matches!(field, MathField::SubBox(_)) {
-                3
-            } else {
-                4
-            };
-            destination.push(tag);
-            encode_page_list(destination, list);
-        }
+        MathField::SubBox(_) | MathField::SubMlist(_) => return false,
     }
+    true
+}
+
+pub(super) fn encode_math_field(destination: &mut [u32; 11], field: MathField<PageListId>) {
+    *destination = [0; 11];
+    if encode_scalar_math_field(
+        (&mut destination[..4])
+            .try_into()
+            .expect("scalar field width"),
+        field,
+    ) {
+        return;
+    }
+    let (tag, list) = match field {
+        MathField::SubBox(list) => (3, list),
+        MathField::SubMlist(list) => (4, list),
+        _ => unreachable!("non-scalar math field"),
+    };
+    destination[0] = tag;
+    destination[1..].copy_from_slice(&list.words());
 }
 
 pub(super) fn decode_math_field(
     words: &[u32],
     cursor: &mut usize,
 ) -> Option<MathField<PageListId>> {
-    let field: [u32; 11] = take_words(words, cursor)?;
+    let end = cursor.checked_add(11)?;
+    let field = words.get(*cursor..end)?;
+    *cursor = end;
+    decode_math_field_words(field)
+}
+
+pub(super) fn decode_math_field_words(field: &[u32]) -> Option<MathField<PageListId>> {
+    if !matches!(field.len(), 4 | 11) {
+        return None;
+    }
     match field[0] {
         0 if field[1..].iter().all(|word| *word == 0) => Some(MathField::Empty),
         tag @ (1 | 2)
@@ -358,7 +375,7 @@ pub(super) fn decode_math_field(
                 MathField::MathTextChar(value)
             })
         }
-        tag @ (3 | 4) => {
+        tag @ (3 | 4) if field.len() == 11 => {
             let list = PageListId::from_words(field[1..].try_into().ok()?)?;
             Some(if tag == 3 {
                 MathField::SubBox(list)
@@ -370,8 +387,8 @@ pub(super) fn decode_math_field(
     }
 }
 
-pub(super) fn encode_noad_kind(destination: &mut Vec<u32>, kind: NoadKind) {
-    let words = match kind {
+pub(super) fn encode_noad_kind(destination: &mut [u32; 3], kind: NoadKind) {
+    *destination = match kind {
         NoadKind::Normal(class) => [class as u32, 0, 0],
         NoadKind::Operator(limit) => [1 << 8 | limit as u32, 0, 0],
         NoadKind::Radical { delimiter } => [2 << 8, delimiter, 0],
@@ -387,7 +404,6 @@ pub(super) fn encode_noad_kind(destination: &mut Vec<u32>, kind: NoadKind) {
         NoadKind::Overline => [8 << 8, 0, 0],
         NoadKind::VCenter => [9 << 8, 0, 0],
     };
-    destination.extend(words);
 }
 
 pub(super) fn decode_noad_kind(words: &[u32], cursor: &mut usize) -> Option<NoadKind> {

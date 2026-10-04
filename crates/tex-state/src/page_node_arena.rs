@@ -217,6 +217,12 @@ impl<'a> PageMaterialNodeRef<'a> {
     }
 
     pub(crate) fn view(self) -> Option<crate::node_view::NodeView<'a>> {
+        if self.record.kind() == Some(crate::node::NodeKind::MathNoad) {
+            return self
+                .record
+                .math_noad(self.annex)
+                .map(crate::node_view::NodeView::MathNoad);
+        }
         self.record
             .decode_owned(self.annex)
             .map(crate::node_view::NodeView::from_owned)

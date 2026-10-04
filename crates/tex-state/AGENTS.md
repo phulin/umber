@@ -465,6 +465,8 @@ Definition-owned parameter programs expose literal delimiter views only for none
   payload is a compact `NodeRecord` with child coordinates in the paired typed
   annex. Construction validates those children directly in one traversal;
   logical `Node<PageListId>` values remain semantic inputs and demanded views.
+  Math noad views decode actual fields directly from borrowed fixed annex words;
+  owned materialization shares that decoder without a temporary payload array.
 - `src/page/tests.rs`: Page snapshot value isolation, mark-value, and semantic
   hash rollback tests, including exhausted cold capture counters preserving
   rootless material for retry.
@@ -640,3 +642,7 @@ refresh bookkeeping on append, unsave or checkpoint transitions.
 The checked packed-token frame leaf constructor is inlined across crate boundaries so token-frame owners initialize their final row directly. Its native identity, source context, positions, bounds, kind and flags retain their canonical meanings; no alternate frame encoding is added.
 
 Generated node construction validates child coordinates directly from the final record and borrowed annex, computing node and paired-annex dependency floors together. NodeRecordDependencies and its fixed twelve-slot array are deleted; construction has no temporary child collection or second dependency traversal. The visitor propagates the caller's schema error before child-admission errors, retaining exact reservation rollback and checkpoint reachability.
+
+Scalar math noads with empty scripts occupy only their 32-byte resident record;
+complex noads use final fixed annex words without a payload vector. Their
+shared decoder owns field/header validation for views and semantic hashing.

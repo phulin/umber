@@ -653,3 +653,32 @@ and full checkpoint ownership use their existing paths. Non-math-mode
 commands retain missing-dollar recovery. `MathStyleKind`, its duplicate
 four-way conversion and the style variant of `MathRequest` are deleted
 without a replacement carrier or compatibility entry.
+
+## Borrowed noad decoding
+
+An annex-backed math noad view decodes its actual fields directly from the admitted fixed
+annex payload. It does not copy the 36 payload words into a temporary array,
+construct a full `Node`, then project that owned node into `NodeView`.
+The existing view receives only its actual `MathNoad` value. The decoder is
+private to the compact codec and is also used by owned materialization, so
+header, payload length, serial and field validation have one authority.
+No new cache, owner, payload vocabulary or compatibility decoder is added.
+
+## Compact scalar noads
+
+Noads with empty scripts and an empty or character nucleus fit entirely in
+an existing 32-byte resident record. The seven payload words hold the existing
+three kind words and four nucleus words, including diagnostic origins. This
+covers ordinary characters, text characters, operators, delimiters, accents,
+and other scalar kinds without an annex allocation or payload vector.
+Scripted and boxed noads use the fixed annex form; their encoder writes its
+36 final words in bounded storage directly, without a heap vector.
+
+A private header flag distinguishes the two intrinsic storage forms. Both
+use one field/kind validation authority for views, owned materialization and
+semantic hashing. Inline noads are leaves for dependency visitation and
+region copies. They contain no child coordinate to relocate. The annex form
+is reserved for values requiring it, so duplicate old scalar-annex encodings
+are rejected instead of retaining compatibility. Runtime word accounting,
+origin preservation, group edits, checkpoint rollback and explicit region
+copies retain their existing semantic contracts.

@@ -2,6 +2,17 @@ use super::annex::{BoxMigrationSegments, BoxPositiveRanges};
 use super::box_descriptor::{BoxConstructionDescriptor, decode_box_construction_descriptor};
 use super::*;
 
+const INLINE_MATH_NOAD: u32 = 1;
+
+fn math_noad_has_inline_fields(noad: &MathNoad) -> bool {
+    matches!(noad.subscript, MathField::Empty)
+        && matches!(noad.superscript, MathField::Empty)
+        && matches!(
+            noad.nucleus,
+            MathField::Empty | MathField::MathChar(_) | MathField::MathTextChar(_)
+        )
+}
+
 /// Offsets of independently owned child-list coordinates in one fixed body.
 #[derive(Clone, Copy)]
 pub(crate) struct FixedCopyFields {
@@ -80,6 +91,7 @@ impl NodeRecord<PageMaterialLane> {
                 | NodeKind::MathStyle
                 | NodeKind::Nonscript,
             ) => true,
+            Some(NodeKind::MathNoad) => self.subtype() == 0 && self.flags() == INLINE_MATH_NOAD,
             Some(NodeKind::Glue) => !matches!(self.flags() & 3, 2 | 3),
             _ => false,
         }
@@ -94,13 +106,13 @@ impl NodeRecord<PageMaterialLane> {
                     | NodeKind::Unset
                     | NodeKind::Disc
                     | NodeKind::Ins
-                    | NodeKind::MathNoad
                     | NodeKind::FractionNoad
                     | NodeKind::MathChoice
                     | NodeKind::MathList
                     | NodeKind::Adjust
             )
-        ) || (self.kind() == Some(NodeKind::Glue) && matches!(self.flags() & 3, 2 | 3))
+        ) || (self.kind() == Some(NodeKind::MathNoad) && self.flags() == 0)
+            || (self.kind() == Some(NodeKind::Glue) && matches!(self.flags() & 3, 2 | 3))
     }
 
     pub(crate) fn with_relocated_fixed_key(self, key: AnnexKey<()>) -> Option<Self> {
@@ -150,7 +162,7 @@ impl NodeRecord<PageMaterialLane> {
             NodeKind::Unset => 15,
             NodeKind::Disc => 30,
             NodeKind::Ins => 17,
-            NodeKind::MathNoad => 36,
+            NodeKind::MathNoad if self.flags() == 0 => 36,
             NodeKind::FractionNoad => 23,
             NodeKind::MathChoice => 40,
             NodeKind::MathList | NodeKind::Adjust => 10,
@@ -205,14 +217,52 @@ impl NodeRecord<PageMaterialLane> {
         }
     }
 
-    pub(crate) fn math_noad_memory_words(self, annex: NodeAnnexView<'_>) -> Option<usize> {
-        if self.kind()? != NodeKind::MathNoad || self.subtype() != 0 || self.flags() != 0 {
+    #[inline]
+    pub(crate) fn math_noad(self, annex: NodeAnnexView<'_>) -> Option<MathNoad> {
+        if self.kind()? != NodeKind::MathNoad || self.subtype() != 0 {
             return None;
         }
-        annex.inspect_fixed(key_from_record::<MathNoadPayload>(self), 36, |payload| {
-            let tag = *payload.get(1)? >> 8;
-            Some(if matches!(tag, 2 | 3) { 5 } else { 4 })
-        })
+        if self.flags() == INLINE_MATH_NOAD {
+            let words = self.words();
+            let mut cursor = 0;
+            return Some(MathNoad {
+                kind: decode_noad_kind(&words[..3], &mut cursor)?,
+                nucleus: decode_math_field_words(&words[3..])?,
+                subscript: MathField::Empty,
+                superscript: MathField::Empty,
+            });
+        }
+        if self.flags() != 0 {
+            return None;
+        }
+        let noad =
+            annex.inspect_fixed(key_from_record::<MathNoadPayload>(self), 36, |payload| {
+                let body = payload.get(1..)?;
+                let mut cursor = 0;
+                Some(MathNoad {
+                    kind: decode_noad_kind(body, &mut cursor)?,
+                    nucleus: decode_math_field(body, &mut cursor)?,
+                    subscript: decode_math_field(body, &mut cursor)?,
+                    superscript: decode_math_field(body, &mut cursor)?,
+                })
+            })?;
+        (!math_noad_has_inline_fields(&noad)).then_some(noad)
+    }
+
+    pub(crate) fn math_noad_memory_words(self, annex: NodeAnnexView<'_>) -> Option<usize> {
+        if self.kind()? != NodeKind::MathNoad || self.subtype() != 0 {
+            return None;
+        }
+        let tag = if self.flags() == INLINE_MATH_NOAD {
+            self.words()[0] >> 8
+        } else if self.flags() == 0 {
+            annex.inspect_fixed(key_from_record::<MathNoadPayload>(self), 36, |payload| {
+                Some(*payload.get(1)? >> 8)
+            })?
+        } else {
+            return None;
+        };
+        Some(if matches!(tag, 2 | 3) { 5 } else { 4 })
     }
 
     pub(crate) fn visit_node_lists(
@@ -409,6 +459,10 @@ impl NodeRecord<PageMaterialLane> {
                 ))
             }
             NodeKind::Whatsit => self.reencode_whatsit(annex),
+            NodeKind::MathNoad if self.is_inline_leaf() => {
+                self.math_noad(annex.source_view())?;
+                Some((self, None))
+            }
             NodeKind::Char
             | NodeKind::Kern
             | NodeKind::MarginKern
@@ -1256,18 +1310,45 @@ impl NodeRecord<PageMaterialLane> {
             ),
             Node::Direction(value) => Self::new(NodeKind::Direction, value as u8, 0, [0; 7]),
             Node::MathNoad(value) => {
-                let mut payload = Vec::with_capacity(36);
-                encode_noad_kind(&mut payload, value.kind);
-                encode_math_field(&mut payload, value.nucleus);
-                encode_math_field(&mut payload, value.subscript);
-                encode_math_field(&mut payload, value.superscript);
-                debug_assert_eq!(payload.len(), 36);
-                Self::with_key(
-                    NodeKind::MathNoad,
-                    0,
-                    0,
-                    annex.append_fixed::<MathNoadPayload>(&payload),
-                )
+                if math_noad_has_inline_fields(&value) {
+                    let mut words = [0; 7];
+                    encode_noad_kind(
+                        (&mut words[..3]).try_into().expect("noad kind width"),
+                        value.kind,
+                    );
+                    let scalar = encode_scalar_math_field(
+                        (&mut words[3..]).try_into().expect("scalar nucleus width"),
+                        value.nucleus,
+                    );
+                    debug_assert!(scalar);
+                    Self::new(NodeKind::MathNoad, 0, INLINE_MATH_NOAD, words)
+                } else {
+                    let mut payload = [0; 36];
+                    encode_noad_kind(
+                        (&mut payload[..3]).try_into().expect("noad kind width"),
+                        value.kind,
+                    );
+                    encode_math_field(
+                        (&mut payload[3..14]).try_into().expect("nucleus width"),
+                        value.nucleus,
+                    );
+                    encode_math_field(
+                        (&mut payload[14..25]).try_into().expect("subscript width"),
+                        value.subscript,
+                    );
+                    encode_math_field(
+                        (&mut payload[25..36])
+                            .try_into()
+                            .expect("superscript width"),
+                        value.superscript,
+                    );
+                    Self::with_key(
+                        NodeKind::MathNoad,
+                        0,
+                        0,
+                        annex.append_fixed::<MathNoadPayload>(&payload),
+                    )
+                }
             }
             Node::FractionNoad(value) => {
                 let mut payload = Vec::with_capacity(23);
@@ -1619,17 +1700,7 @@ impl NodeRecord<PageMaterialLane> {
                     _ => return None,
                 }))
             }
-            NodeKind::MathNoad if subtype == 0 && flags == 0 => {
-                let payload =
-                    annex.resolve_fixed_array::<MathNoadPayload, 36>(key_from_record(self))?;
-                let mut cursor = 0;
-                Some(Node::MathNoad(MathNoad {
-                    kind: decode_noad_kind(&payload, &mut cursor)?,
-                    nucleus: decode_math_field(&payload, &mut cursor)?,
-                    subscript: decode_math_field(&payload, &mut cursor)?,
-                    superscript: decode_math_field(&payload, &mut cursor)?,
-                }))
-            }
+            NodeKind::MathNoad => self.math_noad(annex).map(Node::MathNoad),
             NodeKind::FractionNoad if subtype == 0 && flags & !7 == 0 => {
                 let payload =
                     annex.resolve_fixed_array::<FractionPayload, 23>(key_from_record(self))?;

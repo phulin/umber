@@ -16,7 +16,9 @@ Pool-stable logical coordinates belong in `fork_arena.rs`; aggregate paired
 node-and-annex ownership marks and transfer receipts belong in `node_region.rs`.
 Do not add either concern to this codec tree. This codec is the production
 page-material representation; keep decoding and validation rules shared by
-resident traversal and cold materialization.
+resident traversal and cold materialization. Math noad views decode their actual
+fields directly from borrowed fixed annex words through the same private decoder
+as owned materialization; no payload array or whole-node projection is built.
 
 Box and leader-box publication initializes fixed word arrays without a temporary
 heap vector. Fixed-payload explicit copies use bounded prepared word scratch in
@@ -31,3 +33,8 @@ Preserve crate-private codec visibility and explicit integer encoding. Do not
 transmute records, serialize native bytes, add owned payloads to `NodeRecord`,
 or weaken stale annex-coordinate validation. Run the focused `node_record`
 tests and the owning `tex-state` suite after changes.
+
+Scalar noads with empty scripts live wholly in the existing resident record.
+Complex noads encode final fixed words without a heap vector. Inline noads
+are child-free leaves for copies; hashing, views and owned materialization
+share the private decoder, which rejects duplicate scalar-annex encoding.
