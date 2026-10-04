@@ -700,7 +700,7 @@ fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> String {
                 crate::CanonicalStepResult::ResourceNeed(need) => panic!(
                     "direct semantic helper crossed a resource boundary for {need:?}; use the tex-incr checkpoint owner for replay"
                 ),
-                crate::CanonicalStepResult::Completed(step @ ReplayStep::End) => {
+                crate::CanonicalStepResult::Completed(step @ MainControlStep::End) => {
                     terminal = Some(step);
                     break;
                 }

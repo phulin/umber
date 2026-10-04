@@ -45,67 +45,6 @@ impl<G> MainControl<G> {
             })
     }
 
-    pub(super) fn resolve_font_request(
-        &mut self,
-        request: &mut FontLoadRequest,
-        stores: &mut Universe<G>,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<Option<FontResource>, ExecError> {
-        stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
-        let path = crate::canonical_font_resource_path(&request.name);
-        loop {
-            if let Some(retained) = self.capabilities.font(&path) {
-                let dependencies = self
-                    .capabilities
-                    .font_dependencies(&path)
-                    .unwrap_or_default();
-                let actual = stores
-                    .command_context()
-                    .expect("font resource admission")
-                    .with_input_read_state(|input| retained.actual_use(input, &dependencies))
-                    .map_err(ExecError::from)?;
-                let Some(actual) = actual else {
-                    self.capabilities.invalidate_font_resource(&path);
-                    continue;
-                };
-                if let Some(metrics) = font_metrics(&actual) {
-                    let dependencies = tex_command::dependencies_for_actual_content(
-                        &dependencies,
-                        metrics.path(),
-                        metrics.hash(),
-                    );
-                    Self::record_cached_input_dependencies(stores, &dependencies)?;
-                } else {
-                    Self::record_cached_input_dependencies(stores, &dependencies)?;
-                }
-                return Ok(Some(actual));
-            }
-
-            let need = ResourceNeed::Font {
-                request: request.clone(),
-            };
-            match self.resolve_provider_resource(stores, resource_provider, &need, false)? {
-                Some(ResourceInstallOutcome::Fulfilled(fulfillment)) => {
-                    let ResourceFulfillment::Font { resource, .. } = fulfillment else {
-                        unreachable!("font provider fulfillment was type-checked by installer")
-                    };
-                    return Ok(Some(*resource));
-                }
-                Some(ResourceInstallOutcome::Unavailable) => {
-                    return Ok(Some(FontResource::Unavailable));
-                }
-                Some(ResourceInstallOutcome::Declined) | None => {
-                    return Err(ExecError::MissingFont {
-                        request: Box::new(request.clone()),
-                    });
-                }
-                Some(ResourceInstallOutcome::Failed(_)) => {
-                    unreachable!("failed provider outcomes are returned as errors")
-                }
-            }
-        }
-    }
-
     pub(super) fn resolve_input_stream_request(
         &mut self,
         request: &mut tex_command::InputStreamRequest<G>,

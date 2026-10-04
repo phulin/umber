@@ -277,7 +277,7 @@ fn bare_macro_parameter_commit_survives_later_input_need_without_duplication() {
 
         assert!(matches!(
             control.advance(stores).expect("parameter recovers"),
-            StepResult::Progress(ReplayStep::Continue)
+            StepResult::Progress(MainControlStep::Continue)
         ));
         let committed = terminal_text(stores);
         assert_eq!(committed.matches("macro parameter character #").count(), 1);
@@ -834,7 +834,7 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
                 crate::CanonicalStepResult::ResourceNeed(need) => panic!(
                     "preloaded reference probe unexpectedly crossed a resource boundary: {need:?}"
                 ),
-                crate::CanonicalStepResult::Completed(step @ ReplayStep::End) => {
+                crate::CanonicalStepResult::Completed(step @ MainControlStep::End) => {
                     terminal_step = Some(step);
                     break;
                 }
@@ -1030,7 +1030,7 @@ fn committed_token_scanner_attempt_is_discarded_before_named_checkpoint() {
 
         assert_eq!(
             control.advance(stores).expect("token assignment commits"),
-            StepResult::Progress(ReplayStep::Continue)
+            StepResult::Progress(MainControlStep::Continue)
         );
         let stored = admitted!(stores, |context| {
             let tokens = context
@@ -1437,7 +1437,7 @@ fn invalid_arithmetic_target_commit_survives_later_resource_need() {
             }
             assert!(matches!(
                 control.advance(stores).expect("setup executes"),
-                StepResult::Progress(ReplayStep::Continue)
+                StepResult::Progress(MainControlStep::Continue)
             ));
         }
         assert_eq!(stores.count(0).expect("count register"), 1);

@@ -19,8 +19,6 @@ mod groups;
 pub(super) use groups::*;
 mod leaders;
 pub(super) use leaders::*;
-mod math;
-pub(super) use math::*;
 mod page_state;
 pub(super) use page_state::*;
 mod paragraph;

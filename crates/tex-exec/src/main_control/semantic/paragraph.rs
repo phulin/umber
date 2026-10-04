@@ -4,9 +4,11 @@ use super::super::*;
 pub(in crate::main_control) fn execute_paragraph_indent<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    indent: &mut bool,
-) -> Result<ReplayStep, ExecError> {
+    command: &mut CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    indent: bool,
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1090 routes only `vmode+start_par` to §1091 `new_graf`,
         // the single site that pushes `\everypar`. §1092 routes both
@@ -19,23 +21,11 @@ pub(in crate::main_control) fn execute_paragraph_indent<G>(
             modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_paragraph(
-                command.state,
-                modes,
-                stores,
-                command.diagnostic_effects,
-                *indent,
-            )?;
+            start_paragraph(command, modes, stores, effects, indent)?;
         } else {
-            crate::box_runtime::indent_in_hmode(
-                modes,
-                stores,
-                command.diagnostic_effects,
-                *indent,
-                command.fuel,
-            )?;
+            crate::box_runtime::indent_in_hmode(modes, stores, effects, indent, fuel)?;
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -45,7 +35,7 @@ pub(in crate::main_control) fn execute_set_language<G>(
     effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
     language: i32,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1377, verbatim:
         //
@@ -81,7 +71,7 @@ pub(in crate::main_control) fn execute_set_language<G>(
         modes
             .current_list_mutation()
             .set_hyphen_context(clang, left_hyphen_min, right_hyphen_min);
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -93,7 +83,7 @@ pub(in crate::main_control) fn execute_mark<G>(
     boxes: &mut ReplayBoxes<G>,
     class: u16,
     tokens: tex_state::TokenListId<G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         // No `build_page` call afterward (unlike `\penalty`/`\insert`):
         // TeX82 §1101 and e-TeX 2.6 [26.424]'s `make_mark` append the
@@ -117,60 +107,40 @@ pub(in crate::main_control) fn execute_mark<G>(
                     .push(segment);
             }
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
 pub(in crate::main_control) fn execute_paragraph<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    current_line: &mut i32,
-) -> Result<ReplayStep, ExecError> {
+    command: &mut CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    observer: Option<&mut dyn CommandObserver>,
+    output_routine_active: bool,
+    current_line: i32,
+) -> Result<MainControlStep, ExecError> {
     {
         if matches!(
             modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
-            crate::vertical::build_page_if_outer_vertical(
-                modes,
-                stores,
-                command.diagnostic_effects,
-                &*command.state,
-            )?;
+            crate::paragraph_end::normal_paragraph(modes, stores, effects);
+            crate::vertical::build_page_if_outer_vertical(modes, stores, effects, &*command)?;
         } else {
-            let mut diagnostic_context =
-                command_diagnostic_context(command.state, command.output_routine_active);
-            diagnostic_context.current_line = *current_line;
-            let mut geometry =
-                pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
+            let mut diagnostic_context = command_diagnostic_context(command, output_routine_active);
+            diagnostic_context.current_line = current_line;
+            let mut geometry = pack_geometry_sink(command, observer);
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,
-                command.diagnostic_effects,
+                effects,
                 &mut geometry,
                 diagnostic_context,
-                command.fuel,
+                fuel,
             )?;
         }
-        Ok(ReplayStep::Continue)
-    }
-}
-
-pub(in crate::main_control) fn execute_paragraph_start<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
-    {
-        start_paragraph(
-            command.state,
-            modes,
-            stores,
-            command.diagnostic_effects,
-            true,
-        )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }

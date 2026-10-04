@@ -52,7 +52,12 @@ existing safe boundaries. Resource misses unwind ordinary calls before the
 host restores a full checkpoint. Local group first writes and host checkpoint
 first writes retain their separate preimages in the existing journal; reads and
 unchanged groups create neither history. No per-command rollback or successful
-settlement/cleanup stage is introduced. Real output, diagnostics, tracing,
+settlement/cleanup stage is introduced. Live box, math and discretionary groups
+close through native unsave and transfer their real node spans. Immediately
+consumed messages render from scanner storage without publishing a discarded
+token list. Deferred writes retain their final token owner. Job termination
+retires input in the processor, then moves its actual incomplete-conditional
+notices to the host for one-time terminal publication after admission ends. Real output, diagnostics, tracing,
 observation and host-budget demands publish at their consuming boundaries.
 
 The replacement must pass the complete native, profiling and authoritative
@@ -293,7 +298,7 @@ retain their existing lifetimes.
 | Matcher and final arguments           | `macro_definition.rs`, `definition_arena/body.rs`, `macro_call.rs`, `input/arguments.rs`; delimiter, forwarded-origin, abort, tail-reuse and zero-arity tests.                                                         |
 | Native group and checkpoint histories | `tex-state/src/journal{,/groups,/checkpoints}.rs`, `env/restoration.rs`; local/global/sparse/box chronology, repeated restore, epoch exhaustion and pruning tests.                                                     |
 | Counted definitions                   | `definition_arena{,/body,/build_lane}.rs`; ownership tests cover aliases, independent histories, stale keys, frame survival and final accounting.                                                                      |
-| Direct execution                      | `tex-exec/src/main_control/direct/`, native semantic leaves and demanded host boundaries; observation, resource, prefix and mode tests.                                                                                |
+| Direct execution                      | `tex-exec/src/main_control/interpreter/`, concrete semantic routines and demanded host boundaries; observation, resource, prefix and mode tests.                                                                       |
 | Aggregate restart                     | `checkpoint.rs`, `canonical_step.rs`, `Universe`, retained-generation and incremental drivers; capture rejection/exhaustion, interrupted-owner replay, repeated output restore, candidates and cold-equivalence tests. |
 
 Every implementation deletes its displaced representation and ports real

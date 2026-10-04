@@ -864,7 +864,7 @@ fn production_batch_reuses_admitted_context_for_ordinary_source_run() {
 
         loop {
             if control.advance_episode(stores).expect("batch advances")
-                == StepResult::Progress(ReplayStep::End)
+                == StepResult::Progress(MainControlStep::End)
             {
                 break;
             }
@@ -927,7 +927,7 @@ fn committed_fatal_command_reclaims_from_live_roots() {
         }
 
         assert!(
-            matches!(terminal, Some(ReplayStep::End)),
+            matches!(terminal, Some(MainControlStep::End)),
             "fatal command terminalizes from its live attempt roots: {terminal:?}"
         );
         assert_eq!(

@@ -7,12 +7,15 @@
 use super::*;
 use std::ops::ControlFlow;
 
+mod arithmetic;
 mod assignments;
+mod boxes;
 mod characters;
 mod codes;
 mod discretionary;
 mod dispatch;
 mod driver;
+mod fonts;
 mod glue_identity;
 mod groups;
 mod material;
@@ -20,6 +23,9 @@ mod math;
 mod prefixes;
 mod publication;
 mod recovery;
+mod streams;
+mod termination;
+mod trace;
 
 type Processor<'state, 'host, G> =
     CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>;
@@ -29,10 +35,11 @@ pub(super) fn run<G>(
     remaining_operations: usize,
     completed_operations: &mut usize,
     observation_receipts: &mut Option<Vec<MutationRecord>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     while *completed_operations < remaining_operations {
         let lookahead = processor
             .with_execution_owners(|_, _, _, _, _, execution, _, _, _| execution.main_loop_active);
+        trace::prepare(processor);
         let mut completion = None;
         let observing = processor.is_observed();
         let mut consume =
@@ -50,12 +57,27 @@ pub(super) fn run<G>(
                     observation_receipts,
                     0,
                 ) {
-                    Ok(ReplayStep::Continue) => {
+                    Ok(MainControlStep::Continue) => {
                         *completed_operations += 1;
-                        let next_lookahead =
-                            processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                                execution.main_loop_active
-                            });
+                        trace::prepare(processor);
+                        let (next_lookahead, host_boundary) = processor.with_execution_owners(
+                            |context, _, effects, _, _, execution, _, _, _| {
+                                (
+                                    execution.main_loop_active,
+                                    execution.paragraph_checkpoint_cut
+                                        || execution.prepared_shipout.is_some()
+                                        || effects.has_first_recoverable()
+                                        || (!execution.boxes.output_routine_active
+                                            && (context.page_fire_up().is_some()
+                                                || context
+                                                    .page_builder_resume_after_output_pending())),
+                                )
+                            },
+                        );
+                        if host_boundary {
+                            completion = Some(Ok(MainControlStep::Continue));
+                            return Ok(ControlFlow::Break(()));
+                        }
                         if !observing
                             && next_lookahead == lookahead
                             && *completed_operations < remaining_operations
@@ -63,7 +85,12 @@ pub(super) fn run<G>(
                             return Ok(ControlFlow::Continue(()));
                         }
                     }
-                    result => completion = Some(result),
+                    result => {
+                        if result.is_ok() {
+                            *completed_operations += 1;
+                        }
+                        completion = Some(result);
+                    }
                 }
                 Ok(ControlFlow::Break(()))
             };
@@ -77,14 +104,14 @@ pub(super) fn run<G>(
             return completion;
         }
         if observing && status == tex_command::DeliveryStatus::Command {
-            return Ok(ReplayStep::Continue);
+            return Ok(MainControlStep::Continue);
         }
         match status {
             tex_command::DeliveryStatus::Command => {}
             status => return finish_input_boundary(processor, status),
         }
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 /// Scanner reports publish before the selected arm mutates semantic state.
@@ -115,10 +142,10 @@ fn report_scan<G>(processor: &mut Processor<'_, '_, G>) -> Result<(), ExecError>
 fn finish_input_boundary<G>(
     _processor: &mut Processor<'_, '_, G>,
     status: tex_command::DeliveryStatus,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     match status {
-        tex_command::DeliveryStatus::End => Ok(ReplayStep::EndOfInput),
-        tex_command::DeliveryStatus::ReplayCompleted(_) => Ok(ReplayStep::Continue),
+        tex_command::DeliveryStatus::End => Ok(MainControlStep::EndOfInput),
+        tex_command::DeliveryStatus::ReplayCompleted(_) => Ok(MainControlStep::Continue),
         _ => unreachable!("canonical terminal reader handles alignment and scalar boundaries"),
     }
 }

@@ -1,5 +1,67 @@
 //! Direct borrowed character admission into the live horizontal builder.
 use super::*;
+
+pub(super) fn no_boundary<G>(
+    processor: &mut Processor<'_, '_, G>,
+    receipts: &mut Option<Vec<MutationRecord>>,
+) -> Result<MainControlStep, ExecError> {
+    let (mode, right) = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+        (execution.modes.current_mode(), execution.main_loop_active)
+    });
+    if matches!(mode, Mode::Math | Mode::DisplayMath) {
+        return Ok(MainControlStep::Continue);
+    }
+    if right {
+        return processor.with_execution_owners(
+            |context, _, effects, fuel, _, execution, _, _, _| {
+                execution.main_loop_active = false;
+                crate::box_runtime::flush_pending_hchars_without_right_boundary(
+                    &mut execution.modes,
+                    context,
+                    effects,
+                    fuel,
+                )?;
+                Ok(MainControlStep::Continue)
+            },
+        );
+    }
+    let mut completion = None;
+    processor
+        .consume_expanded_words(&mut |processor, spelling, meaning, symbol, exceptional| {
+            if let tex_state::meaning::MeaningWord::Static(word) = meaning {
+                let code = Meaning::runtime_word_control_code(*word);
+                if code == codes::PRIMITIVE_NO_BOUNDARY {
+                    return Ok(ControlFlow::Continue(()));
+                }
+                if matches!(
+                    code,
+                    codes::CHAR_LETTER
+                        | codes::CHAR_OTHER
+                        | codes::CHAR_GIVEN
+                        | codes::PRIMITIVE_CHAR
+                ) {
+                    processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                        execution
+                            .modes
+                            .current_list_mutation()
+                            .set_no_boundary(true)
+                    });
+                }
+            }
+            completion = Some(dispatch::execute(
+                processor,
+                spelling,
+                meaning,
+                symbol,
+                exceptional,
+                receipts,
+                0,
+            ));
+            Ok(ControlFlow::Break(()))
+        })
+        .map_err(command_error)?;
+    completion.unwrap_or(Ok(MainControlStep::EndOfInput))
+}
 /// The one main-loop admission owner for ordinary source text and its scalar
 /// boundaries. The command processor invokes `admit` once for a borrowed
 /// prefix and again only for exceptional scalar events; this concrete owner

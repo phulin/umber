@@ -85,7 +85,7 @@ impl<G> MainControl<G> {
     /// to main control for ordinary tokenization and fuel accounting. Fatal
     /// EOF is latched as §93's terminal `End`, so no driver can advance the
     /// exhausted source again.
-    pub(super) fn handle_root_end_of_input(&mut self, stores: &mut Universe<G>) -> ReplayStep {
+    pub(super) fn handle_root_end_of_input(&mut self, stores: &mut Universe<G>) -> MainControlStep {
         let previous_line_was_empty = self
             .execution
             .terminal_line_was_empty
@@ -111,7 +111,7 @@ impl<G> MainControl<G> {
                 self.command
                     .open_registered_source_as(id, tex_command::SourceNameClass::Terminal)
                     .expect("fresh terminal source must be openable");
-                ReplayStep::Continue
+                MainControlStep::Continue
             }
             crate::job::EndOfInputAction::Fatal(fatal) => {
                 // TeX82 §§360, 93 reports the fatal error after the root has

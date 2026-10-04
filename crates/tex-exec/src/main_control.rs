@@ -1117,6 +1117,7 @@ impl<G> MainControl<G> {
             && self.operation_observations.is_none()
             && self.execution.operation_receipt_start.is_none()
             && self.execution.prepared_shipout.is_none()
+            && self.execution.pending_job_end.is_none()
             && !self.execution.page_region_succession_pending
             && self.execution.immediate_prints.is_empty()
             && self.execution.pending_resource_site.is_none()
@@ -1411,6 +1412,7 @@ impl<G> MainControl<G> {
             || self.operation_observations.is_some()
             || self.execution.operation_receipt_start.is_some()
             || self.execution.prepared_shipout.is_some()
+            || self.execution.pending_job_end.is_some()
             || self.execution.page_region_succession_pending
             || !self.execution.prepared_dvi_pages.is_empty()
             || !self.execution.immediate_prints.is_empty()
@@ -1627,6 +1629,7 @@ impl<G> MainControl<G> {
         self.execution.prepared_dvi_pages = PreparedDviPages::default();
         self.execution.immediate_prints.clear();
         self.execution.prepared_shipout = None;
+        self.execution.pending_job_end = None;
         self.execution.page_region_succession_pending = false;
         self.execution.paragraph_checkpoint_demand = None;
         self.execution.paragraph_checkpoint_cut = false;
@@ -1856,7 +1859,7 @@ impl<G> MainControl<G> {
     }
 
     /// tex.web §1335 `final_cleanup`'s tail, run once a step has produced
-    /// [`ReplayStep::End`]: closing every still-open paren, reporting
+    /// [`MainControlStep::End`]: closing every still-open paren, reporting
     /// unfinished conditionals, the "(see the transcript file..." note, and
     /// the `\dump`-outside-INITEX note, in that exact order. The first of
     /// those needs the live job-framing owner. The direct end handler calls
@@ -2048,6 +2051,7 @@ impl<G> MainControl<G> {
             && self.operation_observations.is_none()
             && self.execution.operation_receipt_start.is_none()
             && self.execution.prepared_shipout.is_none()
+            && self.execution.pending_job_end.is_none()
             && !self.execution.page_region_succession_pending
             && self.execution.immediate_prints.is_empty()
             && self.execution.pending_resource_site.is_none()
@@ -2227,7 +2231,7 @@ impl<G> MainControl<G> {
             };
             let applied = if pending.is_pending() {
                 self.fire_pending_page_output(stores, &mut diagnostic_effects, pending)
-                    .map(|()| ReplayStep::Continue)
+                    .map(|()| MainControlStep::Continue)
             } else {
                 self.interpret_chunk(
                     stores,
@@ -2677,7 +2681,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<ReplayStep, ExecError> {
+    ) -> Result<MainControlStep, ExecError> {
         let result = self.apply_operation(
             stores,
             settled,
@@ -2715,7 +2719,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<ReplayStep, ExecError> {
+    ) -> Result<MainControlStep, ExecError> {
         if matches!(
             self.execution.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
@@ -2752,7 +2756,7 @@ impl<G> MainControl<G> {
                 char::from(accent),
                 self.command_profile() == CommandProfile::ETEX26,
             );
-            return Ok(ReplayStep::Continue);
+            return Ok(MainControlStep::Continue);
         };
         drop(context);
         let base = self.do_assignments_then_accent_base(
@@ -2858,8 +2862,8 @@ impl<G> MainControl<G> {
                     );
                     self.execution.set_box_forbidden_depth -= 1;
                     match step? {
-                        ReplayStep::Continue => {}
-                        ReplayStep::End | ReplayStep::EndOfInput => return Ok(None),
+                        MainControlStep::Continue => {}
+                        MainControlStep::End | MainControlStep::EndOfInput => return Ok(None),
                     }
                     self.execution.main_loop_active = false;
                 }
@@ -3058,7 +3062,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<ReplayStep, ExecError> {
+    ) -> Result<MainControlStep, ExecError> {
         let Some((nodes, aux_prev_depth)) = self
             .execution
             .modes
@@ -3098,7 +3102,7 @@ impl<G> MainControl<G> {
             },
             resource_provider,
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 
     fn apply_math_shift(
@@ -3107,7 +3111,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<ReplayStep, ExecError> {
+    ) -> Result<MainControlStep, ExecError> {
         match self.execution.modes.current_mode() {
             Mode::Horizontal | Mode::RestrictedHorizontal => {
                 debug_assert_ne!(pairing, MathShiftPairing::ProbeDisplayEnd);
@@ -3187,7 +3191,7 @@ impl<G> MainControl<G> {
                         },
                         resource_provider,
                     )?;
-                    return Ok(ReplayStep::Continue);
+                    return Ok(MainControlStep::Continue);
                 }
                 let (content, display_level) =
                     self.prepare_display_math_list(stores, diagnostic_effects)?;
@@ -3210,7 +3214,7 @@ impl<G> MainControl<G> {
                 unreachable!("vertical math shifts retry through ParagraphStart")
             }
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 
     /// TeX82 §1194 checks the current formula's math fonts before `fin_mlist`
@@ -3862,7 +3866,7 @@ impl<G> MainControl<G> {
         boundary: MathDelimiterBoundary,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<ReplayStep, ExecError> {
+    ) -> Result<MainControlStep, ExecError> {
         match boundary.kind {
             MathDelimiterBoundaryKind::Left => {
                 // TeX82 §1191's `push_math(math_left_group)` opens both a
@@ -3975,7 +3979,7 @@ impl<G> MainControl<G> {
                         &["I'm ignoring a \\right that had no matching \\left."],
                         context,
                     )?;
-                    return Ok(ReplayStep::Continue);
+                    return Ok(MainControlStep::Continue);
                 }
                 let content = take_finished_math_list(&mut self.execution.modes, stores)?;
                 let mut context = stores.command_context().expect("math-right admission");
@@ -4010,7 +4014,7 @@ impl<G> MainControl<G> {
                 );
             }
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 
     fn command_scan_math_character(
@@ -4223,7 +4227,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<ReplayStep, ExecError> {
+    ) -> Result<MainControlStep, ExecError> {
         if let Some(command) = command {
             self.interpret_fetched(
                 stores,
@@ -4489,11 +4493,6 @@ pub enum RootCompletionPolicy {
     RequireTeXEnd,
     StopAtRootEof,
 }
-
-// The fixture suite retains its historical vocabulary locally.  This alias is
-// Kept private while the implementation is migrated in place; callers only
-// see `MainControlStep`.
-type ReplayStep = MainControlStep;
 
 fn math_char<G>(
     stores: &CommandContext<'_, G>,
@@ -5097,12 +5096,12 @@ impl PendingPageOutputFacts {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn operation_termination(step: ReplayStep, fatal: Option<FatalError>) -> OperationTermination {
+fn operation_termination(step: MainControlStep, fatal: Option<FatalError>) -> OperationTermination {
     fatal.map_or_else(
         || match step {
-            ReplayStep::Continue => OperationTermination::Continue,
-            ReplayStep::End => OperationTermination::End,
-            ReplayStep::EndOfInput => OperationTermination::EndOfInput,
+            MainControlStep::Continue => OperationTermination::Continue,
+            MainControlStep::End => OperationTermination::End,
+            MainControlStep::EndOfInput => OperationTermination::EndOfInput,
         },
         OperationTermination::Fatal,
     )

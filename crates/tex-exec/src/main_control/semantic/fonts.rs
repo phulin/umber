@@ -8,7 +8,7 @@ pub(in crate::main_control) fn execute_font_dimen<G>(
     number: i32,
     value: Scaled,
     recovery_context: Option<String>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     // tex.web §578's `find_font_dimen` resolves an unusable parameter
     // number to the scratch location `fmem_ptr`; §579 then reports
     // "Font x has only n fontdimen parameters" and §1253 still runs
@@ -37,7 +37,7 @@ pub(in crate::main_control) fn execute_font_dimen<G>(
             }
         }
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_font_integer<G>(
@@ -46,7 +46,7 @@ pub(in crate::main_control) fn execute_font_integer<G>(
     font: FontId,
     skew: bool,
     value: i32,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     AssignmentCommitter::new(stores, effects).unscoped(|stores| {
         if skew {
             stores.set_font_skew_char(font, value)
@@ -54,7 +54,7 @@ pub(in crate::main_control) fn execute_font_integer<G>(
             stores.set_font_hyphen_char(font, value)
         }
     });
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 // Borrow the actual owners and pass concrete operands without a command packet.
@@ -68,7 +68,7 @@ pub(in crate::main_control) fn execute_hyphenation_data<G>(
     patterns: bool,
     rejection_context: String,
     trie_built: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     // TeX82 §1252 rejects `\patterns` for two different reasons, and
     // the two do not share a message. The `init`/`tini` split comes
     // first: a production binary has no `new_patterns` to call, so it
@@ -80,14 +80,14 @@ pub(in crate::main_control) fn execute_hyphenation_data<G>(
         let mut report = stores.print_err("Patterns can be loaded only by INITEX");
         report.context(rejection_context);
         report.error().defer_recovery(effects)?;
-        return Ok(ReplayStep::Continue);
+        return Ok(MainControlStep::Continue);
     }
     if trie_built {
         let mut report = stores.print_err("Too late for \\patterns");
         report.help(&["All patterns must be given before typesetting begins."]);
         report.context(rejection_context);
         report.error().defer_recovery(effects)?;
-        return Ok(ReplayStep::Continue);
+        return Ok(MainControlStep::Continue);
     }
     // Both halves of §§935/963's diagnostics were already reported by
     // the live scan, where §82 could still show the character that
@@ -101,7 +101,7 @@ pub(in crate::main_control) fn execute_hyphenation_data<G>(
             crate::paragraph_end::apply_scanned_hyphenation_exceptions(stores, words);
         });
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_font_select<G>(
@@ -109,22 +109,25 @@ pub(in crate::main_control) fn execute_font_select<G>(
     effects: &mut DiagnosticEffects,
     font: FontId,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     AssignmentCommitter::new(stores, effects).unscoped(|stores| {
         stores
             .assign_current_font(font, assignment_scope(global))
             .expect("current font belongs to admitted state")
     });
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::main_control) fn execute_font_definition<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    font_resource: Option<&FontResource>,
-    request: &mut FontLoadRequest,
-    global: &mut bool,
-) -> Result<ReplayStep, ExecError> {
+    command: &CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    font_resource: &FontResource,
+    request: &FontLoadRequest,
+    global: bool,
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1257 records `font_id_text(f):=t` at `common_ending`,
         // including the `f=null_font` recovery path. Active targets use
@@ -132,13 +135,13 @@ pub(in crate::main_control) fn execute_font_definition<G>(
         // control-sequence text.
         let identifier = font_identifier_for_definition(stores, request.target);
         let observe_font_definition =
-            command.observes_mutations() && command.state.profile().capabilities().supports_etex();
+            receipts.is_some() && command.profile().capabilities().supports_etex();
         // TeX82 §1258/§1259 report an illegal `at`/`scaled` size and
         // continue with the replaced value; §1257 then loads the font
         // normally. The replacement is the scanner's, the report this
         // seam's.
         if let Some(recovery) = &request.size_recovery {
-            report_font_size_recovery(stores, command.diagnostic_effects, recovery)?;
+            report_font_size_recovery(stores, effects, recovery)?;
         }
         let bind_null_font =
             |stores: &mut tex_state::CommandContext<'_, G>,
@@ -146,7 +149,7 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                 let record = font_definition_mutation(
                     stores,
                     request.target,
-                    *global,
+                    global,
                     observe_font_definition,
                 );
                 AssignmentCommitter::new(stores, diagnostic_effects).unscoped(|stores| {
@@ -156,14 +159,14 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                             tex_state::MeaningWord::from_static(Meaning::Font(
                                 tex_state::font::NULL_FONT,
                             )),
-                            assignment_scope(*global),
+                            assignment_scope(global),
                         )
                         .expect("font selector belongs to admitted state");
                     stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
                 });
                 record
             };
-        let resource = font_resource.expect("font resource is resolved before application");
+        let resource = font_resource;
         if matches!(resource, FontResource::Unavailable) {
             // TeX.web §§1257/561 diagnose the failed TFM open before
             // continuing with the selector bound to `null_font`. The
@@ -174,7 +177,7 @@ pub(in crate::main_control) fn execute_font_definition<G>(
             let selector_kind = stores.control_sequence_kind(request.target);
             report_font_not_loadable_with_context(
                 stores,
-                command.diagnostic_effects,
+                effects,
                 selector_kind,
                 &selector,
                 &request.name,
@@ -186,11 +189,14 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                 },
                 request.error_context.clone(),
             )?;
-            let receipt = bind_null_font(stores, command.diagnostic_effects);
+            let receipt = bind_null_font(stores, effects);
             if let Some(record) = receipt {
-                command.retain_assignment_mutation(record);
+                receipts
+                    .as_mut()
+                    .expect("mutation observation requested")
+                    .push(record);
             }
-            return Ok(ReplayStep::Continue);
+            return Ok(MainControlStep::Continue);
         }
         let loaded = match load_font(request, resource) {
             Ok(loaded) => loaded,
@@ -203,7 +209,7 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                 let selector_kind = stores.control_sequence_kind(request.target);
                 report_font_not_loadable_with_context(
                     stores,
-                    command.diagnostic_effects,
+                    effects,
                     selector_kind,
                     &selector,
                     &request.name,
@@ -211,11 +217,14 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                     FontLoadFailure::MalformedTfm,
                     request.error_context.clone(),
                 )?;
-                let receipt = bind_null_font(stores, command.diagnostic_effects);
+                let receipt = bind_null_font(stores, effects);
                 if let Some(record) = receipt {
-                    command.retain_assignment_mutation(record);
+                    receipts
+                        .as_mut()
+                        .expect("mutation observation requested")
+                        .push(record);
                 }
-                return Ok(ReplayStep::Continue);
+                return Ok(MainControlStep::Continue);
             }
             Err(error) => return Err(error),
         };
@@ -227,38 +236,44 @@ pub(in crate::main_control) fn execute_font_definition<G>(
                 let selector_kind = stores.control_sequence_kind(request.target);
                 report_font_capacity(
                     stores,
-                    command.diagnostic_effects,
+                    effects,
                     selector_kind,
                     &selector,
                     &request.name,
                     request.size,
                     request.error_context.clone(),
                 )?;
-                let receipt = bind_null_font(stores, command.diagnostic_effects);
+                let receipt = bind_null_font(stores, effects);
                 if let Some(record) = receipt {
-                    command.retain_assignment_mutation(record);
+                    receipts
+                        .as_mut()
+                        .expect("mutation observation requested")
+                        .push(record);
                 }
-                return Ok(ReplayStep::Continue);
+                return Ok(MainControlStep::Continue);
             }
         };
         // Web2C tex.ch [49.1260] removes TeX82 §1254's `flush_string`:
         // [29.517]'s `slow_make_string` may have returned an older pool
         // string, so flushing it would retire an unrelated allocation.
         let record =
-            font_definition_mutation(stores, request.target, *global, observe_font_definition);
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|stores| {
+            font_definition_mutation(stores, request.target, global, observe_font_definition);
+        AssignmentCommitter::new(stores, effects).unscoped(|stores| {
             stores
                 .assign_meaning(
                     request.target,
                     tex_state::MeaningWord::from_static(Meaning::Font(id)),
-                    assignment_scope(*global),
+                    assignment_scope(global),
                 )
                 .expect("font selector belongs to admitted state")
         });
         if let Some(record) = record {
-            command.retain_assignment_mutation(record);
+            receipts
+                .as_mut()
+                .expect("mutation observation requested")
+                .push(record);
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -268,7 +283,7 @@ pub(in crate::main_control) fn execute_generated_font_definition<G>(
     receipts: &mut Option<Vec<MutationRecord>>,
     definition: ScannedGeneratedFontDefinition,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     if definition.kind == GeneratedFontKind::Copy
         && matches!(
             stores.font_construction(definition.source),
@@ -318,5 +333,5 @@ pub(in crate::main_control) fn execute_generated_font_definition<G>(
             .expect("requested mutation receipt")
             .push(record);
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }

@@ -16,7 +16,7 @@ pub(super) fn apply_macro_definition<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     mut observer: Option<&mut dyn CommandObserver>,
     receipts: &mut Option<Vec<MutationRecord>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let observed_definition =
         (observer.is_some() || receipts.is_some()).then_some(definition.reference());
     commit_macro_definition(
@@ -66,7 +66,7 @@ pub(super) fn apply_macro_definition<G>(
             observer.committed(CommandObservation::Mutation(record));
         }
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 /// Commits §1218's macro definition and its §1211 assignment trace.
@@ -99,7 +99,7 @@ pub(super) fn apply_let<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     receipts: &mut Option<Vec<MutationRecord>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let committed = commit_let(target, meaning, global, stores, diagnostic_effects)?;
     if let Some(meaning) = committed
         && let Some(receipts) = receipts.as_mut()
@@ -112,7 +112,7 @@ pub(super) fn apply_let<G>(
         };
         receipts.push(record);
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 /// Commits §1221's `\let` through §277's `eq_define`, returning the
@@ -160,7 +160,7 @@ pub(super) fn apply_catcode<G>(
     state: &CommandState<G>,
     effects: &mut DiagnosticEffects,
     receipts: &mut Option<Vec<MutationRecord>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let value = recover_code_table_value(
         UnexpandablePrimitive::CatCode,
         raw_value,
@@ -183,7 +183,7 @@ pub(super) fn apply_catcode<G>(
         };
         receipts.push(record);
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 /// Commits §1232's validated category code through §277's `eq_define`,

@@ -291,7 +291,7 @@ fn deferred_effect_and_ordinary_pdf_commands_open_no_aggregate_savepoint() {
 
         assert_eq!(
             control.advance(stores).expect("deferred open commits"),
-            StepResult::Progress(ReplayStep::Continue)
+            StepResult::Progress(MainControlStep::Continue)
         );
 
         crate::test_harness::with_nonstop_plain_universe(|pdf_stores| {
@@ -309,7 +309,7 @@ fn deferred_effect_and_ordinary_pdf_commands_open_no_aggregate_savepoint() {
                 pdf_control
                     .advance(pdf_stores)
                     .expect("ordinary PDF node commits"),
-                StepResult::Progress(ReplayStep::Continue)
+                StepResult::Progress(MainControlStep::Continue)
             );
         });
     });

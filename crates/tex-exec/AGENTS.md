@@ -78,7 +78,7 @@ not allocate a vector merely to publish one already-complete node.
   character, group and publication primitives live under `interpreter/`.
 - `src/main_control/semantic/`: concrete source-free typed semantic routines
   grouped by assignments, registers, fonts, text, paragraph/page state, groups,
-  boxes/builders/leaders, alignment/recovery, math, diagnostics, streams, and
+  boxes/builders/leaders, alignment/recovery, diagnostics, streams, and
   PDF. Each routine borrows the actual admitted native owners; no operation
   union, readiness phase, context dereference facade, compatibility executor, or universal payload exists. Input stream scanners return a move-only final definition owner for read assignment; no attempt-definition promotion remains.
 - `src/main_control/semantic_owners.rs`: actual semantic-owner admission and
@@ -281,20 +281,17 @@ Native execution errors box missing-font, missing-image and World payloads only
 when raised. Resource failures move the same command-owned need/cause packet
 through executor and session; successful results construct no failure payload.
 
-- `src/main_control/direct/native.rs`: the main-control terminal consumer,
-  including packed math style, defined-symbol and numeric math heads that append final nodes directly.
-  General math heads are arms in this same mode/command switch; no math
-  pre-dispatch, generic request table or request-application switch remains.
-  Selected arms scan real operands and preserve the genuine reporting boundary. The
-  retained observed dispatcher shares that append operation; no style scanner
-  request or duplicate style enum remains. The consumer continues
-  borrowing actual driver operation counts and diagnostic origins. Ordinary
-  relax, font selections and simple/semi-simple group words continue inside the canonical
-  expanded reader. Entry and unsave share the actual group helpers; group exit
-  rechecks restored tracing parameters. Only actual reporting/failure results
-  are returned, without command records. Tracing, leaders,
-  character lookahead and flushing retain their actual boundaries. The last
-  native operation returns its actual budget-cut result without command construction.
+- `src/main_control/interpreter/dispatch.rs`: the sole terminal selector,
+  including packed math style, defined-symbol and numeric math heads. Selected
+  arms scan actual operands inside the retained processor. `trace.rs` produces
+  command displays only when tracing demands them. `boxes.rs` closes live box,
+  insertion and adjustment groups through native unsave. `streams.rs` publishes
+  retained deferred-write tokens and renders immediately consumed message and
+  special text directly from scanner storage. `fonts.rs` scans font operands
+  and acquires metrics through the actual capabilities and provider loans;
+  no separate font-resolution admission remains. `termination.rs` owns real
+  residual-page ejection and final input retirement. `driver.rs` releases the
+  processor only for actual host work, observations and terminal publication.
 
 Mark class/text and deferred openout operands scan in their selected switch
 arms through the retained processor. Mark publication lends only actual
@@ -303,11 +300,11 @@ TeX82 §1101 performs no page build or page-output capture. Its whole-executor
 application wrapper and the second-processor streams-scanner module are
 deleted. Restricted horizontal mark migration keeps its existing page region.
 
-Arithmetic runs in `direct/scan_arithmetic.rs` on the actual reader loan: its
-expanded target word feeds operand scanning and semantic application directly.
-The shared `with_native_assignment!` seam renders demanded scan reports before
-mutation. The old invalid-target executor adapter is deleted; its diagnostic
-borrows actual command and effect owners without an operation request.
+Arithmetic runs in `interpreter/arithmetic.rs` on the actual reader loan:
+its expanded target word feeds operand scanning and semantic application
+without rebuilding a processor. Demanded reports and error dialogue precede
+mutation or the next scan. There is no assignment-loan macro or discarded
+original-value carrier.
 
 Native calls consume standard `Result` from the direct scanner APIs. Retained
 scalar unions, result projections and compatibility scanner entries are absent.

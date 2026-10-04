@@ -94,7 +94,7 @@ fn native_chunk_budget_stops_before_the_next_assignment_and_restores_local_value
         );
         assert_eq!(
             control.advance_chunk(stores, 3, None).expect("first chunk"),
-            StepResult::Progress(ReplayStep::Continue)
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.count(0).expect("count register"), 11);
         assert_eq!(stores.count(1).expect("later register"), 0);
@@ -109,7 +109,7 @@ fn native_chunk_budget_stops_before_the_next_assignment_and_restores_local_value
             control
                 .advance_chunk(stores, 3, None)
                 .expect("second chunk"),
-            StepResult::Progress(ReplayStep::Continue)
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.count(0).expect("restored count register"), 11);
         assert_eq!(stores.count(1).expect("committed later register"), 22);
@@ -124,7 +124,7 @@ fn native_chunk_budget_stops_before_the_next_assignment_and_restores_local_value
             control
                 .advance_chunk(stores, 3, None)
                 .expect("terminal chunk"),
-            StepResult::Progress(ReplayStep::End)
+            StepResult::Progress(MainControlStep::End)
         );
     });
 }
@@ -137,7 +137,7 @@ fn production_batch_commits_assignments_and_terminal_command_once() {
 
         assert_eq!(
             control.advance_episode(stores).expect("batch completes"),
-            StepResult::Progress(ReplayStep::End)
+            StepResult::Progress(MainControlStep::End)
         );
         assert_eq!(stores.count(0).expect("count register"), 11);
         assert_eq!(stores.count(1).expect("count register"), 22);
@@ -156,7 +156,7 @@ fn production_batch_returns_after_a_world_effect() {
 
         assert_eq!(
             control.advance_episode(stores).expect("effect commits"),
-            StepResult::Progress(ReplayStep::Continue)
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
             stores.count(0).expect("count register"),

@@ -264,7 +264,7 @@ impl<G> MainControl<G> {
     pub(super) fn episode_commit_boundary(
         &self,
         stores: &Universe<G>,
-        applied: &Result<ReplayStep, ExecError>,
+        applied: &Result<MainControlStep, ExecError>,
         operations: usize,
         max_operations: usize,
         _initial_boundaries: usize,
@@ -299,7 +299,10 @@ impl<G> MainControl<G> {
                 crate::SemanticEpisodeBarrier::Diagnostic,
             ));
         }
-        if matches!(applied, Ok(ReplayStep::End | ReplayStep::EndOfInput)) {
+        if matches!(
+            applied,
+            Ok(MainControlStep::End | MainControlStep::EndOfInput)
+        ) {
             return Some(crate::EpisodeCommitBoundary::Terminal);
         }
         if stores.world().committed_artifacts().len() != initial_artifacts {
@@ -501,11 +504,11 @@ impl<G> MainControl<G> {
 impl<G> MainControl<G> {
     pub(super) fn finish_host_owned_step(
         &mut self,
-        applied: Result<ReplayStep, ExecError>,
+        applied: Result<MainControlStep, ExecError>,
         output_start: OperationOutputStart,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<ReplayStep, ExecError> {
+    ) -> Result<MainControlStep, ExecError> {
         let applied = match applied {
             Ok(applied) => applied,
             Err(error) => {

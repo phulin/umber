@@ -8,7 +8,7 @@ pub(in crate::main_control) fn execute_count<G>(
     index: u16,
     value: i32,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let receipt = AssignmentCommitter::new(stores, effects).count(index, value, global);
     if let Some(receipts) = receipts
         && receipt
@@ -20,7 +20,7 @@ pub(in crate::main_control) fn execute_count<G>(
             global,
         });
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_dimen<G>(
@@ -30,7 +30,7 @@ pub(in crate::main_control) fn execute_dimen<G>(
     index: u16,
     value: Scaled,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let receipt = AssignmentCommitter::new(stores, effects).dimension(index, value, global);
     if let Some(receipts) = receipts
         && receipt
@@ -42,7 +42,7 @@ pub(in crate::main_control) fn execute_dimen<G>(
             global,
         });
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 #[allow(clippy::too_many_arguments)] // actual glue operand, scope, pointer identity, and observation owner
@@ -56,7 +56,7 @@ pub(in crate::main_control) fn execute_skip<G>(
     mu: bool,
     redundant: bool,
     reassigning: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let committed = AssignmentCommitter::new(stores, effects).skip(
         index,
         value,
@@ -75,7 +75,7 @@ pub(in crate::main_control) fn execute_skip<G>(
             global,
         });
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 #[allow(clippy::too_many_arguments)] // actual native assignment and demanded observation owners
@@ -87,7 +87,7 @@ pub(in crate::main_control) fn execute_int_param<G>(
     index: u16,
     value: i32,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let committed = AssignmentCommitter::new(stores, effects).int_parameter(index, value, global);
     if let Some(receipts) = receipts
         && committed
@@ -103,7 +103,7 @@ pub(in crate::main_control) fn execute_int_param<G>(
             global,
         });
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 #[allow(clippy::too_many_arguments)] // actual native assignment and demanded observation owners
@@ -115,7 +115,7 @@ pub(in crate::main_control) fn execute_dimen_param<G>(
     index: u16,
     value: Scaled,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let committed =
         AssignmentCommitter::new(stores, effects).dimension_parameter(index, value, global);
     if let Some(receipts) = receipts
@@ -132,7 +132,7 @@ pub(in crate::main_control) fn execute_dimen_param<G>(
             global,
         });
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 #[allow(clippy::too_many_arguments)] // actual native assignment and demanded observation owners
@@ -144,7 +144,7 @@ pub(in crate::main_control) fn execute_glue_param<G>(
     index: u16,
     value: GlueSpec,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let committed = AssignmentCommitter::new(stores, effects).glue_parameter(index, value, global);
     if let Some(receipts) = receipts
         && committed
@@ -160,7 +160,7 @@ pub(in crate::main_control) fn execute_glue_param<G>(
             global,
         });
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 #[allow(clippy::too_many_arguments)] // concrete arithmetic operands and actual native evidence owners
@@ -173,7 +173,7 @@ pub(in crate::main_control) fn execute_arithmetic<G>(
     target: ArithmeticTarget,
     operand: ArithmeticOperand,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1236 sets `arith_error` and, when it is set, reports
         // "Arithmetic overflow" and `return`s *before* `word_define`, so
@@ -203,7 +203,7 @@ pub(in crate::main_control) fn execute_arithmetic<G>(
             Ok(()) => {}
             Err(error) => return Err(error),
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -213,7 +213,7 @@ pub(in crate::main_control) fn execute_invalid_arithmetic_target<G>(
     effects: &mut DiagnosticEffects,
     primitive: UnexpandablePrimitive,
     target: tex_command::PrintCommand<G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1236 prints this error and returns from
         // `do_register_command`; §1269's common `done` path still gets
@@ -232,6 +232,6 @@ pub(in crate::main_control) fn execute_invalid_arithmetic_target<G>(
         report.help(&["I'm forgetting what you said and not changing anything."]);
         report.context(context);
         report.error().defer_recovery(effects)?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }

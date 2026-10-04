@@ -139,6 +139,8 @@ pub(super) struct ExecutionState<G> {
     pub(super) prepared_dvi_pages: PreparedDviPages,
     pub(super) immediate_prints: Vec<ImmediatePrint>,
     pub(super) prepared_shipout: Option<PreparedShipout>,
+    /// Actual terminal notices, moved once after command admission ends.
+    pub(super) pending_job_end: Option<(bool, Vec<tex_command::IncompleteCondition>)>,
     /// A detached page has committed, but a live mode still owns page-region
     /// coordinates. Succession waits until that mode closure is consumed into
     /// PageBuilder state; it never copies or scans the mode payload.
@@ -245,6 +247,7 @@ impl<G> ExecutionState<G> {
             prepared_dvi_pages: PreparedDviPages::default(),
             immediate_prints: Vec::new(),
             prepared_shipout: None,
+            pending_job_end: None,
             page_region_succession_pending: false,
             paragraph_checkpoint_demand: None,
             paragraph_checkpoint_cut: false,

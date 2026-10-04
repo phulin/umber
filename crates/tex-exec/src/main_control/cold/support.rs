@@ -567,7 +567,10 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     boxes: &mut ReplayBoxes<G>,
-    command: &mut CommandMachine<'_, '_, G>,
+    command: &mut CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    receipts: Option<&mut Vec<MutationRecord>>,
 ) -> Result<(), ExecError> {
     let kind = ReplayBoxKind::from_scanned(construction.kind);
     let isolated_box = target.is_none()
@@ -579,12 +582,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     if isolated_box {
         // A pending parent character run belongs before this box. Materialize
         // it before opening the box's independent allocation interval.
-        crate::box_runtime::flush_pending_hchars_with_fuel(
-            modes,
-            stores,
-            command.diagnostic_effects,
-            command.fuel,
-        )?;
+        crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, effects, fuel)?;
     }
     let box_segment_start = isolated_box.then(|| stores.begin_page_node_region());
     let packing = match construction.packing {
@@ -607,22 +605,17 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     } else {
         kind.group_kind()
     };
-    enter_group(
-        stores,
-        command.state,
-        command.diagnostic_effects,
-        group_kind,
-    );
+    enter_group(stores, command, effects, group_kind);
     modes.push_at_line(
         if kind.horizontal() {
             Mode::RestrictedHorizontal
         } else {
             Mode::InternalVertical
         },
-        i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
+        i32::try_from(command.current_file_line_number()).unwrap_or(i32::MAX),
     )?;
     if !kind.horizontal() {
-        commit_box_normal_paragraph(modes, stores, command);
+        commit_box_normal_paragraph(modes, stores, effects, receipts);
     }
     boxes.push_box(
         stores,
@@ -639,16 +632,17 @@ pub(in crate::main_control) fn begin_replay_box<G>(
             shift: None,
         },
     );
-    schedule_everybox(command.state, stores, kind.horizontal());
+    schedule_everybox(command, stores, kind.horizontal());
     Ok(())
 }
 
 pub(in crate::main_control) fn commit_box_normal_paragraph<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
+    effects: &mut DiagnosticEffects,
+    receipts: Option<&mut Vec<MutationRecord>>,
 ) {
-    let record = (command.observes_mutations()
+    let record = (receipts.is_some()
         && !stores.penalty_array(PenaltyArrayKind::InterLine).is_empty())
     .then(|| MutationRecord {
         target: MutationTarget::Register,
@@ -656,13 +650,15 @@ pub(in crate::main_control) fn commit_box_normal_paragraph<G>(
         value: ObservationValue::Tokens(Vec::new()),
         global: false,
     });
-    AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped_with_effects(
+    AssignmentCommitter::new(stores, effects).unscoped_with_effects(
         |stores, diagnostic_effects| {
             crate::paragraph_end::normal_paragraph(modes, stores, diagnostic_effects);
         },
     );
     if let Some(record) = record {
-        command.retain_assignment_mutation(record);
+        if let Some(receipts) = receipts {
+            receipts.push(record);
+        }
     }
 }
 
@@ -680,20 +676,20 @@ pub(in crate::main_control) fn apply_box_shift<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     boxes: &mut ReplayBoxes<G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     match &mut shift.payload {
         ScannedBoxShiftPayload::Missing => {
             // `scan_box`'s own "A <box> was supposed to be here" recovery
             // (tex.web §1084); the rejected command has already been backed
             // up by `scan_box_payload` for ordinary replay.
             report_missing_box(command.state, command.diagnostic_effects, stores)?;
-            Ok(ReplayStep::Continue)
+            Ok(MainControlStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
             let id = read_box_register(*index, *copy, stores, command);
             let node = crate::box_runtime::first_box_node(stores, id);
             append_shifted_box(modes, stores, node, shift.delta, command)?;
-            Ok(ReplayStep::Continue)
+            Ok(MainControlStep::Continue)
         }
         ScannedBoxShiftPayload::LastBox { error_context } => {
             let state = &*command.state;
@@ -705,7 +701,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
                 |stores| render_diagnostic_context(state, stores, **error_context),
             )?;
             append_shifted_box(modes, stores, node, shift.delta, command)?;
-            Ok(ReplayStep::Continue)
+            Ok(MainControlStep::Continue)
         }
         ScannedBoxShiftPayload::VSplit(split) => {
             if let Some(context) = &split.missing_to_context {
@@ -725,7 +721,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
                 &split.split_context,
             )?;
             append_shifted_box(modes, stores, node, shift.delta, command)?;
-            Ok(ReplayStep::Continue)
+            Ok(MainControlStep::Continue)
         }
         ScannedBoxShiftPayload::Construction(construction) => {
             let axis = if matches!(
@@ -736,7 +732,18 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             } else {
                 BoxShiftAxis::Vertical
             };
-            begin_replay_box(*construction, None, None, modes, stores, boxes, command)?;
+            begin_replay_box(
+                *construction,
+                None,
+                None,
+                modes,
+                stores,
+                boxes,
+                command.state,
+                command.diagnostic_effects,
+                command.fuel,
+                command.assignment_receipts.as_deref_mut(),
+            )?;
             boxes
                 .active_boxes
                 .last_mut()
@@ -745,7 +752,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
                 delta: shift.delta,
                 axis,
             });
-            Ok(ReplayStep::Continue)
+            Ok(MainControlStep::Continue)
         }
     }
 }
@@ -837,7 +844,13 @@ pub(in crate::main_control) fn box_end<G>(
         // the destination void, it does not leave the old value in place.
         BoxContext::SetBox(pending) => {
             let boxed = node.map(|node| stores.publish_page_nodes([node]));
-            commit_set_box_target(pending, boxed, stores, command);
+            commit_set_box_target(
+                pending,
+                boxed,
+                stores,
+                command.diagnostic_effects,
+                command.assignment_receipts.as_deref_mut(),
+            );
             Ok(())
         }
         // §1075 guards `ship_out` with `cur_box<>null`.
@@ -869,7 +882,8 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
     pending: PendingSetBox,
     boxed: Option<tex_state::page_node_arena::PageListId>,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
+    effects: &mut DiagnosticEffects,
+    receipts: Option<&mut Vec<MutationRecord>>,
 ) {
     let PendingSetBox {
         target,
@@ -877,7 +891,7 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
         origin,
     } = pending;
     let traced_box = boxed;
-    let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).box_register(
+    let receipt = AssignmentCommitter::new(stores, effects).box_register(
         target.index,
         traced_box.as_ref(),
         target.global,
@@ -895,7 +909,21 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
         },
     );
     if receipt {
-        observe_box_assignment(command, target.index, target.global, traced_box.is_some());
+        if let Some(receipts) = receipts {
+            receipts.push(MutationRecord {
+                target: MutationTarget::Register,
+                key: ObservationValue::Name(format!("box:{}", target.index)),
+                value: ObservationValue::Name(
+                    if traced_box.is_some() {
+                        "occupied"
+                    } else {
+                        "void"
+                    }
+                    .into(),
+                ),
+                global: target.global,
+            });
+        }
     }
 }
 
@@ -1032,14 +1060,18 @@ pub(in crate::main_control) fn append_shifted_box<G>(
 }
 
 pub(in crate::main_control) fn apply_scanned_rule<G>(
-    command: &mut CommandMachine<'_, '_, G>,
+    command: &mut CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    observer: Option<&mut dyn CommandObserver>,
+    output_routine_active: bool,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     width: Option<Scaled>,
     height: Option<Scaled>,
     depth: Option<Scaled>,
     horizontal: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let node = Node::Rule {
         width,
         height,
@@ -1049,17 +1081,15 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
         match modes.current_mode() {
             Mode::Vertical | Mode::InternalVertical => {}
             Mode::Horizontal => {
-                let diagnostic_context =
-                    command_diagnostic_context(command.state, command.output_routine_active);
-                let mut geometry =
-                    pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
+                let diagnostic_context = command_diagnostic_context(command, output_routine_active);
+                let mut geometry = pack_geometry_sink(command, observer);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
-                    command.diagnostic_effects,
+                    effects,
                     &mut geometry,
                     diagnostic_context,
-                    command.fuel,
+                    fuel,
                 )?;
             }
             Mode::RestrictedHorizontal => unreachable!(
@@ -1092,24 +1122,13 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
             modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_paragraph(
-                command.state,
-                modes,
-                stores,
-                command.diagnostic_effects,
-                true,
-            )?;
+            start_paragraph(command, modes, stores, effects, true)?;
         }
         // TeX82 §1054 reaches `append_rule` only after main_control has
         // finished the current word. Materialize Umber's pending character
         // run before appending the rule so a `\vrule` cannot split a word and
         // move its final character behind the rule node.
-        crate::box_runtime::flush_pending_hchars_with_fuel(
-            modes,
-            stores,
-            command.diagnostic_effects,
-            command.fuel,
-        )?;
+        crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, effects, fuel)?;
         modes.current_list_mutation().push(stores, node);
         // TeX82 §1056 resets `space_factor` after a rule in either
         // horizontal mode. This matters when a zero-sfcode closer follows
@@ -1122,7 +1141,7 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
             modes.current_list_mutation().set_space_factor(1000);
         }
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 /// TeX82 §1123's list-building tail, with §1125's kerns.
@@ -1144,7 +1163,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     etex_extended: bool,
     placement: AccentPlacement,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let AccentPlacement {
         accent,
         accent_font,
@@ -1176,7 +1195,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
     let Some((character, base_origin, base_metrics)) = base else {
         modes.current_list_mutation().push(stores, accent_node);
         modes.current_list_mutation().set_space_factor(1000);
-        return Ok(ReplayStep::Continue);
+        return Ok(MainControlStep::Continue);
     };
     let accent_x_height = stores.font_parameter(accent_font, 5);
     let accent_slant = stores.font_parameter(accent_font, 1);
@@ -1234,7 +1253,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
         },
     );
     modes.current_list_mutation().set_space_factor(1000);
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(in crate::main_control) fn assign_math_family_font<G>(
@@ -1371,93 +1390,6 @@ pub(in crate::main_control) fn start_paragraph<G>(
 /// (`is_outer_vertical`) then invokes `build_page`, matching §1099's `if
 /// nest_ptr=0 then build_page` (`\vadjust` never actually reaches this since
 /// it is forbidden in outer vertical mode).
-pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
-    class: u16,
-    pre: bool,
-    modes: &mut ModeNest,
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
-    // TeX82 §§993/1100: an outer-vertical insertion invokes `build_page`
-    // before main control fetches another command. Preserve this closing
-    // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
-    let page_error_context = command.state.output_open_context(stores);
-    let diagnostic_context =
-        command_diagnostic_context(command.state, command.output_routine_active);
-    let pack_context = diagnostic_context.packing();
-    let mut geometry =
-        pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
-    crate::paragraph_end::end_paragraph_with_fuel(
-        modes,
-        stores,
-        command.diagnostic_effects,
-        &mut geometry,
-        diagnostic_context,
-        command.fuel,
-    )?;
-    let split_top_skip = stores
-        .glue_param(GlueParam::SPLIT_TOP_SKIP)
-        .map(|id| stores.glue(id))
-        .unwrap_or(GlueSpec::ZERO);
-    let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
-    let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
-    unsave_group(stores, command, GroupKind::Insert).map_err(|_| ExecError::MissingToken {
-        context: "insert group",
-    })?;
-    let mut level = crate::box_runtime::commit_current_list(
-        modes,
-        stores,
-        command.diagnostic_effects,
-        command.fuel,
-    )?;
-    let content = level.list_mutation().take_nodes();
-    let params = tex_typeset::VpackParams {
-        box_max_depth: Scaled::MAX_DIMEN,
-        ..crate::packing_params::vpack_params(stores)
-    };
-    let mut geometry =
-        pack_geometry_sink(command.state, reborrow_observer(&mut command.observations));
-    let packed = crate::packing_params::vpack(
-        stores,
-        command.diagnostic_effects,
-        &mut geometry,
-        &pack_context,
-        content,
-        PackSpec::Natural,
-        params,
-    );
-    crate::box_runtime::flush_pending_hchars_with_fuel(
-        modes,
-        stores,
-        command.diagnostic_effects,
-        command.fuel,
-    )?;
-    let node = if class == 255 {
-        Node::Adjust(tex_state::node::AdjustNode { content, pre })
-    } else {
-        let size = packed
-            .node
-            .height
-            .checked_add(packed.node.depth)
-            .ok_or(ExecError::ArithmeticOverflow)?;
-        Node::Ins {
-            class,
-            size,
-            split_top_skip,
-            split_max_depth,
-            floating_penalty,
-            content,
-        }
-    };
-    crate::vertical::append_vertical_contribution(modes, stores, node);
-    // §1099 calls `build_page` only after §1100's `unsave` has completed.
-    // The outer operation releases this CommandContext, publishes the
-    // detached group-close/restoration program, then re-admits page building
-    // so its World-facing recovery diagnostics cannot overtake those traces.
-    command.pending_outer_page_build_context = Some(page_error_context);
-    Ok(ReplayStep::Continue)
-}
-
 /// Schedules an every-box list after replay has entered its scoped group and
 /// mode.  The immutable traced list is owned by command state, preserving the
 /// ordinary macro, recovery, retirement, and provenance path for hook tokens.

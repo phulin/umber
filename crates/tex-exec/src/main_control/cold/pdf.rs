@@ -146,7 +146,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
     modes: &mut ModeNest,
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     match request {
         tex_command::PdfNavigationRequest::Annotation(request) => {
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -295,7 +295,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                 if let Some((_, text)) = warn_pdf_destination_duplicate(stores, &identity) {
                     stores.append_ordinary_print_effect(diagnostic_effects, text);
                 }
-                return Ok(ReplayStep::Continue);
+                return Ok(MainControlStep::Continue);
             }
             crate::box_runtime::append_whatsit(
                 modes,
@@ -354,7 +354,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
             )?;
         }
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(in crate::main_control) fn reserve_navigation_action_targets<G>(
@@ -421,7 +421,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
     command: &CommandState<G>,
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     use tex_command::PdfColorStackActionRequest as Action;
 
     if !matches!(request, tex_command::PdfGraphicsRequest::SavePosition)
@@ -520,7 +520,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
                     ],
                     context,
                 )?;
-                return Ok(ReplayStep::Continue);
+                return Ok(MainControlStep::Continue);
             };
             let action = match action {
                 Action::Set(text) => {
@@ -536,14 +536,14 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
         }
     };
     crate::box_runtime::append_whatsit(modes, stores, diagnostic_effects, fuel, whatsit)?;
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(in crate::main_control) fn apply_pdf_object_request<G>(
     request: &mut tex_command::PdfObjectRequest<tex_state::TokenListId<G>>,
     stores: &mut tex_state::CommandContext<'_, G>,
     immediate: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
         return Err(ExecError::PdfExtensionInDviMode("pdfobj"));
     }
@@ -596,7 +596,7 @@ pub(in crate::main_control) fn apply_pdf_object_request<G>(
                 .map_err(|_| ExecError::PdfReferencedObjectNotFound)?;
         }
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(in crate::main_control) fn apply_pdf_form_request<G>(

@@ -23,8 +23,8 @@ impl<G> MainControl<G> {
             &[bool],
             &[MathShiftContext],
             &mut PreparedDviPages,
-        ) -> Result<ReplayStep, ExecError>,
-    ) -> Result<ReplayStep, ExecError> {
+        ) -> Result<MainControlStep, ExecError>,
+    ) -> Result<MainControlStep, ExecError> {
         let mut operation_resource_provider = resource_provider.take();
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_phase(
@@ -225,7 +225,7 @@ impl<G> MainControl<G> {
             self.execution.page_region_succession_pending = true;
             self.finish_pending_page_region_succession(stores);
         }
-        if matches!(result, Ok(ReplayStep::EndOfInput))
+        if matches!(result, Ok(MainControlStep::EndOfInput))
             && self.execution.root_completion == RootCompletionPolicy::RequireTeXEnd
         {
             result = Ok(self.handle_root_end_of_input(stores));

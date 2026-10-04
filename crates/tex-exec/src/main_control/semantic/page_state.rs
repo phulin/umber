@@ -3,41 +3,37 @@ use super::super::*;
 
 pub(in crate::main_control) fn execute_page_dimension<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    dimension: &mut PageDimension,
-    value: &mut Scaled,
-) -> Result<ReplayStep, ExecError> {
+    effects: &mut DiagnosticEffects,
+    dimension: PageDimension,
+    value: Scaled,
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1245's `alter_page_so_far`: a direct
         // `page_so_far[c]:=cur_val` store with no mode check, no
         // diagnostic, and no save-stack entry (§1242: "these definitions
         // are always global"). The page builder reads the same slots.
-        AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .unscoped(|stores| stores.set_page_dimension(*dimension, *value));
-        Ok(ReplayStep::Continue)
+        AssignmentCommitter::new(stores, effects)
+            .unscoped(|stores| stores.set_page_dimension(dimension, value));
+        Ok(MainControlStep::Continue)
     }
 }
 
 pub(in crate::main_control) fn execute_page_integer<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    integer: &mut PageInteger,
-    value: &mut i32,
-) -> Result<ReplayStep, ExecError> {
+    effects: &mut DiagnosticEffects,
+    integer: PageInteger,
+    value: i32,
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1246's `alter_integer`, scoped exactly like
         // `alter_page_so_far` above. `\deadcycles` in particular is what
         // §1024's output-routine loop guard compares against
         // `\maxdeadcycles`, so a wrong value here is only visible once a
         // page ships.
-        AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .unscoped(|stores| stores.set_page_integer(*integer, *value));
-        Ok(ReplayStep::Continue)
+        AssignmentCommitter::new(stores, effects)
+            .unscoped(|stores| stores.set_page_integer(integer, value));
+        Ok(MainControlStep::Continue)
     }
-}
-
-pub(in crate::main_control) fn execute_continue() -> Result<ReplayStep, ExecError> {
-    Ok(ReplayStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_relax<G>(
@@ -45,7 +41,7 @@ pub(in crate::main_control) fn execute_relax<G>(
     modes: Option<&mut ModeNest>,
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     #[cfg(feature = "profiling")]
     tex_state::measurement::record_hot_core_phase(
         tex_state::measurement::HotCorePhase::SemanticApply,
@@ -67,19 +63,15 @@ pub(in crate::main_control) fn execute_relax<G>(
                 fuel,
             )?;
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
-}
-
-pub(in crate::main_control) fn execute_end_of_input() -> Result<ReplayStep, ExecError> {
-    Ok(ReplayStep::EndOfInput)
 }
 
 pub(in crate::main_control) fn execute_end<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    dump: &mut bool,
-) -> Result<ReplayStep, ExecError> {
+    initex: bool,
+    dump: bool,
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1054 has accepted `its_all_over`; the page-builder-owned
         // replay fence must not enter terminal or INITEX format state.
@@ -106,7 +98,7 @@ pub(in crate::main_control) fn execute_end<G>(
         // discard lists, so the host-side format encoder still rejects
         // genuine page material instead of mistaking `last_penalty` or
         // `last_node_type` for it.
-        if *dump && command.initex && crate::page_output::job_is_all_over(stores) {
+        if dump && initex && crate::page_output::job_is_all_over(stores) {
             stores.start_new_page();
         }
         // TeX82 §1378 closes every still-open numbered output file after
@@ -127,14 +119,15 @@ pub(in crate::main_control) fn execute_end<G>(
         for raw in 0..tex_state::world::STREAM_SLOT_COUNT as u8 {
             stores.close_output_stream(StreamSlot::new(raw));
         }
-        Ok(ReplayStep::End)
+        Ok(MainControlStep::End)
     }
 }
 
 pub(in crate::main_control) fn execute_eject_residual_page<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
+    command: &CommandState<G>,
+    effects: &mut DiagnosticEffects,
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1054's `its_all_over` false branch. The stop is already
         // backed up; appending the end-job trio and running §994's
@@ -153,39 +146,40 @@ pub(in crate::main_control) fn execute_eject_residual_page<G>(
             .begin_end_job_ejection()
             .map_err(|_| ExecError::Fatal(FatalError::confusion("end job page progress")))?;
         crate::page_output::append_end_job_contributions(stores);
-        crate::page_builder::build_page(stores, command.diagnostic_effects, &*command.state)?;
+        crate::page_builder::build_page(stores, effects, command)?;
         if !stores.complete_end_job_ejection(progress) {
             return Err(ExecError::Fatal(FatalError::confusion(
                 "end job page progress",
             )));
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
 pub(in crate::main_control) fn execute_prev_depth<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    value: &mut Scaled,
-) -> Result<ReplayStep, ExecError> {
+    effects: &mut DiagnosticEffects,
+    value: Scaled,
+) -> Result<MainControlStep, ExecError> {
     {
         debug_assert!(matches!(
             modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ));
-        AssignmentCommitter::new(stores, command.diagnostic_effects)
-            .unscoped(|_| modes.current_list_mutation().set_prev_depth(*value));
-        Ok(ReplayStep::Continue)
+        AssignmentCommitter::new(stores, effects)
+            .unscoped(|_| modes.current_list_mutation().set_prev_depth(value));
+        Ok(MainControlStep::Continue)
     }
 }
 
 pub(in crate::main_control) fn execute_space_factor<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    value: &mut i32,
-) -> Result<ReplayStep, ExecError> {
+    command: &CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    value: i32,
+) -> Result<MainControlStep, ExecError> {
     {
         debug_assert!(matches!(
             modes.current_mode(),
@@ -195,53 +189,50 @@ pub(in crate::main_control) fn execute_space_factor<G>(
         // then int_error(cur_val) else space_factor:=cur_val` -- an
         // out-of-range value is diagnosed and left unchanged rather than
         // clamped.
-        if (1..=32767).contains(value) {
-            AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|_| {
-                modes.current_list_mutation().set_space_factor(*value);
+        if (1..=32767).contains(&value) {
+            AssignmentCommitter::new(stores, effects).unscoped(|_| {
+                modes.current_list_mutation().set_space_factor(value);
             });
         } else {
             // §91's `int_error` appends ` (value)` to the message before
             // §82 completes the report, so the value is not part of the
             // `print_err` text.
-            let context = command.state.output_open_context(&*stores);
+            let context = command.output_open_context(&*stores);
             let mut report = stores.print_err("Bad space factor");
             report
                 .help(&["I allow only values in the range 1..32767 here."])
                 .context(context);
-            report
-                .int_error(*value)
-                .defer_recovery(command.diagnostic_effects)?;
+            report.int_error(value).defer_recovery(effects)?;
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
 pub(in crate::main_control) fn execute_prev_graf<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    value: &mut i32,
-) -> Result<ReplayStep, ExecError> {
+    command: &CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    value: i32,
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1244's `alter_prev_graf`: `\prevgraf` is `any_mode` (it
         // walks the mode nest up to its nearest enclosing vertical level
         // rather than checking the current mode), unlike `\spacefactor`/
         // `\prevdepth`'s §1243 `report_illegal_case`.
-        if *value < 0 {
-            let context = command.state.output_open_context(&*stores);
+        if value < 0 {
+            let context = command.output_open_context(&*stores);
             let mut report = stores.print_err("Bad ");
             report
                 .print_esc("prevgraf")
                 .help(&["I allow only nonnegative values here."])
                 .context(context);
-            report
-                .int_error(*value)
-                .defer_recovery(command.diagnostic_effects)?;
+            report.int_error(value).defer_recovery(effects)?;
         } else {
-            AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(|_| {
-                modes.set_enclosing_vertical_prev_graf(*value);
+            AssignmentCommitter::new(stores, effects).unscoped(|_| {
+                modes.set_enclosing_vertical_prev_graf(value);
             });
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }

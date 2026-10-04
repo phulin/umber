@@ -9,7 +9,7 @@ pub(in crate::main_control) fn execute_character_definition<G>(
     target: Symbol,
     value: i32,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let meaning = match primitive {
         UnexpandablePrimitive::CharDef => Meaning::CharGiven(
             char::from_u32(value as u32).expect("§434 recovers a character code to a character"),
@@ -45,7 +45,7 @@ pub(in crate::main_control) fn execute_character_definition<G>(
             global,
         });
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 #[allow(clippy::too_many_arguments)] // actual owners, selected primitive and concrete operands
@@ -58,7 +58,7 @@ pub(in crate::main_control) fn execute_register_definition<G>(
     target: Symbol,
     index: u16,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let meaning = match primitive {
         UnexpandablePrimitive::CountDef => Meaning::CountRegister(index),
         UnexpandablePrimitive::DimenDef => Meaning::DimenRegister(index),
@@ -106,7 +106,7 @@ pub(in crate::main_control) fn execute_register_definition<G>(
             global,
         });
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_paragraph_shape<G>(
@@ -114,7 +114,7 @@ pub(in crate::main_control) fn execute_paragraph_shape<G>(
     effects: &mut DiagnosticEffects,
     lines: &[ParagraphShapeLine],
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     // TeX82 §1214's "Adjust for the setting of `\globaldefs`" runs
     // unconditionally before `prefixed_command`'s `case cur_cmd of
     // @<Assignments@> endcases`, so it applies uniformly to all
@@ -132,7 +132,7 @@ pub(in crate::main_control) fn execute_paragraph_shape<G>(
             .assign_paragraph_shape(lines, assignment_scope(global))
             .expect("paragraph shape fits admitted durable storage")
     });
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(in crate::main_control) fn execute_penalty_array<G>(
@@ -142,7 +142,7 @@ pub(in crate::main_control) fn execute_penalty_array<G>(
     kind: PenaltyArrayKind,
     values: &[i32],
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     // e-TeX 2.6 change [49.1248] commits every selector through
     // `define(q, shape_ref, p)`, so this uses the same save-stack and
     // `\globaldefs`-adjusted scope bit as TeX82 §1214/§1248.
@@ -185,7 +185,7 @@ pub(in crate::main_control) fn execute_penalty_array<G>(
             .expect("requested mutation receipt")
             .push(record);
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 #[allow(clippy::too_many_arguments)] // final native token owner, scope, and demanded observation
@@ -198,7 +198,7 @@ pub(in crate::main_control) fn execute_toks<G>(
     tokens: Option<tex_state::TokenListId<G>>,
     global: bool,
     parameter: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let mut committer = AssignmentCommitter::new(stores, effects);
     let committed = if parameter {
         committer.token_parameter(index, tokens, global)
@@ -243,5 +243,5 @@ pub(in crate::main_control) fn execute_toks<G>(
             global,
         });
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }

@@ -7,7 +7,7 @@ pub(in crate::main_control) fn execute_begin_insert<G>(
     command: &mut CommandMachine<'_, '_, G>,
     boxes: &mut ReplayBoxes<G>,
     construction: &mut ScannedInsertConstruction,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1099's `begin_insert_or_adjust`: `scan_eight_bit_int`
         // has already applied its range clamp and queued the canonical
@@ -79,7 +79,7 @@ pub(in crate::main_control) fn execute_begin_insert<G>(
         );
         // Unlike `\hbox`/`\vbox`/`\vtop`, §1099 never begins the
         // `\everyhbox`/`\everyvbox` token list for an insertion body.
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -88,7 +88,7 @@ pub(in crate::main_control) fn execute_illegal_insert_or_adjust<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
@@ -98,6 +98,6 @@ pub(in crate::main_control) fn execute_illegal_insert_or_adjust<G>(
             modes.current_mode(),
             Some(context),
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }

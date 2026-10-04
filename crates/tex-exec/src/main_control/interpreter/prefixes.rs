@@ -10,7 +10,7 @@ pub(super) fn scan<G>(
     processor: &mut Processor<'_, '_, G>,
     mut prefixes: u8,
     receipts: &mut Option<Vec<MutationRecord>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let mut completion = None;
     processor
         .consume_expanded_words(&mut |processor,
@@ -90,7 +90,7 @@ fn discard_prefixes<G>(
     control_sequence: Option<Symbol>,
     exceptional: Option<&tex_command::CurrentCommand<G>>,
     invalid_command: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let site = processor.capture_consumed_site(spelling, meaning, control_sequence, exceptional);
     if invalid_command {
         processor
@@ -108,6 +108,8 @@ fn discard_prefixes<G>(
             PendingDiagnostic::IrrelevantLongOuterPrefix(print, display, etex, Some(site))
         };
         report_pending_diagnostics_in_context(context, effects, vec![diagnostic])?;
-        Ok(ReplayStep::Continue)
-    })
+        Ok::<_, ExecError>(())
+    })?;
+    recovery::finish_error_dialogue(processor)?;
+    Ok(MainControlStep::Continue)
 }

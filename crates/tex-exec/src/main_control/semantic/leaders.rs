@@ -4,7 +4,7 @@ use super::super::*;
 pub(in crate::main_control) fn execute_h_rule_here_except_leaders<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let context = command.state.output_open_context(&*stores);
         report_escaped_error(
@@ -19,7 +19,7 @@ pub(in crate::main_control) fn execute_h_rule_here_except_leaders<G>(
             ],
             context,
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -33,7 +33,7 @@ pub(in crate::main_control) fn execute_leaders<G>(
     payload: &mut LeaderPayload,
     glue: &mut GlueSpec,
     shared_zero_glue: &mut bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         boxes.pending_leader = None;
         crate::box_runtime::append_leader_contribution(
@@ -56,7 +56,7 @@ pub(in crate::main_control) fn execute_leaders<G>(
             command.diagnostic_effects,
             &*command.state,
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -70,7 +70,7 @@ pub(in crate::main_control) fn execute_leader_register<G>(
     copy: &mut bool,
     glue: &mut GlueSpec,
     shared_zero_glue: &mut bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         if let Some(payload) = crate::box_runtime::take_register_payload(stores, *index, *copy) {
             crate::box_runtime::append_leader_contribution(
@@ -94,20 +94,20 @@ pub(in crate::main_control) fn execute_leader_register<G>(
                 &*command.state,
             )?;
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
 pub(in crate::main_control) fn execute_missing_leader_payload<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         // A leader payload is scanned by §1084's `scan_box` like any
         // other box context, so a non-box command there gets §1084's own
         // report, not a leader-specific one.
         report_missing_box(command.state, command.diagnostic_effects, stores)?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -115,7 +115,7 @@ pub(in crate::main_control) fn execute_leaders_not_followed_by_glue<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
     boxes: &mut ReplayBoxes<G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         boxes.pending_leader = None;
         // TeX82 §1078's `back_error`; `scan_leader_glue_command` has
@@ -132,7 +132,7 @@ pub(in crate::main_control) fn execute_leaders_not_followed_by_glue<G>(
             ],
             context,
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -143,7 +143,7 @@ pub(in crate::main_control) fn execute_begin_leader_box<G>(
     boxes: &mut ReplayBoxes<G>,
     construction: &mut ScannedBoxConstruction,
     leader_kind: &mut GlueKind,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let kind = ReplayBoxKind::from_scanned(construction.kind);
         let packing = match construction.packing {
@@ -166,7 +166,12 @@ pub(in crate::main_control) fn execute_begin_leader_box<G>(
             i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
         )?;
         if !kind.horizontal() {
-            commit_box_normal_paragraph(modes, stores, command);
+            commit_box_normal_paragraph(
+                modes,
+                stores,
+                command.diagnostic_effects,
+                command.assignment_receipts.as_deref_mut(),
+            );
         }
         boxes.push_box(
             stores,
@@ -184,6 +189,6 @@ pub(in crate::main_control) fn execute_begin_leader_box<G>(
             },
         );
         schedule_everybox(command.state, stores, kind.horizontal());
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }

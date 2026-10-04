@@ -1,7 +1,9 @@
 //! Actual math values and field destinations in the persistent interpreter.
 use super::*;
 
-pub(super) fn choice<G>(processor: &mut Processor<'_, '_, G>) -> Result<ReplayStep, ExecError> {
+pub(super) fn choice<G>(
+    processor: &mut Processor<'_, '_, G>,
+) -> Result<MainControlStep, ExecError> {
     report_scan(processor)?;
     processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
         let empty = tex_state::page_node_arena::PageListId::empty();
@@ -19,7 +21,9 @@ pub(super) fn choice<G>(processor: &mut Processor<'_, '_, G>) -> Result<ReplaySt
     open_choice_branch(processor)
 }
 
-fn open_choice_branch<G>(processor: &mut Processor<'_, '_, G>) -> Result<ReplayStep, ExecError> {
+fn open_choice_branch<G>(
+    processor: &mut Processor<'_, '_, G>,
+) -> Result<MainControlStep, ExecError> {
     processor.with_execution_owners(
         |context, command, effects, _, observer, execution, _, _, _| {
             execution.main_loop_active = false;
@@ -37,12 +41,12 @@ fn open_choice_branch<G>(processor: &mut Processor<'_, '_, G>) -> Result<ReplayS
     )?;
     processor.scan_math_choice_group().map_err(command_error)?;
     report_scan(processor)?;
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(super) fn close_choice<G>(
     processor: &mut Processor<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     groups::finish_native_group_leave(processor, GroupKind::MathChoice, "math choice group")?;
     let complete =
         processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
@@ -75,7 +79,8 @@ pub(super) fn close_choice<G>(
                         3 => choice.script_script = list,
                         _ => unreachable!("four math choice branches"),
                     }
-                });
+                })
+                .expect("live math choice destination");
             *branch += 1;
             let complete = *branch == 4;
             if complete {
@@ -85,7 +90,7 @@ pub(super) fn close_choice<G>(
             Ok::<bool, ExecError>(complete)
         })?;
     if complete {
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     } else {
         open_choice_branch(processor)
     }
@@ -93,7 +98,7 @@ pub(super) fn close_choice<G>(
 
 pub(super) fn text_accent<G>(
     processor: &mut Processor<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     processor.with_execution_owners(|context, command, effects, _, _, _, _, _, _| {
         let display = command.output_open_context(context);
         let mut report = context.print_err("Please use \\mathaccent for accents in math mode");
@@ -118,7 +123,7 @@ pub(super) fn equation_number<G>(
     processor: &mut Processor<'_, '_, G>,
     side: crate::mode::EqNoSide,
     spelling: TracedTokenWord,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     report_scan(processor)?;
     processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
         execution.main_loop_active = false;
@@ -131,7 +136,7 @@ pub(super) fn equation_number<G>(
                 execution.modes.current_mode(),
                 Some(display),
             )?;
-            return Ok::<ReplayStep, ExecError>(ReplayStep::Continue);
+            return Ok::<MainControlStep, ExecError>(MainControlStep::Continue);
         }
         let (nodes, incomplete) = {
             let mut list = execution.modes.current_list_mutation();
@@ -159,17 +164,17 @@ pub(super) fn equation_number<G>(
             .modes
             .current_list_mutation()
             .set_display_eq_no(context, crate::mode::DisplayEqNo { side, display });
-        Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
+        Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
     })?;
     recovery::finish_error_dialogue(processor)?;
-    Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
+    Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
 }
 
 pub(super) fn character<G>(
     processor: &mut Processor<'_, '_, G>,
     code: u32,
     origin: OriginId,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     report_scan(processor)?;
     processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
         execution.main_loop_active = false;
@@ -179,14 +184,14 @@ pub(super) fn character<G>(
             code,
             origin,
         )?;
-        Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
+        Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
     })
 }
 
 pub(super) fn style<G>(
     processor: &mut Processor<'_, '_, G>,
     style: MathStyle,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     report_scan(processor)?;
     processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
         execution.main_loop_active = false;
@@ -194,14 +199,14 @@ pub(super) fn style<G>(
             .modes
             .current_list_mutation()
             .push(context, Node::MathStyle(style));
-        Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
+        Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
     })
 }
 
 pub(super) fn nucleus<G>(
     processor: &mut Processor<'_, '_, G>,
     kind: NoadKind,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     report_scan(processor)?;
     let simplify_accent = kind == NoadKind::Normal(NoadClass::Ord);
     let node_index = processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
@@ -223,7 +228,7 @@ pub(super) fn nucleus<G>(
             simplify_accent,
         },
     )?;
-    Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
+    Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
 }
 
 fn accept_field<G>(
@@ -261,7 +266,7 @@ fn accept_field<G>(
 
 pub(super) fn close_field<G>(
     processor: &mut Processor<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     groups::finish_native_group_leave(processor, GroupKind::Math, "math group")?;
     processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
         let target = *execution
@@ -281,14 +286,14 @@ pub(super) fn close_field<G>(
         fill_math_field_target(&mut execution.modes, context, target, field);
         execution.active_math_fields.pop();
         execution.main_loop_active = false;
-        Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
+        Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
     })
 }
 
 pub(super) fn script<G>(
     processor: &mut Processor<'_, '_, G>,
     kind: MathScriptKind,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     report_scan(processor)?;
     let target =
         processor.with_execution_owners(|context, _, effects, _, _, execution, _, _, _| {
@@ -300,42 +305,51 @@ pub(super) fn script<G>(
                 kind,
             )
         })?;
+    recovery::finish_error_dialogue(processor)?;
     let field = processor.scan_math_field_episode().map_err(command_error)?;
     report_scan(processor)?;
     accept_field(processor, field, ActiveMathFieldTarget::Script(target))?;
-    Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
+    Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
 }
 
 pub(super) fn limits<G>(
     processor: &mut Processor<'_, '_, G>,
     kind: LimitType,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     report_scan(processor)?;
-    processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
+    let applied = processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
         execution.main_loop_active = false;
-        if !apply_limits(execution.modes.current_list_mutation(), context, kind) {
+        apply_limits(execution.modes.current_list_mutation(), context, kind)
+    });
+    if !applied {
+        processor.with_execution_owners(|context, command, effects, _, _, _, _, _, _| {
             let display = command.output_open_context(context);
             let mut report = context.print_err("Limit controls must follow a math operator");
             report.help(&["I'm ignoring this misplaced \\limits or \\nolimits command."]);
             report.context(display);
             report.error().defer_recovery(effects)?;
-        }
-        Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
-    })
+            Ok::<(), ExecError>(())
+        })?;
+        recovery::finish_error_dialogue(processor)?;
+    }
+    Ok(MainControlStep::Continue)
 }
 
 pub(super) fn fraction<G>(
     processor: &mut Processor<'_, '_, G>,
     kind: MathFractionKind,
     delimiters: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let fraction = processor
         .scan_math_fraction(kind, delimiters)
         .map_err(command_error)?;
     report_scan(processor)?;
-    processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
+    let applied = processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
         execution.main_loop_active = false;
-        if !start_fraction(execution.modes.current_list_mutation(), context, fraction) {
+        start_fraction(execution.modes.current_list_mutation(), context, fraction)
+    });
+    if !applied {
+        processor.with_execution_owners(|context, command, effects, _, _, _, _, _, _| {
             let display = command.output_open_context(context);
             let mut report = context.print_err("Ambiguous; you need another { and }");
             report.help(&[
@@ -345,7 +359,9 @@ pub(super) fn fraction<G>(
             ]);
             report.context(display);
             report.error().defer_recovery(effects)?;
-        }
-        Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
-    })
+            Ok::<(), ExecError>(())
+        })?;
+        recovery::finish_error_dialogue(processor)?;
+    }
+    Ok(MainControlStep::Continue)
 }

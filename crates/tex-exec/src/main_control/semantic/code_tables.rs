@@ -12,7 +12,7 @@ pub(in crate::main_control) fn execute_code_table<G>(
     character: char,
     value: i32,
     global: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     // TeX82 §§1230--1234's `def_code` reports an invalid table
     // value after scanning it, substitutes zero, and commits the
     // assignment. In particular, this is not an operation failure:
@@ -241,5 +241,5 @@ pub(in crate::main_control) fn execute_code_table<G>(
         }
         _ => unreachable!("only code-table primitives are scanned"),
     }
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }

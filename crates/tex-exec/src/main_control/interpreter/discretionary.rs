@@ -1,7 +1,7 @@
 //! Three live discretionary parts, closed by the ordinary interpreter.
 use super::*;
 
-pub(super) fn begin<G>(processor: &mut Processor<'_, '_, G>) -> Result<ReplayStep, ExecError> {
+pub(super) fn begin<G>(processor: &mut Processor<'_, '_, G>) -> Result<MainControlStep, ExecError> {
     report_scan(processor)?;
     processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
         execution.main_loop_active = false;
@@ -21,7 +21,7 @@ pub(super) fn begin<G>(processor: &mut Processor<'_, '_, G>) -> Result<ReplaySte
     open_part(processor)
 }
 
-fn open_part<G>(processor: &mut Processor<'_, '_, G>) -> Result<ReplayStep, ExecError> {
+fn open_part<G>(processor: &mut Processor<'_, '_, G>) -> Result<MainControlStep, ExecError> {
     processor.scan_left_brace().map_err(command_error)?;
     report_scan(processor)?;
     processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
@@ -34,11 +34,13 @@ fn open_part<G>(processor: &mut Processor<'_, '_, G>) -> Result<ReplayStep, Exec
         )?;
         enter_group(context, command, effects, GroupKind::Disc);
         execution.main_loop_active = false;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     })
 }
 
-pub(super) fn close_part<G>(processor: &mut Processor<'_, '_, G>) -> Result<ReplayStep, ExecError> {
+pub(super) fn close_part<G>(
+    processor: &mut Processor<'_, '_, G>,
+) -> Result<MainControlStep, ExecError> {
     let (nodes, deleted, prefix_end) =
         processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
             let mut level = crate::box_runtime::commit_current_list(
@@ -117,7 +119,7 @@ pub(super) fn close_part<G>(processor: &mut Processor<'_, '_, G>) -> Result<Repl
             .pop()
             .expect("completed discretionary");
         if active.rejected {
-            return Ok(ReplayStep::Continue);
+            return Ok(MainControlStep::Continue);
         }
         let [pre, post, mut replace] = active.parts;
         if matches!(
@@ -157,16 +159,16 @@ pub(super) fn close_part<G>(processor: &mut Processor<'_, '_, G>) -> Result<Repl
                 physical_replace_count,
             },
         );
-        Ok::<_, ExecError>(ReplayStep::Continue)
+        Ok::<_, ExecError>(MainControlStep::Continue)
     })?;
     recovery::finish_error_dialogue(processor)?;
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(super) fn hyphen<G>(
     processor: &mut Processor<'_, '_, G>,
     origin: OriginId,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     report_scan(processor)?;
     let extended = processor.profile() == CommandProfile::ETEX26;
     processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
@@ -208,6 +210,6 @@ pub(super) fn hyphen<G>(
                 physical_replace_count: 0,
             },
         );
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     })
 }

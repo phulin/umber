@@ -5,7 +5,7 @@ pub(in crate::main_control) fn execute_input_stream<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
     request: tex_command::InputStreamRequest<G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         match request {
             tex_command::InputStreamRequest::Open { .. }
@@ -62,117 +62,6 @@ pub(in crate::main_control) fn execute_input_stream<G>(
                 }
             }
         }
-        Ok(ReplayStep::Continue)
-    }
-}
-
-pub(in crate::main_control) fn execute_deferred_open_out<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    stream: &mut u8,
-    file_name: &mut String,
-) -> Result<ReplayStep, ExecError> {
-    {
-        crate::box_runtime::append_whatsit(
-            modes,
-            stores,
-            command.diagnostic_effects,
-            command.fuel,
-            Whatsit::OpenOut {
-                slot: StreamSlot::new(*stream),
-                path: std::mem::take(file_name),
-            },
-        )?;
-        Ok(ReplayStep::Continue)
-    }
-}
-
-pub(in crate::main_control) fn execute_deferred_close_out<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    stream: &mut tex_command::WriteStreamSelector,
-) -> Result<ReplayStep, ExecError> {
-    {
-        crate::box_runtime::append_whatsit(
-            modes,
-            stores,
-            command.diagnostic_effects,
-            command.fuel,
-            Whatsit::CloseOut {
-                slot: stream.stream_slot(),
-            },
-        )?;
-        Ok(ReplayStep::Continue)
-    }
-}
-
-pub(in crate::main_control) fn execute_deferred_write<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    stream: &mut tex_command::WriteStreamSelector,
-    tokens: &mut tex_state::TokenListId<G>,
-) -> Result<ReplayStep, ExecError> {
-    {
-        let tokens = stores.node_token_list(tokens);
-        crate::box_runtime::append_whatsit(
-            modes,
-            stores,
-            command.diagnostic_effects,
-            command.fuel,
-            Whatsit::DeferredWrite {
-                sink: replay_write_sink(*stream),
-                tokens,
-            },
-        )?;
-        Ok(ReplayStep::Continue)
-    }
-}
-
-pub(in crate::main_control) fn execute_deferred_special<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    deferred: &mut bool,
-    tokens: &mut tex_state::TokenListId<G>,
-) -> Result<ReplayStep, ExecError> {
-    match deferred {
-        true => {
-            let tokens = stores.node_token_list(tokens);
-            crate::box_runtime::append_whatsit(
-                modes,
-                stores,
-                command.diagnostic_effects,
-                command.fuel,
-                Whatsit::DeferredSpecial {
-                    class: "dvi".to_owned(),
-                    tokens,
-                },
-            )?;
-            Ok(ReplayStep::Continue)
-        }
-        false => {
-            let mut text = String::new();
-            for word in stores.token_list(tokens.clone()) {
-                tex_state::token_show::append_token_string_text(
-                    &*stores,
-                    word.semantic_token(),
-                    &mut text,
-                );
-            }
-            crate::box_runtime::append_whatsit(
-                modes,
-                stores,
-                command.diagnostic_effects,
-                command.fuel,
-                Whatsit::Special {
-                    class: "dvi".to_owned(),
-                    payload: tex_byte_text(&text),
-                },
-            )?;
-            Ok(ReplayStep::Continue)
-        }
+        Ok(MainControlStep::Continue)
     }
 }

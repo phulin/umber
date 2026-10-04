@@ -1075,7 +1075,7 @@ fn ordinary_assignment_opens_no_aggregate_savepoint() {
 
         assert_eq!(
             control.advance(stores).expect("assignment commits"),
-            StepResult::Progress(ReplayStep::Continue)
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.count(0).expect("count register"), 11);
         assert_eq!(control.advance_telemetry().attempts, 1);

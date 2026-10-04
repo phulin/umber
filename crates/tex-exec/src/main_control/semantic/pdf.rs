@@ -9,7 +9,7 @@ pub(in crate::main_control) fn execute_pdf_font_code<G>(
     font: FontId,
     character: u8,
     value: i32,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         AssignmentCommitter::new(stores, effects)
             .unscoped(|stores| stores.set_pdf_font_code(table, font, character, value));
@@ -21,7 +21,7 @@ pub(in crate::main_control) fn execute_pdf_font_code<G>(
                 global: true,
             });
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -30,7 +30,7 @@ pub(in crate::main_control) fn execute_pdf_no_ligatures<G>(
     effects: &mut DiagnosticEffects,
     receipts: &mut Option<Vec<MutationRecord>>,
     font: FontId,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         AssignmentCommitter::new(stores, effects)
             .unscoped(|stores| stores.disable_pdf_font_ligatures(font));
@@ -42,7 +42,7 @@ pub(in crate::main_control) fn execute_pdf_no_ligatures<G>(
                 global: true,
             });
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -50,7 +50,7 @@ pub(in crate::main_control) fn execute_pdf_x_image<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     request: &mut tex_command::PdfImageRequest<tex_state::TokenListId<G>>,
     resource: &mut PdfImageResource,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode("pdfximage"));
@@ -82,7 +82,7 @@ pub(in crate::main_control) fn execute_pdf_x_image<G>(
         stores
             .allocate_pdf_external_image(source, dimensions, request.color_space_object, attributes)
             .map_err(|_| ExecError::PdfObjectCapacity)?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -91,7 +91,7 @@ pub(in crate::main_control) fn execute_pdf_ref_x_image<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
     object: &mut i32,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode("pdfrefximage"));
@@ -114,7 +114,7 @@ pub(in crate::main_control) fn execute_pdf_ref_x_image<G>(
                 depth: dimensions.depth,
             },
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -123,7 +123,7 @@ pub(in crate::main_control) fn execute_pdf_interword_space<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
     control: &mut tex_state::node::PdfAccessibilityControl,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             let name = match control {
@@ -142,7 +142,7 @@ pub(in crate::main_control) fn execute_pdf_interword_space<G>(
             command.fuel,
             Whatsit::PdfAccessibility(*control),
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -151,7 +151,7 @@ pub(in crate::main_control) fn execute_pdf_running_link<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
     enabled: &mut bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode(if *enabled {
@@ -167,21 +167,21 @@ pub(in crate::main_control) fn execute_pdf_running_link<G>(
             command.fuel,
             Whatsit::PdfRunningLink(*enabled),
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
 pub(in crate::main_control) fn execute_pdf_space_font<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     tokens: &mut tex_state::TokenListId<G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode("pdfspacefont"));
         }
         let name = pdf_graphics_text(tokens, stores);
         stores.set_pdf_space_font_name(name);
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -190,7 +190,7 @@ pub(in crate::main_control) fn execute_pdf_graphics<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
     request: &mut tex_command::PdfGraphicsRequest<tex_state::TokenListId<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     apply_pdf_graphics_request(
         request,
         stores,
@@ -204,7 +204,7 @@ pub(in crate::main_control) fn execute_pdf_graphics<G>(
 pub(in crate::main_control) fn execute_pdf_object<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     request: &mut tex_command::PdfObjectRequest<tex_state::TokenListId<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     apply_pdf_object_request(request, stores, false)
 }
 
@@ -213,7 +213,7 @@ pub(in crate::main_control) fn execute_pdf_reference_object<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
     request: &mut PdfReferenceObjectRequest,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode("pdfrefobj"));
@@ -229,7 +229,7 @@ pub(in crate::main_control) fn execute_pdf_reference_object<G>(
             command.fuel,
             Whatsit::PdfReferenceObject { object },
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -238,11 +238,11 @@ pub(in crate::main_control) fn execute_pdf_form<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
     request: &mut tex_command::PdfFormRequest<tex_state::TokenListId<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         apply_pdf_form_request(request, stores, modes, command, false).map(|pending| {
             debug_assert!(pending.is_none());
-            ReplayStep::Continue
+            MainControlStep::Continue
         })
     }
 }
@@ -250,7 +250,7 @@ pub(in crate::main_control) fn execute_pdf_form<G>(
 pub(in crate::main_control) fn execute_pdf_document_fragment<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     request: &mut tex_command::PdfDocumentFragmentRequest<tex_state::TokenListId<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let dvi_only_error = matches!(request.kind, tex_state::PdfDocumentFragmentKind::Names);
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -269,7 +269,7 @@ pub(in crate::main_control) fn execute_pdf_document_fragment<G>(
             stores.printer().print_rendered(&format!(
                         "\npdfTeX warning (\\{name}): not allowed in DVI mode (\\pdfoutput <= 0); ignoring it\n"
                     ));
-            return Ok(ReplayStep::Continue);
+            return Ok(MainControlStep::Continue);
         }
         stores.append_pdf_document_fragment(request.kind, request.text.tokens.clone());
         if let Some(action) = &mut request.open_action {
@@ -282,7 +282,7 @@ pub(in crate::main_control) fn execute_pdf_document_fragment<G>(
                 .set_pdf_catalog_open_action_with_targets(action, destination, structure, thread)
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -291,7 +291,7 @@ pub(in crate::main_control) fn execute_pdf_navigation<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
     request: &mut tex_command::PdfNavigationRequest<tex_state::TokenListId<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     apply_pdf_navigation_request(
         request,
         stores,
@@ -305,7 +305,7 @@ pub(in crate::main_control) fn execute_pdf_font_expand<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     font: &mut FontId,
     spec: &mut tex_typeset::expansion::FontExpansionSpec,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         stores.configure_font_expansion(
             *font,
@@ -316,7 +316,7 @@ pub(in crate::main_control) fn execute_pdf_font_expand<G>(
                 auto_expand: spec.auto_expand(),
             },
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -326,7 +326,7 @@ pub(in crate::main_control) fn execute_pdf_font_action<G>(
     font: &mut Option<FontId>,
     first: &mut Option<tex_state::TokenListId<G>>,
     second: &mut Option<tex_state::TokenListId<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let first = first
             .as_ref()
@@ -395,7 +395,7 @@ pub(in crate::main_control) fn execute_pdf_font_action<G>(
             }
             _ => unreachable!("scanner restricts PDF font actions"),
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -404,7 +404,7 @@ pub(in crate::main_control) fn execute_immediate_extension<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
     extension: &mut tex_command::ImmediateExtension<tex_state::TokenListId<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         match extension {
             tex_command::ImmediateExtension::Continue => {}
@@ -478,6 +478,6 @@ pub(in crate::main_control) fn execute_immediate_extension<G>(
                 unreachable!("immediate image requests are normalized before resolution")
             }
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }

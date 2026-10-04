@@ -6,7 +6,7 @@ pub(in crate::main_control) fn execute_misplaced_alignment_delimiter<G>(
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
     context: &mut tex_command::DiagnosticContextCoordinate,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let context = render_diagnostic_coordinate(command, stores, *context)?;
         crate::diagnostics::report_misplaced_alignment_delimiter(
@@ -15,7 +15,7 @@ pub(in crate::main_control) fn execute_misplaced_alignment_delimiter<G>(
             *token,
             Some(context),
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -23,7 +23,7 @@ pub(in crate::main_control) fn execute_misplaced_alignment_command<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
     omit: &mut bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let context = command.state.output_open_context(&*stores);
         let (name, help) = if *omit {
@@ -50,14 +50,14 @@ pub(in crate::main_control) fn execute_misplaced_alignment_command<G>(
             &help,
             Some(context),
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
 pub(in crate::main_control) fn execute_missing_alignment_cr<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1132 reaches §82's `ins_error` only after §325 has
         // backed up the brace and frozen `\cr` has been inserted. The
@@ -71,7 +71,7 @@ pub(in crate::main_control) fn execute_missing_alignment_cr<G>(
             &["I'm guessing that you meant to end an alignment here."],
             context,
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -80,7 +80,7 @@ pub(in crate::main_control) fn execute_alignment_recovery<G>(
     command: &mut CommandMachine<'_, '_, G>,
     boxes: &mut ReplayBoxes<G>,
     brace: &mut Catcode,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let (message, opens_simple_group) = match brace {
             Catcode::BeginGroup => ("Missing { inserted", true),
@@ -104,7 +104,7 @@ pub(in crate::main_control) fn execute_alignment_recovery<G>(
             context,
         )?;
         boxes.recovery_simple_group_pending = opens_simple_group;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -113,7 +113,7 @@ pub(in crate::main_control) fn execute_illegal_h_align<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
     token: &mut Token,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let context = command.state.output_open_context(&*stores);
         crate::diagnostics::report_illegal_case_with_context(
@@ -123,6 +123,6 @@ pub(in crate::main_control) fn execute_illegal_h_align<G>(
             modes.current_mode(),
             Some(context),
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }

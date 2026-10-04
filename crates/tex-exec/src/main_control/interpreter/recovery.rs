@@ -2,6 +2,30 @@
 use super::*;
 use tex_state::meaning::MeaningWord;
 
+pub(super) fn illegal_case<G>(
+    processor: &mut Processor<'_, '_, G>,
+    spelling: TracedTokenWord,
+    meaning: &MeaningWord<G>,
+    control_sequence: Option<Symbol>,
+    exceptional: Option<&tex_command::CurrentCommand<G>>,
+) -> Result<MainControlStep, ExecError> {
+    let site = processor.capture_consumed_site(spelling, meaning, control_sequence, exceptional);
+    processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
+        execution.main_loop_active = false;
+        let display = command.output_open_context(context);
+        crate::diagnostics::report_illegal_case_with_site(
+            context,
+            effects,
+            spelling.semantic_token(),
+            execution.modes.current_mode(),
+            Some(display),
+            Some(site),
+        )
+    })?;
+    finish_error_dialogue(processor)?;
+    Ok(MainControlStep::Continue)
+}
+
 /// ErrorStop input edits belong to the diagnostic that requested them, before
 /// its handler scans another operand or the interpreter fetches another word.
 pub(super) fn finish_error_dialogue<G>(
@@ -24,7 +48,7 @@ pub(super) fn off_save<G>(
     meaning: &MeaningWord<G>,
     control_sequence: Option<Symbol>,
     exceptional: Option<&tex_command::CurrentCommand<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let site = processor.capture_consumed_site(spelling, meaning, control_sequence, exceptional);
     let kind = processor
         .with_execution_owners(|context, _, _, _, _, _, _, _, _| context.innermost_group_kind());
@@ -42,7 +66,7 @@ pub(super) fn off_save<G>(
             },
         )?;
         finish_error_dialogue(processor)?;
-        return Ok(ReplayStep::Continue);
+        return Ok(MainControlStep::Continue);
     };
     let (closer, tokens, count) = match kind {
         GroupKind::SemiSimple => (
@@ -115,7 +139,7 @@ pub(super) fn off_save<G>(
         report.error_and_defer_at(effects, Some(site))
     })?;
     finish_error_dialogue(processor)?;
-    Ok(ReplayStep::Continue)
+    Ok(MainControlStep::Continue)
 }
 
 pub(super) fn start_paragraph_and_reswitch<G>(
@@ -124,7 +148,7 @@ pub(super) fn start_paragraph_and_reswitch<G>(
     _meaning: &MeaningWord<G>,
     _control_sequence: Option<Symbol>,
     exceptional: Option<&tex_command::CurrentCommand<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     processor
         .back_consumed_word(spelling, exceptional)
         .map_err(command_error)?;
@@ -134,7 +158,7 @@ pub(super) fn start_paragraph_and_reswitch<G>(
             execution.main_loop_active = false;
             start_paragraph(command, &mut execution.modes, context, effects, true)?;
             command.publish_named_token_list_pushes(context, effects, observer);
-            Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
+            Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
         },
     )
 }
@@ -145,7 +169,7 @@ pub(super) fn insert_math_shift<G>(
     meaning: &MeaningWord<G>,
     control_sequence: Option<Symbol>,
     exceptional: Option<&tex_command::CurrentCommand<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     let site = processor.capture_consumed_site(spelling, meaning, control_sequence, exceptional);
     processor
         .recover_missing_math_shift(spelling, exceptional)
@@ -161,8 +185,8 @@ pub(super) fn insert_math_shift<G>(
         ]);
         report.context(display);
         report.error_and_defer_at(effects, Some(site))?;
-        Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
+        Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
     })?;
     finish_error_dialogue(processor)?;
-    Ok::<ReplayStep, ExecError>(ReplayStep::Continue)
+    Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
 }

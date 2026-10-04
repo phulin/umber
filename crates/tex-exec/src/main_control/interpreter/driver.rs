@@ -83,7 +83,7 @@ impl<G> MainControl<G> {
         provider: &mut Option<&mut dyn ResourceProvider<G>>,
         remaining_operations: usize,
         completed_operations: &mut usize,
-    ) -> Result<ReplayStep, ExecError> {
+    ) -> Result<MainControlStep, ExecError> {
         self.invoke_interpreter(stores, effects, tracked, provider, |processor, receipts| {
             run(
                 processor,
@@ -104,11 +104,12 @@ impl<G> MainControl<G> {
         effects: &mut DiagnosticEffects,
         tracked: bool,
         provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<ReplayStep, ExecError> {
+    ) -> Result<MainControlStep, ExecError> {
         self.invoke_interpreter(stores, effects, tracked, provider, |processor, receipts| {
             if let Some(cursor) = cursor {
                 processor.resume_delivery_cursor(cursor);
             }
+            trace::prepare(processor);
             dispatch::execute(
                 processor,
                 command.spelling(),
@@ -130,8 +131,8 @@ impl<G> MainControl<G> {
         interpret: impl FnOnce(
             &mut Processor<'_, '_, G>,
             &mut Option<Vec<MutationRecord>>,
-        ) -> Result<ReplayStep, ExecError>,
-    ) -> Result<ReplayStep, ExecError> {
+        ) -> Result<MainControlStep, ExecError>,
+    ) -> Result<MainControlStep, ExecError> {
         self.ensure_primitive_handles(stores);
         if tracked {
             self.observe_control_projections(stores);
@@ -182,17 +183,69 @@ impl<G> MainControl<G> {
             )
         };
         processor.set_output_routine_active(output_routine_active);
-        let result = interpret(&mut processor, &mut receipts);
-        if result.is_ok() {
-            report_scan(&mut processor)?;
-        }
+        let mut result = interpret(&mut processor, &mut receipts);
         drop(processor);
         drop(context);
+        if let Some((dump, incomplete)) = self.execution.pending_job_end.take() {
+            if self.execution.initex && dump {
+                let mut context = stores.command_context().expect("format dump accounting");
+                let receipt = crate::job::FormatDumpReceipt::new(
+                    self.capabilities.job_name().to_owned(),
+                    context.int_param(IntParam::YEAR),
+                    context.int_param(IntParam::MONTH),
+                    context.int_param(IntParam::DAY),
+                );
+                context.make_string_pool_string(&receipt.pool_string());
+                self.execution.dumped_format = Some(receipt);
+            }
+            stores
+                .world_mut()
+                .publish_diagnostic_effects_preserving(effects);
+            self.end_of_job_final_cleanup(stores, dump, incomplete);
+            if let Some(observations) = self.operation_observations.as_mut() {
+                observations.committed(CommandObservation::Effect(engine_termination_effect()));
+            }
+        }
+        if result.is_ok() {
+            if let Some(shipout) = self.execution.prepared_shipout.take() {
+                stores
+                    .world_mut()
+                    .publish_diagnostic_effects_preserving(effects);
+                let staged = {
+                    let mut command =
+                        self.command_machine_with_resource_provider(effects, provider.take());
+                    let modes = match &command.host_facts {
+                        CommandMachineHostFacts::Live(facts) => facts.modes,
+                        _ => unreachable!("actual shipout borrows the live mode owner"),
+                    };
+                    let staged = shipout_replay_box(shipout, stores, &mut command, modes);
+                    *provider = command.resource_provider.take();
+                    staged
+                };
+                stores.release_shipout_source();
+                match staged {
+                    Ok(publication) => {
+                        if let Some(receipt) = publication.and_then(|publication| publication.dvi) {
+                            push_prepared_dvi_page(&mut self.execution.prepared_dvi_pages, receipt);
+                        }
+                    }
+                    Err(error) => result = Err(error),
+                }
+            }
+            if output_routine_active && !self.execution.boxes.output_routine_active {
+                self.execution.page_region_succession_pending = true;
+                self.finish_pending_page_region_succession(stores);
+            }
+            if matches!(result, Ok(MainControlStep::EndOfInput))
+                && self.execution.root_completion == RootCompletionPolicy::RequireTeXEnd
+            {
+                result = Ok(self.handle_root_end_of_input(stores));
+            }
+        }
         if result.is_ok() {
             if let Some(output_start) = output_start {
                 self.publish_semantic_observations(stores, output_start, None, receipts.take());
             }
-            self.apply_error_stop_transition(stores, effects)?;
         }
         result
     }

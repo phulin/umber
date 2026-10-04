@@ -4,7 +4,7 @@ use super::super::*;
 pub(in crate::main_control) fn execute_align_peek_restart<G>(
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
     alignment: &mut AlignmentIdentity,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let active = active_alignment
             .as_mut()
@@ -14,13 +14,13 @@ pub(in crate::main_control) fn execute_align_peek_restart<G>(
             })?;
         active.align_peek_pending = true;
         active.align_peek_after_noalign = true;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
 pub(in crate::main_control) fn execute_alignment_template_entered<G>(
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §§1034--1038's character lookahead calls `get_next`,
         // whose alignment interception inserts the v-template and then
@@ -31,7 +31,7 @@ pub(in crate::main_control) fn execute_alignment_template_entered<G>(
         let _active = active_alignment.as_mut().ok_or(ExecError::MissingToken {
             context: "active replay alignment",
         })?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -45,7 +45,7 @@ pub(in crate::main_control) fn execute_begin_alignment<G>(
     boxes: &mut ReplayBoxes<G>,
     vertical: &mut bool,
     owner: &mut Option<tex_state::interner::Symbol>,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §774's display-math entry accepts an alignment only when
         // the current formula is empty. `flush_math` owns both the
@@ -149,7 +149,7 @@ pub(in crate::main_control) fn execute_begin_alignment<G>(
         if let Some(prev_depth) = enclosing_prev_depth {
             modes.current_list_mutation().set_prev_depth(prev_depth);
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -159,7 +159,7 @@ pub(in crate::main_control) fn execute_alignment_preamble_opening<G>(
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
     packing: &mut ScannedPackingSpec,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         command
             .state
@@ -184,7 +184,7 @@ pub(in crate::main_control) fn execute_alignment_preamble_opening<G>(
             command.diagnostic_effects,
             GroupKind::Align,
         );
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -193,7 +193,7 @@ pub(in crate::main_control) fn execute_alignment_preamble_start<G>(
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         // `init_row` reaches `align_peek` before `init_col` selects the
         // first cell. Keep the first pair validated here, but defer
@@ -224,7 +224,7 @@ pub(in crate::main_control) fn execute_alignment_preamble_start<G>(
         // row boundary. The push follows the entry save level, so the hook
         // is scoped to the entry it opens.
         schedule_everycr(command.state, stores);
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -234,7 +234,7 @@ pub(in crate::main_control) fn execute_alignment_cell_opening<G>(
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
     opening: &mut AlignmentCellOpening,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         command
             .state
@@ -258,7 +258,7 @@ pub(in crate::main_control) fn execute_alignment_cell_opening<G>(
             active.cell_opening_pending = false;
             active.next_cell_opening_pending = false;
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -268,7 +268,7 @@ pub(in crate::main_control) fn execute_alignment_cell_finish<G>(
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         if matches!(
             modes.current_mode(),
@@ -296,7 +296,7 @@ pub(in crate::main_control) fn execute_alignment_cell_finish<G>(
             modes,
             stores,
         )?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -308,7 +308,7 @@ pub(in crate::main_control) fn execute_alignment_finish<G>(
     boxes: &mut ReplayBoxes<G>,
     alignment: &mut AlignmentIdentity,
     current_line: &mut u32,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         if active_alignment.as_ref().map(|active| active.identity) != Some(*alignment) {
             return Err(ExecError::MissingToken {
@@ -352,7 +352,7 @@ pub(in crate::main_control) fn execute_alignment_finish<G>(
                 })?;
             *active_alignment = Some(outer);
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -362,7 +362,7 @@ pub(in crate::main_control) fn execute_begin_no_align<G>(
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let active = active_alignment
             .as_mut()
@@ -386,7 +386,7 @@ pub(in crate::main_control) fn execute_begin_no_align<G>(
         if modes.current_mode() == Mode::InternalVertical {
             crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -397,7 +397,7 @@ pub(in crate::main_control) fn execute_alignment_peek_cell<G>(
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
     omit: &mut bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let active = active_alignment
             .as_mut()
@@ -455,7 +455,7 @@ pub(in crate::main_control) fn execute_alignment_peek_cell<G>(
                     context: "alignment next-row cell-template lifecycle",
                 })?;
         }
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
 
@@ -465,7 +465,7 @@ pub(in crate::main_control) fn execute_no_align_end_group<G>(
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
     command: &mut CommandMachine<'_, '_, G>,
     alignment: &mut AlignmentIdentity,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<MainControlStep, ExecError> {
     {
         let active = active_alignment
             .as_mut()
@@ -506,6 +506,6 @@ pub(in crate::main_control) fn execute_no_align_end_group<G>(
         unsave_group(stores, command, GroupKind::NoAlign).map_err(|_| ExecError::MissingToken {
             context: "noalign group",
         })?;
-        Ok(ReplayStep::Continue)
+        Ok(MainControlStep::Continue)
     }
 }
