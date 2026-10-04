@@ -508,3 +508,25 @@ the same decoder as ordinary positional reads, preserving malformed payload
 handling. Public page cursors validate their coordinate once through the
 existing span-reader boundary; the discarded admission before that validation
 is removed. Borrowed durable-source fallback retains its existing behavior.
+
+## Direct math dependency discovery
+
+Dependency discovery and conversion share the selected-choice source walker.
+Discovery appends actual child coordinates directly to the dependency stack;
+it creates no expanded node list, style-marker vector or separate request
+collection. Formulas with no child lists return before allocating a dependency
+stack or inserting visiting entries.
+
+The stack retains each parent's real postorder completion. At that point its
+children are already converted, so the kernel converts it immediately and
+stores its layout in the existing converted-layout map. That map also supplies
+completion evidence for repeated child coordinates. A visiting set retains
+cycle detection during the nonrecursive walk. The separate completed set,
+request deduplication set and postorder vector are deleted. Child source order,
+full cramped choice styles, delimiter style resets and per-occurrence hpack
+and diagnostic replay retain their existing semantics.
+
+Ordinary-pair processing owns its single adjacency decision in `make_ord`.
+The first pass calls that processor directly after bin normalization; the
+processor leaves other nodes unchanged. The preliminary ordinary-kind and
+adjacency probes and their immediately consumed Boolean helper are deleted.

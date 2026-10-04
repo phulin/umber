@@ -291,13 +291,8 @@ fn first_pass<'a, S: MathTypesetState>(
         {
             noad.kind = NoadKind::Normal(NoadClass::Ord);
         }
-        if matches!(
-            view.node(index),
-            Some(tex_state::node_view::NodeView::MathNoad(noad)) if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
-        ) && operators::ord_pair_may_change(view, index)
-        {
-            operators::make_ord(ctx, view, index);
-        }
+        // make_ord owns the only adjacency decision and leaves other nodes alone.
+        operators::make_ord(ctx, view, index);
         if let Some(children) = match view.node(index) {
             Some(
                 tex_state::node_view::NodeView::HList(boxed)
@@ -585,38 +580,19 @@ fn expand_math_choices_into<'a>(
     view: &mut ExpandedMathView<'a>,
 ) {
     view.clear();
-    let mut style = starting_style;
-    view.stack.push(ExpansionFrame {
-        list: root,
-        index: 0,
-        nodes: state.page_nodes(root),
-    });
-    while let Some(frame) = view.stack.last_mut() {
-        let Some(source_node) = frame.nodes.get_direct(frame.index) else {
-            view.stack.pop();
-            continue;
-        };
-        let source_list = frame.list;
-        let source_index = frame.index;
-        frame.index += 1;
-        let Some(node) = source_node.view() else {
-            view.stack.pop();
-            continue;
-        };
-        match node {
-            tex_state::node_view::NodeView::MathStyle(next) => {
-                style = Style::from_math_style(next);
-                view.nodes.push(ExpandedMathNode::Source {
-                    list: source_list,
-                    index: source_index,
-                    node: source_node,
-                });
-                view.marker_styles.push(style);
-            }
-            tex_state::node_view::NodeView::MathChoice(choice) => {
-                // The style marker is semantically observable by the first
-                // pass even though the choice itself disappears.
-                view.nodes.push(ExpandedMathNode::Owned(Node::MathStyle(
+    let ExpandedMathView {
+        nodes,
+        marker_styles,
+        stack,
+    } = view;
+    walk_math_choices(
+        state,
+        root,
+        starting_style,
+        stack,
+        |list, index, source, node, style| match node {
+            NodeView::MathChoice(_) => {
+                nodes.push(ExpandedMathNode::Owned(Node::MathStyle(
                     match style.family() {
                         StyleFamily::Display => tex_state::math::MathStyle::Display,
                         StyleFamily::Text => tex_state::math::MathStyle::Text,
@@ -624,36 +600,81 @@ fn expand_math_choices_into<'a>(
                         StyleFamily::ScriptScript => tex_state::math::MathStyle::ScriptScript,
                     },
                 )));
-                view.marker_styles.push(style);
-                let selected = match style.family() {
-                    StyleFamily::Display => choice.display,
-                    StyleFamily::Text => choice.text,
-                    StyleFamily::Script => choice.script,
-                    StyleFamily::ScriptScript => choice.script_script,
-                };
-                view.stack.push(ExpansionFrame {
-                    list: selected,
-                    index: 0,
-                    nodes: state.page_nodes(selected),
-                });
+                marker_styles.push(style);
             }
-            node => {
-                let resets_style = matches!(
-                    node,
-                    tex_state::node_view::NodeView::MathNoad(MathNoad {
-                        kind: NoadKind::RightDelimiter { .. } | NoadKind::MiddleDelimiter { .. },
-                        ..
-                    })
-                );
-                view.nodes.push(ExpandedMathNode::Source {
-                    list: source_list,
-                    index: source_index,
-                    node: source_node,
+            NodeView::MathStyle(_) => {
+                nodes.push(ExpandedMathNode::Source {
+                    list,
+                    index,
+                    node: source,
                 });
-                if resets_style {
-                    style = starting_style;
-                }
+                marker_styles.push(style);
             }
+            _ => nodes.push(ExpandedMathNode::Source {
+                list,
+                index,
+                node: source,
+            }),
+        },
+    );
+}
+
+/// Visits selected source leaves and choice/style boundaries without an intermediate list.
+fn walk_math_choices<'a>(
+    state: &'a impl MathTypesetState,
+    root: PageListId,
+    starting_style: Style,
+    stack: &mut Vec<ExpansionFrame<'a>>,
+    mut visit: impl FnMut(PageListId, usize, DirectNodeView<'a>, NodeView<'a>, Style),
+) {
+    stack.clear();
+    let mut style = starting_style;
+    stack.push(ExpansionFrame {
+        list: root,
+        index: 0,
+        nodes: state.page_nodes(root),
+    });
+    while let Some(frame) = stack.last_mut() {
+        let Some(source) = frame.nodes.get_direct(frame.index) else {
+            stack.pop();
+            continue;
+        };
+        let Some(node) = source.view() else {
+            stack.pop();
+            continue;
+        };
+        let list = frame.list;
+        let index = frame.index;
+        frame.index += 1;
+        let selected = match &node {
+            NodeView::MathStyle(next) => {
+                style = Style::from_math_style(*next);
+                None
+            }
+            NodeView::MathChoice(choice) => Some(match style.family() {
+                StyleFamily::Display => choice.display,
+                StyleFamily::Text => choice.text,
+                StyleFamily::Script => choice.script,
+                StyleFamily::ScriptScript => choice.script_script,
+            }),
+            _ => None,
+        };
+        let resets_style = matches!(
+            &node,
+            NodeView::MathNoad(MathNoad {
+                kind: NoadKind::RightDelimiter { .. } | NoadKind::MiddleDelimiter { .. },
+                ..
+            })
+        );
+        visit(list, index, source, node, style);
+        if let Some(list) = selected {
+            stack.push(ExpansionFrame {
+                list,
+                index: 0,
+                nodes: state.page_nodes(list),
+            });
+        } else if resets_style {
+            style = starting_style;
         }
     }
 }
@@ -667,44 +688,48 @@ fn prepare_nested_mlists<S: MathTypesetState>(
     root_style: Style,
 ) {
     let root = (root, root_style);
-    let mut visiting = AHashSet::new();
-    let mut completed = AHashSet::new();
-    let mut stack = vec![(root, false)];
-    let mut postorder = Vec::new();
-    let mut requests = Vec::new();
-    let mut request_seen = AHashSet::new();
-    let mut request_view = std::mem::take(&mut ctx.scratch.expansion);
-    while let Some((list, expanded)) = stack.pop() {
-        if expanded {
-            visiting.remove(&list);
-            completed.insert(list);
-            postorder.push(list);
-            continue;
-        }
-        if completed.contains(&list) {
-            continue;
-        }
-        assert!(
-            visiting.insert(list),
-            "math source lists must not contain structural cycles"
-        );
-        stack.push((list, true));
-        nested_mlist_requests(
-            ctx.state,
-            list.0,
-            list.1,
-            &mut request_view,
-            &mut requests,
-            &mut request_seen,
-        );
-        for dependency in requests.iter().rev() {
-            stack.push((*dependency, false));
-        }
+    let mut stack = Vec::new();
+    nested_mlist_requests(
+        ctx.state,
+        root.0,
+        root.1,
+        &mut ctx.scratch.expansion.stack,
+        &mut stack,
+    );
+    if stack.is_empty() {
+        return;
     }
-    request_view.clear();
-    ctx.scratch.expansion = request_view;
-
-    for (list, style) in postorder.into_iter().filter(|key| key != &root) {
+    // Only an actual child needs a dependency walk or cycle bookkeeping.
+    stack.insert(0, (root, true));
+    stack[1..].reverse();
+    let mut visiting = AHashSet::new();
+    visiting.insert(root);
+    while let Some((list, expanded)) = stack.pop() {
+        if !expanded {
+            if ctx.converted.contains_key(&list) {
+                continue;
+            }
+            assert!(
+                visiting.insert(list),
+                "math source lists must not contain structural cycles"
+            );
+            stack.push((list, true));
+            let children_start = stack.len();
+            nested_mlist_requests(
+                ctx.state,
+                list.0,
+                list.1,
+                &mut ctx.scratch.expansion.stack,
+                &mut stack,
+            );
+            stack[children_start..].reverse();
+            continue;
+        }
+        visiting.remove(&list);
+        if list == root {
+            continue;
+        }
+        let (list, style) = list;
         let observation_start = ctx.layout.pack_observation_count();
         let event_start = ctx.conversion_events.borrow().len();
         ctx.capture_replay = true;
@@ -739,55 +764,28 @@ fn nested_mlist_requests<'a>(
     state: &'a impl MathTypesetState,
     root: PageListId,
     starting_style: Style,
-    view: &mut ExpandedMathView<'a>,
-    out: &mut Vec<(PageListId, Style)>,
-    seen: &mut AHashSet<(PageListId, Style)>,
+    frames: &mut Vec<ExpansionFrame<'a>>,
+    out: &mut Vec<((PageListId, Style), bool)>,
 ) {
-    fn add_field(
-        field: &MathField,
-        style: Style,
-        out: &mut Vec<(PageListId, Style)>,
-        seen: &mut AHashSet<(PageListId, Style)>,
-    ) {
+    fn add_field(field: &MathField, style: Style, out: &mut Vec<((PageListId, Style), bool)>) {
         if let MathField::SubMlist(list) = field {
-            let request = (*list, style);
-            if seen.insert(request) {
-                out.push(request);
-            }
+            out.push(((*list, style), false));
         }
     }
-
-    expand_math_choices_into(state, root, starting_style, view);
-    let mut style = starting_style;
-    let mut markers = view.marker_styles.iter().copied();
-    out.clear();
-    seen.clear();
-    for index in 0..view.len() {
-        let node = view
-            .node(index)
-            .expect("expanded math request remains in range");
-        match node {
-            tex_state::node_view::NodeView::MathStyle(_) => {
-                style = markers
-                    .next()
-                    .expect("expanded style marker must retain its full style");
-            }
-            tex_state::node_view::NodeView::MathNoad(noad)
+    walk_math_choices(
+        state,
+        root,
+        starting_style,
+        frames,
+        |_, _, _, node, style| match node {
+            NodeView::MathNoad(noad)
                 if matches!(
                     noad.kind,
                     NoadKind::LeftDelimiter { .. }
                         | NoadKind::RightDelimiter { .. }
                         | NoadKind::MiddleDelimiter { .. }
-                ) =>
-            {
-                if matches!(
-                    noad.kind,
-                    NoadKind::RightDelimiter { .. } | NoadKind::MiddleDelimiter { .. }
-                ) {
-                    style = starting_style;
-                }
-            }
-            tex_state::node_view::NodeView::MathNoad(noad) => {
+                ) => {}
+            NodeView::MathNoad(noad) => {
                 let nucleus_style = if matches!(
                     noad.kind,
                     NoadKind::Radical { .. } | NoadKind::Accent { .. } | NoadKind::Overline
@@ -796,27 +794,25 @@ fn nested_mlist_requests<'a>(
                 } else {
                     style
                 };
-                add_field(&noad.nucleus, nucleus_style, out, seen);
-                add_field(&noad.subscript, style.sub_style(), out, seen);
-                add_field(&noad.superscript, style.sup_style(), out, seen);
+                add_field(&noad.nucleus, nucleus_style, out);
+                add_field(&noad.subscript, style.sub_style(), out);
+                add_field(&noad.superscript, style.sup_style(), out);
             }
-            tex_state::node_view::NodeView::FractionNoad(fraction) => {
+            NodeView::FractionNoad(fraction) => {
                 add_field(
                     &MathField::SubMlist(fraction.numerator),
                     style.num_style(),
                     out,
-                    seen,
                 );
                 add_field(
                     &MathField::SubMlist(fraction.denominator),
                     style.denom_style(),
                     out,
-                    seen,
                 );
             }
             _ => {}
-        }
-    }
+        },
+    );
 }
 
 fn translate_noad<S: MathTypesetState>(

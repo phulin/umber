@@ -105,10 +105,6 @@ pub(super) fn make_ord(
     }
 }
 
-pub(super) fn ord_pair_may_change(nodes: &ExpandedMathView<'_>, index: usize) -> bool {
-    adjacent_math_chars(nodes, index).is_some()
-}
-
 fn operator_nucleus(
     ctx: &mut Context<'_, impl MathTypesetState>,
     noad: &MathNoad,
