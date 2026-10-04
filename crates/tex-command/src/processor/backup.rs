@@ -1,6 +1,6 @@
 //! Canonical command backup and replay insertion transitions.
 
-use tex_state::meaning::{Meaning, MeaningWord};
+use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, TracedTokenWord};
 
 use crate::command::CurrentCommand;
@@ -48,12 +48,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<bool, CommandError> {
         self.consume_raw_words::<true, _>(&mut |processor, spelling, meaning, exceptional| {
             let shift = outer_horizontal
-                && matches!(
-                    meaning.expect("math probe requested native meaning"),
-                    MeaningWord::Static(word)
-                        if Meaning::runtime_word_character(*word)
-                            .is_some_and(|(_, cat)| cat == Catcode::MathShift)
-                );
+                && meaning
+                    .expect("math probe requested native meaning")
+                    .scalar_word()
+                    .and_then(Meaning::runtime_word_character)
+                    .is_some_and(|(_, cat)| cat == Catcode::MathShift);
             if !shift {
                 processor.back_consumed_word(spelling, exceptional)?;
             }
@@ -72,9 +71,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_display_end_math_shift(&mut self) -> Result<bool, CommandError> {
         let mut shift = false;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            shift = matches!(meaning, MeaningWord::Static(word)
-                if Meaning::runtime_word_character(*word)
-                    .is_some_and(|(_, cat)| cat == Catcode::MathShift));
+            shift = meaning
+                .scalar_word()
+                .and_then(Meaning::runtime_word_character)
+                .is_some_and(|(_, cat)| cat == Catcode::MathShift);
             if !shift {
                 processor.back_consumed_word(spelling, exceptional)?;
             }

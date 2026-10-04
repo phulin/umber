@@ -16,39 +16,37 @@ impl<G> CurrentCommand<G> {
     }
 
     pub(crate) const fn flags(&self) -> MeaningFlags {
-        match self.command {
-            MeaningWord::Macro { flags, .. } => flags,
-            _ => MeaningFlags::EMPTY,
+        match self.command.macro_flags() {
+            Some(flags) => flags,
+            None => MeaningFlags::EMPTY,
         }
     }
 
     #[inline(always)]
     pub(crate) const fn expandable_primitive(&self) -> Option<ExpandablePrimitive> {
-        match self.command {
-            MeaningWord::Static(word)
-                if matches!(
-                    Meaning::runtime_word_class(word),
-                    StaticCommandClass::Expandable
-                ) =>
-            {
-                ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
-            }
-            _ => None,
+        if let Some(word) = self.command.scalar_word()
+            && matches!(
+                Meaning::runtime_word_class(word),
+                StaticCommandClass::Expandable
+            )
+        {
+            ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
+        } else {
+            None
         }
     }
 
     #[inline(always)]
     pub(crate) const fn unexpandable_primitive(&self) -> Option<UnexpandablePrimitive> {
-        match self.command {
-            MeaningWord::Static(word)
-                if matches!(
-                    Meaning::runtime_word_class(word),
-                    StaticCommandClass::Unexpandable
-                ) =>
-            {
-                UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
-            }
-            _ => None,
+        if let Some(word) = self.command.scalar_word()
+            && matches!(
+                Meaning::runtime_word_class(word),
+                StaticCommandClass::Unexpandable
+            )
+        {
+            UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
+        } else {
+            None
         }
     }
 
@@ -56,18 +54,14 @@ impl<G> CurrentCommand<G> {
     /// capabilities keep their native forms and have no scalar projection.
     #[inline(always)]
     pub(crate) fn static_meaning(&self) -> Option<Meaning> {
-        match self.command {
-            MeaningWord::Static(word) => Some(Meaning::from_runtime_word(word)),
-            _ => None,
-        }
+        self.command.scalar_word().map(Meaning::from_runtime_word)
     }
 
     #[inline(always)]
     pub(crate) fn character(&self) -> Option<(char, Catcode)> {
-        match self.command {
-            MeaningWord::Static(word) => Meaning::runtime_word_character(word),
-            _ => None,
-        }
+        self.command
+            .scalar_word()
+            .and_then(Meaning::runtime_word_character)
     }
 
     pub(crate) fn character_catcode(&self) -> Option<Catcode> {

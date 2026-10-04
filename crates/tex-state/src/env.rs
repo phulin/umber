@@ -525,20 +525,11 @@ impl<G> DenseState<G> {
                 continue;
             }
 
-            let equal = match (current, prior_value) {
-                (MeaningWord::Static(left), MeaningWord::Static(right)) => left == right,
-                (MeaningWord::Font(left), MeaningWord::Font(right)) => left == right,
-                (
-                    MeaningWord::Macro {
-                        flags: left_flags,
-                        definition: left,
-                    },
-                    MeaningWord::Macro {
-                        flags: right_flags,
-                        definition: right,
-                    },
-                ) => left_flags == right_flags && definitions_equal(left, right),
-                _ => false,
+            let equal = match (current.macro_parts(), prior_value.macro_parts()) {
+                (Some((left_flags, left)), Some((right_flags, right))) => {
+                    left_flags == right_flags && definitions_equal(left, right)
+                }
+                _ => current == prior_value,
             };
             if !equal {
                 return false;
@@ -578,7 +569,7 @@ impl<G> DenseState<G> {
 
     pub(crate) fn visit_dynamic_memory_roots(&self, mut visit: impl FnMut(DynamicMemoryRoot<G>)) {
         for meaning in self.meanings.values() {
-            if let MeaningWord::Macro { definition, .. } = meaning {
+            if let Some((_, definition)) = meaning.macro_parts() {
                 visit(DynamicMemoryRoot::Definition(definition));
             }
         }
@@ -631,14 +622,19 @@ impl<G> DenseState<G> {
 
         let mut cells = Vec::new();
         for (index, meaning) in self.meanings.values().enumerate() {
-            let meaning = match meaning {
-                MeaningWord::Static(0) => continue,
-                MeaningWord::Static(word) => FormatMeaning::Static(word),
-                MeaningWord::Font(font) => FormatMeaning::Font(font.raw()),
-                MeaningWord::Macro { flags, definition } => FormatMeaning::Macro {
+            let meaning = if let Some(word) = meaning.scalar_word() {
+                if word == 0 {
+                    continue;
+                }
+                FormatMeaning::Static(word)
+            } else if let Some(font) = meaning.font_id() {
+                FormatMeaning::Font(font.raw())
+            } else {
+                let (flags, definition) = meaning.macro_parts().expect("native macro");
+                FormatMeaning::Macro {
                     flags: flags.bits(),
                     definition: definition_row(definition)?,
-                },
+                }
             };
             cells.push(FormatCell::Meaning(index as u32, meaning));
         }
@@ -753,20 +749,22 @@ impl<G> DenseState<G> {
             match cell {
                 FormatCell::Meaning(index, meaning) => {
                     let meaning = match meaning {
-                        FormatMeaning::Static(word) => MeaningWord::Static(word),
-                        FormatMeaning::Font(font) => MeaningWord::Font(
+                        FormatMeaning::Static(word) => MeaningWord::scalar(word),
+                        FormatMeaning::Font(font) => MeaningWord::font_value(
                             *fonts
                                 .get(font as usize)
                                 .ok_or("format references an unloaded font")?,
                         ),
-                        FormatMeaning::Macro { flags, definition } => MeaningWord::Macro {
-                            flags: crate::meaning::MeaningFlags::from_bits(flags),
-                            definition: definitions
-                                .get(definition as usize)
-                                .cloned()
-                                .flatten()
-                                .ok_or("format macro reference is not live")?,
-                        },
+                        FormatMeaning::Macro { flags, definition } => {
+                            MeaningWord::macro_definition(
+                                crate::meaning::MeaningFlags::from_bits(flags),
+                                definitions
+                                    .get(definition as usize)
+                                    .cloned()
+                                    .flatten()
+                                    .ok_or("format macro reference is not live")?,
+                            )
+                        }
                     };
                     self.replace_meaning(index, meaning, LEVEL_ONE, 0)
                         .map_err(|_| "format meaning index is out of range")?;
@@ -2472,10 +2470,9 @@ fn state_word_semantic_contribution<G>(
     }
     let identity = match word {
         StateWord::Meaning(value) => {
-            let definition_identity = match value {
-                MeaningWord::Macro { definition, .. } => definition_identity(*definition),
-                MeaningWord::Static(_) | MeaningWord::Font(_) => None,
-            };
+            let definition_identity = value
+                .macro_parts()
+                .and_then(|(_, definition)| definition_identity(definition));
             value.semantic_identity(definition_identity).ok_or(())?
         }
         StateWord::Integer(value) => {

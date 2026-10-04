@@ -2,7 +2,7 @@
 
 use tex_state::GlueId;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::meaning::{Meaning, MeaningWord, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 use tex_state::token::Catcode;
 
@@ -303,10 +303,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let mut parenthesis = false;
                     let probe = self.consume_expanded_words(
                         &mut |processor, spelling, meaning, _, exceptional| {
-                            let character = match meaning {
-                                MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
-                                _ => None,
-                            };
+                            let character = meaning
+                                .scalar_word()
+                                .and_then(Meaning::runtime_word_character);
                             if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
                                 return Ok(std::ops::ControlFlow::Continue(()));
                             }
@@ -436,10 +435,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<ExpressionOperator, CommandError> {
         let mut operator = ExpressionOperator::None;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let character = match meaning {
-                MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
-                _ => None,
-            };
+            let character = meaning
+                .scalar_word()
+                .and_then(Meaning::runtime_word_character);
             if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
                 return Ok(std::ops::ControlFlow::Continue(()));
             }
@@ -456,7 +454,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         processor.back_consumed_word(spelling, exceptional)?;
                         processor.missing_expression_parenthesis_error()?;
                     }
-                } else if !matches!(meaning, MeaningWord::Static(Meaning::RELAX_WORD)) {
+                } else if meaning.scalar_word() != Some(Meaning::RELAX_WORD) {
                     processor.back_consumed_word(spelling, exceptional)?;
                 }
             }

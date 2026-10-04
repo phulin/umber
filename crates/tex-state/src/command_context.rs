@@ -802,7 +802,7 @@ impl<'a, G> CommandContext<'a, G> {
         meaning: MeaningWord<G>,
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
-        if let MeaningWord::Font(font) = meaning {
+        if let Some(font) = meaning.font_id() {
             self.validate_font_root(font)?;
         }
         self.admitted.assign_meaning(symbol, meaning, scope)

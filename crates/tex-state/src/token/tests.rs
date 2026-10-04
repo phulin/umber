@@ -230,12 +230,12 @@ fn packed_literal_resolution_preserves_all_nonactive_categories_and_unicode_scal
             }
             for ch in ['\0', 'x', 'λ', '🙂', '\u{d7ff}', '\u{e000}', '\u{10ffff}'] {
                 let word = TokenWord::pack(Token::Char { ch, cat });
-                let mut target = MeaningWord::Static(Meaning::UNDEFINED_WORD);
+                let mut target = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
                 assert_eq!(
                     context.write_packed_token_command_into(word, &mut target),
                     None
                 );
-                let MeaningWord::Static(resolved) = target else {
+                let Some(resolved) = target.scalar_word() else {
                     panic!("literal resolution must preserve a static character");
                 };
                 assert_eq!(
@@ -266,21 +266,21 @@ fn packed_active_character_resolution_reads_its_live_binding() {
             context
                 .assign_meaning(
                     symbol,
-                    MeaningWord::Static(Meaning::CharGiven(ch).encode()),
+                    MeaningWord::scalar(Meaning::CharGiven(ch).encode()),
                     crate::AssignmentScope::Global,
                 )
                 .expect("active binding");
-            let mut target = MeaningWord::Static(Meaning::UNDEFINED_WORD);
+            let mut target = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
             assert_eq!(
                 context.write_packed_token_command_into(word, &mut target),
                 Some(symbol)
             );
-            let MeaningWord::Static(resolved) = target else {
+            let Some(resolved) = target.scalar_word() else {
                 panic!("active character binding has its assigned static meaning");
             };
             assert_eq!(Meaning::from_runtime_word(resolved), Meaning::CharGiven(ch));
         }
-        let mut target = MeaningWord::Static(Meaning::RELAX_WORD);
+        let mut target = MeaningWord::scalar(Meaning::RELAX_WORD);
         let unregistered = TokenWord::pack(Token::Char {
             ch: 'λ',
             cat: Catcode::Active,
@@ -289,7 +289,7 @@ fn packed_active_character_resolution_reads_its_live_binding() {
             context.write_packed_token_command_into(unregistered, &mut target),
             None
         );
-        assert_eq!(target, MeaningWord::Static(Meaning::UNDEFINED_WORD));
+        assert_eq!(target, MeaningWord::scalar(Meaning::UNDEFINED_WORD));
     })
     .expect("fresh universe");
 }

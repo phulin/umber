@@ -514,7 +514,7 @@ fn native_active_meanings_expand_and_back_without_command_construction() {
                 )
                 .expect("empty meaning");
             let meaning = match case {
-                0 => MeaningWord::Static(
+                0 => MeaningWord::scalar(
                     Meaning::CharToken {
                         ch: 'b',
                         cat: Catcode::Letter,
@@ -522,7 +522,7 @@ fn native_active_meanings_expand_and_back_without_command_construction() {
                     .encode(),
                 ),
                 1 => MeaningWord::macro_definition(MeaningFlags::EMPTY, body.reference()),
-                _ => MeaningWord::Static(
+                _ => MeaningWord::scalar(
                     Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter).encode(),
                 ),
             };

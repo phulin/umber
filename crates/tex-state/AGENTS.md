@@ -299,9 +299,12 @@ Definition-owned parameter programs expose literal delimiter views only for none
   directly; definition publication compiles them once for scans, imports, and
   format loading.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
+- `src/meaning/native.rs`: Two-word native command encoding, complete font
+  identity/definition-coordinate projections and demanded cold decoding. No
+  enum tag, extra registry, identity truncation or ordinary root acquisition.
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed compact
-  macro definition keys and the canonical dense-row writer which decodes one
-  borrowed row directly into its caller's final native meaning. Outer validity
+  macro definition keys. The token resolver copies each borrowed native row
+  directly into the consumer's final meaning; there is no dense-row decoder. Outer validity
   inspects this native tag/operand without a derived command class. Main-control
   switch keys project disjoint small scalar/catcode/primitive ranges from the
   actual word; stored words and capabilities retain their native encodings.

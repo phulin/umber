@@ -437,7 +437,7 @@ fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
         );
 
         let (_, warm) = processor.scan_let_assignment().expect("warm let scan");
-        assert!(matches!(warm, tex_state::MeaningWord::Macro { .. }));
+        assert!(warm.is_macro());
         let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
 
@@ -447,7 +447,7 @@ fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
         };
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
 
-        assert!(matches!(measured, tex_state::MeaningWord::Macro { .. }));
+        assert!(measured.is_macro());
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
     });

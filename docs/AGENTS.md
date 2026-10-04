@@ -56,6 +56,10 @@ remains open.
 definition-owned matcher and collector integration, and direct operation path
 using the current full-book profile and explicit acceptance boundaries.
 
+`native_meaning_word.md` selects the two-word native command encoding, full
+font and definition identity preservation, ownership boundaries and enum
+deletion; it adds no opcode cache or identity registry.
+
 `minimal_hot_loop.md` maps implemented direct immutable spans, packed meanings,
 frame-owned cursors, counted real roots, the TeX save stack and full aggregate
 replay. It separates actual fuel/driver units from historical measurements and

@@ -219,28 +219,50 @@ pub(super) fn close_display<G>(
 ) -> Result<MainControlStep, ExecError> {
     let mut result = None;
 
-    processor.consume_main_control(&mut |processor, spelling, meaning, symbol, exceptional| {
-        if let tex_state::meaning::MeaningWord::Static(word) = meaning {
-            let code = Meaning::runtime_word_control_code(*word);
-            if matches!(code, codes::RELAX | codes::CHAR_SPACE) { return Ok(ControlFlow::Continue(())); }
-        }
-        let assignment = match meaning {
-            tex_state::meaning::MeaningWord::Font(_) => true,
-            tex_state::meaning::MeaningWord::Static(word) => tex_command::exceeds_max_non_prefixed_command(Meaning::from_runtime_word(*word)),
-            _ => false,
-        };
-        if assignment {
-            processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| execution.set_box_forbidden_depth += 1);
-            let step = dispatch::execute(processor, spelling, meaning, symbol, exceptional, receipts, codes::of(meaning));
-            processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| execution.set_box_forbidden_depth -= 1);
-            if let Err(error) = step { result = Some(Err(error)); return Ok(ControlFlow::Break(())); }
+    processor
+        .consume_main_control(&mut |processor, spelling, meaning, symbol, exceptional| {
+            if let Some(word) = meaning.scalar_word() {
+                let code = Meaning::runtime_word_control_code(word);
+                if matches!(code, codes::RELAX | codes::CHAR_SPACE) {
+                    return Ok(ControlFlow::Continue(()));
+                }
+            }
+            let assignment = meaning.is_font()
+                || meaning.scalar_word().is_some_and(|word| {
+                    tex_command::exceeds_max_non_prefixed_command(Meaning::from_runtime_word(word))
+                });
+            if assignment {
+                processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                    execution.set_box_forbidden_depth += 1
+                });
+                let step = dispatch::execute(
+                    processor,
+                    spelling,
+                    meaning,
+                    symbol,
+                    exceptional,
+                    receipts,
+                    codes::of(meaning),
+                );
+                processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                    execution.set_box_forbidden_depth -= 1
+                });
+                if let Err(error) = step {
+                    result = Some(Err(error));
+                    return Ok(ControlFlow::Break(()));
+                }
 
-            return Ok(ControlFlow::Continue(()));
-        }
-        let shift = matches!(meaning, tex_state::meaning::MeaningWord::Static(word) if Meaning::runtime_word_control_code(*word) == codes::CHAR_MATH_SHIFT);
-        result = Some(if shift { math_shift::apply(processor, spelling, meaning, symbol, exceptional) } else { recover_display(processor, spelling, exceptional) });
-        Ok(ControlFlow::Break(()))
-    }).map_err(command_error)?;
+                return Ok(ControlFlow::Continue(()));
+            }
+            let shift = meaning.control_code() == Some(codes::CHAR_MATH_SHIFT);
+            result = Some(if shift {
+                math_shift::apply(processor, spelling, meaning, symbol, exceptional)
+            } else {
+                recover_display(processor, spelling, exceptional)
+            });
+            Ok(ControlFlow::Break(()))
+        })
+        .map_err(command_error)?;
     result.unwrap_or(Ok(MainControlStep::EndOfInput))
 }
 

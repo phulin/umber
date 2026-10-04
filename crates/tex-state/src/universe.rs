@@ -1529,7 +1529,7 @@ impl<G> Universe<G> {
 
     /// Records a static or generation-local frozen primitive meaning.
     pub fn register_primitive_word(&mut self, name: &str, meaning: MeaningWord<G>) {
-        if let Some(font) = meaning.font() {
+        if let Some(font) = meaning.font_id() {
             assert!(
                 self.command_retained.fonts.contains(font),
                 "frozen font meaning retains a live Universe font"
@@ -2459,7 +2459,7 @@ impl<G> Universe<G> {
     ) -> Result<(), UniverseError> {
         self.command_session.interner().resolve_id(symbol)?;
         if value
-            .font()
+            .font_id()
             .is_some_and(|font| !self.command_retained.fonts.contains(font))
         {
             return Err(UniverseError::State(StateError::ForeignSession));

@@ -39,14 +39,12 @@ fn consume_meaning<G>(
     meaning: &MeaningWord<G>,
     nested: &Cell<u32>,
 ) -> Option<ConditionalDelimiter> {
-    let MeaningWord::Static(word) = meaning else {
-        return None;
-    };
-    if Meaning::runtime_word_class(*word) != StaticCommandClass::Expandable {
+    let word = meaning.scalar_word()?;
+    if Meaning::runtime_word_class(word) != StaticCommandClass::Expandable {
         return None;
     }
     consume_conditional(
-        ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(*word))?,
+        ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))?,
         nested,
     )
 }
@@ -85,7 +83,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let stop = if literal.is_some_and(|cat| cat != Catcode::Active) {
                     None
                 } else {
-                    let mut meaning = MeaningWord::Static(Meaning::UNDEFINED_WORD);
+                    let mut meaning = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
                     state.write_packed_token_command_into(word, &mut meaning);
                     if meaning.is_outer() {
                         return ControlFlow::Continue(false);

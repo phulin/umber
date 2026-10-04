@@ -2366,8 +2366,7 @@ mod tests;
 
 #[inline(always)]
 fn native_character<G>(meaning: &tex_state::meaning::MeaningWord<G>) -> Option<(char, Catcode)> {
-    match meaning {
-        tex_state::meaning::MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
-        _ => None,
-    }
+    meaning
+        .scalar_word()
+        .and_then(Meaning::runtime_word_character)
 }

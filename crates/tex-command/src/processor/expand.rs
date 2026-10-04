@@ -155,25 +155,27 @@ fn classify_native_command<G>(
 ) -> ExpandedCommandAction {
     #[cfg(test)]
     EXPANDED_CLASSIFICATIONS.with(|counter| counter.set(counter.get().saturating_add(1)));
-    use tex_state::meaning::{MeaningWord, StaticCommandClass};
-    match meaning {
-        MeaningWord::Macro { .. } => ExpandedCommandAction::Expand(ExpansionDispatch::Macro),
-        MeaningWord::Font(_) => ExpandedCommandAction::Return,
-        MeaningWord::Static(word) => match Meaning::runtime_word_class(*word) {
-            StaticCommandClass::Expandable => {
-                match ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(*word)) {
-                    Some(ExpandablePrimitive::EndTemplate) => ExpandedCommandAction::EndTemplate,
-                    Some(ExpandablePrimitive::EndCsName) | None => ExpandedCommandAction::Return,
-                    Some(primitive) => {
-                        ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive))
-                    }
+    use tex_state::meaning::StaticCommandClass;
+    if meaning.is_macro() {
+        return ExpandedCommandAction::Expand(ExpansionDispatch::Macro);
+    }
+    let Some(word) = meaning.scalar_word() else {
+        return ExpandedCommandAction::Return;
+    };
+    match Meaning::runtime_word_class(word) {
+        StaticCommandClass::Expandable => {
+            match ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word)) {
+                Some(ExpandablePrimitive::EndTemplate) => ExpandedCommandAction::EndTemplate,
+                Some(ExpandablePrimitive::EndCsName) | None => ExpandedCommandAction::Return,
+                Some(primitive) => {
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive))
                 }
             }
-            StaticCommandClass::Undefined if spelling.out_parameter_slot().is_none() => {
-                ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
-            }
-            _ => ExpandedCommandAction::Return,
-        },
+        }
+        StaticCommandClass::Undefined if spelling.out_parameter_slot().is_none() => {
+            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
+        }
+        _ => ExpandedCommandAction::Return,
     }
 }
 
@@ -702,7 +704,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 self.command.set_last_diagnostic_location(Some(location));
             }
             if N::EXPAND_BOUNDARIES
-                && let tex_state::meaning::MeaningWord::Macro { flags, definition } = meaning
+                && let Some((flags, definition)) = meaning.macro_parts()
             {
                 let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
                 match self.activate_read_macro(word, origin, flags, definition, name) {

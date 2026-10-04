@@ -205,11 +205,15 @@ fn resume<G>(
         Ok::<_, ExecError>(())
     })?;
     if scan_space {
-        processor.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let space = matches!(meaning, tex_state::meaning::MeaningWord::Static(word) if Meaning::runtime_word_control_code(*word) == codes::CHAR_SPACE);
-            if !space { processor.back_consumed_word(spelling, exceptional)?; }
-            Ok(ControlFlow::Break(()))
-        }).map_err(command_error)?;
+        processor
+            .consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
+                let space = meaning.control_code() == Some(codes::CHAR_SPACE);
+                if !space {
+                    processor.back_consumed_word(spelling, exceptional)?;
+                }
+                Ok(ControlFlow::Break(()))
+            })
+            .map_err(command_error)?;
         report_scan(processor)?;
     }
     processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {

@@ -216,7 +216,7 @@ fn native_font_command_preserves_opaque_runtime_identity() {
     let font = tex_state::ids::FontId::testing_from_words([0x5a17_0042, 7, 11, 23])
         .expect("valid branded font identity");
     let mut rich = CurrentCommand::<()>::empty();
-    rich.command = MeaningWord::Font(font);
+    rich.command = MeaningWord::font_value(font);
 
     let hot = rich;
 
@@ -260,12 +260,6 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
         #[cfg(feature = "profiling")]
         {
             assert_eq!(after.dense_row_accesses - before.dense_row_accesses, 1);
-            assert_eq!(after.dense_row_decodes - before.dense_row_decodes, 1);
-            assert_eq!(after.meaning_word_clones - before.meaning_word_clones, 0);
-            assert_eq!(
-                after.resolved_meaning_clones - before.resolved_meaning_clones,
-                0
-            );
         }
         let command = command;
         assert_eq!(command.meaning(), Meaning::CountRegister(32_767));

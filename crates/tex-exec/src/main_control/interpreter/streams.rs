@@ -9,12 +9,7 @@ pub(super) fn immediate<G>(
     let mut result = None;
     let status = processor
         .consume_main_control(&mut |processor, spelling, meaning, _, exceptional| {
-            let code = match meaning {
-                tex_state::meaning::MeaningWord::Static(word) => {
-                    Meaning::runtime_word_control_code(*word)
-                }
-                _ => codes::FONT,
-            };
+            let code = meaning.control_code().unwrap_or(codes::FONT);
             if code == codes::CHAR_SPACE {
                 return Ok(ControlFlow::Continue(()));
             }

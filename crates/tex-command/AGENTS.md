@@ -119,6 +119,8 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   the host replays from a full checkpoint.
 - `src/execution_scratch.rs`, `src/execution_scratch/tests.rs`: reusable
   bounded expression frames and admission/sinks for ordinary resident runs.
+  Outer admission reads the actual native meaning; its separate command-target
+  probe adapter is deleted.
   Definition and csname collectors consume those runs directly. One stack-local admission cursor transfers into the resident reader; suppression restricts it in place without copying its configuration. Admission
   borrows the final sink’s scanner cursor, settles each accepted word and writes it in one traversal;
   no accepted-prefix rescan or separate span-copy pass remains. Execution scratch owns

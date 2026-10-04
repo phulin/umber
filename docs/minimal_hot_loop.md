@@ -72,6 +72,11 @@ percentage substitutes for completing the architecture and its semantics.
 
 ## Implemented ownership and hot work
 
+The native meaning enum is deleted. [Native meaning words](native_meaning_word.md)
+retain the actual opcode and complete macro/font identity in 16 bytes, down
+from 24. State cells, group saves and checkpoint preimages use that same value;
+ordinary readers project its actual fields without a decoded-kind adapter.
+
 Ordinary token delivery reads the current input frame and writes the consumer's
 final native `MeaningWord`. The same native meaning value belongs to the eqtb
 row and the delivered `CurrentCommand` snapshot. Resolution writes its static

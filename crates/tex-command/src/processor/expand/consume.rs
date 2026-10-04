@@ -16,7 +16,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &self,
         word: tex_state::token::TokenWord,
     ) -> (MeaningWord<G>, Option<Symbol>) {
-        let mut meaning = MeaningWord::Static(Meaning::UNDEFINED_WORD);
+        let mut meaning = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
         let control_sequence = self
             .state
             .write_packed_token_command_into(word, &mut meaning);
@@ -83,7 +83,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let (meaning, control_sequence) = processor.resolve_token_word(word);
                     processor.record_consumed_word(kind, word.requires_meaning_lookup());
                     if !OBSERVED
-                        && let MeaningWord::Macro { flags, definition } = meaning
+                        && let Some((flags, definition)) = meaning.macro_parts()
                         && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
                         && !processor
                             .command
@@ -93,8 +93,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 flags.contains(MeaningFlags::OUTER),
                             )
                     {
-                        let name = control_sequence
-                            .ok_or_else(CommandError::input_invariant)?;
+                        let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
                         terminal.before_action(processor);
                         let result = if Consumer::RAW_TOKEN {
                             processor.with_expansion_depth(|processor| {
@@ -109,42 +108,70 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         expanded = true;
                         return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                     }
-                    let native = !OBSERVED && !processor.command.delivery_mode
-                        .requires_semantic_settlement(suppress, meaning.is_outer());
+                    let native = !OBSERVED
+                        && !processor
+                            .command
+                            .delivery_mode
+                            .requires_semantic_settlement(suppress, meaning.is_outer());
                     let native_action;
                     if native {
                         native_action = classify_native_command(word, &meaning);
                         if matches!(site, ReadSite::Source(_))
                             && let Some(location) = processor.pending_diagnostic_location.take()
                         {
-                            processor.command.set_last_diagnostic_location(Some(location));
+                            processor
+                                .command
+                                .set_last_diagnostic_location(Some(location));
                         }
-                        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) = native_action {
+                        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                            primitive,
+                        )) = native_action
+                        {
                             terminal.before_action(processor);
-                            let result = terminal.splice(processor, primitive).and_then(|spliced| {
-                                if spliced { Ok(()) } else {
-                                    processor.expand_primitive(primitive,
-                                        tex_state::token::TracedTokenWord::from_parts(word, origin),
-                                        control_sequence, true)
-                                }
-                            });
+                            let result =
+                                terminal.splice(processor, primitive).and_then(|spliced| {
+                                    if spliced {
+                                        Ok(())
+                                    } else {
+                                        processor.expand_primitive(
+                                            primitive,
+                                            tex_state::token::TracedTokenWord::from_parts(
+                                                word, origin,
+                                            ),
+                                            control_sequence,
+                                            true,
+                                        )
+                                    }
+                                });
                             if let Err(failure) = result {
-                                if Consumer::RAW_TOKEN { terminal.recover(processor, failure)?; }
-                                else { return Err(failure); }
+                                if Consumer::RAW_TOKEN {
+                                    terminal.recover(processor, failure)?;
+                                } else {
+                                    return Err(failure);
+                                }
                             }
                             expanded = true;
                             return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                         }
-                        let protected = STOP_PROTECTED && matches!(meaning,
-                            MeaningWord::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED));
-                        if Consumer::NATIVE_TERMINAL &&
-                            (protected || matches!(native_action, ExpandedCommandAction::Return))
+                        let protected = STOP_PROTECTED
+                            && meaning
+                                .macro_flags()
+                                .is_some_and(|flags| flags.contains(MeaningFlags::PROTECTED));
+                        if Consumer::NATIVE_TERMINAL
+                            && (protected || matches!(native_action, ExpandedCommandAction::Return))
                         {
-                            processor.command.roots.alignment.account_literal_catcode(word.literal_catcode());
+                            processor
+                                .command
+                                .roots
+                                .alignment
+                                .account_literal_catcode(word.literal_catcode());
                             terminal.before_action(processor);
-                            let result = terminal.native_terminal(processor,
+                            let result = terminal.native_terminal(
+                                processor,
                                 tex_state::token::TracedTokenWord::from_parts(word, origin),
-                                &meaning, control_sequence)?;
+                                &meaning,
+                                control_sequence,
+                            )?;
                             expanded = false;
                             return Ok(result.map_break(|()| DeliveryStatus::Command));
                         }
@@ -165,11 +192,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         control_sequence,
                     ));
                     if native {
-                        processor.command.roots.alignment.account_literal_brace(
-                            command, word.literal_catcode());
+                        processor
+                            .command
+                            .roots
+                            .alignment
+                            .account_literal_brace(command, word.literal_catcode());
                     } else {
-                        processor.settle_hot_delivery_in::<OBSERVED>(
-                            command, word.literal_catcode())?;
+                        processor
+                            .settle_hot_delivery_in::<OBSERVED>(command, word.literal_catcode())?;
                     }
                     if Consumer::RAW_TOKEN
                         && matches!(
@@ -182,7 +212,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         return Ok(ControlFlow::Continue(()));
                     }
                     terminal.before_action(processor);
-                    let action = if native { native_action } else { classify_hot_command(command) };
+                    let action = if native {
+                        native_action
+                    } else {
+                        classify_hot_command(command)
+                    };
                     let terminal_status = if STOP_PROTECTED
                         && Self::protected_terminal(command, action)
                     {
@@ -218,8 +252,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         if !Consumer::RAW_TOKEN
                             && role == ExpandedReaderRole::MainLoopLookahead
                             && matches!(action, ExpandedCommandAction::EndTemplate)
-                            && !matches!(command.alignment_adjustment(),
-                                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_))
+                            && !matches!(
+                                command.alignment_adjustment(),
+                                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                            )
                         {
                             // §1038 uses x_token (§381), whose expand (§366/§376)
                             // backs frozen endv. Only get_x_token (§380) changes
@@ -232,8 +268,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             expanded = true;
                             return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                         }
-                        if Consumer::RAW_TOKEN || (role == ExpandedReaderRole::MainLoopLookahead
-                            && !expanded && command.is_main_loop_character()) {
+                        if Consumer::RAW_TOKEN
+                            || (role == ExpandedReaderRole::MainLoopLookahead
+                                && !expanded
+                                && command.is_main_loop_character())
+                        {
                             DeliveryStatus::Command
                         } else {
                             processor

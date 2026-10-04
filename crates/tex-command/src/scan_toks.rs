@@ -8,9 +8,7 @@
 //! to the brace depth of this collection.
 
 use tex_state::interner::{ControlSequenceKind, Symbol};
-use tex_state::meaning::{
-    ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord, ResolvedMeaning,
-};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 mod expanded;
@@ -1092,12 +1090,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_left_brace(&mut self) -> Result<Option<OriginId>, CommandError> {
         let mut opening = None;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let character = match meaning {
-                MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
-                _ => None,
-            };
+            let character = meaning
+                .scalar_word()
+                .and_then(Meaning::runtime_word_character);
             if matches!(character, Some((_, Catcode::Space)))
-                || matches!(meaning, MeaningWord::Static(Meaning::RELAX_WORD))
+                || meaning.scalar_word() == Some(Meaning::RELAX_WORD)
             {
                 return Ok(std::ops::ControlFlow::Continue(()));
             }

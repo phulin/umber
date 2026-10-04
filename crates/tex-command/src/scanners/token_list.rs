@@ -4,7 +4,7 @@
 
 use tex_state::env::banks::TokParam;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, MeaningWord, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_toks::ScanToksMode;
@@ -29,10 +29,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.scan_optional_equals()?;
         let mut value = None;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let meaning = match meaning {
-                MeaningWord::Static(word) => Meaning::from_runtime_word(*word),
-                _ => Meaning::Undefined,
-            };
+            let meaning = meaning
+                .scalar_word()
+                .map_or(Meaning::Undefined, Meaning::from_runtime_word);
             let collected = match meaning {
                 Meaning::CharToken {
                     cat: Catcode::Space,

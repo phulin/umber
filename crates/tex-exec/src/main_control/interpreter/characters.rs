@@ -28,8 +28,8 @@ pub(super) fn no_boundary<G>(
     let mut completion = None;
     let status = processor
         .consume_main_control(&mut |processor, spelling, meaning, symbol, exceptional| {
-            if let tex_state::meaning::MeaningWord::Static(word) = meaning {
-                let code = Meaning::runtime_word_control_code(*word);
+            if let Some(word) = meaning.scalar_word() {
+                let code = Meaning::runtime_word_control_code(word);
                 if code == codes::PRIMITIVE_NO_BOUNDARY {
                     trace::command(processor, code, meaning, symbol);
                     return Ok(ControlFlow::Continue(()));
@@ -73,8 +73,8 @@ pub(super) fn ignore_spaces<G>(
     let mut completion = None;
     let status = processor
         .consume_main_control(&mut |processor, spelling, meaning, symbol, exceptional| {
-            if let tex_state::meaning::MeaningWord::Static(word) = meaning {
-                let code = Meaning::runtime_word_control_code(*word);
+            if let Some(word) = meaning.scalar_word() {
+                let code = Meaning::runtime_word_control_code(word);
                 if code == codes::CHAR_SPACE {
                     return Ok(ControlFlow::Continue(()));
                 }

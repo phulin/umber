@@ -177,44 +177,6 @@ const _: () = assert!(core::mem::size_of::<Token>() == 8);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TokenWord(u32);
 
-/// In-place destination for one packed-token command resolution.
-///
-/// The implementing value is the caller's actual current-command slot, not a
-/// projection or transport value. Dense eqtb rows write their final static or
-/// macro meaning through this boundary while the resolver also records the
-/// exact control-sequence identity selected by the raw spelling.
-#[doc(hidden)]
-pub trait PackedCommandTarget<G> {
-    fn write_static_meaning_word(&mut self, word: u64);
-    fn write_font_meaning(&mut self, font: crate::ids::FontId);
-    fn write_macro_meaning(
-        &mut self,
-        flags: crate::meaning::MeaningFlags,
-        definition: crate::DefinitionRef<G>,
-    );
-}
-
-impl<G> PackedCommandTarget<G> for crate::meaning::MeaningWord<G> {
-    #[inline(always)]
-    fn write_static_meaning_word(&mut self, word: u64) {
-        *self = Self::Static(word);
-    }
-
-    #[inline(always)]
-    fn write_font_meaning(&mut self, font: crate::ids::FontId) {
-        *self = Self::Font(font);
-    }
-
-    #[inline(always)]
-    fn write_macro_meaning(
-        &mut self,
-        flags: crate::meaning::MeaningFlags,
-        definition: crate::DefinitionRef<G>,
-    ) {
-        *self = Self::Macro { flags, definition };
-    }
-}
-
 impl TokenWord {
     const KIND_SHIFT: u32 = 30;
     const PAYLOAD_MASK: u32 = (1 << Self::KIND_SHIFT) - 1;
@@ -384,9 +346,9 @@ impl<G> crate::CommandContext<'_, G> {
     pub fn write_packed_token_command_into(
         &self,
         word: TokenWord,
-        target: &mut impl PackedCommandTarget<G>,
+        target: &mut crate::meaning::MeaningWord<G>,
     ) -> Option<Symbol> {
-        use crate::meaning::Meaning;
+        use crate::meaning::{Meaning, MeaningWord};
 
         let kind = word.0 >> TokenWord::KIND_SHIFT;
         let payload = word.0 & TokenWord::PAYLOAD_MASK;
@@ -397,47 +359,45 @@ impl<G> crate::CommandContext<'_, G> {
                         .expect("packed token scalar is valid");
                     let control_sequence = self.active_character_symbol(ch);
                     if let Some(symbol) = control_sequence {
-                        self.compact_control_sequence_meaning_word(symbol)
-                            .write_command_into(target);
+                        *target = *self.compact_control_sequence_meaning_word(symbol);
                     } else {
-                        target.write_static_meaning_word(Meaning::UNDEFINED_WORD);
+                        *target = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
                     }
                     control_sequence
                 } else {
-                    target.write_static_meaning_word(Meaning::char_token_payload_word(payload));
+                    *target = MeaningWord::scalar(Meaning::char_token_payload_word(payload));
                     None
                 }
             }
             TokenWord::KIND_CS => {
                 let symbol = Symbol::from_packed_slot(payload);
-                self.compact_control_sequence_meaning_word(symbol)
-                    .write_command_into(target);
+                *target = *self.compact_control_sequence_meaning_word(symbol);
                 Some(symbol)
             }
             TokenWord::KIND_PARAM => {
-                target.write_static_meaning_word(Meaning::UNDEFINED_WORD);
+                *target = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
                 None
             }
             TokenWord::KIND_FROZEN => {
                 let frozen = FrozenToken::from_raw(payload as u16);
                 if frozen == FrozenToken::UNDEFINED_CONTROL_SEQUENCE {
-                    target.write_static_meaning_word(Meaning::UNDEFINED_WORD);
+                    *target = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
                 } else if frozen == FrozenToken::END_TEMPLATE {
-                    target.write_static_meaning_word(
+                    *target = MeaningWord::scalar(
                         Meaning::ExpandablePrimitive(
                             crate::meaning::ExpandablePrimitive::EndTemplate,
                         )
                         .encode(),
                     );
                 } else if frozen == FrozenToken::END_V {
-                    target.write_static_meaning_word(Meaning::END_V_WORD);
+                    *target = MeaningWord::scalar(Meaning::END_V_WORD);
                 } else if frozen == FrozenToken::RELAX {
-                    target.write_static_meaning_word(Meaning::RELAX_WORD);
+                    *target = MeaningWord::scalar(Meaning::RELAX_WORD);
                 } else if let Some(row) = self.frozen_primitive_meaning_word(Token::Frozen(frozen))
                 {
-                    row.write_command_into(target);
+                    *target = *row;
                 } else {
-                    target.write_static_meaning_word(Meaning::UNDEFINED_WORD);
+                    *target = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
                 }
                 None
             }

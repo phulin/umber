@@ -15,10 +15,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut primary = None;
         let mut grouped = false;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let character = match meaning {
-                tex_state::MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
-                _ => None,
-            };
+            let character = meaning
+                .scalar_word()
+                .and_then(Meaning::runtime_word_character);
             if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
                 return Ok(std::ops::ControlFlow::Continue(()));
             }
@@ -34,10 +33,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut character_count = 0;
         let mut quoted = false;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let character = match meaning {
-                tex_state::MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
-                _ => None,
-            };
+            let character = meaning
+                .scalar_word()
+                .and_then(Meaning::runtime_word_character);
             match character {
                 Some((_, Catcode::BeginGroup)) if grouped => {}
                 Some(('"', _)) => quoted = !quoted,

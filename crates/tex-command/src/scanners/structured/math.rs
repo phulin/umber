@@ -1,6 +1,6 @@
 use super::*;
 use std::ops::ControlFlow;
-use tex_state::meaning::{MeaningWord, StaticCommandClass};
+use tex_state::meaning::StaticCommandClass;
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Completes one TeX82 §1151 `scan_math` field.
@@ -82,18 +82,18 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let provenance = StructuredProvenance {
                 primary: spelling.origin(),
             };
-            if let MeaningWord::Static(word) = meaning {
-                let character = Meaning::runtime_word_character(*word);
-                if matches!(character, Some((_, Catcode::Space))) || *word == Meaning::RELAX_WORD {
+            if let Some(word) = meaning.scalar_word() {
+                let character = Meaning::runtime_word_character(word);
+                if matches!(character, Some((_, Catcode::Space))) || word == Meaning::RELAX_WORD {
                     return Ok(ControlFlow::Continue(()));
                 }
                 let character = match character {
                     Some((ch, Catcode::Letter | Catcode::Other)) => Some(ch),
-                    _ if Meaning::runtime_word_control_code(*word)
+                    _ if Meaning::runtime_word_control_code(word)
                         == Meaning::runtime_word_control_code(Meaning::CharGiven('A').encode()) =>
                     {
                         Some(
-                            char::from_u32(Meaning::runtime_word_operand(*word) as u32)
+                            char::from_u32(Meaning::runtime_word_operand(word) as u32)
                                 .expect("validated character-definition meaning"),
                         )
                     }
@@ -111,21 +111,21 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     });
                     return Ok(ControlFlow::Break(()));
                 }
-                if Meaning::runtime_word_control_code(*word)
+                if Meaning::runtime_word_control_code(word)
                     == Meaning::runtime_word_control_code(Meaning::MathCharGiven(0).encode())
                 {
                     field = Some(MathFieldEpisode {
-                        body: MathFieldBody::Character(Meaning::runtime_word_operand(*word) as u16),
+                        body: MathFieldBody::Character(Meaning::runtime_word_operand(word) as u16),
                         provenance,
                     });
                     return Ok(ControlFlow::Break(()));
                 }
-                if Meaning::runtime_word_class(*word) == StaticCommandClass::Unexpandable
+                if Meaning::runtime_word_class(word) == StaticCommandClass::Unexpandable
                     && let Some(
                         primitive @ (UnexpandablePrimitive::Char
                         | UnexpandablePrimitive::MathChar
                         | UnexpandablePrimitive::Delimiter),
-                    ) = UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(*word))
+                    ) = UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
                 {
                     let kind = match primitive {
                         UnexpandablePrimitive::Char => MathFieldRestrictedKind::Character,
@@ -248,14 +248,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                           meaning,
                                           control_sequence,
                                           exceptional| {
-            let code = if let MeaningWord::Static(word) = meaning {
-                match Meaning::runtime_word_character(*word) {
+            let code = if let Some(word) = meaning.scalar_word() {
+                match Meaning::runtime_word_character(word) {
                     Some((_, Catcode::Space)) => return Ok(ControlFlow::Continue(())),
                     Some((ch, Catcode::Letter | Catcode::Other)) => processor.state.delcode(ch),
-                    _ if *word == Meaning::RELAX_WORD => return Ok(ControlFlow::Continue(())),
-                    _ if Meaning::runtime_word_class(*word) == StaticCommandClass::Unexpandable
+                    _ if word == Meaning::RELAX_WORD => return Ok(ControlFlow::Continue(())),
+                    _ if Meaning::runtime_word_class(word) == StaticCommandClass::Unexpandable
                         && UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(
-                            *word,
+                            word,
                         )) == Some(UnexpandablePrimitive::Delimiter) =>
                     {
                         delimiter = Some(processor.scan_delimiter_number()?);

@@ -123,30 +123,15 @@ pub enum Meaning {
     Unknown(RawMeaning),
 }
 
-/// One generation-scoped packed meaning cell.
-///
-/// Scalar meanings retain TeX's compact `opcode:8 | flags:8 | operand:48`
-/// representation. Meanings that contain live coordinates carry those
-/// coordinates directly: neither a definition nor a font identity may be
-/// reconstructed from a dense slot on an ordinary state read.
-pub enum MeaningWord<G> {
-    Static(u64),
-    Font(FontId),
-    Macro {
-        flags: MeaningFlags,
-        definition: DefinitionRef<G>,
-    },
-}
+#[path = "meaning/native.rs"]
+mod native;
+pub use native::MeaningWord;
 
 /// Profiling-only structural census for direct command delivery.
 #[cfg(any(test, feature = "profiling"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DirectCommandDeliveryCounters {
     pub dense_row_accesses: u64,
-    pub dense_row_decodes: u64,
-    pub macro_owner_acquisitions: u64,
-    pub meaning_word_clones: u64,
-    pub resolved_meaning_clones: u64,
 }
 
 #[cfg(any(test, feature = "profiling"))]
@@ -154,10 +139,6 @@ thread_local! {
     static DIRECT_COMMAND_DELIVERY_COUNTERS: core::cell::Cell<DirectCommandDeliveryCounters> =
         const { core::cell::Cell::new(DirectCommandDeliveryCounters {
             dense_row_accesses: 0,
-            dense_row_decodes: 0,
-            macro_owner_acquisitions: 0,
-            meaning_word_clones: 0,
-            resolved_meaning_clones: 0,
         }) };
 }
 
@@ -184,170 +165,6 @@ pub(crate) fn record_dense_meaning_row_access() {
     update_direct_command_delivery_counters(|counters| {
         counters.dense_row_accesses = counters.dense_row_accesses.saturating_add(1);
     });
-}
-
-impl<G> Clone for MeaningWord<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<G> Copy for MeaningWord<G> {}
-
-impl<G> core::fmt::Debug for MeaningWord<G> {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Static(word) => formatter.debug_tuple("Static").field(word).finish(),
-            Self::Font(font) => formatter.debug_tuple("Font").field(font).finish(),
-            Self::Macro { flags, .. } => formatter
-                .debug_struct("Macro")
-                .field("flags", flags)
-                .field("definition", &"DefinitionRef(..)")
-                .finish(),
-        }
-    }
-}
-
-impl<G> PartialEq for MeaningWord<G> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Static(left), Self::Static(right)) => left == right,
-            (Self::Font(left), Self::Font(right)) => left == right,
-            (
-                Self::Macro {
-                    flags: left_flags,
-                    definition: left_definition,
-                },
-                Self::Macro {
-                    flags: right_flags,
-                    definition: right_definition,
-                },
-            ) => left_flags == right_flags && left_definition == right_definition,
-            (Self::Static(_), Self::Font(_) | Self::Macro { .. })
-            | (Self::Font(_), Self::Static(_) | Self::Macro { .. })
-            | (Self::Macro { .. }, Self::Static(_) | Self::Font(_)) => false,
-        }
-    }
-}
-
-impl<G> Eq for MeaningWord<G> {}
-
-impl<G> MeaningWord<G> {
-    pub(crate) const UNDEFINED: Self = Self::Static(0);
-
-    /// Whether the native value belongs to TeX82 §336's outer class.
-    #[must_use]
-    #[inline(always)]
-    pub const fn is_outer(&self) -> bool {
-        match self {
-            Self::Static(word) => *word == Meaning::END_TEMPLATE_WORD,
-            Self::Macro { flags, .. } => flags.contains(MeaningFlags::OUTER),
-            Self::Font(_) => false,
-        }
-    }
-
-    #[must_use]
-    pub const fn from_static(meaning: Meaning) -> Self {
-        match meaning {
-            Meaning::Font(font) => Self::Font(font),
-            scalar => Self::Static(scalar.encode()),
-        }
-    }
-
-    #[must_use]
-    pub const fn macro_definition(flags: MeaningFlags, definition: DefinitionRef<G>) -> Self {
-        Self::Macro { flags, definition }
-    }
-
-    #[must_use]
-    pub fn resolve(&self) -> ResolvedMeaning<G> {
-        match self {
-            Self::Static(word) => ResolvedMeaning::Static(Meaning::decode_stored(*word)),
-            Self::Font(font) => ResolvedMeaning::Static(Meaning::Font(*font)),
-            Self::Macro { flags, definition } => ResolvedMeaning::Macro {
-                flags: *flags,
-                definition: *definition,
-            },
-        }
-    }
-
-    /// Borrows the scalar meaning without cloning a generation-local owner.
-    #[must_use]
-    pub(crate) const fn static_meaning(&self) -> Option<Meaning> {
-        match self {
-            Self::Static(word) => Some(Meaning::decode_stored(*word)),
-            Self::Font(font) => Some(Meaning::Font(*font)),
-            Self::Macro { .. } => None,
-        }
-    }
-
-    /// Returns the exact live font coordinate retained by this meaning.
-    #[must_use]
-    pub(crate) const fn font(&self) -> Option<FontId> {
-        match self {
-            Self::Font(font) => Some(*font),
-            Self::Static(_) | Self::Macro { .. } => None,
-        }
-    }
-
-    pub(crate) fn semantic_identity(&self, definition_identity: Option<u64>) -> Option<u64> {
-        let definition_identity = match self {
-            Self::Macro { .. } => Some(definition_identity?),
-            Self::Static(_) | Self::Font(_) => None,
-        };
-        Some(crate::state_hash::semantic_scalar_root(
-            0x6d65_616e_696e_6731,
-            |hasher| match self {
-                Self::Static(word) => {
-                    hasher.u8(0);
-                    hasher.u64(*word);
-                }
-                Self::Font(font) => {
-                    hasher.u8(1);
-                    hasher.u32(font.raw());
-                }
-                Self::Macro { flags, definition } => {
-                    hasher.u8(2);
-                    hasher.u8(flags.bits());
-                    let _ = definition;
-                    hasher.u64(definition_identity.expect("macro identity was resolved"));
-                }
-            },
-        ))
-    }
-}
-
-impl<G> MeaningWord<G> {
-    /// Decodes this borrowed canonical row directly into the caller's final
-    /// command slot.
-    ///
-    /// The row borrow ends before this call returns. Static meanings are
-    /// copied into the resident slot, while a macro row copies only its compact
-    /// non-owning definition key.
-    #[inline(always)]
-    pub(crate) fn write_command_into(
-        &self,
-        target: &mut impl crate::token::PackedCommandTarget<G>,
-    ) {
-        #[cfg(any(test, feature = "profiling"))]
-        update_direct_command_delivery_counters(|counters| {
-            counters.dense_row_decodes = counters.dense_row_decodes.saturating_add(1);
-        });
-        match self {
-            MeaningWord::Static(word) => {
-                target.write_static_meaning_word(*word);
-            }
-            MeaningWord::Font(font) => target.write_font_meaning(*font),
-            MeaningWord::Macro { flags, definition } => {
-                #[cfg(any(test, feature = "profiling"))]
-                update_direct_command_delivery_counters(|counters| {
-                    counters.macro_owner_acquisitions =
-                        counters.macro_owner_acquisitions.saturating_add(1);
-                });
-                target.write_macro_meaning(*flags, *definition);
-            }
-        }
-    }
 }
 
 /// Decoded meaning returned by an admitted generation borrow.
@@ -1480,7 +1297,7 @@ impl Meaning {
             OP_RELAX => Self::Relax,
             // Runtime definition coordinates are never decoded from an
             // unvalidated integer. Cold formats materialize a fresh
-            // generation-local id before constructing `MeaningWord::Macro`.
+            // generation-local id before constructing a native macro meaning.
             OP_MACRO => Self::Unknown(RawMeaning { op, flags, operand }),
             OP_CHAR_GIVEN => match char::from_u32(operand as u32) {
                 Some(ch) => Self::CharGiven(ch),

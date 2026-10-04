@@ -282,7 +282,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.with_expanded_delivery(&mut destination, |processor, destination| {
             match action {
                 ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
-                    let MeaningWord::Macro { flags, definition } = meaning else {
+                    let Some((flags, definition)) = meaning.macro_parts() else {
                         unreachable!("native active macro");
                     };
                     let name = control_sequence.ok_or_else(CommandError::input_invariant)?;

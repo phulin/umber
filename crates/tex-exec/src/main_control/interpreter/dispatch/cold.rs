@@ -950,7 +950,7 @@ pub(super) fn execute<'state, 'host, G>(
             pdf::image(processor)
         }
         codes::FONT => {
-            let MeaningWord::Font(font) = meaning else {
+            let Some(font) = meaning.font_id() else {
                 unreachable!("font capability")
             };
             let global = effective_global(
@@ -967,7 +967,7 @@ pub(super) fn execute<'state, 'host, G>(
                         effects,
                         fuel,
                     )?;
-                    semantic::execute_font_select(context, effects, *font, global)
+                    semantic::execute_font_select(context, effects, font, global)
                 },
             )?;
             assignments::complete(processor, observation_receipts)?;

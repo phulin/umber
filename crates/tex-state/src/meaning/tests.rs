@@ -99,6 +99,24 @@ fn meaning_variants_round_trip() {
 }
 
 #[test]
+fn scalar_words_keep_their_value_when_opcodes_overlap_coordinate_commands() {
+    for opcode in [super::OP_MACRO, super::OP_FONT, u8::MAX] {
+        let raw =
+            RawMeaning::testing_new_with_flags(opcode, MeaningFlags::from_bits(0xa5), OPERAND_MASK);
+        let scalar =
+            ((opcode as u64) << super::OPCODE_SHIFT) | (0xa5 << super::FLAGS_SHIFT) | OPERAND_MASK;
+        let word = MeaningWord::<()>::scalar(scalar);
+        assert_eq!(word.scalar_word(), Some(scalar));
+        assert!(!word.is_macro());
+        assert!(!word.is_font());
+        assert_eq!(
+            word.resolve(),
+            ResolvedMeaning::Static(Meaning::decode_stored(Meaning::Unknown(raw).encode()))
+        );
+    }
+}
+
+#[test]
 fn macro_meanings_carry_only_generation_typed_definition_ids() {
     with_generation(|mut generation| {
         let definition = generation

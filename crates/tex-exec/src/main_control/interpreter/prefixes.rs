@@ -18,11 +18,7 @@ pub(super) fn scan<G>(
                                       meaning,
                                       control_sequence,
                                       exceptional| {
-            let code = match meaning {
-                MeaningWord::Static(word) => Meaning::runtime_word_control_code(*word),
-                MeaningWord::Font(_) => codes::FONT,
-                MeaningWord::Macro { .. } => unreachable!("expanded prefix operand"),
-            };
+            let code = meaning.control_code().expect("expanded prefix operand");
             match code {
                 codes::RELAX | codes::CHAR_SPACE => return Ok(ControlFlow::Continue(())),
                 codes::PRIMITIVE_GLOBAL => prefixes |= GLOBAL,

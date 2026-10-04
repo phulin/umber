@@ -4,7 +4,7 @@
 //! never a retained current command or an input cursor.
 
 use tex_state::ids::FontId;
-use tex_state::meaning::{Meaning, MeaningWord, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 
 use crate::scanners::MathFamilySize;
 use crate::{CommandError, CommandProcessor};
@@ -24,14 +24,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
         let mut font = None;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let meaning = match meaning {
-                MeaningWord::Font(font_id) => {
-                    font = Some(*font_id);
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-                MeaningWord::Static(word) => Meaning::from_runtime_word(*word),
-                MeaningWord::Macro { .. } => Meaning::Undefined,
-            };
+            if let Some(font_id) = meaning.font_id() {
+                font = Some(font_id);
+                return Ok(std::ops::ControlFlow::Break(()));
+            }
+            let meaning = meaning
+                .scalar_word()
+                .map_or(Meaning::Undefined, Meaning::from_runtime_word);
             font = Some(match meaning {
                 Meaning::CharToken {
                     cat: tex_state::token::Catcode::Space,

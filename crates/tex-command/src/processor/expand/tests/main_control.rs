@@ -517,7 +517,7 @@ fn native_main_control_continues_across_macro_bodies_without_command_records() {
         universe
             .assign_meaning(
                 relax,
-                MeaningWord::Static(Meaning::RELAX_WORD),
+                MeaningWord::scalar(Meaning::RELAX_WORD),
                 AssignmentScope::Global,
             )
             .expect("relax meaning");
@@ -565,7 +565,7 @@ fn native_main_control_continues_across_macro_bodies_without_command_records() {
             processor
                 .consume_main_control(&mut |_, spelling, meaning, _, exceptional| {
                     assert!(exceptional.is_none());
-                    if matches!(meaning, MeaningWord::Static(Meaning::RELAX_WORD)) {
+                    if meaning.scalar_word() == Some(Meaning::RELAX_WORD) {
                         consumed += 1;
                         Ok(std::ops::ControlFlow::Continue(()))
                     } else {

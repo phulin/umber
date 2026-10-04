@@ -1065,12 +1065,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                           meaning,
                                           control_sequence,
                                           exceptional| {
-            let character = match meaning {
-                tex_state::meaning::MeaningWord::Static(word) => {
-                    Meaning::runtime_word_character(*word)
-                }
-                _ => None,
-            };
+            let character = meaning
+                .scalar_word()
+                .and_then(Meaning::runtime_word_character);
             relation = Some(match character {
                 Some(('<', _)) => IfRelation::Less,
                 Some(('=', _)) => IfRelation::Equal,

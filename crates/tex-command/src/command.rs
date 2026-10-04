@@ -136,20 +136,17 @@ impl<G> core::hash::Hash for CurrentCommand<G> {
         self.word.hash(state);
         self.origin.hash(state);
         self.site.hash(state);
-        match self.command {
-            MeaningWord::Static(word) => {
-                0_u8.hash(state);
-                word.hash(state);
-            }
-            MeaningWord::Font(font) => {
-                1_u8.hash(state);
-                font.hash(state);
-            }
-            MeaningWord::Macro { flags, definition } => {
-                2_u8.hash(state);
-                flags.hash(state);
-                definition.hash(state);
-            }
+        if let Some(word) = self.command.scalar_word() {
+            0_u8.hash(state);
+            word.hash(state);
+        } else if let Some(font) = self.command.font_id() {
+            1_u8.hash(state);
+            font.hash(state);
+        } else {
+            let (flags, definition) = self.command.macro_parts().expect("native macro");
+            2_u8.hash(state);
+            flags.hash(state);
+            definition.hash(state);
         }
     }
 }
@@ -205,7 +202,7 @@ impl<G> CurrentCommand<G> {
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
     ) -> Self {
-        let mut meaning = MeaningWord::Static(Meaning::UNDEFINED_WORD);
+        let mut meaning = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
         let control_sequence = state.write_packed_token_command_into(word, &mut meaning);
         Self::from_delivered_parts(
             word,
@@ -265,7 +262,7 @@ impl<G> CurrentCommand<G> {
                 alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
                 delivery_flags: CommandDeliveryFlags::default(),
             },
-            command: MeaningWord::Static(Meaning::UNDEFINED_WORD),
+            command: MeaningWord::scalar(Meaning::UNDEFINED_WORD),
         }
     }
 
@@ -335,20 +332,19 @@ impl<G> CurrentCommand<G> {
     }
 
     pub(crate) fn suppress_expandable(&mut self) {
-        let suppress = match self.command {
-            MeaningWord::Macro { .. } => true,
-            MeaningWord::Font(_) => false,
-            MeaningWord::Static(word) => match Meaning::runtime_word_class(word) {
-                StaticCommandClass::Undefined => true,
-                StaticCommandClass::Expandable => {
-                    ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
-                        != Some(ExpandablePrimitive::EndCsName)
+        let suppress = self.command.is_macro()
+            || self.command.scalar_word().is_some_and(|word| {
+                match Meaning::runtime_word_class(word) {
+                    StaticCommandClass::Undefined => true,
+                    StaticCommandClass::Expandable => {
+                        ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
+                            != Some(ExpandablePrimitive::EndCsName)
+                    }
+                    _ => false,
                 }
-                _ => false,
-            },
-        };
+            });
         if suppress {
-            self.command = MeaningWord::Static(Meaning::RELAX_WORD);
+            self.command = MeaningWord::scalar(Meaning::RELAX_WORD);
             self.site
                 .delivery_flags
                 .set(CommandDeliveryFlags::NOEXPAND_FROZEN_RELAX, true);
@@ -360,21 +356,18 @@ impl<G> CurrentCommand<G> {
     }
 
     pub(crate) const fn macro_parts(&self) -> Option<(MeaningFlags, DefinitionRef<G>)> {
-        match self.command {
-            MeaningWord::Macro { flags, definition } => Some((flags, definition)),
-            _ => None,
-        }
+        self.command.macro_parts()
     }
 
     pub(crate) fn convert_end_template_to_endv(&mut self, frozen_endv: Token) {
         self.word = TokenWord::pack(frozen_endv);
-        self.command = MeaningWord::Static(Meaning::END_V_WORD);
+        self.command = MeaningWord::scalar(Meaning::END_V_WORD);
         self.site.control_sequence = None;
         self.site.alignment_adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
     }
 
     pub(crate) fn convert_to_end_template(&mut self) {
-        self.command = MeaningWord::Static(Meaning::END_TEMPLATE_WORD);
+        self.command = MeaningWord::scalar(Meaning::END_TEMPLATE_WORD);
         self.site.control_sequence = None;
     }
 }
@@ -430,7 +423,7 @@ impl<G> CurrentCommand<G> {
             cat: Catcode::Space,
         });
         self.origin = OriginId::UNKNOWN;
-        self.command = MeaningWord::Static(Meaning::char_token_word(' ', Catcode::Space));
+        self.command = MeaningWord::scalar(Meaning::char_token_word(' ', Catcode::Space));
         self.site.control_sequence = None;
         self.site
             .delivery_flags
@@ -469,23 +462,14 @@ impl<G> CurrentCommand<G> {
     /// Macro and font capabilities remain in their actual typed command fields.
     #[must_use]
     pub const fn static_word(&self) -> Option<u64> {
-        match self.command {
-            MeaningWord::Static(word) => Some(word),
-            _ => None,
-        }
+        self.command.scalar_word()
     }
 
     /// Small native family/selector key for the sole mode/command switch.
     #[must_use]
     #[inline]
     pub fn control_code(&self) -> Option<u64> {
-        match self.command {
-            MeaningWord::Static(word) => Some(Meaning::runtime_word_control_code(word)),
-            MeaningWord::Font(font) => Some(Meaning::runtime_word_control_code(
-                Meaning::Font(font).encode(),
-            )),
-            MeaningWord::Macro { .. } => None,
-        }
+        self.command.control_code()
     }
 
     /// Returns the control-sequence identity, if this spelling resolves via

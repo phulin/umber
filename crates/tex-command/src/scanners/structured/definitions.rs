@@ -114,33 +114,34 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // §1221: any leading spaces, optional literal equals, then at
         // most one space. Space uses cur_cmd, equals uses cur_tok.
         let mut after_equals = 0;
-        let meaning = self.consume_raw_words::<true, _>(&mut |_, spelling, meaning, _| {
-            let meaning = *meaning.expect("raw meaning requested");
-            let space = matches!(
-                meaning,
-                tex_state::MeaningWord::Static(word) if matches!(Meaning::runtime_word_character(word), Some((_, Catcode::Space)))
-            );
-            if after_equals == 0 {
-                if space {
-                    return Ok(ControlFlow::Continue(()));
-                }
-                if matches!(
-                    spelling.semantic_token(),
-                    Token::Char {
-                        ch: '=',
-                        cat: Catcode::Other
+        let meaning = self
+            .consume_raw_words::<true, _>(&mut |_, spelling, meaning, _| {
+                let meaning = *meaning.expect("raw meaning requested");
+                let space = meaning
+                    .scalar_word()
+                    .and_then(Meaning::runtime_word_character)
+                    .is_some_and(|(_, cat)| cat == Catcode::Space);
+                if after_equals == 0 {
+                    if space {
+                        return Ok(ControlFlow::Continue(()));
                     }
-                ) {
-                    after_equals = 1;
+                    if matches!(
+                        spelling.semantic_token(),
+                        Token::Char {
+                            ch: '=',
+                            cat: Catcode::Other
+                        }
+                    ) {
+                        after_equals = 1;
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                } else if after_equals == 1 && space {
+                    after_equals = 2;
                     return Ok(ControlFlow::Continue(()));
                 }
-            } else if after_equals == 1 && space {
-                after_equals = 2;
-                return Ok(ControlFlow::Continue(()));
-            }
-            Ok(ControlFlow::Break(meaning))
-        })?
-        .ok_or_else(CommandError::input_invariant)?;
+                Ok(ControlFlow::Break(meaning))
+            })?
+            .ok_or_else(CommandError::input_invariant)?;
         Ok((target, meaning))
     }
 

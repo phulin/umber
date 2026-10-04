@@ -355,35 +355,10 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
         let Some(state) = self.state else {
             return false;
         };
-        let mut probe = OuterMeaningProbe { outer: false };
-        state.write_packed_token_command_into(word, &mut probe);
-        !probe.outer
-    }
-}
-
-/// Records only whether a resolved meaning is §336's outer class.
-struct OuterMeaningProbe {
-    outer: bool,
-}
-
-impl<G> tex_state::token::PackedCommandTarget<G> for OuterMeaningProbe {
-    #[inline(always)]
-    fn write_static_meaning_word(&mut self, word: u64) {
-        self.outer = word == tex_state::meaning::Meaning::END_TEMPLATE_WORD;
-    }
-
-    #[inline(always)]
-    fn write_font_meaning(&mut self, _: tex_state::ids::FontId) {
-        self.outer = false;
-    }
-
-    #[inline(always)]
-    fn write_macro_meaning(
-        &mut self,
-        flags: tex_state::meaning::MeaningFlags,
-        _: tex_state::DefinitionRef<G>,
-    ) {
-        self.outer = flags.contains(tex_state::meaning::MeaningFlags::OUTER);
+        let mut meaning =
+            tex_state::meaning::MeaningWord::from_static(tex_state::meaning::Meaning::Undefined);
+        state.write_packed_token_command_into(word, &mut meaning);
+        !meaning.is_outer()
     }
 }
 

@@ -3,11 +3,7 @@ use super::*;
 
 #[inline(always)]
 pub(super) fn of<G>(meaning: &tex_state::meaning::MeaningWord<G>) -> u64 {
-    match meaning {
-        tex_state::meaning::MeaningWord::Static(word) => Meaning::runtime_word_control_code(*word),
-        tex_state::meaning::MeaningWord::Font(_) => FONT,
-        tex_state::meaning::MeaningWord::Macro { .. } => unreachable!("expanded terminal"),
-    }
+    meaning.control_code().expect("expanded terminal")
 }
 
 pub(super) const CHAR_BEGIN_GROUP: u64 =

@@ -655,7 +655,7 @@ fn main_loop_native_boundary_consumes_the_word_without_a_command_record() {
         universe
             .assign_meaning(
                 relax,
-                tex_state::MeaningWord::Static(Meaning::RELAX_WORD),
+                tex_state::MeaningWord::scalar(Meaning::RELAX_WORD),
                 AssignmentScope::Global,
             )
             .expect("relax meaning");
@@ -727,8 +727,13 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>, const EXPAND: bool>
         _: &mut crate::CommandProcessor<'state, 'host, G, Facts>,
         meaning: &tex_state::MeaningWord<G>,
     ) -> bool {
-        matches!(meaning, tex_state::MeaningWord::Static(word)
-            if *word == Meaning::RELAX_WORD || Meaning::runtime_word_character(*word).is_some_and(|(_, cat)| cat == Catcode::Space || (EXPAND && matches!(cat, Catcode::Letter | Catcode::Other))))
+        meaning.scalar_word().is_some_and(|word| {
+            word == Meaning::RELAX_WORD
+                || Meaning::runtime_word_character(word).is_some_and(|(_, cat)| {
+                    cat == Catcode::Space
+                        || (EXPAND && matches!(cat, Catcode::Letter | Catcode::Other))
+                })
+        })
     }
 
     fn consume_native_terminal(
@@ -766,10 +771,7 @@ fn execution_character_boundaries_expand_without_constructing_commands() {
             universe
                 .assign_meaning(
                     m,
-                    MeaningWord::Macro {
-                        flags: MeaningFlags::EMPTY,
-                        definition: publication.reference(),
-                    },
+                    MeaningWord::macro_definition(MeaningFlags::EMPTY, publication.reference()),
                     AssignmentScope::Global,
                 )
                 .expect("macro meaning");
@@ -780,10 +782,10 @@ fn execution_character_boundaries_expand_without_constructing_commands() {
             universe
                 .assign_meaning(
                     empty,
-                    MeaningWord::Macro {
-                        flags: MeaningFlags::EMPTY,
-                        definition: empty_publication.reference(),
-                    },
+                    MeaningWord::macro_definition(
+                        MeaningFlags::EMPTY,
+                        empty_publication.reference(),
+                    ),
                     AssignmentScope::Global,
                 )
                 .expect("empty macro meaning");
@@ -798,7 +800,7 @@ fn execution_character_boundaries_expand_without_constructing_commands() {
                 universe
                     .assign_meaning(
                         symbol,
-                        MeaningWord::Static(meaning.encode()),
+                        MeaningWord::scalar(meaning.encode()),
                         AssignmentScope::Global,
                     )
                     .expect("primitive meaning");

@@ -64,12 +64,9 @@ impl DefinitionBank {
 pub(crate) struct DefinitionRoots(Rc<RefCell<DefinitionBank>>);
 impl DefinitionRoots {
     pub(crate) fn validates_meaning<G>(&self, meaning: crate::meaning::MeaningWord<G>) -> bool {
-        match meaning {
-            crate::meaning::MeaningWord::Macro { definition, .. } => {
-                self.0.borrow().entry(definition).is_some()
-            }
-            _ => true,
-        }
+        meaning
+            .macro_parts()
+            .is_none_or(|(_, definition)| self.0.borrow().entry(definition).is_some())
     }
     pub(crate) fn acquire<G>(&self, id: DefinitionRef<G>) {
         if id.region() == FORMAT_REGION {
@@ -109,12 +106,12 @@ impl DefinitionRoots {
         drop(payload);
     }
     pub(crate) fn acquire_meaning<G>(&self, meaning: crate::meaning::MeaningWord<G>) {
-        if let crate::meaning::MeaningWord::Macro { definition, .. } = meaning {
+        if let Some((_, definition)) = meaning.macro_parts() {
             self.acquire(definition);
         }
     }
     pub(crate) fn release_meaning<G>(&self, meaning: crate::meaning::MeaningWord<G>) {
-        if let crate::meaning::MeaningWord::Macro { definition, .. } = meaning {
+        if let Some((_, definition)) = meaning.macro_parts() {
             self.release(definition);
         }
     }
