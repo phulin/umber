@@ -672,3 +672,6 @@ pub(super) const PRIMITIVE_SCRIPT_STYLE: u64 = Meaning::runtime_word_control_cod
 pub(super) const PRIMITIVE_SCRIPT_SCRIPT_STYLE: u64 = Meaning::runtime_word_control_code(
     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ScriptScriptStyle).encode(),
 );
+
+pub(super) const MATH_GIVEN: u64 =
+    Meaning::runtime_word_control_code(Meaning::MathCharGiven(0).encode());

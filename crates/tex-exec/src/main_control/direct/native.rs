@@ -88,6 +88,16 @@ impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
                     Ok(ReplayStep::Continue)
                 })
             }
+            codes::MATH_GIVEN => {
+                let tex_state::meaning::MeaningWord::Static(word) = meaning else {
+                    unreachable!("native defined math symbol");
+                };
+                let code = Meaning::runtime_word_operand(*word) as u32;
+                processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+                    append_math_given(context, execution, code, spelling.origin())
+                        .map(|()| ReplayStep::Continue)
+                })
+            }
             codes::CHAR_SPACE => processor.with_execution_owners(
                 |context, _, effects, fuel, _, execution, _, _, _| {
                     execution.main_loop_active = false;
@@ -278,7 +288,8 @@ impl<'state, 'host, G, const TEXT_BOUNDARY: bool>
                         && !execution.page_region_succession_pending
                         && !context.tracked_region_is_active()
                 }),
-            codes::PRIMITIVE_DISPLAY_STYLE
+            codes::MATH_GIVEN
+            | codes::PRIMITIVE_DISPLAY_STYLE
             | codes::PRIMITIVE_TEXT_STYLE
             | codes::PRIMITIVE_SCRIPT_STYLE
             | codes::PRIMITIVE_SCRIPT_SCRIPT_STYLE => {
@@ -366,4 +377,20 @@ pub(super) fn append_math_style<G>(
         .modes
         .current_list_mutation()
         .push(context, Node::MathStyle(style));
+}
+
+/// TeX82 section 1154 enters set_math_char with the head's completed code.
+pub(super) fn append_math_given<G>(
+    context: &mut tex_state::CommandContext<'_, G>,
+    execution: &mut ExecutionState<G>,
+    code: u32,
+    origin: OriginId,
+) -> Result<(), ExecError> {
+    execution.main_loop_active = false;
+    append_math_char(
+        execution.modes.current_list_mutation(),
+        context,
+        code,
+        origin,
+    )
 }

@@ -399,33 +399,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// field or braced list is intentionally represented by a later opaque
     /// replay episode, so the stomach never receives a source cursor.
     ///
-    /// The table is keyed on the delivered [`Meaning`], not on
-    /// [`UnexpandablePrimitive`], because TeX82's math vocabulary is not
-    /// exclusively primitive-shaped: §1154's `mmode+math_given` case carries
-    /// its math code in the delivered command itself (a `\\mathchardef`
-    /// target, §1224), exactly as `mmode+math_char_num` carries it in the
-    /// integer `\\mathchar` scans. Keying on the primitive alone silently
-    /// excluded `math_given` from the whole mmode table.
+    /// Operand-free style and defined-symbol heads append their final nodes
+    /// in main control; this scanner handles actual primitive operands.
     pub fn scan_math_request(
         &mut self,
         command: &crate::CurrentCommand<G>,
     ) -> Result<Option<MathRequest>, CommandError> {
         use MathRequest as Request;
         use MathTextFieldKind as Field;
-        // TeX82 §1154's `mmode+math_given: set_math_char(cur_chr)`. Unlike
-        // `mmode+math_char_num`, which reaches the same `set_math_char`
-        // (§1155) through §436's `scan_fifteen_bit_int`, the code is already
-        // complete in the delivered command, so nothing is scanned and the
-        // math char's provenance is the delivering token's own origin.
-        if let Some(Meaning::MathCharGiven(code)) = static_meaning(command.meaning()) {
-            return Ok(Some(Request::Character(ScannedMathCharacter {
-                code,
-
-                provenance: StructuredProvenance {
-                    primary: command.origin(),
-                },
-            })));
-        }
         let Some(Meaning::UnexpandablePrimitive(primitive)) = static_meaning(command.meaning())
         else {
             return Ok(None);

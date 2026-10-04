@@ -24,9 +24,12 @@ intercepts alignment delimiters. Its real downstream boundary is the delivery
 of an unexpandable current command to main control.
 
 `tex-exec::MainControl` is the production main-control seam for that boundary:
-it accepts no raw input cursor, obtains each `CurrentCommand` and every
-assignment operand through `CommandProcessor`, then applies only the completed
-typed structural mutation. Native scalar/group/definition arms reborrow the
+it accepts no raw input cursor. `CommandProcessor` expands native words and
+passes ordinary terminal meanings directly to main control, which consumes
+assignment operands through synchronous scanners and writes final semantic
+state. Remaining general-dispatch, observed and recovery deliveries retain
+`CurrentCommand`; ordinary native expansion, scanners, characters, math styles
+and defined math symbols do not construct that record. Native scalar/group/definition arms reborrow the
 still-live processor's actual semantic owners after their synchronous scans
 return; genuine mode, host, output and diagnostic demands end that loan.
 Macro calls and

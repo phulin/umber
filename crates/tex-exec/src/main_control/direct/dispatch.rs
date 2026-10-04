@@ -732,6 +732,25 @@ impl<G> DirectDispatch<'_, '_, G> {
                         );
                     }
 
+                    if matches!(mode, Mode::Math | Mode::DisplayMath)
+                        && let ResolvedMeaning::Static(Meaning::MathCharGiven(code)) =
+                            command.meaning()
+                    {
+                        let origin = command.origin();
+                        return retained_completed!(
+                            receipts,
+                            |context, _state, _effects, _fuel, _observer, execution| {
+                                native::append_math_given(
+                                    context,
+                                    execution,
+                                    u32::from(code),
+                                    origin,
+                                )
+                                .map(|()| ReplayStep::Continue)
+                            }
+                        );
+                    }
+
                     // Math operands are scanned exclusively by `tex-command`.  The replay
                     // driver receives a typed scalar request and schedules any opaque field
                     // episode only after this processor borrow has ended.

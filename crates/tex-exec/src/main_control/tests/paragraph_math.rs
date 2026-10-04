@@ -563,3 +563,59 @@ fn math_style_heads_append_the_same_mlist_in_native_observed_and_traced_delivery
         });
     }
 }
+
+#[test]
+fn defined_math_symbol_heads_preserve_fixed_and_variable_families_in_all_delivery_modes() {
+    // TeX82 §§1154–1155 use the completed code and let class 7 select fam.
+    for (observed, traced) in [(false, false), (true, false), (false, true)] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            let source = if traced {
+                br#"\tracingcommands=2 \catcode`\$=3 \mathchardef\fixed="0161 \mathchardef\variable="7262 $\fam=3\fixed\variable$\end"#.as_slice()
+            } else {
+                br#"\catcode`\$=3 \mathchardef\fixed="0161 \mathchardef\variable="7262 $\fam=3\fixed\variable$\end"#.as_slice()
+            };
+            register_source(&mut control, source);
+            let mut observations = ObservationRecorder::default();
+            for _ in 0..64 {
+                let step = if observed {
+                    control.advance_with_observer(stores, &mut observations)
+                } else {
+                    control.advance(stores)
+                }
+                .expect("defined math symbol delivery executes");
+                assert!(matches!(
+                    step,
+                    StepResult::Progress(MainControlStep::Continue)
+                ));
+                let characters = admitted!(stores, |context| control
+                    .execution
+                    .modes
+                    .current_list()
+                    .nodes(context)
+                    .iter()
+                    .filter_map(|node| {
+                        match node.to_owned() {
+                            Node::MathNoad(noad) => {
+                                assert_eq!(noad.kind, NoadKind::Normal(NoadClass::Ord));
+                                assert_eq!(noad.subscript, MathField::Empty);
+                                assert_eq!(noad.superscript, MathField::Empty);
+                                let MathField::MathChar(character) = noad.nucleus else {
+                                    panic!("defined math symbol has a character nucleus")
+                                };
+                                Some((character.family, character.character))
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>());
+                if characters.len() == 2 {
+                    assert_eq!(characters, [(1, 'a'), (3, 'b')]);
+                    assert_eq!(control.execution.modes.current_mode(), Mode::Math);
+                    return;
+                }
+            }
+            panic!("defined symbols failed to append their final noads");
+        });
+    }
+}

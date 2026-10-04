@@ -682,3 +682,16 @@ is reserved for values requiring it, so duplicate old scalar-annex encodings
 are rejected instead of retaining compatibility. Runtime word accounting,
 origin preservation, group edits, checkpoint rollback and explicit region
 copies retain their existing semantic contracts.
+
+## Native defined math symbols
+
+A `math_given` head already carries its complete math code. The native
+terminal consumer reads that packed operand and appends the final noad using
+the existing `append_math_char` authority. It does not construct a command
+record or a scalar scanner request. The observed dispatcher shares the same
+append operation after its actual report boundary. Non-math mode retains
+missing-dollar recovery, and alignment, tracked-region and pending page
+boundaries use the existing declined-delivery path. The scanner's redundant
+`MathCharGiven` request construction is deleted; actual numeric `mathchar`
+operands still use their real scanner result. Family selection, class-7
+`fam` handling, spelling origin and full checkpoint ownership are unchanged.
