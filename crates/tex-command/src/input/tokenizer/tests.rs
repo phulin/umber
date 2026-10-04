@@ -357,7 +357,8 @@ fn rejected_control_word_superscript_probe_does_not_publish_or_retain_an_edit() 
     );
     let line = match command.input.levels.top_source() {
         Some(source) => source
-            .slot
+            .source_slot()
+            .expect("source input")
             .cursor
             .line
             .as_ref()

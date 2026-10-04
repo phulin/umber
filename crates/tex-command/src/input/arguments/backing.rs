@@ -349,19 +349,28 @@ impl<G> ArgumentArena<G> {
             };
         }
         let mut retained = false;
-        if let Some(super::super::InputLevel::Resident(row)) = rows.last()
+        if let Some(
+            row @ super::super::InputLevel {
+                storage:
+                    super::super::InputStorage::List(_)
+                    | super::super::InputStorage::StoredList(_)
+                    | super::super::InputStorage::MacroBody(_)
+                    | super::super::InputStorage::MacroArgument { .. },
+                ..
+            },
+        ) = rows.last()
             && row.frame.position() != 0
         {
             let at = row.frame.position() - 1;
             match &row.storage {
-                super::super::ResidentTokenStorage::MacroBody(source)
+                super::super::InputStorage::MacroBody(source)
                     if word.origin() == tex_state::token::OriginId::UNKNOWN
                         && source.body.word(at as usize) == Some(word.token_word()) =>
                 {
                     self.extend_definition(writer.region, &source.body, at, 1)?;
                     retained = true;
                 }
-                super::super::ResidentTokenStorage::MacroArgument { region, slot }
+                super::super::InputStorage::MacroArgument { region, slot }
                     if self.words(*region, *slot - 1).get(at as usize) == Some(word) =>
                 {
                     self.extend_region(writer.region, *region, *slot - 1, at, 1)?;

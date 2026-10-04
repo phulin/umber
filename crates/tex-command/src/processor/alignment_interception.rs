@@ -5,7 +5,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use crate::AlignmentDeliveryEvent;
 use crate::command::CurrentCommand;
 use crate::error::CommandError;
-use crate::input::{InputLevel, RetirementBehavior, TokenBehavior};
+use crate::input::{RetirementBehavior, TokenBehavior};
 use crate::observation::{AlignmentRecord, CommandObservation};
 
 use super::CommandProcessor;
@@ -105,24 +105,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // `loc=null`. A live token either in the v-template itself or in
             // an interposed token-list frame is the canonical interwoven-
             // preamble fatal path, not an internal Rust invariant failure.
-            match level {
-                level @ InputLevel::Resident(row) => {
-                    let cursor = row;
-                    if level.stored_is_exhausted() != Some(true) {
-                        break;
-                    }
-                    if cursor.identity() == v_level
-                        && matches!(cursor.behavior(), TokenBehavior::VTemplate)
-                        && matches!(
-                            cursor.retirement(),
-                            RetirementBehavior::AwaitingVTemplateRetirement
-                        )
-                    {
-                        found = true;
-                        break;
-                    }
-                }
-                InputLevel::Source(_) => break,
+            if level.stored_is_exhausted() != Some(true) {
+                break;
+            }
+            if level.identity() == v_level
+                && matches!(level.behavior(), TokenBehavior::VTemplate)
+                && level.retirement() == RetirementBehavior::AwaitingVTemplateRetirement
+            {
+                found = true;
+                break;
             }
         }
         if !found {

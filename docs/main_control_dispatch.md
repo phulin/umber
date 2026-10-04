@@ -623,7 +623,7 @@ Observed treatment and genuine undefined, end-template or alignment demands keep
 
 ## Resident frame construction
 
-Every resident input row stores its actual packed frame directly beside its token storage. The one-field TokenRowHeader wrapper and its constructor are deleted. Behavior and retirement projections belong to the resident row; checkpoints copy the native frame, and source/input cursors access it directly. There is no replacement header type or compatibility accessor.
+Every input level stores its actual packed frame directly beside its storage union. TokenRowHeader and the source/resident row wrappers are deleted. Common identity, source context and token behavior/retirement projections belong to the authoritative level; checkpoints copy the native frame, and source/input cursors access it directly. There is no replacement header type or compatibility accessor.
 
 The public packed-token frame constructor is a small checked field initializer and is inlined across crate boundaries. A macro's constant frame kind, flags and zero position can then be written into its final row, rather than calling a generic constructor and copying its temporary return through additional stack locations. Frame bounds, source context, identities, retirement and peak-use accounting remain authoritative.
 
@@ -638,3 +638,11 @@ The existing input context epoch changes only when source owners are rebound, ch
 Font validation determines its actual failure once before rendering error context. Successful validation allocates no diagnostic string; a failure renders while command input is still live, publishes earlier effects at the existing barrier, and reports that same failure without rescanning fonts.
 
 Math lowering borrows the actual command state for its synchronous error reports. The detached MathConversionErrorContext string wrapper and eager copies are deleted. Inline, display and equation-number conversion do not mutate command input during lowering; undefined-family reports render the borrowed input only at their error boundary. Display packing uses the existing live execution diagnostic context, preserving line scalars and report chronology without pre-rendering source text. No diagnostic owner survives the synchronous conversion or crosses its following input scan or group unwind.
+
+## One authoritative input row
+
+Each input level owns one packed frame and one InputStorage union. That union directly distinguishes a boxed source slot, an immutable macro body, a borrowed macro argument, a durable list and stack-owned token words. The outer source/resident union, separate SourceLevel and ResidentTokenRow wrappers, ResidentTokenStorage and the temporary ResidentSourceTop are deleted. No substitute row wrapper or compatibility type remains.
+
+The frame supplies common identity, cursor, bounds, source context and retirement facts. SourceSlot owns the actual variable source state and accepts the real frame when advancing or committing its cursor. Native reading selects the storage once; it does not classify a source/resident wrapper before selecting the backing. Macro bodies retain their actual immutable definition owner and final argument region until semantic retirement.
+
+Source and token retirement retain their existing chronology, bounds, peak usage and replay-completion owners. Full checkpoints copy the common frame, actual source slot or durable/traced words; active macro bodies and argument regions remain excluded. Diagnostics render the actual row and source slot, and native source context remains a direct top-frame projection. The change adds no per-word counter, cached source owner, separate input cursor or successful cleanup stage.

@@ -30,7 +30,7 @@ use tex_state::CommandContext;
 
 use crate::{CommandError, CommandFuel, CommandHostContext, CommandState};
 
-use crate::input::{BorrowedSourceCharacterRun, InputLevel, InputLevelId, input_level_identity};
+use crate::input::{BorrowedSourceCharacterRun, InputLevel, InputLevelId, InputStorage};
 
 use crate::observation::CommandObserver;
 
@@ -366,17 +366,26 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return (0, 0);
         };
         let position = match level {
-            InputLevel::Source(source) => source
-                .slot
+            source @ InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            } => source
+                .source_slot()
+                .expect("source input")
                 .cursor
                 .line
                 .as_ref()
-                .map_or(source.slot.cursor.next_physical_offset, |line| {
-                    line.cursor.byte_cursor
-                }),
-            InputLevel::Resident(row) => u64::from(row.frame.position()),
+                .map_or(
+                    source
+                        .source_slot()
+                        .expect("source input")
+                        .cursor
+                        .next_physical_offset,
+                    |line| line.cursor.byte_cursor,
+                ),
+            row => u64::from(row.frame.position()),
         };
-        (input_level_identity(level).0, position)
+        (level.identity().0, position)
     }
 
     /// Captures TeX82 §82's `show_context` while this processor still owns
@@ -446,10 +455,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .iter()
             .rev()
             .find_map(|level| match level {
-                crate::input::InputLevel::Resident(crate::input::ResidentTokenRow {
-                    storage: crate::input::ResidentTokenStorage::MacroBody(body),
+                crate::input::InputLevel {
+                    storage: crate::input::InputStorage::MacroBody(body),
                     ..
-                }) => Some(body.invocation),
+                } => Some(body.invocation),
                 _ => None,
             })
     }

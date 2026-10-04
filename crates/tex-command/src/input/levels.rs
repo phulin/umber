@@ -99,15 +99,11 @@ pub(crate) fn packed_token_frame(
     )
 }
 
-/// One future-relevant input level.
-///
-/// Conditions, caches, scanner policy, and paragraph transitions cannot be
-/// represented here. Both character profiles use this same level structure.
+/// One authoritative input frame and its actual backing owner.
 #[derive(Debug, Eq, Hash, PartialEq)]
-#[repr(u8)]
-pub(crate) enum InputLevel<G> {
-    Source(SourceLevel<G>),
-    Resident(ResidentTokenRow<G>),
+pub(crate) struct InputLevel<G> {
+    pub(crate) frame: PackedInputFrame,
+    pub(crate) storage: InputStorage<G>,
 }
 
 /// One macro activation: TeX82 §390's `macro` token list.
@@ -121,28 +117,6 @@ pub(crate) struct MacroBodyCursor<G> {
     /// Sole owner of the invocation's final argument words, if parameterized.
     pub(crate) argument_region: Option<super::ArgumentRegionId>,
     pub(crate) body: tex_state::ResidentMacroBody<G>,
-}
-
-/// One registered-source level and its exact delivery identity.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct SourceLevel<G> {
-    pub(crate) frame: PackedInputFrame,
-    /// Sole owner of all variable source state. Boxing keeps the row small;
-    /// the resident lexer reaches the owner through one pointer.
-    pub(crate) slot: Box<SourceSlot<G>>,
-}
-
-impl<G> SourceLevel<G> {
-    pub(crate) fn identity(&self) -> InputLevelId {
-        InputLevelId(self.frame.identity())
-    }
-
-    fn checkpoint_copy(&self) -> Self {
-        Self {
-            frame: self.frame,
-            slot: Box::new(self.slot.checkpoint_copy()),
-        }
-    }
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
@@ -252,16 +226,11 @@ impl<G> MacroBodyCursor<G> {
     }
 }
 
-/// A token-backed input row owns its native frame and actual token storage.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ResidentTokenRow<G> {
-    pub(crate) frame: PackedInputFrame,
-    pub(crate) storage: ResidentTokenStorage<G>,
-}
-
 /// What a token-list row owns of the input stack's words.
 #[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) enum ResidentTokenStorage<G> {
+pub(crate) enum InputStorage<G> {
+    /// Sole owner of variable external source state.
+    Source(Box<SourceSlot<G>>),
     /// Owns `[frame.start(), frame.start() + frame.limit())`.
     List(PackedTokenOwnership),
     /// Reads one generation-durable immutable list without materializing it.
@@ -276,7 +245,7 @@ pub(crate) enum ResidentTokenStorage<G> {
     },
 }
 
-impl<G> ResidentTokenRow<G> {
+impl<G> InputLevel<G> {
     pub(crate) fn identity(&self) -> InputLevelId {
         InputLevelId(self.frame.identity())
     }
@@ -351,11 +320,11 @@ impl<G> ResidentTokenRow<G> {
         self.frame.set_flags(flags);
     }
 
-    pub(crate) fn trace(&self) -> ReplayTrace {
-        match self.frame.kind() {
+    pub(crate) fn trace(&self) -> Option<ReplayTrace> {
+        Some(match self.frame.kind() {
             InputFrameKind::Parameter => ReplayTrace::MacroParameter {
                 slot: match self.storage {
-                    ResidentTokenStorage::MacroArgument { slot, .. } => slot,
+                    InputStorage::MacroArgument { slot, .. } => slot,
                     _ => 0,
                 },
             },
@@ -380,89 +349,54 @@ impl<G> ResidentTokenRow<G> {
             InputFrameKind::Mark => ReplayTrace::Stored(StoredReplayReason::Mark),
             InputFrameKind::Write => ReplayTrace::Stored(StoredReplayReason::Write),
             InputFrameKind::UmberReplay => ReplayTrace::Stored(StoredReplayReason::Discretionary),
-            InputFrameKind::Source => unreachable!("resident row cannot be a source"),
-        }
+            InputFrameKind::Source => return None,
+        })
     }
 }
 
 impl<G> InputLevel<G> {
-    pub(crate) fn trace(&self) -> Option<ReplayTrace> {
-        match self {
-            Self::Resident(row) => Some(row.trace()),
-            Self::Source(_) => None,
-        }
-    }
-
-    #[cfg(test)] // Macro and input lifecycle tests inspect the resident row.
-    pub(crate) fn macro_body(&self) -> Option<&MacroBodyCursor<G>> {
-        match self {
-            Self::Resident(ResidentTokenRow {
-                storage: ResidentTokenStorage::MacroBody(body),
-                ..
-            }) => Some(body),
+    pub(crate) fn source_slot(&self) -> Option<&SourceSlot<G>> {
+        match &self.storage {
+            InputStorage::Source(slot) => Some(slot),
             _ => None,
         }
     }
-
-    /// Copies frame coordinates and retains any immutable span owner. The
-    /// aggregate capture also copies transient words these rows reference.
+    #[cfg(test)]
+    pub(crate) fn macro_body(&self) -> Option<&MacroBodyCursor<G>> {
+        match &self.storage {
+            InputStorage::MacroBody(body) => Some(body),
+            _ => None,
+        }
+    }
+    /// Copies the actual frame and admitted checkpoint owners.
     pub(super) fn checkpoint_copy(&self) -> Self {
-        match self {
-            Self::Source(level) => Self::Source(level.checkpoint_copy()),
-            Self::Resident(row) => Self::Resident(ResidentTokenRow {
-                frame: row.frame,
-                storage: match &row.storage {
-                    ResidentTokenStorage::List(ownership) => ResidentTokenStorage::List(*ownership),
-                    ResidentTokenStorage::StoredList(list) => {
-                        ResidentTokenStorage::StoredList(list.clone())
-                    }
-                    ResidentTokenStorage::MacroBody(_)
-                    | ResidentTokenStorage::MacroArgument { .. } => {
-                        unreachable!("named checkpoints exclude macro input")
-                    }
-                },
-            }),
+        Self {
+            frame: self.frame,
+            storage: match &self.storage {
+                InputStorage::Source(slot) => {
+                    InputStorage::Source(Box::new(slot.checkpoint_copy()))
+                }
+                InputStorage::List(ownership) => InputStorage::List(*ownership),
+                InputStorage::StoredList(list) => InputStorage::StoredList(list.clone()),
+                InputStorage::MacroBody(_) | InputStorage::MacroArgument { .. } => {
+                    unreachable!("named checkpoints exclude macro input")
+                }
+            },
         }
     }
-
-    pub(crate) fn stored_common(&self) -> Option<&ResidentTokenRow<G>> {
-        match self {
-            Self::Resident(row) => Some(row),
-            Self::Source(_) => None,
-        }
-    }
-
-    pub(crate) fn stored_common_mut(&mut self) -> Option<&mut ResidentTokenRow<G>> {
-        match self {
-            Self::Resident(row) => Some(row),
-            Self::Source(_) => None,
-        }
-    }
-
-    /// Tests a token-list row's `loc=null` condition.
+    /// Tests a token-list row's loc=null condition; source exhaustion is lexical.
     pub(crate) fn stored_is_exhausted(&self) -> Option<bool> {
-        self.stored_common()
-            .map(|header| header.frame.position() >= header.frame.limit())
+        (!matches!(self.storage, InputStorage::Source(_)))
+            .then_some(self.frame.position() >= self.frame.limit())
     }
-
-    /// External source context inherited when this semantic input row became
-    /// visible. Source owners remain exclusively in `InputStack`; this is the
-    /// compact execution fact delivered commands need for checkpoint origin.
     pub(crate) const fn source_context(&self) -> Option<tex_state::packed_input::SourceContext> {
-        match self {
-            Self::Source(source) => source.frame.source_context(),
-            Self::Resident(tokens) => tokens.frame.source_context(),
-        }
+        self.frame.source_context()
     }
-
     pub(crate) fn set_source_context(
         &mut self,
         source: Option<tex_state::packed_input::SourceContext>,
     ) {
-        match self {
-            Self::Source(level) => level.frame.set_source_context(source),
-            Self::Resident(tokens) => tokens.frame.set_source_context(source),
-        }
+        self.frame.set_source_context(source);
     }
 }
 
@@ -500,7 +434,7 @@ pub(crate) trait PackedTokenSpanSource<G> {
         self,
         words: &mut Vec<TracedTokenWord>,
         sources: TokenSources<'_, G>,
-    ) -> ResidentTokenStorage<G>;
+    ) -> InputStorage<G>;
 }
 
 /// The escaping inserted list `scan_toks` collected at the end of
@@ -515,22 +449,18 @@ impl<G> PackedTokenSpanSource<G> for PendingInsertion {
         self,
         words: &mut Vec<TracedTokenWord>,
         sources: TokenSources<'_, G>,
-    ) -> ResidentTokenStorage<G> {
+    ) -> InputStorage<G> {
         let start = self.start as usize;
         words.extend_from_slice(&sources.pending_insertions[start..]);
         sources.pending_insertions.truncate(start);
-        ResidentTokenStorage::List(PackedTokenOwnership::Transient)
+        InputStorage::List(PackedTokenOwnership::Transient)
     }
 }
 
 impl<G> PackedTokenSpanSource<G> for tex_state::TokenListView<G> {
     #[inline]
-    fn admit(
-        self,
-        _: &mut Vec<TracedTokenWord>,
-        _: TokenSources<'_, G>,
-    ) -> ResidentTokenStorage<G> {
-        ResidentTokenStorage::StoredList(self.into_id())
+    fn admit(self, _: &mut Vec<TracedTokenWord>, _: TokenSources<'_, G>) -> InputStorage<G> {
+        InputStorage::StoredList(self.into_id())
     }
 }
 
@@ -539,7 +469,7 @@ impl<G> PackedTokenSpanSource<G> for AttemptTokenListId {
         self,
         words: &mut Vec<TracedTokenWord>,
         sources: TokenSources<'_, G>,
-    ) -> ResidentTokenStorage<G> {
+    ) -> InputStorage<G> {
         words.extend(
             sources
                 .attempt
@@ -552,19 +482,15 @@ impl<G> PackedTokenSpanSource<G> for AttemptTokenListId {
             .attempt
             .discard_token_list(self)
             .expect("admitted attempt list consumed");
-        ResidentTokenStorage::List(PackedTokenOwnership::Stored)
+        InputStorage::List(PackedTokenOwnership::Stored)
     }
 }
 
 impl<G> PackedTokenSpanSource<G> for TracedTokenWord {
     #[inline]
-    fn admit(
-        self,
-        words: &mut Vec<TracedTokenWord>,
-        _: TokenSources<'_, G>,
-    ) -> ResidentTokenStorage<G> {
+    fn admit(self, words: &mut Vec<TracedTokenWord>, _: TokenSources<'_, G>) -> InputStorage<G> {
         words.push(self);
-        ResidentTokenStorage::List(PackedTokenOwnership::BackedUp)
+        InputStorage::List(PackedTokenOwnership::BackedUp)
     }
 }
 
@@ -573,13 +499,9 @@ pub(crate) struct TracedReplaySeed<I> {
     ownership: PackedTokenOwnership,
 }
 impl<G, I: Iterator<Item = TracedTokenWord>> PackedTokenSpanSource<G> for TracedReplaySeed<I> {
-    fn admit(
-        self,
-        words: &mut Vec<TracedTokenWord>,
-        _: TokenSources<'_, G>,
-    ) -> ResidentTokenStorage<G> {
+    fn admit(self, words: &mut Vec<TracedTokenWord>, _: TokenSources<'_, G>) -> InputStorage<G> {
         words.extend(self.tokens);
-        ResidentTokenStorage::List(self.ownership)
+        InputStorage::List(self.ownership)
     }
 }
 
@@ -587,13 +509,9 @@ pub(crate) struct SemanticReplaySeed<'a> {
     words: &'a [TokenWord],
 }
 impl<G> PackedTokenSpanSource<G> for SemanticReplaySeed<'_> {
-    fn admit(
-        self,
-        words: &mut Vec<TracedTokenWord>,
-        _: TokenSources<'_, G>,
-    ) -> ResidentTokenStorage<G> {
+    fn admit(self, words: &mut Vec<TracedTokenWord>, _: TokenSources<'_, G>) -> InputStorage<G> {
         push_untraced_words(words, self.words);
-        ResidentTokenStorage::List(PackedTokenOwnership::Stored)
+        InputStorage::List(PackedTokenOwnership::Stored)
     }
 }
 
@@ -601,13 +519,9 @@ pub(crate) struct BackedReplaySeed<I> {
     tokens: I,
 }
 impl<G, I: Iterator<Item = BackedUpToken>> PackedTokenSpanSource<G> for BackedReplaySeed<I> {
-    fn admit(
-        self,
-        words: &mut Vec<TracedTokenWord>,
-        _: TokenSources<'_, G>,
-    ) -> ResidentTokenStorage<G> {
+    fn admit(self, words: &mut Vec<TracedTokenWord>, _: TokenSources<'_, G>) -> InputStorage<G> {
         words.extend(self.tokens.map(|token| token.spelling));
-        ResidentTokenStorage::List(PackedTokenOwnership::BackedUp)
+        InputStorage::List(PackedTokenOwnership::BackedUp)
     }
 }
 
@@ -622,11 +536,11 @@ impl<G, I: Iterator<Item = OriginId>> PackedTokenSpanSource<G> for StoredReplayS
         mut self,
         words: &mut Vec<TracedTokenWord>,
         _: TokenSources<'_, G>,
-    ) -> ResidentTokenStorage<G> {
+    ) -> InputStorage<G> {
         words.extend(self.tokens.iter().map(|&token| {
             TracedTokenWord::pack(token, self.origins.next().unwrap_or(OriginId::UNKNOWN))
         }));
-        ResidentTokenStorage::List(PackedTokenOwnership::Stored)
+        InputStorage::List(PackedTokenOwnership::Stored)
     }
 }
 

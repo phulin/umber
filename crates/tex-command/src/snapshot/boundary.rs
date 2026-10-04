@@ -269,10 +269,20 @@ impl<G> CommandState<G> {
             .generation_owner()
             .expect("command capture generation was preflighted");
         let root_source_anchor = self.input.levels.iter().find_map(|level| {
-            let crate::input::InputLevel::Source(source) = level else {
+            let source @ crate::input::InputLevel {
+                storage: crate::input::InputStorage::Source(_),
+                ..
+            } = level
+            else {
                 return None;
             };
-            Some(source.slot.cursor.next_physical_offset)
+            Some(
+                source
+                    .source_slot()
+                    .expect("source input")
+                    .cursor
+                    .next_physical_offset,
+            )
         });
         let capture = self.roots.capture_checkpoint();
         let retained_owner_bytes = capture.retained_bytes();

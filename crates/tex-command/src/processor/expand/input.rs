@@ -2,8 +2,8 @@
 
 use super::ReadSite;
 use crate::input::{
-    InputLevel, InputLevelId, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
-    ResidentSourceTop, SourceNameClass,
+    InputLevel, InputLevelId, InputStorage, ResidentBoundary, ResidentSourceAdvance,
+    ResidentSourceCharacterRun, SourceNameClass,
 };
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 use crate::processor::end_input::{RetirementHandoff, SourceExhaustionStatus};
@@ -36,26 +36,26 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let state = &mut *self.state;
         let profile = command_state.roots.profile;
         let force_eof_requested = command_state.roots.input.force_eof;
-        let InputLevel::Source(source) = &mut command_state.roots.input.levels.rows[resident_index]
+        let InputLevel {
+            frame,
+            storage: InputStorage::Source(slot),
+        } = &mut command_state.roots.input.levels.rows[resident_index]
         else {
             return Err(CommandError::input_invariant());
         };
-        let mut top = ResidentSourceTop { source };
-        let force_eof = top.force_eof(force_eof_requested);
+        let force_eof = slot.force_eof(force_eof_requested);
 
-        match top
-            .advance(profile, force_eof, state, create_control_sequences)
+        match slot
+            .advance(frame, profile, force_eof, state, create_control_sequences)
             .map_err(|()| CommandError::input_invariant())?
         {
             ResidentSourceAdvance::Delivered(word, origin, location) => {
-                let direct_source_line = top
-                    .source
-                    .slot
+                let direct_source_line = slot
                     .cursor
                     .line
                     .as_ref()
                     .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
-                self.pending_diagnostic_location = top.diagnostic_location(location);
+                self.pending_diagnostic_location = slot.diagnostic_location(location);
                 finish(
                     self,
                     word,
@@ -97,18 +97,20 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let fuel = &mut *self.fuel;
         let diagnostic_effects = &mut *self.diagnostic_effects;
         let execution = &mut self.host.facts;
-        let InputLevel::Source(source) = &mut command_state.roots.input.levels.rows[resident_index]
+        let InputLevel {
+            frame,
+            storage: InputStorage::Source(slot),
+        } = &mut command_state.roots.input.levels.rows[resident_index]
         else {
             return Err(CommandError::input_invariant());
         };
-        let mut top = ResidentSourceTop { source };
         if !command_state.delivery_mode.allows_character_run()
             || state.int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS) > 1
         {
             return Ok(None);
         }
 
-        if let Some(mut run) = top
+        if let Some(mut run) = slot
             .borrow_character_run()
             .map_err(|()| CommandError::input_invariant())?
         {
@@ -156,9 +158,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     // until the consumer has accepted this byte.
                     return Ok(Some(0));
                 }
-                top.commit_character_run(1)
+                slot.commit_character_run(frame, 1)
                     .map_err(|()| CommandError::input_invariant())?;
-                if let Some(location) = top.current_diagnostic_location() {
+                if let Some(location) = slot.current_diagnostic_location() {
                     command_state.set_last_diagnostic_location(Some(location));
                 }
                 #[cfg(feature = "profiling")]
@@ -175,9 +177,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             if count != 0 {
                 let count = u32::try_from(count).map_err(|_| CommandError::input_invariant())?;
                 fuel.charge_run(count)?;
-                top.commit_character_run(usize::try_from(count).expect("u32 fits usize"))
+                slot.commit_character_run(frame, usize::try_from(count).expect("u32 fits usize"))
                     .map_err(|()| CommandError::input_invariant())?;
-                if let Some(location) = top.current_diagnostic_location() {
+                if let Some(location) = slot.current_diagnostic_location() {
                     command_state.set_last_diagnostic_location(Some(location));
                 }
                 #[cfg(feature = "profiling")]
@@ -186,8 +188,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
         }
 
-        let run = top
-            .advance_character_run(state, |state, ch, origin| {
+        let run = slot
+            .advance_character_run(frame, state, |state, ch, origin| {
                 fuel.charge()?;
                 Ok(consume
                     .admit(
@@ -203,7 +205,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         match run {
             ResidentSourceCharacterRun::Unavailable => Ok(None),
             ResidentSourceCharacterRun::Consumed { count } => {
-                if let Some(location) = top.current_diagnostic_location() {
+                if let Some(location) = slot.current_diagnostic_location() {
                     command_state.set_last_diagnostic_location(Some(location));
                 }
                 #[cfg(feature = "profiling")]
@@ -212,7 +214,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
             ResidentSourceCharacterRun::Failed { count, error } => {
                 if count != 0 {
-                    if let Some(location) = top.current_diagnostic_location() {
+                    if let Some(location) = slot.current_diagnostic_location() {
                         command_state.set_last_diagnostic_location(Some(location));
                     }
                     #[cfg(feature = "profiling")]
@@ -254,35 +256,35 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         };
         if matches!(
             self.command.roots.input.levels.rows[index],
-            InputLevel::Source(_)
+            InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            }
         ) {
             return self.advance_source_token(index, create_control_sequences, finish);
         }
         let levels = &mut self.command.roots.input.levels;
-        let InputLevel::Resident(row) = &mut levels.rows[index] else {
-            return Err(CommandError::input_invariant());
-        };
+        let row = &mut levels.rows[index];
         let frame = &mut row.frame;
         if frame.position() < frame.limit() {
             let position = frame.start() as usize + frame.position() as usize;
             let word = match &row.storage {
-                crate::input::ResidentTokenStorage::MacroBody(body) => {
+                InputStorage::Source(_) => None,
+                crate::input::InputStorage::MacroBody(body) => {
                     body.body.definition_words().get(position).copied()
                 }
-                crate::input::ResidentTokenStorage::StoredList(list) => {
-                    list.words().get(position).copied()
-                }
-                crate::input::ResidentTokenStorage::List(_) => {
+                crate::input::InputStorage::StoredList(list) => list.words().get(position).copied(),
+                crate::input::InputStorage::List(_) => {
                     levels.words.get(position).map(|word| word.token_word())
                 }
-                crate::input::ResidentTokenStorage::MacroArgument { .. } => None,
+                crate::input::InputStorage::MacroArgument { .. } => None,
             }
             .ok_or_else(CommandError::input_invariant)?;
             let slot = word
                 .out_parameter_slot()
                 .ok_or_else(CommandError::input_invariant)?;
             let (region, span) = match &row.storage {
-                crate::input::ResidentTokenStorage::MacroBody(body) => (
+                crate::input::InputStorage::MacroBody(body) => (
                     body.argument_region,
                     body.argument_len(&levels.arguments, slot),
                 ),
@@ -376,7 +378,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .input
                     .levels
                     .last()
-                    .and_then(|level| level.stored_common())
+                    .filter(|level| !matches!(level.storage, InputStorage::Source(_)))
                     .is_some_and(|cursor| cursor.identity() == identity)
                 {
                     return Err(CommandError::input_invariant());

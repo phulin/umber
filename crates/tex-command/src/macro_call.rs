@@ -266,8 +266,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     control_sequence: self.state.resolve(macro_name).to_owned(),
                     argument_count: parameter_count as u8,
                     token_count: match self.command.input.levels.rows.last() {
-                        Some(crate::input::InputLevel::Resident(row)) => match &row.storage {
-                            crate::input::ResidentTokenStorage::MacroBody(body) => body
+                        Some(
+                            row @ crate::input::InputLevel {
+                                storage:
+                                    crate::input::InputStorage::List(_)
+                                    | crate::input::InputStorage::StoredList(_)
+                                    | crate::input::InputStorage::MacroBody(_)
+                                    | crate::input::InputStorage::MacroArgument { .. },
+                                ..
+                            },
+                        ) => match &row.storage {
+                            crate::input::InputStorage::MacroBody(body) => body
                                 .argument_values(&self.command.input.levels.arguments)
                                 .iter()
                                 .map(|span| u64::from(span.len()))
@@ -362,11 +371,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .iter()
             .rev()
             .take_while(|level| {
-                matches!(level, crate::input::InputLevel::Resident(row)
+                matches!(level, row @ crate::input::InputLevel { storage: crate::input::InputStorage::List(_) | crate::input::InputStorage::StoredList(_) | crate::input::InputStorage::MacroBody(_) | crate::input::InputStorage::MacroArgument { .. }, .. }
                     if !matches!(row.behavior(), crate::input::TokenBehavior::VTemplate)
                         && level.stored_is_exhausted() == Some(true))
             })
-            .any(|level| crate::input::input_level_identity(level) == owner)
+            .any(|level| level.identity() == owner)
     }
 
     /// TeX82 §392's `end_match` branch for an ordinary unobserved macro.

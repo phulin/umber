@@ -17,7 +17,7 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::CommandError;
 use crate::command::CurrentCommand;
-use crate::input::InputLevel;
+use crate::input::{InputLevel, InputStorage};
 
 use super::{
     AlignmentLookahead, CommandProcessor, DeliveryStatus, MainCharacterConsumer, MainCharacterInput,
@@ -794,11 +794,19 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     <= 1;
             #[cfg(feature = "profiling")]
             let kind = match self.command.roots.input.levels.rows.last() {
-                Some(crate::input::InputLevel::Resident(row))
-                    if matches!(
-                        row.storage,
-                        crate::input::ResidentTokenStorage::MacroArgument { .. }
-                    ) =>
+                Some(
+                    row @ crate::input::InputLevel {
+                        storage:
+                            crate::input::InputStorage::List(_)
+                            | crate::input::InputStorage::StoredList(_)
+                            | crate::input::InputStorage::MacroBody(_)
+                            | crate::input::InputStorage::MacroArgument { .. },
+                        ..
+                    },
+                ) if matches!(
+                    row.storage,
+                    crate::input::InputStorage::MacroArgument { .. }
+                ) =>
                 {
                     crate::fuel::RawDeliveryKind::MacroArgument
                 }
@@ -860,17 +868,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .levels
                     .rows
                     .last()
-                    .is_none_or(|row| match row {
-                        InputLevel::Resident(row) => row.frame.position() >= row.frame.limit(),
-                        InputLevel::Source(_) => false,
-                    })
+                    .is_none_or(|row| row.stored_is_exhausted() == Some(true))
             {
                 return Ok(DeliveryStatus::CharacterRun);
             }
             if let Some(index) = self.command.roots.input.levels.rows.len().checked_sub(1)
                 && matches!(
                     self.command.roots.input.levels.rows[index],
-                    InputLevel::Source(_)
+                    InputLevel {
+                        storage: InputStorage::Source(_),
+                        ..
+                    }
                 )
                 && self
                     .advance_source_character_step(index, consume)?

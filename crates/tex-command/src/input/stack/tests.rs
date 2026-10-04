@@ -286,12 +286,13 @@ fn firmed_line_replacement_owner_survives_candidate_rollback() {
             .expect("source transition")
             .expect("physical line");
         assert_eq!(state.input.levels.occupied_source_buffer_slots(), 4);
-        let slot = &*state
+        let slot = state
             .input
             .levels
             .top_source()
             .expect("source remains live")
-            .slot;
+            .source_slot()
+            .expect("source input");
         assert_eq!(&*slot.cursor.current_backing().bytes, b"xy");
 
         let mut candidate = CommandState::fork_summary(state, &checkpoint, universe, universe)
@@ -299,12 +300,13 @@ fn firmed_line_replacement_owner_survives_candidate_rollback() {
         assert_eq!(candidate.input.levels.occupied_source_buffer_slots(), 0);
         candidate.reject_checkpoint_candidate();
         assert_eq!(candidate.input.levels.occupied_source_buffer_slots(), 4);
-        let slot = &*candidate
+        let slot = candidate
             .input
             .levels
             .top_source()
             .expect("replacement owner is restored")
-            .slot;
+            .source_slot()
+            .expect("source input");
         assert_eq!(&*slot.cursor.current_backing().bytes, b"xy");
     });
 }

@@ -124,7 +124,7 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
     // `checkpoint_copy` methods. Between boundaries input mutation writes no
     // undo record, row marker, or owner journal.
     assert!(history.contains("fn checkpoint_copy"));
-    assert!(levels.contains("slot: Box<SourceSlot<G>>"));
+    assert!(levels.contains("Source(Box<SourceSlot<G>>)"));
     for retired in [
         "enum InputUndo",
         "RowRollbackMarker",

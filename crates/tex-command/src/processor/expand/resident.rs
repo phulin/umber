@@ -1,7 +1,7 @@
 //! Direct, consumer-selected reads of the authoritative input frame.
 
 use super::ReadSite;
-use crate::input::{InputLevel, ResidentTokenStorage};
+use crate::input::InputStorage;
 use crate::{CommandError, CommandProcessor};
 use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
@@ -14,10 +14,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(true);
         }
         let levels = &self.command.roots.input.levels;
-        let Some(InputLevel::Resident(row)) = levels.rows.last() else {
+        let Some(row) = levels.rows.last() else {
             return Ok(false);
         };
-        let ResidentTokenStorage::MacroBody(body) = &row.storage else {
+        let InputStorage::MacroBody(body) = &row.storage else {
             return Ok(false);
         };
         if row.frame.position() >= row.frame.limit()
@@ -70,9 +70,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let Some(row) = levels.rows.last_mut() else {
             return Ok(None);
         };
-        let InputLevel::Resident(row) = row else {
-            return Ok(None);
-        };
         let frame = &mut row.frame;
         if frame.position() >= frame.limit() {
             return Ok(None);
@@ -81,9 +78,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
         );
         let kind = match row.storage {
-            ResidentTokenStorage::MacroArgument { .. } => {
-                crate::fuel::RawDeliveryKind::MacroArgument
-            }
+            InputStorage::MacroArgument { .. } => crate::fuel::RawDeliveryKind::MacroArgument,
             _ => crate::fuel::RawDeliveryKind::StoredToken,
         };
         macro_rules! consume_run {
@@ -123,15 +118,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }};
         }
         let (word, origin) = match &row.storage {
-            ResidentTokenStorage::MacroBody(body) => consume_run!(
+            InputStorage::Source(_) => return Ok(None),
+            InputStorage::MacroBody(body) => consume_run!(
                 body.body.definition_words(),
                 |word| (word, OriginId::UNKNOWN),
                 true
             ),
-            ResidentTokenStorage::StoredList(list) => {
+            InputStorage::StoredList(list) => {
                 consume_run!(list.words(), |word| (word, OriginId::UNKNOWN), true)
             }
-            ResidentTokenStorage::MacroArgument { region, slot } => match levels
+            InputStorage::MacroArgument { region, slot } => match levels
                 .arguments
                 .words(*region, *slot - 1)
             {
@@ -144,7 +140,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     consume_run!(words, |word| (word, OriginId::UNKNOWN), false)
                 }
             },
-            _ => consume_run!(
+            InputStorage::List(_) => consume_run!(
                 &levels.words,
                 |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin()),
                 true

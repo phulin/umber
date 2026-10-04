@@ -333,11 +333,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         };
                         match result {
                             Ok(()) if etex => {
-                                linked = processor.command.input.levels.rows.last().map(|row| {
-                                    row.stored_common()
-                                        .expect("backup row has a header")
-                                        .identity()
-                                })
+                                linked = processor
+                                    .command
+                                    .input
+                                    .levels
+                                    .rows
+                                    .last()
+                                    .map(|row| row.identity())
                             }
                             Ok(()) => {}
                             Err(error) => failure = Some(error),

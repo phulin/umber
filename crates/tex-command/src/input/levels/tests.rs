@@ -1,10 +1,10 @@
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
-    BackedUpToken, BackupTreatment, InputLevelId, PackedTokenOwnership, PackedTokenSpanSource,
-    PendingInsertion, ReplayTrace, ResidentTokenRow, ResidentTokenStorage, RetirementBehavior,
-    StoredReplayReason, TokenBehavior, TokenSources, backed_up_replay, packed_token_frame,
-    stored_replay, transient_replay,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputStorage, PackedTokenOwnership,
+    PackedTokenSpanSource, PendingInsertion, ReplayTrace, RetirementBehavior, StoredReplayReason,
+    TokenBehavior, TokenSources, backed_up_replay, packed_token_frame, stored_replay,
+    transient_replay,
 };
 use crate::attempt::AttemptArena;
 
@@ -22,7 +22,7 @@ fn admit(
     source: impl PackedTokenSpanSource<()>,
     words: &mut Vec<TracedTokenWord>,
     pending: &mut Vec<TracedTokenWord>,
-) -> ResidentTokenStorage<()> {
+) -> InputStorage<()> {
     let mut attempt = AttemptArena::<()>::default();
     source.admit(
         words,
@@ -43,7 +43,7 @@ fn every_seed_appends_its_words_to_the_token_stack() {
             &mut words,
             &mut pending,
         ),
-        ResidentTokenStorage::List(PackedTokenOwnership::Transient)
+        InputStorage::List(PackedTokenOwnership::Transient)
     );
     assert_eq!(
         admit(
@@ -53,7 +53,7 @@ fn every_seed_appends_its_words_to_the_token_stack() {
             &mut words,
             &mut pending,
         ),
-        ResidentTokenStorage::List(PackedTokenOwnership::BackedUp)
+        InputStorage::List(PackedTokenOwnership::BackedUp)
     );
     let token = traced('d').semantic_token();
     assert_eq!(
@@ -62,7 +62,7 @@ fn every_seed_appends_its_words_to_the_token_stack() {
             &mut words,
             &mut pending,
         ),
-        ResidentTokenStorage::List(PackedTokenOwnership::Stored)
+        InputStorage::List(PackedTokenOwnership::Stored)
     );
     assert_eq!(
         words,
@@ -83,7 +83,7 @@ fn pending_insertion_moves_its_suffix_onto_the_stack() {
     let ownership = admit(PendingInsertion { start: 1 }, &mut words, &mut pending);
     assert_eq!(
         ownership,
-        ResidentTokenStorage::List(PackedTokenOwnership::Transient)
+        InputStorage::List(PackedTokenOwnership::Transient)
     );
     assert_eq!(words, [traced('s'), traced('x'), traced('y')]);
     assert_eq!(pending, [traced('p')], "the collected suffix is consumed");
@@ -98,9 +98,9 @@ fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
     assert_eq!(frame.position(), 0);
     assert_eq!(frame.start(), 3);
     let _ = frame.advance();
-    let row = ResidentTokenRow::<()> {
+    let row = InputLevel::<()> {
         frame,
-        storage: ResidentTokenStorage::List(PackedTokenOwnership::BackedUp),
+        storage: InputStorage::List(PackedTokenOwnership::BackedUp),
     };
 
     assert_eq!(row.position(), 1);
@@ -119,11 +119,11 @@ fn packed_omit_template_retains_its_trace_through_v_template_behavior() {
     let retirement = RetirementBehavior::RetainExhaustedVTemplate;
     let trace = ReplayTrace::OmitTemplate;
     let frame = packed_token_frame(InputLevelId(5), 0, 1, &behavior, retirement, &trace);
-    let row = ResidentTokenRow::<()> {
+    let row = InputLevel::<()> {
         frame,
-        storage: ResidentTokenStorage::List(PackedTokenOwnership::Transient),
+        storage: InputStorage::List(PackedTokenOwnership::Transient),
     };
 
     assert_eq!(row.behavior(), TokenBehavior::VTemplate);
-    assert_eq!(row.trace(), ReplayTrace::OmitTemplate);
+    assert_eq!(row.trace(), Some(ReplayTrace::OmitTemplate));
 }

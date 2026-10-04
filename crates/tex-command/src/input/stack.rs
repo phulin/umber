@@ -6,9 +6,9 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord};
 use super::MatchedArguments;
 
 use super::{
-    CompactSourceStepQueries, InputLevel, InputLevelId, ReplayTrace, ResidentTokenRow,
-    ResidentTokenStorage, RetirementBehavior, SourceControlSequenceKind, SourceNameClass,
-    StoredReplayReason, TokenBehavior,
+    CompactSourceStepQueries, InputLevel, InputLevelId, InputStorage, ReplayTrace,
+    RetirementBehavior, SourceControlSequenceKind, SourceNameClass, StoredReplayReason,
+    TokenBehavior,
 };
 
 /// Completed command-state outcome of one resident input transition.
@@ -157,7 +157,7 @@ impl<G> CommandState<G> {
         if state.tracked_region_is_active()
             && let Some(source) = self.input.levels.top_source()
         {
-            super::observe_immutable_source(state, source);
+            super::observe_immutable_source(state, source.source_slot().expect("source input"));
         }
         let physical = {
             let mut queries = LiveSourceQueries {
@@ -177,7 +177,7 @@ impl<G> CommandState<G> {
         if state.tracked_region_is_active()
             && let Some(source) = self.input.levels.top_source()
         {
-            super::observe_immutable_source(state, source);
+            super::observe_immutable_source(state, source.source_slot().expect("source input"));
         }
         Ok(physical)
     }
@@ -284,9 +284,11 @@ impl<G> CommandState<G> {
         observer: &mut Option<&mut dyn crate::CommandObserver>,
         immediate_write_retirement: &mut Option<InputLevelId>,
     ) -> Option<crate::CommandReplayEpisode> {
-        let InputLevel::Resident(row) = self.input.levels.resident_at(index) else {
-            unreachable!("resident coordinate selects a resident row");
-        };
+        let row = self.input.levels.resident_at(index);
+        assert!(
+            !matches!(row.storage, InputStorage::Source(_)),
+            "resident coordinate selects token input"
+        );
         let action = match row.retirement() {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
             RetirementBehavior::AwaitingVTemplateRetirement => {
@@ -299,7 +301,7 @@ impl<G> CommandState<G> {
         // The retirement reason names only the observer's record.
         let reason = observer
             .is_some()
-            .then(|| input_retirement_reason(&row.behavior(), &row.trace()));
+            .then(|| input_retirement_reason(&row.behavior(), &row.trace().expect("token input")));
         let identity = row.identity();
         self.input.levels.pop_resident(index);
         self.settle_resident_retirement(
@@ -319,30 +321,29 @@ impl<G> CommandState<G> {
     pub fn transient_dynamic_words(&self) -> usize {
         let arguments = self.input.levels.arguments.captured_word_len();
         self.input.levels.iter().fold(arguments, |words, level| {
-            let InputLevel::Resident(ResidentTokenRow { frame, storage }) = level else {
-                return words;
-            };
+            let InputLevel { frame, storage } = level;
             let owned = match storage {
-                ResidentTokenStorage::List(
+                InputStorage::Source(_) => 0,
+                InputStorage::List(
                     super::PackedTokenOwnership::Transient | super::PackedTokenOwnership::BackedUp,
                 ) => frame.limit(),
                 // The activation's live argument spans; its parameter text and
                 // replacement stand for TeX's shared definition list.
-                ResidentTokenStorage::MacroBody(body) => body
+                InputStorage::MacroBody(body) => body
                     .argument_values(&self.input.levels.arguments)
                     .iter()
                     .map(|span| span.len() as usize)
                     .sum::<usize>() as u32,
-                ResidentTokenStorage::StoredList(_) => 0,
-                ResidentTokenStorage::List(super::PackedTokenOwnership::Stored)
-                | ResidentTokenStorage::MacroArgument { .. } => 0,
+                InputStorage::StoredList(_) => 0,
+                InputStorage::List(super::PackedTokenOwnership::Stored)
+                | InputStorage::MacroArgument { .. } => 0,
             };
             words.saturating_add(owned as usize)
         })
     }
 
     pub(crate) fn top_input_level_identity(&self) -> Option<InputLevelId> {
-        self.input.levels.last().map(input_level_identity)
+        self.input.levels.last().map(InputLevel::identity)
     }
 
     /// Installs one complete macro activation and its replacement-body level:
@@ -381,15 +382,15 @@ impl<G> CommandState<G> {
             &ReplayTrace::MacroReplacement,
         );
         frame.set_source_context(source);
-        self.push_input_level(InputLevel::Resident(ResidentTokenRow {
+        self.push_input_level(InputLevel {
             frame,
-            storage: ResidentTokenStorage::MacroBody(super::MacroBodyCursor {
+            storage: InputStorage::MacroBody(super::MacroBodyCursor {
                 name,
                 invocation,
                 argument_region,
                 body,
             }),
-        }));
+        });
         identity
     }
 
@@ -433,10 +434,10 @@ impl<G> CommandState<G> {
             },
         );
         let len = match &storage {
-            ResidentTokenStorage::StoredList(list) => list.words().len(),
+            InputStorage::StoredList(list) => list.words().len(),
             _ => words.len() - start,
         };
-        let frame_start = if matches!(storage, ResidentTokenStorage::StoredList(_)) {
+        let frame_start = if matches!(storage, InputStorage::StoredList(_)) {
             0
         } else {
             start as u32
@@ -444,7 +445,7 @@ impl<G> CommandState<G> {
         let mut frame =
             super::packed_token_frame(identity, frame_start, len, &behavior, retirement, &trace);
         frame.set_source_context(source_context);
-        self.push_input_level(InputLevel::Resident(ResidentTokenRow { frame, storage }));
+        self.push_input_level(InputLevel { frame, storage });
         identity
     }
 
@@ -502,14 +503,14 @@ impl<G> CommandState<G> {
             .levels
             .last()
             .ok_or(InputRetirementError::NoInput)?;
-        let actual = input_level_identity(level);
+        let actual = level.identity();
         if actual != expected {
             return Err(InputRetirementError::LevelChanged { expected, actual });
         }
-        if let InputLevel::Resident(ResidentTokenRow {
-            storage: ResidentTokenStorage::MacroBody(_),
+        if let InputLevel {
+            storage: InputStorage::MacroBody(_),
             ..
-        }) = level
+        } = level
         {
             self.input.levels.pop_project(|_, _| ());
             return Ok(InputRetirement {
@@ -523,8 +524,12 @@ impl<G> CommandState<G> {
             });
         }
 
-        if let InputLevel::Source(source) = level {
-            let slot = &*source.slot;
+        if let source @ InputLevel {
+            storage: InputStorage::Source(_),
+            ..
+        } = level
+        {
+            let slot = source.source_slot().expect("source input");
             let name_class = slot.name_class;
             let source_id = slot.cursor.current_backing().id;
             let retirement = slot.retirement;
@@ -564,12 +569,20 @@ impl<G> CommandState<G> {
             });
         }
 
-        let InputLevel::Resident(row) = level else {
+        let row @ InputLevel {
+            storage:
+                InputStorage::List(_)
+                | InputStorage::StoredList(_)
+                | InputStorage::MacroBody(_)
+                | InputStorage::MacroArgument { .. },
+            ..
+        } = level
+        else {
             unreachable!("validated input top is source or resident");
         };
         let behavior = row.behavior();
         let retirement = row.retirement();
-        let reason = input_retirement_reason(&behavior, &row.trace());
+        let reason = input_retirement_reason(&behavior, &row.trace().expect("token input"));
         if retirement == RetirementBehavior::RetainExhaustedVTemplate {
             if !matches!(behavior, TokenBehavior::VTemplate) {
                 return Err(InputRetirementError::NotRetainedVTemplate);
@@ -624,12 +637,10 @@ impl<G> CommandState<G> {
     /// template, or a partially consumed source is still live.
     pub(crate) fn pop_input_level_at_end_of_job(&mut self) -> Option<InputRetirement> {
         let level = self.input.levels.last()?;
-        if let InputLevel::Resident(
-            row @ ResidentTokenRow {
-                storage: ResidentTokenStorage::MacroBody(_),
-                ..
-            },
-        ) = level
+        if let row @ InputLevel {
+            storage: InputStorage::MacroBody(_),
+            ..
+        } = level
         {
             let identity = row.identity();
             self.input.levels.pop_project(|_, _| ());
@@ -643,9 +654,13 @@ impl<G> CommandState<G> {
                 closes_file_frame: false,
             });
         }
-        if let InputLevel::Source(source) = level {
+        if let source @ InputLevel {
+            storage: InputStorage::Source(_),
+            ..
+        } = level
+        {
             let identity = source.identity();
-            let slot = &*source.slot;
+            let slot = source.source_slot().expect("source input");
             let name_class = slot.name_class;
             let source = slot.cursor.current_backing().id;
             let retirement = slot.retirement;
@@ -662,12 +677,20 @@ impl<G> CommandState<G> {
                 closes_file_frame: false,
             });
         }
-        let InputLevel::Resident(row) = level else {
+        let row @ InputLevel {
+            storage:
+                InputStorage::List(_)
+                | InputStorage::StoredList(_)
+                | InputStorage::MacroBody(_)
+                | InputStorage::MacroArgument { .. },
+            ..
+        } = level
+        else {
             unreachable!("input top is source or resident");
         };
         let identity = row.identity();
         let retirement = row.retirement();
-        let reason = input_retirement_reason(&row.behavior(), &row.trace());
+        let reason = input_retirement_reason(&row.behavior(), &row.trace().expect("token input"));
         self.input.levels.pop_project(|_, _| ());
         let action = match retirement {
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
@@ -709,9 +732,19 @@ impl<G> CommandState<G> {
             .iter()
             .rev()
             .find_map(|level| match level {
-                InputLevel::Resident(_) => None,
-                InputLevel::Source(source) => {
-                    let slot = &*source.slot;
+                InputLevel {
+                    storage:
+                        InputStorage::List(_)
+                        | InputStorage::StoredList(_)
+                        | InputStorage::MacroBody(_)
+                        | InputStorage::MacroArgument { .. },
+                    ..
+                } => None,
+                source @ InputLevel {
+                    storage: InputStorage::Source(_),
+                    ..
+                } => {
+                    let slot = source.source_slot().expect("source input");
                     Some(match slot.name_class {
                         SourceNameClass::File | SourceNameClass::Scantokens(_) => {
                             slot.cursor
@@ -889,13 +922,6 @@ impl<G> CompactSourceStepQueries for LiveSourceQueries<'_, '_, G> {
             }
         };
         TokenWord::pack(token)
-    }
-}
-
-pub(crate) fn input_level_identity<G>(level: &InputLevel<G>) -> InputLevelId {
-    match level {
-        InputLevel::Source(level) => level.identity(),
-        InputLevel::Resident(level) => level.identity(),
     }
 }
 

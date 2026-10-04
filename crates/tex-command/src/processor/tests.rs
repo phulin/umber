@@ -1112,12 +1112,13 @@ fn failed_source_map_registration_does_not_mark_cursor_registered() {
         }
         let after_acquisition = crate::input::source_registration_counters();
         assert_eq!(after_acquisition.calls - before.calls, 2);
-        let source = &*command
+        let source = command
             .input
             .levels
             .top_source()
             .expect("source remains live after its first token")
-            .slot;
+            .source_slot()
+            .expect("source input");
         assert!(!source.cursor.backing_registered);
 
         {
@@ -1510,7 +1511,8 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
         assert_eq!(processor.command.input.current_file_line_number(), 1);
         let first_line_number = match processor.command.input.levels.top_source() {
             Some(source) => source
-                .slot
+                .source_slot()
+                .expect("source input")
                 .cursor
                 .line
                 .as_ref()
@@ -1533,7 +1535,8 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
         assert_eq!(processor.command.input.current_file_line_number(), 1);
         let second_line_number = match processor.command.input.levels.top_source() {
             Some(source) => source
-                .slot
+                .source_slot()
+                .expect("source input")
                 .cursor
                 .line
                 .as_ref()

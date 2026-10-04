@@ -5,7 +5,9 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::command::CurrentCommand;
 use crate::error::CommandError;
 use crate::input::SourceNameClass;
-use crate::input::{InputLevel, ReplayTrace, RetirementBehavior, TokenBehavior, transient_replay};
+use crate::input::{
+    InputLevel, InputStorage, ReplayTrace, RetirementBehavior, TokenBehavior, transient_replay,
+};
 use crate::observation::{
     AlignmentRecord, CommandObservation, DiagnosticArgument, DiagnosticRecord, InputReason,
     InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
@@ -51,8 +53,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let delivered_by_read = command.is_direct_source_delivery()
             && matches!(
                 self.command.input.levels.last(),
-                Some(InputLevel::Source(source))
-                    if matches!(source.slot.name_class, SourceNameClass::ReadStream(_))
+                Some(source @ InputLevel { storage: InputStorage::Source(_), .. })
+                    if matches!(source.source_slot().expect("source input").name_class, SourceNameClass::ReadStream(_))
             );
         if !delivered_by_read {
             self.back_input(command.copy_for_backup())?;

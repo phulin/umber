@@ -11,7 +11,7 @@ use crate::input::InputState;
 #[cfg(test)]
 use crate::input::{CompactSourceStepQueries, CompactSourceTokenizationStep};
 use crate::input::{
-    InputLevel, InputLevelId, PhysicalLine, RegisteredSource, RegisteredSourceKind,
+    InputLevel, InputLevelId, InputStorage, PhysicalLine, RegisteredSource, RegisteredSourceKind,
     SourceCharacter, SourceCursor, SourceNameClass, SourceRegistration, SourceRegistrationError,
     SourceTokenizationStep,
 };
@@ -493,21 +493,20 @@ impl<G> CommandState<G> {
             .rev()
             .take(limit)
             .map(|level| match level {
-                InputLevel::Source(_) => "source",
-                level @ InputLevel::Resident(_) => {
-                    match level.trace().expect("resident row trace") {
-                        ReplayTrace::MacroReplacement => "macro-body",
-                        ReplayTrace::MacroParameter { .. } => "macro-argument",
-                        ReplayTrace::BackedUp => "backed-up",
-                        ReplayTrace::Inserted => "inserted",
-                        ReplayTrace::UTemplate => "alignment-u-template",
-                        ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => {
-                            "alignment-v-template"
-                        }
-                        ReplayTrace::Stored(_) => "stored-token-list",
-                        ReplayTrace::Transient(_) => "transient-token-list",
-                    }
-                }
+                InputLevel {
+                    storage: InputStorage::Source(_),
+                    ..
+                } => "source",
+                level => match level.trace().expect("resident row trace") {
+                    ReplayTrace::MacroReplacement => "macro-body",
+                    ReplayTrace::MacroParameter { .. } => "macro-argument",
+                    ReplayTrace::BackedUp => "backed-up",
+                    ReplayTrace::Inserted => "inserted",
+                    ReplayTrace::UTemplate => "alignment-u-template",
+                    ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => "alignment-v-template",
+                    ReplayTrace::Stored(_) => "stored-token-list",
+                    ReplayTrace::Transient(_) => "transient-token-list",
+                },
             })
             .collect();
         (self.input.levels.len(), tail)
@@ -574,10 +573,21 @@ impl<G> CommandState<G> {
     #[must_use]
     pub fn live_physical_root_source_id(&self) -> Option<tex_state::SourceId> {
         self.input.levels.iter().find_map(|level| {
-            let crate::input::InputLevel::Source(source) = level else {
+            let source @ crate::input::InputLevel {
+                storage: crate::input::InputStorage::Source(_),
+                ..
+            } = level
+            else {
                 return None;
             };
-            Some(source.slot.cursor.current_backing().id)
+            Some(
+                source
+                    .source_slot()
+                    .expect("source input")
+                    .cursor
+                    .current_backing()
+                    .id,
+            )
         })
     }
 
@@ -751,7 +761,7 @@ impl<G> CommandState<G> {
 
     pub(crate) fn output_retiring_source_context(
         &self,
-        source: &crate::input::SourceLevel<G>,
+        source: &crate::input::InputLevel<G>,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
         self.input.output_retiring_source_context(source, stores)
@@ -774,9 +784,7 @@ impl<G> CommandState<G> {
             matches!(
                 level,
                 level
-                    if level.stored_common().is_some_and(|_| {
-                        level.trace() == Some(ReplayTrace::Stored(StoredReplayReason::Write))
-                    })
+                    if level.trace() == Some(ReplayTrace::Stored(StoredReplayReason::Write))
             )
         })
     }
@@ -838,7 +846,7 @@ impl<G> CommandState<G> {
         self.input
             .levels
             .iter()
-            .any(|level| crate::input::input_level_identity(level) == episode.0)
+            .any(|level| level.identity() == episode.0)
     }
 
     /// Claims the completion boundary for an executor-requested stored level
@@ -1209,14 +1217,13 @@ impl<G> CommandState<G> {
     /// store capability.
     fn prove_endv_input_shape(&self, v_level: InputLevelId) -> Result<(), AlignmentLifecycleError> {
         let retained_v_template = |level: &InputLevel<G>| {
-            level.stored_common().is_some_and(|cursor| {
-                cursor.identity() == v_level
-                    && matches!(cursor.behavior(), TokenBehavior::VTemplate)
-                    && matches!(
-                        cursor.retirement(),
-                        RetirementBehavior::AwaitingVTemplateRetirement
-                    )
-            })
+            level.identity() == v_level
+                && matches!(
+                    level.frame.kind(),
+                    tex_state::packed_input::InputFrameKind::AlignmentVTemplate
+                        | tex_state::packed_input::InputFrameKind::OmitTemplate
+                )
+                && level.retirement() == RetirementBehavior::AwaitingVTemplateRetirement
         };
         let Some(top) = self.input.levels.last() else {
             return Err(AlignmentLifecycleError::VTemplateNotExhausted);
@@ -1226,12 +1233,12 @@ impl<G> CommandState<G> {
         }
         let exhausted_backed_up_endv = matches!(
             top,
-            InputLevel::Resident(row @ crate::input::ResidentTokenRow {
-                storage: crate::input::ResidentTokenStorage::List(
+            row @ crate::input::InputLevel {
+                storage: crate::input::InputStorage::List(
                     crate::input::PackedTokenOwnership::BackedUp
                 ),
                 ..
-            }) if matches!(row.behavior(), TokenBehavior::BackedUp(_))
+            } if matches!(row.behavior(), TokenBehavior::BackedUp(_))
                 && row.frame.position() >= row.frame.limit()
         );
         if exhausted_backed_up_endv
@@ -1517,12 +1524,20 @@ impl<G> CommandState<G> {
     #[must_use]
     pub fn live_file_framing_name(&self, source: tex_state::SourceId) -> Option<&str> {
         self.input.levels.iter().find_map(|level| {
-            let InputLevel::Source(level) = level else {
+            let level @ InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            } = level
+            else {
                 return None;
             };
-            let backing = level.slot.cursor.current_backing();
+            let backing = level
+                .source_slot()
+                .expect("source input")
+                .cursor
+                .current_backing();
             (backing.id == source
-                && level.slot.name_class == SourceNameClass::File
+                && level.source_slot().expect("source input").name_class == SourceNameClass::File
                 && backing.framing == crate::SourceFramingPolicy::Canonical)
                 .then(|| backing.framing_name.as_deref().or(backing.name.as_deref()))
                 .flatten()
@@ -1590,13 +1605,22 @@ impl<G> CommandState<G> {
         stores: &tex_state::CommandContext<'_, G>,
         source: InputLevelId,
     ) -> Option<InputLevelId> {
-        let InputLevel::Source(level) = self.input.levels.last()? else {
+        let level @ InputLevel {
+            storage: InputStorage::Source(_),
+            ..
+        } = self.input.levels.last()?
+        else {
             return None;
         };
         if level.identity() != source {
             return None;
         }
-        let every_eof = level.slot.every_eof.as_ref()?.clone();
+        let every_eof = level
+            .source_slot()
+            .expect("source input")
+            .every_eof
+            .as_ref()?
+            .clone();
         let retained_line = self
             .input
             .levels
@@ -1669,7 +1693,14 @@ impl<G> CommandState<G> {
             .iter()
             .rev()
             .find_map(|entry| match entry {
-                InputLevel::Source(source) => source.slot.open_depths.as_ref(),
+                source @ InputLevel {
+                    storage: InputStorage::Source(_),
+                    ..
+                } => source
+                    .source_slot()
+                    .expect("source input")
+                    .open_depths
+                    .as_ref(),
                 _ => None,
             })
     }
@@ -1685,10 +1716,26 @@ impl<G> CommandState<G> {
         #[cfg(test)]
         RETIREMENT_TOP_SOURCE_CHECKS.with(|checks| checks.set(checks.get().saturating_add(1)));
         self.input.levels.last().and_then(|entry| match entry {
-            InputLevel::Source(source) if source.identity() == identity => {
-                source.slot.open_depths.as_ref()
+            source @ InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            } if source.identity() == identity => source
+                .source_slot()
+                .expect("source input")
+                .open_depths
+                .as_ref(),
+            InputLevel {
+                storage: InputStorage::Source(_),
+                ..
             }
-            InputLevel::Source(_) | InputLevel::Resident(_) => None,
+            | InputLevel {
+                storage:
+                    InputStorage::List(_)
+                    | InputStorage::StoredList(_)
+                    | InputStorage::MacroBody(_)
+                    | InputStorage::MacroArgument { .. },
+                ..
+            } => None,
         })
     }
 
@@ -1702,8 +1749,18 @@ impl<G> CommandState<G> {
             .iter()
             .rev()
             .find_map(|level| match level {
-                InputLevel::Source(level) => Some(level),
-                InputLevel::Resident(_) => None,
+                level @ InputLevel {
+                    storage: InputStorage::Source(_),
+                    ..
+                } => Some(level),
+                InputLevel {
+                    storage:
+                        InputStorage::List(_)
+                        | InputStorage::StoredList(_)
+                        | InputStorage::MacroBody(_)
+                        | InputStorage::MacroArgument { .. },
+                    ..
+                } => None,
             })
             .is_some();
         if has_source {
@@ -1771,10 +1828,20 @@ impl<G> CommandState<G> {
     pub(crate) fn active_source_snapshot(
         &self,
     ) -> Option<crate::observation::OpenedSourceSnapshot> {
-        let Some(InputLevel::Source(level)) = self.input.levels.last() else {
+        let Some(
+            level @ InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            },
+        ) = self.input.levels.last()
+        else {
             return None;
         };
-        let backing = level.slot.cursor.current_backing();
+        let backing = level
+            .source_slot()
+            .expect("source input")
+            .cursor
+            .current_backing();
         Some(crate::observation::OpenedSourceSnapshot {
             id: backing.id,
             bytes: backing.bytes.clone(),
@@ -1923,10 +1990,21 @@ impl<G> CommandState<G> {
                 .iter()
                 .rev()
                 .find_map(|level| match level {
-                    InputLevel::Source(source) => {
-                        Some(source.slot.name_class == SourceNameClass::File)
-                    }
-                    InputLevel::Resident(_) => None,
+                    source @ InputLevel {
+                        storage: InputStorage::Source(_),
+                        ..
+                    } => Some(
+                        source.source_slot().expect("source input").name_class
+                            == SourceNameClass::File,
+                    ),
+                    InputLevel {
+                        storage:
+                            InputStorage::List(_)
+                            | InputStorage::StoredList(_)
+                            | InputStorage::MacroBody(_)
+                            | InputStorage::MacroArgument { .. },
+                        ..
+                    } => None,
                 })
                 == Some(true)
     }

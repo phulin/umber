@@ -6,7 +6,7 @@ use tex_state::token::{Catcode, Token};
 use crate::error::CommandError;
 use crate::input::SourceNameClass;
 use crate::input::{
-    InputLevel, InputLevelId, InputRetirementAction, ReplayTrace, RetirementBehavior,
+    InputLevel, InputLevelId, InputRetirementAction, InputStorage, ReplayTrace, RetirementBehavior,
     StoredReplayReason, TokenBehavior, observed_retirement_reason,
 };
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
@@ -131,21 +131,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<usize, CommandError> {
         let mut retired = 0_usize;
         loop {
-            let Some(identity) = self
-                .command
-                .input
-                .levels
-                .last()
-                .and_then(|level| match level {
-                    level @ InputLevel::Resident(row) => {
-                        let cursor = row;
-                        (!matches!(cursor.behavior(), TokenBehavior::VTemplate)
-                            && level.stored_is_exhausted() == Some(true))
-                        .then(|| cursor.identity())
-                    }
-                    InputLevel::Source(_) => None,
-                })
-            else {
+            let Some((identity, _)) = self.depleted_input_top() else {
                 return Ok(retired);
             };
             match self.retire_input_top(identity)? {
@@ -220,27 +206,20 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let output_has_remaining = levels.pending_token_word(output_index).is_some();
         let levels_above_are_depleted_backups = (output_index + 1..levels.len()).all(|index| {
             matches!(
-                levels[index].stored_common().map(|row| row.behavior()),
-                Some(TokenBehavior::BackedUp(_))
+                levels[index].frame.kind(),
+                tex_state::packed_input::InputFrameKind::BackedUp
             ) && levels.pending_token_word(index).is_none()
         });
         let unbalanced = output_has_remaining || !levels_above_are_depleted_backups;
 
         if unbalanced {
-            let output_identity = levels[output_index]
-                .stored_common()
-                .ok_or_else(CommandError::input_invariant)?
-                .identity();
+            let output_identity = levels[output_index].identity();
             let mut discarded = None;
             loop {
                 let levels = &self.command.input.levels;
                 let output_has_remaining = levels
                     .iter()
-                    .position(|level| {
-                        level
-                            .stored_common()
-                            .is_some_and(|row| row.identity() == output_identity)
-                    })
+                    .position(|level| level.identity() == output_identity)
                     .is_some_and(|index| levels.pending_token_word(index).is_some());
                 if !output_has_remaining {
                     break;
@@ -268,13 +247,22 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// without fetching whatever lies beneath it.
     pub fn retire_completed_right_brace_backup(&mut self) -> Result<(), CommandError> {
         let levels = &self.command.input.levels;
-        let Some(InputLevel::Resident(row)) = levels.last() else {
+        let Some(
+            row @ InputLevel {
+                storage:
+                    InputStorage::List(_)
+                    | InputStorage::StoredList(_)
+                    | InputStorage::MacroBody(_)
+                    | InputStorage::MacroArgument { .. },
+                ..
+            },
+        ) = levels.last()
+        else {
             return Ok(());
         };
         if !matches!(
             row.storage,
-            crate::input::ResidentTokenStorage::List(_)
-                | crate::input::ResidentTokenStorage::StoredList(_)
+            crate::input::InputStorage::List(_) | crate::input::InputStorage::StoredList(_)
         ) || !matches!(row.behavior(), TokenBehavior::BackedUp(_))
             || levels.pending_token_word(levels.len() - 1).is_some()
             || !matches!(
@@ -335,7 +323,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
         if self.state.int_param(IntParam::TRACING_NESTING) > 1 {
             let context = match self.command.input.levels.last() {
-                Some(InputLevel::Source(source)) if source.identity() == identity => self
+                Some(
+                    source @ InputLevel {
+                        storage: InputStorage::Source(_),
+                        ..
+                    },
+                ) if source.identity() == identity => self
                     .command
                     .output_retiring_source_context(source, self.state),
                 _ => return Err(CommandError::input_invariant()),
@@ -495,16 +488,36 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(always)]
     pub(super) fn depleted_input_top(&self) -> Option<(InputLevelId, RetirementBehavior)> {
         match self.command.input.levels.last() {
-            Some(level @ InputLevel::Resident(row))
-                if !matches!(
-                    row.frame.kind(),
-                    tex_state::packed_input::InputFrameKind::AlignmentVTemplate
-                        | tex_state::packed_input::InputFrameKind::OmitTemplate
-                ) && level.stored_is_exhausted() == Some(true) =>
+            Some(
+                level @ row @ InputLevel {
+                    storage:
+                        InputStorage::List(_)
+                        | InputStorage::StoredList(_)
+                        | InputStorage::MacroBody(_)
+                        | InputStorage::MacroArgument { .. },
+                    ..
+                },
+            ) if !matches!(
+                row.frame.kind(),
+                tex_state::packed_input::InputFrameKind::AlignmentVTemplate
+                    | tex_state::packed_input::InputFrameKind::OmitTemplate
+            ) && level.stored_is_exhausted() == Some(true) =>
             {
                 Some((row.identity(), row.retirement()))
             }
-            Some(InputLevel::Resident(_)) | Some(InputLevel::Source(_)) | None => None,
+            Some(InputLevel {
+                storage:
+                    InputStorage::List(_)
+                    | InputStorage::StoredList(_)
+                    | InputStorage::MacroBody(_)
+                    | InputStorage::MacroArgument { .. },
+                ..
+            })
+            | Some(InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            })
+            | None => None,
         }
     }
 

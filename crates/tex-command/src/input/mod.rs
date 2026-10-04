@@ -20,16 +20,16 @@ pub(crate) use arguments::{
 pub use history::BorrowedSourceCharacterRun;
 pub(crate) use history::{
     InputStack, InputStackContextCoordinate, ResidentRun, ResidentSourceAdvance,
-    ResidentSourceCharacterRun, ResidentSourceTop, observed_retirement_reason,
+    ResidentSourceCharacterRun, observed_retirement_reason,
 };
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
-    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, MacroBodyCursor, PackedInputFrame,
-    PackedTokenOwnership, PackedTokenSpanSource, PendingInsertion, ReplayTrace, ResidentTokenRow,
-    ResidentTokenStorage, RetirementBehavior, SourceLevel, SourceOpenDepths, SourceRetirement,
-    SourceSlot, StoredReplayReason, TokenBehavior, TokenSources, backed_up_replay,
-    packed_token_frame, semantic_replay, transient_replay,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputStorage, MacroBodyCursor,
+    PackedInputFrame, PackedTokenOwnership, PackedTokenSpanSource, PendingInsertion, ReplayTrace,
+    RetirementBehavior, SourceOpenDepths, SourceRetirement, SourceSlot, StoredReplayReason,
+    TokenBehavior, TokenSources, backed_up_replay, packed_token_frame, semantic_replay,
+    transient_replay,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor, SourceOffsetMap};
 #[cfg(test)]
@@ -37,7 +37,7 @@ pub(crate) use stack::source_registration_counters;
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
 pub(crate) use stack::{
     FileWarningBoundary, InputRetirement, InputRetirementAction, InputRetirementError,
-    InputRetirementReason, ResidentBoundary, input_level_identity,
+    InputRetirementReason, ResidentBoundary,
 };
 
 pub use lines::{
@@ -368,16 +368,19 @@ pub(crate) fn tracked_input_projection<G>(
     let mut line = ProjectionHasher::new(0x696e_6c69_6e65_0001);
     for level in &input.levels {
         match level {
-            InputLevel::Source(source) => {
+            source @ InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            } => {
                 stack.byte(0);
-                let slot = &*source.slot;
-                observe_immutable_source(state, source);
+                let slot = source.source_slot().expect("source input");
+                observe_immutable_source(state, source.source_slot().expect("source input"));
                 project_source(&mut stack, slot);
                 if let Some(current) = &slot.cursor.line {
                     project_line(&mut line, &slot.cursor, current);
                 }
             }
-            InputLevel::Resident(row) => {
+            row => {
                 let cursor = row;
                 stack.byte(1);
                 // Macro-activation and alignment identities need stack-relative
@@ -390,7 +393,7 @@ pub(crate) fn tracked_input_projection<G>(
                 }
                 if !matches!(
                     row.storage,
-                    ResidentTokenStorage::List(_) | ResidentTokenStorage::StoredList(_)
+                    InputStorage::List(_) | InputStorage::StoredList(_)
                 ) {
                     return None;
                 }
@@ -403,9 +406,8 @@ pub(crate) fn tracked_input_projection<G>(
 
 pub(crate) fn observe_immutable_source<G>(
     state: &mut tex_state::CommandContext<'_, G>,
-    source: &SourceLevel<G>,
+    slot: &SourceSlot<G>,
 ) {
-    let slot = &source.slot;
     let backing = slot.cursor.current_backing();
     let record = tex_state::world::ContentHash::from_bytes(&backing.bytes);
     state.observe_command_projection(
@@ -498,7 +500,7 @@ fn project_line(hash: &mut ProjectionHasher, cursor: &SourceCursor, line: &lines
 
 fn project_token_cursor<G>(
     hash: &mut ProjectionHasher,
-    row: &ResidentTokenRow<G>,
+    row: &InputLevel<G>,
     levels: &InputStack<G>,
     state: &tex_state::CommandContext<'_, G>,
 ) -> Option<()> {
@@ -621,8 +623,11 @@ impl<G> InputState<G> {
         for (index, level) in self.levels.iter().enumerate().rev() {
             let current = index + 1 == self.levels.len();
             match level {
-                InputLevel::Source(source) => {
-                    let slot = &*source.slot;
+                source @ InputLevel {
+                    storage: InputStorage::Source(_),
+                    ..
+                } => {
+                    let slot = source.source_slot().expect("source input");
                     let bottom = index == 0
                         || matches!(slot.name_class, crate::input::SourceNameClass::File);
                     if Self::source_context_level(slot, index == 0, None, None, None, widths)
@@ -632,21 +637,22 @@ impl<G> InputState<G> {
                         return false;
                     }
                 }
-                InputLevel::Resident(row) => match &row.storage {
-                    ResidentTokenStorage::MacroBody(body) => {
+                row => match &row.storage {
+                    InputStorage::Source(_) => unreachable!("admitted token input"),
+                    InputStorage::MacroBody(body) => {
                         if Self::macro_body_context_level(stores, &self.levels, row, body, widths)
                             .is_some()
                         {
                             return true;
                         }
                     }
-                    ResidentTokenStorage::List(_)
-                    | ResidentTokenStorage::StoredList(_)
-                    | ResidentTokenStorage::MacroArgument { .. } => {
+                    InputStorage::List(_)
+                    | InputStorage::StoredList(_)
+                    | InputStorage::MacroArgument { .. } => {
                         if Self::token_context_level(stores, &self.levels, row, current, widths)
                             .is_some()
                         {
-                            return !matches!(row.trace(), ReplayTrace::BackedUp);
+                            return !matches!(row.trace(), Some(ReplayTrace::BackedUp));
                         }
                     }
                 },
@@ -659,7 +665,7 @@ impl<G> InputState<G> {
     /// source has completed its last line but has not yet left `input_stack`.
     pub(crate) fn output_retiring_source_context(
         &self,
-        retiring: &SourceLevel<G>,
+        retiring: &InputLevel<G>,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
         self.render_context_for_levels(&self.levels, Some(retiring), stores)
@@ -682,7 +688,7 @@ impl<G> InputState<G> {
     fn render_context_for_levels(
         &self,
         input_levels: &[InputLevel<G>],
-        retiring_source: Option<&SourceLevel<G>>,
+        retiring_source: Option<&InputLevel<G>>,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
         let widths = stores.error_context_widths();
@@ -698,11 +704,14 @@ impl<G> InputState<G> {
             stores.untracked_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32,
         );
         let project_level = |index: usize| match input_levels.get(index)? {
-            InputLevel::Source(source) => {
+            source @ InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            } => {
                 let retiring =
                     retiring_source.filter(|retiring| retiring.identity() == source.identity());
                 let selected = retiring.unwrap_or(source);
-                let slot = &*selected.slot;
+                let slot = selected.source_slot().expect("source input");
                 Self::source_context_level(
                     slot,
                     index == 0,
@@ -712,13 +721,14 @@ impl<G> InputState<G> {
                     widths,
                 )
             }
-            InputLevel::Resident(row) => match &row.storage {
-                ResidentTokenStorage::MacroBody(body) => {
+            row => match &row.storage {
+                InputStorage::Source(_) => unreachable!("admitted token input"),
+                InputStorage::MacroBody(body) => {
                     Self::macro_body_context_level(stores, &self.levels, row, body, widths)
                 }
-                ResidentTokenStorage::List(_)
-                | ResidentTokenStorage::StoredList(_)
-                | ResidentTokenStorage::MacroArgument { .. } => Self::token_context_level(
+                InputStorage::List(_)
+                | InputStorage::StoredList(_)
+                | InputStorage::MacroArgument { .. } => Self::token_context_level(
                     stores,
                     &self.levels,
                     row,
@@ -731,19 +741,31 @@ impl<G> InputState<G> {
         for (index, level) in input_levels.iter().enumerate().rev() {
             let current = index + 1 == input_levels.len();
             let visible = match level {
-                InputLevel::Source(source) => {
+                source @ InputLevel {
+                    storage: InputStorage::Source(_),
+                    ..
+                } => {
                     let selected = retiring_source
                         .filter(|retiring| retiring.identity() == source.identity())
                         .unwrap_or(source);
-                    selected.slot.cursor.line.is_some()
+                    selected
+                        .source_slot()
+                        .expect("source input")
+                        .cursor
+                        .line
+                        .is_some()
                 }
-                InputLevel::Resident(row) => Self::context_level_is_visible(row, current),
+                row => Self::context_level_is_visible(row, current),
             };
-            if let InputLevel::Source(source) = level {
+            if let source @ InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            } = level
+            {
                 let source = retiring_source
                     .filter(|retiring| retiring.identity() == source.identity())
                     .unwrap_or(source);
-                let slot = &*source.slot;
+                let slot = source.source_slot().expect("source input");
                 reached_bottom_source =
                     index == 0 || matches!(slot.name_class, crate::input::SourceNameClass::File);
             }
@@ -787,9 +809,9 @@ impl<G> InputState<G> {
         output
     }
 
-    fn context_level_is_visible(row: &ResidentTokenRow<G>, current: bool) -> bool {
+    fn context_level_is_visible(row: &InputLevel<G>, current: bool) -> bool {
         // §312: a fully read backed-up list shows only as the current level.
-        !(matches!(row.trace(), ReplayTrace::BackedUp)
+        !(matches!(row.trace(), Some(ReplayTrace::BackedUp))
             && row.frame.position() >= row.frame.limit()
             && !current)
     }
@@ -797,7 +819,7 @@ impl<G> InputState<G> {
     fn macro_body_context_level(
         stores: &tex_state::CommandContext<'_, G>,
         levels: &InputStack<G>,
-        row: &ResidentTokenRow<G>,
+        row: &InputLevel<G>,
         body: &MacroBodyCursor<G>,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
@@ -1081,12 +1103,12 @@ impl<G> InputState<G> {
     fn token_context_level(
         stores: &tex_state::CommandContext<'_, G>,
         levels: &InputStack<G>,
-        row: &ResidentTokenRow<G>,
+        row: &InputLevel<G>,
         current: bool,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
         let tokens = row;
-        let trace = row.trace();
+        let trace = row.trace().expect("token input");
         let words = levels.row_words(row);
 
         fn render_token<G>(
