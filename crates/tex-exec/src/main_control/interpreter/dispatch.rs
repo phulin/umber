@@ -53,8 +53,7 @@ pub(super) fn enter<G>(
         processor
             .with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
                 if execution.main_loop_active
-                    || (code == codes::RELAX
-                        && execution.modes.current_list().pending_hchars().is_some())
+                    || execution.modes.current_list().pending_hchars().is_some()
                 {
                     execution.main_loop_active = false;
                     crate::box_runtime::flush_pending_hchars_with_fuel(

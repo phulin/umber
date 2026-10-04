@@ -998,19 +998,11 @@ pub(super) fn execute<'state, 'host, G>(
                 }
                 if recovery_opening {
                     return processor.with_execution_owners(
-                        |context, command, effects, fuel, _, execution, _, _, _| {
-                            execution.main_loop_active = false;
-                            let step = groups::begin_native_group(
-                                context,
-                                command,
-                                effects,
-                                fuel,
-                                &mut execution.modes,
-                                GroupKind::Simple,
-                            )?;
+                        |context, command, effects, _, _, execution, _, _, _| {
+                            enter_group(context, command, effects, GroupKind::Simple);
                             execution.boxes.recovery_simple_group_pending = false;
                             execution.boxes.recovery_simple_group_open = true;
-                            Ok(step)
+                            Ok(MainControlStep::Continue)
                         },
                     );
                 }
@@ -1026,20 +1018,10 @@ pub(super) fn execute<'state, 'host, G>(
             } else {
                 GroupKind::SemiSimple
             };
-            report_scan(processor)?;
-            processor.with_execution_owners(
-                |context, command, effects, fuel, _, execution, _, _, _| {
-                    execution.main_loop_active = false;
-                    groups::begin_native_group(
-                        context,
-                        command,
-                        effects,
-                        fuel,
-                        &mut execution.modes,
-                        kind,
-                    )
-                },
-            )
+            processor.with_execution_owners(|context, command, effects, _, _, _, _, _, _| {
+                enter_group(context, command, effects, kind);
+                Ok(MainControlStep::Continue)
+            })
         }
         codes::CHAR_END_GROUP | codes::PRIMITIVE_END_GROUP => groups::close_tex_group(
             processor,

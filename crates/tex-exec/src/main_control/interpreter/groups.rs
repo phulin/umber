@@ -1,8 +1,6 @@
 //! Actual group entry, warning and native unsave semantics.
 use super::*;
 
-impl<G> MainControl<G> {}
-
 /// Unsave through the actual scanner that owns aftergroup input delivery.
 pub(super) fn finish_native_group_leave<G, Facts: tex_command::CommandHostFacts<G>>(
     processor: &mut CommandProcessor<'_, '_, G, Facts>,
@@ -36,22 +34,6 @@ pub(super) fn finish_native_group_leave<G, Facts: tex_command::CommandHostFacts<
     Ok(MainControlStep::Continue)
 }
 
-/// Source-free group entry through the sole actual mode and save-stack owners.
-pub(in crate::main_control) fn begin_native_group<G>(
-    context: &mut CommandContext<'_, G>,
-    command: &mut tex_command::CommandState<G>,
-    effects: &mut DiagnosticEffects,
-    fuel: &mut tex_command::CommandFuel,
-    modes: &mut ModeNest,
-    kind: GroupKind,
-) -> Result<MainControlStep, ExecError> {
-    if modes.current_list().pending_hchars().is_some() {
-        crate::box_runtime::flush_pending_hchars_with_fuel(modes, context, effects, fuel)?;
-    }
-    enter_group(context, command, effects, kind);
-    Ok(MainControlStep::Continue)
-}
-
 pub(super) fn close_tex_group<G>(
     processor: &mut Processor<'_, '_, G>,
     code: u64,
@@ -66,18 +48,6 @@ pub(super) fn close_tex_group<G>(
     match (code, group) {
         (codes::CHAR_END_GROUP, Some(GroupKind::Simple))
         | (codes::PRIMITIVE_END_GROUP, Some(GroupKind::SemiSimple)) => {
-            report_scan(processor)?;
-            processor.with_execution_owners(
-                |context, _, effects, fuel, _, execution, _, _, _| {
-                    execution.main_loop_active = false;
-                    crate::box_runtime::flush_pending_hchars_with_fuel(
-                        &mut execution.modes,
-                        context,
-                        effects,
-                        fuel,
-                    )
-                },
-            )?;
             finish_native_group_leave(
                 processor,
                 group.expect("selected native group"),

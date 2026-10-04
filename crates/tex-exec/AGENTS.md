@@ -8,6 +8,11 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 Command operands are scanned by `tex-command` into typed request and result values. Execution code applies completed values through scoped reborrows of the actual retained processor owners, or after that borrow ends at a genuine World output boundary; it must not add another source cursor, raw-token delivery loop, scanner facade, or command compatibility adapter.
 
+Shared terminal entry owns pending scanner reports and noncharacter character
+flushes. Ordinary group open/close must not repeat this work or construct a
+native-group preparation/result wrapper. Native delivery without an
+exceptional record performs no observation check at continuation.
+
 Group close drives the same `CommandProcessor::end_group` native stack walk in the sole direct dispatcher. Its diagnostic callback renders each restoration while the saved owners are live; aftergroup words enter final input during unsave. There is no restoration receipt, token result vector, or delayed aftergroup scheduling helper. Ordinary, observed, diagnostic, and nested commands use that same group seam.
 
 Fixed-size page publications pass their actual node arrays directly into the

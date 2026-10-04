@@ -1067,3 +1067,16 @@ cached summary. Printing, first-cause capture and recovery keep their existing
 order and ownership. Draining print effects keeps any recovery/cause alive;
 the collector's ordinary scope releases its storage, with no per-command
 normalization or successful cleanup stage.
+
+## Terminal entry ownership
+
+The shared terminal entry publishes pending scanner reports and closes the
+actual pending character run before a noncharacter opcode executes. It tests
+the run itself even when a glyph cannot continue TeX's byte-character loop.
+Ordinary group entry writes the live save-stack boundary directly; it has no
+separate native-group preparation/result wrapper. Ordinary group close does
+not repeat the report and character flush already performed at entry.
+
+Native word delivery has no exceptional command record. Its continuation
+therefore has no observation check; only a genuinely supplied exceptional
+record can invoke the episode's observer and stop at its observation boundary.

@@ -66,6 +66,9 @@ pub(super) fn run<G>(
                  meaning: &tex_state::meaning::MeaningWord<G>,
                  control_sequence: Option<Symbol>,
                  exceptional: Option<&tex_command::CurrentCommand<G>>| {
+                    // Native delivery never lends an observation record.
+                    // Fold that actual ownership fact into its continuation.
+                    let observing = exceptional.is_some() && observing;
                     let code = codes::of(meaning);
                     if let Err(error) =
                         dispatch::enter(processor, spelling, meaning, control_sequence, code)
