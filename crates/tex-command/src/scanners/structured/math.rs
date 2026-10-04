@@ -1,4 +1,6 @@
 use super::*;
+use std::ops::ControlFlow;
+use tex_state::meaning::MeaningWord;
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Completes one TeX82 §1151 `scan_math` field.
@@ -75,109 +77,89 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     pub fn scan_math_field_episode(&mut self) -> Result<MathFieldEpisode, CommandError> {
-        let mut destination = None;
-        loop {
-            // §1151's `restart` label: §404's shared "next non-blank
-            // non-relax non-call token", the same fetch §403 opens with.
-            match self.next_non_blank_non_relax_x_token_into(&mut destination)? {
-                DeliveryStatus::End => {
-                    return Ok(MathFieldEpisode {
-                        body: MathFieldBody::Missing,
-                        provenance: StructuredProvenance {
-                            primary: OriginId::UNKNOWN,
-                        },
-                    });
-                }
-                DeliveryStatus::Command => {}
-                _ => return Err(CommandError::input_invariant()),
-            };
-            let command = destination
-                .take()
-                .ok_or_else(|| CommandError::input_invariant())?;
-            let provenance = StructuredProvenance {
-                primary: command.origin(),
-            };
-            // §1151's `reswitch`: `char_num` scans its selector and re-enters
-            // the table as `char_given`, so both reach one `math_code` read.
-            let character = match static_meaning(command.meaning()) {
-                Some(Meaning::CharToken {
-                    ch,
-                    cat: Catcode::Letter | Catcode::Other,
-                }) => Some(ch),
-                Some(Meaning::CharGiven(ch)) => Some(ch),
-                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)) => {
-                    if let Some(field) = self.scan_math_field_restricted(
-                        provenance,
-                        MathFieldRestrictedKind::Character,
-                    )? {
-                        return Ok(field);
-                    }
-                    continue;
-                }
+        let mut field = None;
+        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
+            let meaning = match meaning {
+                MeaningWord::Static(word) => Some(Meaning::from_runtime_word(*word)),
                 _ => None,
             };
-            if let Some(ch) = character {
-                let code = self.state.mathcode(ch);
-                // §1151 tests `c=@'100000` exactly, and §1152 then resolves
-                // the character's active meaning, expands it once with
-                // `x_token`, backs the result up, and restarts the field.
-                if code == 0o100000 {
-                    self.treat_as_active_character(ch, provenance.primary)?;
-                    continue;
-                }
-                return Ok(MathFieldEpisode {
-                    body: MathFieldBody::Character(code as u16),
-                    provenance,
-                });
+            // §404's nonblank/non-relax fetch remains in the same reader.
+            if matches!(
+                meaning,
+                Some(
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    } | Meaning::Relax
+                )
+            ) {
+                return Ok(ControlFlow::Continue(()));
             }
-            let (code, provenance) = match static_meaning(command.meaning()) {
-                // §1224's `\mathchardef` target carries its own code.
-                Some(Meaning::MathCharGiven(code)) => (code, provenance),
-                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathChar)) => {
-                    return self
-                        .scan_math_field_restricted(
-                            provenance,
-                            MathFieldRestrictedKind::MathCharacter,
-                        )?
-                        .ok_or_else(|| CommandError::input_invariant());
-                }
-                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter)) => {
-                    return self
-                        .scan_math_field_restricted(provenance, MathFieldRestrictedKind::Delimiter)?
-                        .ok_or_else(|| CommandError::input_invariant());
-                }
-                // §1153's `othercases`, verbatim: `back_input;
-                // scan_left_brace; ... push_math(math_group); return`. The
-                // brace is re-read rather than consumed from `command`
-                // because §403's skipped spaces and its missing-brace
-                // recovery are both observable.
-                _ => {
-                    self.back_input(command)?;
-                    return Ok(match self.scan_left_brace(true)? {
-                        crate::scan_toks::ScannedLeftBrace::Consumed(opening) => MathFieldEpisode {
-                            body: MathFieldBody::OpenGroup,
-                            provenance: StructuredProvenance {
-                                primary: opening.origin(),
-                            },
-                        },
-                        // §403's recovery reaches §1153 with `cur_cmd =
-                        // left_brace`, so `push_math(math_group)` runs
-                        // unconditionally; the rejected command is already
-                        // backed up and opens the body.
-                        crate::scan_toks::ScannedLeftBrace::Inserted => MathFieldEpisode {
-                            body: MathFieldBody::OpenGroup,
-                            provenance: StructuredProvenance {
-                                primary: OriginId::UNKNOWN,
-                            },
-                        },
+            let provenance = StructuredProvenance {
+                primary: spelling.origin(),
+            };
+            match meaning {
+                Some(
+                    Meaning::CharToken {
+                        ch,
+                        cat: Catcode::Letter | Catcode::Other,
+                    }
+                    | Meaning::CharGiven(ch),
+                ) => {
+                    let code = processor.state.mathcode(ch);
+                    if code == 0o100000 {
+                        // §1152 expands the active meaning before restarting §1151.
+                        processor.treat_as_active_character(ch, provenance.primary)?;
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                    field = Some(MathFieldEpisode {
+                        body: MathFieldBody::Character(code as u16),
+                        provenance,
                     });
                 }
-            };
-            return Ok(MathFieldEpisode {
-                body: MathFieldBody::Character(code),
-                provenance,
-            });
-        }
+                Some(Meaning::MathCharGiven(code)) => {
+                    field = Some(MathFieldEpisode {
+                        body: MathFieldBody::Character(code),
+                        provenance,
+                    });
+                }
+                Some(Meaning::UnexpandablePrimitive(
+                    primitive @ (UnexpandablePrimitive::Char
+                    | UnexpandablePrimitive::MathChar
+                    | UnexpandablePrimitive::Delimiter),
+                )) => {
+                    let kind = match primitive {
+                        UnexpandablePrimitive::Char => MathFieldRestrictedKind::Character,
+                        UnexpandablePrimitive::MathChar => MathFieldRestrictedKind::MathCharacter,
+                        _ => MathFieldRestrictedKind::Delimiter,
+                    };
+                    field = processor.scan_math_field_restricted(provenance, kind)?;
+                    if field.is_none() {
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                }
+                _ => {
+                    // §1153 backs up before §403, including a real left brace:
+                    // its reread and missing-brace recovery are observable.
+                    processor.back_consumed_word(spelling, exceptional)?;
+                    let primary = match processor.scan_left_brace(true)? {
+                        crate::scan_toks::ScannedLeftBrace::Consumed(opening) => opening.origin(),
+                        crate::scan_toks::ScannedLeftBrace::Inserted => OriginId::UNKNOWN,
+                    };
+                    field = Some(MathFieldEpisode {
+                        body: MathFieldBody::OpenGroup,
+                        provenance: StructuredProvenance { primary },
+                    });
+                }
+            }
+            Ok(ControlFlow::Break(()))
+        })?;
+        Ok(field.unwrap_or(MathFieldEpisode {
+            body: MathFieldBody::Missing,
+            provenance: StructuredProvenance {
+                primary: OriginId::UNKNOWN,
+            },
+        }))
     }
 
     /// Consumes the mandatory opening brace of one `\mathchoice` branch.
@@ -206,78 +188,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         kind: MathDelimiterBoundaryKind,
     ) -> Result<MathDelimiterBoundary, CommandError> {
-        let mut destination = None;
-        match self.next_non_blank_non_relax_x_token_hot(&mut destination)? {
-            DeliveryStatus::End => {
-                return Ok(MathDelimiterBoundary {
-                    kind,
-                    delimiter: ScannedMathDelimiter {
-                        code: 0,
-
-                        missing_delimiter: true,
-                        provenance: StructuredProvenance {
-                            primary: OriginId::UNKNOWN,
-                        },
-                    },
-                });
-            }
-            DeliveryStatus::Command
-            | DeliveryStatus::PendingExpanded
-            | DeliveryStatus::AlignmentClosingBrace => {}
-            DeliveryStatus::AlignmentEndTemplate
-            | DeliveryStatus::CharacterRun
-            | DeliveryStatus::CharacterRunBoundary => {
-                return Err(CommandError::input_invariant());
-            }
-            DeliveryStatus::ReplayCompleted(_) => unreachable!(),
-        }
-        let command = destination
-            .take()
-            .ok_or_else(|| CommandError::input_invariant())?;
-        let primary = command.origin();
-        let code = match command.static_meaning() {
-            Some(Meaning::CharToken {
-                ch,
-                cat: Catcode::Letter | Catcode::Other,
-            }) => self.state.delcode(ch),
-            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter)) => {
-                return Ok(MathDelimiterBoundary {
-                    kind,
-                    delimiter: self.scan_delimiter_number()?,
-                });
-            }
-            // `char_given` and `math_given` are distinct TeX command codes;
-            // neither is one of §1160's accepted delimiter cases. Keep them
-            // explicit here so a compact terminal command cannot fall
-            // through to a second expanded fetch.
-            Some(Meaning::CharGiven(_) | Meaning::MathCharGiven(_)) => -1,
-            _ => -1,
-        };
-        if code < 0 {
-            // TeX82 §1161: back up exactly the one rejected delivery before
-            // reporting the recovery. The following source token has not
-            // entered the scanner and remains untouched.
-            let site = self.capture_hot_diagnostic_site(&command);
-            self.back_input(command)?;
-            self.missing_delimiter_error(Some(site))?;
-            return Ok(MathDelimiterBoundary {
-                kind,
-                delimiter: ScannedMathDelimiter {
-                    code: 0,
-
-                    missing_delimiter: true,
-                    provenance: StructuredProvenance { primary },
-                },
-            });
-        }
         Ok(MathDelimiterBoundary {
             kind,
-            delimiter: ScannedMathDelimiter {
-                code: code as u32,
-
-                missing_delimiter: false,
-                provenance: StructuredProvenance { primary },
-            },
+            delimiter: self.scan_delimiter(false)?,
         })
     }
 
@@ -349,55 +262,63 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         if radical {
             return self.scan_delimiter_number();
         }
-        let mut destination = None;
-        match self.next_non_blank_non_relax_x_token_into(&mut destination)? {
-            DeliveryStatus::End => {
-                return Ok(ScannedMathDelimiter {
-                    code: 0,
-
-                    missing_delimiter: true,
-                    provenance: StructuredProvenance {
-                        primary: OriginId::UNKNOWN,
-                    },
-                });
+        let mut delimiter = None;
+        self.consume_expanded_words(&mut |processor,
+                                          spelling,
+                                          meaning,
+                                          control_sequence,
+                                          exceptional| {
+            let static_meaning = match meaning {
+                MeaningWord::Static(word) => Some(Meaning::from_runtime_word(*word)),
+                _ => None,
+            };
+            let code = match static_meaning {
+                Some(
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    }
+                    | Meaning::Relax,
+                ) => {
+                    return Ok(ControlFlow::Continue(()));
+                }
+                Some(Meaning::CharToken {
+                    ch,
+                    cat: Catcode::Letter | Catcode::Other,
+                }) => processor.state.delcode(ch),
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter)) => {
+                    delimiter = Some(processor.scan_delimiter_number()?);
+                    return Ok(ControlFlow::Break(()));
+                }
+                _ => -1,
+            };
+            let primary = spelling.origin();
+            if code < 0 {
+                // §1161 captures the rejected delivery, then backs it up before
+                // reporting. The following source token remains untouched.
+                let site = processor.capture_consumed_site(
+                    spelling,
+                    meaning,
+                    control_sequence,
+                    exceptional,
+                );
+                processor.back_consumed_word(spelling, exceptional)?;
+                processor.missing_delimiter_error(Some(site))?;
             }
-            DeliveryStatus::Command => {}
-            _ => return Err(CommandError::input_invariant()),
-        };
-        let command = destination
-            .take()
-            .ok_or_else(|| CommandError::input_invariant())?;
-        let primary = command.origin();
-        let code = match static_meaning(command.meaning()) {
-            Some(Meaning::CharToken {
-                ch,
-                cat: Catcode::Letter | Catcode::Other,
-            }) => self.state.delcode(ch),
-            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter)) => {
-                return self.scan_delimiter_number();
-            }
-            _ => -1,
-        };
-        if code < 0 {
-            // TeX82 §1161: "Missing delimiter (. inserted)" reports through
-            // `back_error`, which returns the offending token to the input
-            // before the error and leaves the null delimiter behind.
-            let site = self.capture_diagnostic_site(Some(&command));
-            self.back_input(command)?;
-            self.missing_delimiter_error(Some(site))?;
-            return Ok(ScannedMathDelimiter {
-                code: 0,
-
-                missing_delimiter: true,
+            delimiter = Some(ScannedMathDelimiter {
+                code: if code < 0 { 0 } else { code as u32 },
+                missing_delimiter: code < 0,
                 provenance: StructuredProvenance { primary },
             });
-        }
-        Ok(ScannedMathDelimiter {
-            code: code as u32,
-
-            missing_delimiter: false,
-            provenance: StructuredProvenance { primary },
-        })
+            Ok(ControlFlow::Break(()))
+        })?;
+        Ok(delimiter.unwrap_or(ScannedMathDelimiter {
+            code: 0,
+            missing_delimiter: true,
+            provenance: StructuredProvenance {
+                primary: OriginId::UNKNOWN,
+            },
+        }))
     }
 
     /// TeX82 §1161's invalid-delimiter `back_error` report.

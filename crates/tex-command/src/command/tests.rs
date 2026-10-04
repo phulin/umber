@@ -5,7 +5,7 @@ use tex_state::meaning::{
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use super::{CommandClass, CurrentCommand};
+use super::CurrentCommand;
 
 fn native_command(meaning: Meaning) -> CurrentCommand<()> {
     let mut command = CurrentCommand::empty();
@@ -47,7 +47,6 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
             false,
             &context,
         );
-        assert_eq!(hot.class(), CommandClass::Macro);
         assert_eq!(hot.flags(), MeaningFlags::LONG);
         assert_eq!(hot.macro_parts(), Some((MeaningFlags::LONG, definition)));
         assert_eq!(
@@ -219,7 +218,6 @@ fn native_font_command_preserves_opaque_runtime_identity() {
 
     let hot = rich;
 
-    assert_eq!(hot.class(), CommandClass::Font);
     assert_eq!(
         hot.meaning(),
         ResolvedMeaning::Static(Meaning::Font(font)),

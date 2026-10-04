@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::DeliveryStatus;
-use crate::command::CommandClass;
 use crate::processor::expand::{ExpandedCommandAction, ExpandedReaderConsumer, ExpansionDispatch};
 use std::ops::ControlFlow;
 
@@ -108,9 +107,7 @@ impl<G, Facts: crate::CommandHostFacts<G>>
         _status: DeliveryStatus,
     ) -> Result<ControlFlow<()>, CommandError> {
         let command = destination.as_mut().expect("replacement token delivery");
-        if command.flags().contains(MeaningFlags::PROTECTED)
-            && command.class() == CommandClass::Macro
-        {
+        if command.flags().contains(MeaningFlags::PROTECTED) {
             // e-TeX [27.465] retains the spelling as relax/no_expand_flag.
             observe!(
                 processor,

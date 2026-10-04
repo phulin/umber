@@ -546,3 +546,21 @@ packing rules.
 with the full-node clone before horizontal measurement. Box and vertical
 dimension accessors project their actual node variants directly. No replacement
 packing enum, font cache or separate node collection is added.
+
+## Native math operand scanning
+
+Math fields and delimiter operands consume the existing expanded-word reader
+synchronously. The scalar terminal supplies spelling and the already resolved
+`MeaningWord`; ordinary classification does not initialize `CurrentCommand` or
+decode a second command representation. Spaces and relax continue in that same
+reader, and the scanner writes only its final math field or delimiter result.
+Active math characters retain their existing expansion and restart semantics.
+Braced fields still back up the exact rejected spelling and call the canonical
+left-brace scanner, preserving observed delivery and missing-brace recovery.
+
+Structural delimiter boundaries and ordinary non-radical delimiters share the
+same delimiter grammar. Only a negative delimiter captures diagnostic facts
+and backs up the consumed word. Observed, alignment and recovery deliveries
+lend their existing exceptional record to the same consumer. Radical positions
+continue to scan their restricted integer directly. The duplicate hot
+nonblank/non-relax fetch loop is deleted rather than retained as an adapter.

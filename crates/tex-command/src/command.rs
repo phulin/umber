@@ -9,7 +9,8 @@ use tex_state::CommandContext;
 use tex_state::DefinitionRef;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{
-    ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord, ResolvedMeaning, UnexpandablePrimitive,
+    ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord, ResolvedMeaning, StaticCommandClass,
+    UnexpandablePrimitive,
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
@@ -49,20 +50,6 @@ fn update_command_ownership_counters(update: impl FnOnce(&mut CommandOwnershipCo
         update(&mut counters);
         slot.set(counters);
     });
-}
-
-/// TeX's directly branchable `cur_cmd` class.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum CommandClass {
-    Undefined,
-    Relax,
-    Character,
-    Macro,
-    Expandable,
-    EndV,
-    Unexpandable,
-    Font,
-    Value,
 }
 
 /// Compact coordinates and one-delivery policy attached to a hot token.
@@ -354,12 +341,19 @@ impl<G> CurrentCommand<G> {
     }
 
     pub(crate) fn suppress_expandable(&mut self) {
-        if self.expandable_primitive() != Some(ExpandablePrimitive::EndCsName)
-            && matches!(
-                self.class(),
-                CommandClass::Undefined | CommandClass::Macro | CommandClass::Expandable
-            )
-        {
+        let suppress = match self.command {
+            MeaningWord::Macro { .. } => true,
+            MeaningWord::Font(_) => false,
+            MeaningWord::Static(word) => match Meaning::runtime_word_class(word) {
+                StaticCommandClass::Undefined => true,
+                StaticCommandClass::Expandable => {
+                    ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
+                        != Some(ExpandablePrimitive::EndCsName)
+                }
+                _ => false,
+            },
+        };
+        if suppress {
             self.command = MeaningWord::Static(Meaning::RELAX_WORD);
             self.site
                 .delivery_flags

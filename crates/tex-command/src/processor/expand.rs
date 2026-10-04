@@ -1367,54 +1367,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.back_input(settled)
     }
 
-    /// TeX82 §404's expanded nonblank/non-relax fetch for scanners that can
-    /// classify the terminal command directly from the compact delivery.
-    ///
-    /// The hot command is the sole result owner: it is overwritten on each
-    /// fetch, and exactly the command that stops the loop remains in the
-    /// caller's slot. In particular, no rich command is made merely to hand
-    /// one delimiter operand from expansion to `scan_delimiter`.
-    pub(crate) fn next_non_blank_non_relax_x_token_hot(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        debug_assert!(destination.is_none());
-        loop {
-            match self.expanded_next_hot(destination, None)? {
-                DeliveryStatus::ReplayCompleted(_) => continue,
-                DeliveryStatus::End => return Ok(DeliveryStatus::End),
-                DeliveryStatus::Command
-                | DeliveryStatus::PendingExpanded
-                | DeliveryStatus::AlignmentClosingBrace => {}
-                DeliveryStatus::AlignmentEndTemplate => {
-                    let command = destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?;
-                    self.begin_scalar_alignment_v_template(&command)?;
-                    continue;
-                }
-                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
-                    return Err(CommandError::input_invariant());
-                }
-            }
-            let command = destination
-                .as_ref()
-                .ok_or_else(CommandError::input_invariant)?;
-            if !matches!(
-                command.static_meaning(),
-                Some(
-                    Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    } | Meaning::Relax
-                )
-            ) {
-                return Ok(DeliveryStatus::Command);
-            }
-            destination.take();
-        }
-    }
-
     /// TeX82 §§785/791's shared alignment lookahead fetch.
     ///
     /// TeX82's `get_x_token` commits the terminal expanded command before

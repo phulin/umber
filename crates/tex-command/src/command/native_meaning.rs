@@ -1,6 +1,6 @@
 //! Demanded semantic projections of the actual delivered native meaning.
 
-use super::{CommandClass, CurrentCommand};
+use super::CurrentCommand;
 use tex_state::meaning::{
     ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord, StaticCommandClass,
     UnexpandablePrimitive,
@@ -11,23 +11,6 @@ impl<G> CurrentCommand<G> {
     #[inline(always)]
     pub(crate) const fn native_meaning(&self) -> &MeaningWord<G> {
         &self.command
-    }
-
-    #[inline(always)]
-    pub(crate) const fn class(&self) -> CommandClass {
-        match self.command {
-            MeaningWord::Macro { .. } => CommandClass::Macro,
-            MeaningWord::Font(_) => CommandClass::Font,
-            MeaningWord::Static(word) => match Meaning::runtime_word_class(word) {
-                StaticCommandClass::Undefined => CommandClass::Undefined,
-                StaticCommandClass::Relax => CommandClass::Relax,
-                StaticCommandClass::Character => CommandClass::Character,
-                StaticCommandClass::Expandable => CommandClass::Expandable,
-                StaticCommandClass::EndV => CommandClass::EndV,
-                StaticCommandClass::Unexpandable => CommandClass::Unexpandable,
-                StaticCommandClass::Value => CommandClass::Value,
-            },
-        }
     }
 
     pub(crate) const fn flags(&self) -> MeaningFlags {
