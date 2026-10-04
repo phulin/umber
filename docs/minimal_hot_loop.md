@@ -666,14 +666,3 @@ This bounds the common reader's instruction footprint as direct native
 command cases are added. It does not outline raw command construction or
 pass delivery metadata through an extra ABI; the previous record-construction
 experiment did that and was rejected after paired measurements regressed.
-
-## Immutable substantive admission facts
-
-The selected substantive admission switch reads only the actual immutable
-command context and execution state plus its packed opcode. It receives no
-mutable processor and no meaning record. The caller selects the opcode from
-its existing meaning and lends the exact fact owners once. Admission retains
-the existing mode, alignment, page, tracked-region and group predicates;
-only the subsequent semantic handler receives mutable owners. This makes
-the query's actual authority explicit and removes repeated whole-processor
-owner reborrows from the switch without caching any execution fact.
