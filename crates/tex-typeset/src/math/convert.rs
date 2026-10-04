@@ -7,7 +7,7 @@ use tex_state::font::NULL_FONT;
 use tex_state::ids::FontId;
 use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{GlueKind, KernKind, Node};
-use tex_state::node_view::NodeView;
+use tex_state::node_view::{DirectNodeView, NodeCursor, NodeView};
 use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::Scaled;
 
@@ -260,9 +260,9 @@ enum WorkItem {
     Style(Style),
 }
 
-fn first_pass<S: MathTypesetState>(
-    ctx: &mut Context<'_, S>,
-    view: &mut ExpandedMathView,
+fn first_pass<'a, S: MathTypesetState>(
+    ctx: &mut Context<'a, S>,
+    view: &mut ExpandedMathView<'a>,
     base_style: Style,
     out: &mut Vec<WorkItem>,
     max_height: &mut Scaled,
@@ -273,7 +273,7 @@ fn first_pass<S: MathTypesetState>(
     let mut index = 0;
     while index < view.len() {
         if matches!(
-            view.node(ctx.state, index),
+            view.node(index),
             Some(tex_state::node_view::NodeView::MathNoad(MathNoad {
                 kind: NoadKind::Normal(NoadClass::Bin),
                 ..
@@ -287,18 +287,18 @@ fn first_pass<S: MathTypesetState>(
                     | NoadClass::Open
                     | NoadClass::Punct
             )
-        ) && let Some(noad) = view.noad_mut(ctx.state, index)
+        ) && let Some(noad) = view.noad_mut(index)
         {
             noad.kind = NoadKind::Normal(NoadClass::Ord);
         }
         if matches!(
-            view.node(ctx.state, index),
+            view.node(index),
             Some(tex_state::node_view::NodeView::MathNoad(noad)) if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
-        ) && operators::ord_pair_may_change(ctx, view, index)
+        ) && operators::ord_pair_may_change(view, index)
         {
             operators::make_ord(ctx, view, index);
         }
-        if let Some(children) = match view.node(ctx.state, index) {
+        if let Some(children) = match view.node(index) {
             Some(
                 tex_state::node_view::NodeView::HList(boxed)
                 | tex_state::node_view::NodeView::VList(boxed),
@@ -307,9 +307,8 @@ fn first_pass<S: MathTypesetState>(
         } {
             source_box_payload(ctx, children);
         }
-        let state = ctx.state;
         match view
-            .node(state, index)
+            .node(index)
             .expect("expanded math index remains in range")
         {
             tex_state::node_view::NodeView::MathStyle(style) => {
@@ -335,7 +334,7 @@ fn first_pass<S: MathTypesetState>(
                 // AppG rule 2
                 let suppress_next = matches!(kind, GlueKind::NonScript)
                     && ctx.style.is_script_or_smaller()
-                    && view.node(state, index + 1).is_some_and(|next| {
+                    && view.node(index + 1).is_some_and(|next| {
                         matches!(
                             next,
                             tex_state::node_view::NodeView::Glue { .. }
@@ -508,13 +507,13 @@ fn first_pass<S: MathTypesetState>(
 /// Builds the immutable node view selected by Appendix G rule 4 without
 /// recursively descending through nested `\mathchoice` lists.
 #[derive(Default)]
-pub(super) struct ExpandedMathView {
-    nodes: Vec<ExpandedMathNode>,
+pub(super) struct ExpandedMathView<'a> {
+    nodes: Vec<ExpandedMathNode<'a>>,
     marker_styles: Vec<Style>,
-    stack: Vec<ExpansionFrame>,
+    stack: Vec<ExpansionFrame<'a>>,
 }
 
-impl ExpandedMathView {
+impl ExpandedMathView<'_> {
     fn clear(&mut self) {
         self.nodes.clear();
         self.marker_styles.clear();
@@ -527,45 +526,26 @@ impl ExpandedMathView {
 
     fn source(&self, index: usize) -> Option<(PageListId, usize)> {
         match self.nodes.get(index)? {
-            ExpandedMathNode::Source { list, index } => Some((*list, *index)),
+            ExpandedMathNode::Source { list, index, .. } => Some((*list, *index)),
             ExpandedMathNode::Owned(_) => None,
         }
     }
 
-    pub(super) fn node<'a>(
-        &'a self,
-        state: &'a impl MathTypesetState,
-        index: usize,
-    ) -> Option<tex_state::node_view::NodeView<'a>> {
+    pub(super) fn node(&self, index: usize) -> Option<tex_state::node_view::NodeView<'_>> {
         match self.nodes.get(index)? {
-            ExpandedMathNode::Source { list, index } => state.page_nodes(*list).get(*index),
+            ExpandedMathNode::Source { node, .. } => node.view(),
             ExpandedMathNode::Owned(node) => Some(tex_state::node_view::NodeView::from(node)),
         }
     }
 
-    pub(super) fn noad_mut<'a>(
-        &'a mut self,
-        state: &impl MathTypesetState,
-        index: usize,
-    ) -> Option<&'a mut MathNoad> {
-        if let ExpandedMathNode::Source {
-            list,
-            index: source_index,
-        } = self.nodes[index]
-        {
-            let tex_state::node_view::NodeView::MathNoad(noad) = state
-                .page_nodes(list)
-                .get(source_index)
-                .expect("expanded math source remains live")
+    pub(super) fn noad_mut(&mut self, index: usize) -> Option<&mut MathNoad> {
+        if let ExpandedMathNode::Source { node, .. } = self.nodes[index] {
+            let tex_state::node_view::NodeView::MathNoad(noad) =
+                node.view().expect("expanded math source remains live")
             else {
                 return None;
             };
-            self.nodes[index] = ExpandedMathNode::Owned(Node::MathNoad(MathNoad {
-                kind: noad.kind,
-                nucleus: noad.nucleus,
-                subscript: noad.subscript,
-                superscript: noad.superscript,
-            }));
+            self.nodes[index] = ExpandedMathNode::Owned(Node::MathNoad(noad));
         }
         match &mut self.nodes[index] {
             ExpandedMathNode::Owned(Node::MathNoad(noad)) => Some(noad),
@@ -583,43 +563,53 @@ impl ExpandedMathView {
     }
 }
 
-enum ExpandedMathNode {
-    Source { list: PageListId, index: usize },
+enum ExpandedMathNode<'a> {
+    Source {
+        list: PageListId,
+        index: usize,
+        node: DirectNodeView<'a>,
+    },
     Owned(Node),
 }
 
-#[derive(Clone)]
-struct ExpansionFrame {
+struct ExpansionFrame<'a> {
     list: PageListId,
     index: usize,
+    nodes: NodeCursor<'a>,
 }
 
-fn expand_math_choices_into(
-    state: &impl MathTypesetState,
+fn expand_math_choices_into<'a>(
+    state: &'a impl MathTypesetState,
     root: PageListId,
     starting_style: Style,
-    view: &mut ExpandedMathView,
+    view: &mut ExpandedMathView<'a>,
 ) {
     view.clear();
     let mut style = starting_style;
     view.stack.push(ExpansionFrame {
         list: root,
         index: 0,
+        nodes: state.page_nodes(root),
     });
     while let Some(frame) = view.stack.last_mut() {
-        let Some(node) = state.page_nodes(frame.list).get(frame.index) else {
+        let Some(source_node) = frame.nodes.get_direct(frame.index) else {
             view.stack.pop();
             continue;
         };
         let source_list = frame.list;
         let source_index = frame.index;
         frame.index += 1;
+        let Some(node) = source_node.view() else {
+            view.stack.pop();
+            continue;
+        };
         match node {
             tex_state::node_view::NodeView::MathStyle(next) => {
                 style = Style::from_math_style(next);
                 view.nodes.push(ExpandedMathNode::Source {
                     list: source_list,
                     index: source_index,
+                    node: source_node,
                 });
                 view.marker_styles.push(style);
             }
@@ -644,6 +634,7 @@ fn expand_math_choices_into(
                 view.stack.push(ExpansionFrame {
                     list: selected,
                     index: 0,
+                    nodes: state.page_nodes(selected),
                 });
             }
             node => {
@@ -657,6 +648,7 @@ fn expand_math_choices_into(
                 view.nodes.push(ExpandedMathNode::Source {
                     list: source_list,
                     index: source_index,
+                    node: source_node,
                 });
                 if resets_style {
                     style = starting_style;
@@ -743,11 +735,11 @@ fn prepare_nested_mlists<S: MathTypesetState>(
     }
 }
 
-fn nested_mlist_requests(
-    state: &impl MathTypesetState,
+fn nested_mlist_requests<'a>(
+    state: &'a impl MathTypesetState,
     root: PageListId,
     starting_style: Style,
-    view: &mut ExpandedMathView,
+    view: &mut ExpandedMathView<'a>,
     out: &mut Vec<(PageListId, Style)>,
     seen: &mut AHashSet<(PageListId, Style)>,
 ) {
@@ -772,7 +764,7 @@ fn nested_mlist_requests(
     seen.clear();
     for index in 0..view.len() {
         let node = view
-            .node(state, index)
+            .node(index)
             .expect("expanded math request remains in range");
         match node {
             tex_state::node_view::NodeView::MathStyle(_) => {
@@ -1234,9 +1226,9 @@ fn convert_source_list(
         if expanded {
             visiting.remove(&key);
             let start = ctx.layout.begin_direct_list();
-            let state = ctx.state;
             let source_lists = &ctx.source_lists;
             let layout = &mut ctx.layout;
+            let state = ctx.state;
             let nodes = state.page_nodes(current);
             nodes.for_each_range(0..nodes.len(), |index, node| {
                 layout.push_direct_node(source_node(
@@ -1445,12 +1437,12 @@ pub(crate) struct Context<'a, S> {
     pub(crate) pack_replays: Vec<ReplayMarker<MathPackObservation>>,
     pub(crate) event_replays: RefCell<Vec<ReplayMarker<MathConversionEvent>>>,
     pub(crate) recovered: Cell<bool>,
-    pub(crate) scratch: ConversionScratch,
+    pub(crate) scratch: ConversionScratch<'a>,
 }
 
 #[derive(Default)]
-pub(crate) struct ConversionScratch {
-    expansion: ExpandedMathView,
+pub(crate) struct ConversionScratch<'a> {
+    expansion: ExpandedMathView<'a>,
     work: Vec<WorkItem>,
     output: Vec<MathNode>,
 }

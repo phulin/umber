@@ -336,7 +336,7 @@ Definition-owned parameter programs expose literal delimiter views only for none
   projections. The old owned dual-channel node buffer is retired.
 - `src/node_view.rs` and `src/node_view/{view,cursor}.rs`: Borrowed `NodeView`
   and `NodeCursor` projections over compact page-material records and slices,
-  including direct scalar reads and admitted linear traversal. Storage and
+  including direct scalar reads, logical projection of an already-borrowed node, and admitted linear traversal. Public page cursors admit the source list once. Storage and
   page-list coordinates belong to `page_node_arena`, not this view module.
 - `src/node_destination.rs`: One-use variant-directed construction capability
   for initializing a final resident node slot without a complete caller-owned

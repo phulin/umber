@@ -57,6 +57,15 @@ impl<'a> DirectNodeView<'a> {
         }
     }
 
+    /// Projects this already-borrowed record without resolving its list again.
+    #[must_use]
+    pub fn view(self) -> Option<NodeView<'a>> {
+        match self.source {
+            DirectNodeSource::Owned(node) => Some(NodeView::from(node)),
+            DirectNodeSource::Page(node) => node.view(),
+        }
+    }
+
     #[must_use]
     pub fn kind(self) -> Option<crate::node::NodeKind> {
         match self.source {
@@ -381,13 +390,7 @@ impl<'a> NodeCursor<'a> {
     }
     #[must_use]
     pub fn get(&self, index: usize) -> Option<NodeView<'a>> {
-        match self.source {
-            NodeCursorSource::Slice(nodes) => nodes.get(index).map(NodeView::from),
-            NodeCursorSource::Fork(view, annex) => view
-                .get(index)
-                .and_then(|record| record.decode_owned(annex))
-                .map(NodeView::from_owned),
-        }
+        self.get_direct(index)?.view()
     }
 
     /// Borrows one node without expanding compact page material into the

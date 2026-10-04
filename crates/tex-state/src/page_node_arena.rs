@@ -216,6 +216,12 @@ impl<'a> PageMaterialNodeRef<'a> {
         Self { record, annex }
     }
 
+    pub(crate) fn view(self) -> Option<crate::node_view::NodeView<'a>> {
+        self.record
+            .decode_owned(self.annex)
+            .map(crate::node_view::NodeView::from_owned)
+    }
+
     #[must_use]
     pub fn kind(self) -> Option<crate::node::NodeKind> {
         self.record.kind()
@@ -2722,10 +2728,7 @@ impl<'a> PageMaterialArena<'a> {
         &self,
         list: PageListId,
     ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
-        match self.admit_span(list) {
-            Ok(span) => self.span_node_cursor(span),
-            Err(error) => self.pool.borrowed_cursor(list).ok_or(error),
-        }
+        self.span_node_cursor(PageListSpan { list })
     }
 
     pub fn span_node_cursor(

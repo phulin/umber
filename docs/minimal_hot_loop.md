@@ -488,3 +488,23 @@ characters. Removing that copy requires lending the actual source slice to
 reconstitution callbacks; the graph deletion does not claim that ownership
 change is already complete. Full main-control command-slot elimination also
 remains separate unfinished work.
+
+## Borrowed math source reads
+
+Appendix G conversion lends immutable state for the entire kernel call. The
+existing expanded math view retains each source node's actual `DirectNodeView`
+borrow alongside its `(PageListId, index)` replay coordinate. A choice frame
+opens its source cursor once; repeated noad inspection and adjacency reads
+project the already-borrowed node instead of admitting its list and resolving
+its position again. Genuinely rewritten noads still become owned drafts in the
+same view. Choice expansion, styles, source retention and nested observation
+replay keep their existing ordering.
+
+The borrow is bounded by conversion and cannot survive mutation, unsave or
+checkpoint restoration. There is no persistent admission cache, node registry,
+new counter or alternate input owner. The existing source-node vector owns
+these borrows; no parallel vector is introduced. Compact-node projection uses
+the same decoder as ordinary positional reads, preserving malformed payload
+handling. Public page cursors validate their coordinate once through the
+existing span-reader boundary; the discarded admission before that validation
+is removed. Borrowed durable-source fallback retains its existing behavior.
