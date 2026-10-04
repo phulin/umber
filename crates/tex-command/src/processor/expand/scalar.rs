@@ -200,7 +200,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             },
             origin,
         );
-        let (meaning, resolution) = self.resolve_token_word(spelling.token_word());
+        let (meaning, control_sequence) = self.resolve_token_word(spelling.token_word());
         let action = classify_native_command(spelling.token_word(), &meaning);
         if self.is_observed()
             || self.command.delivery_mode.requires_persistent_settlement()
@@ -213,7 +213,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return self.treat_observed_or_exceptional_active_character(
                 spelling,
                 meaning,
-                resolution.control_sequence(),
+                control_sequence,
             );
         }
         if action == ExpandedCommandAction::Return {
@@ -236,9 +236,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let MeaningWord::Macro { flags, definition } = meaning else {
                         unreachable!("native active macro");
                     };
-                    let name = resolution
-                        .control_sequence()
-                        .ok_or_else(CommandError::input_invariant)?;
+                    let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
                     match processor.activate_read_macro(
                         spelling.token_word(),
                         origin,
@@ -255,12 +253,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                 }
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) => {
-                    processor.expand_primitive(
-                        primitive,
-                        spelling,
-                        resolution.control_sequence(),
-                        true,
-                    )?;
+                    processor.expand_primitive(primitive, spelling, control_sequence, true)?;
                 }
                 _ => unreachable!("native active expansion"),
             }

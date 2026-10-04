@@ -121,7 +121,6 @@ fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCo
         false,
         &universe.command_context().expect("command context"),
     )
-    .0
 }
 
 #[test]
@@ -186,7 +185,7 @@ fn packed_input_resolution_preserves_the_consumed_native_slot() {
         );
         let slot = core::ptr::from_ref(&command);
         let context = universe.command_context().expect("command context");
-        let resolution = command.write_resolved_delivery(
+        command.write_resolved_delivery(
             spelling.token_word(),
             spelling.origin(),
             false,
@@ -194,8 +193,11 @@ fn packed_input_resolution_preserves_the_consumed_native_slot() {
             false,
             &context,
         );
-        assert!(!resolution.meaning_lookup());
-        assert_eq!(resolution.literal_catcode(), Some(Catcode::Letter));
+        assert!(!spelling.token_word().requires_meaning_lookup());
+        assert_eq!(
+            spelling.token_word().literal_catcode(),
+            Some(Catcode::Letter)
+        );
         assert_eq!(core::ptr::from_ref(&command), slot);
 
         let command = command;
@@ -242,7 +244,7 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
         #[cfg(feature = "profiling")]
         let before = tex_state::meaning::direct_command_delivery_counters();
 
-        let resolution = command.write_resolved_delivery(
+        command.write_resolved_delivery(
             TokenWord::pack(Token::Cs(symbol.symbol())),
             OriginId::UNKNOWN,
             false,
@@ -254,7 +256,7 @@ fn dense_control_sequence_row_writes_the_actual_command_slot_once() {
         let after = tex_state::meaning::direct_command_delivery_counters();
 
         assert_eq!(core::ptr::from_ref(&command), slot);
-        assert!(resolution.meaning_lookup());
+        assert!(TokenWord::pack(Token::Cs(symbol.symbol())).requires_meaning_lookup());
         #[cfg(feature = "profiling")]
         {
             assert_eq!(after.dense_row_accesses - before.dense_row_accesses, 1);
@@ -351,7 +353,7 @@ fn packed_input_resolution_replaces_the_destination_with_the_new_meaning() {
         let mut command = CurrentCommand::empty();
 
         let context = universe.command_context().expect("command context");
-        let _ = command.write_resolved_delivery(
+        command.write_resolved_delivery(
             TokenWord::pack(Token::Cs(symbol.symbol())),
             OriginId::UNKNOWN,
             false,
@@ -360,7 +362,7 @@ fn packed_input_resolution_replaces_the_destination_with_the_new_meaning() {
             &context,
         );
 
-        let _ = command.write_resolved_delivery(
+        command.write_resolved_delivery(
             TokenWord::pack(Token::Char {
                 ch: 'x',
                 cat: Catcode::Letter,

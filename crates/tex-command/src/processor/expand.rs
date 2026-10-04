@@ -202,7 +202,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             ReadSite::Source(line) => line,
             _ => None,
         };
-        let resolution = CurrentCommand::write_delivery_into(
+        CurrentCommand::write_delivery_into(
             destination,
             word,
             origin,
@@ -211,8 +211,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             suppress,
             self.state,
         );
-        self.record_consumed_word(kind, resolution.meaning_lookup());
-        resolution.literal_catcode()
+        self.record_consumed_word(kind, word.requires_meaning_lookup());
+        word.literal_catcode()
     }
 
     #[inline(always)]
@@ -697,8 +697,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         native: &mut N,
     ) -> Result<std::ops::ControlFlow<DeliveryStatus>, CommandError> {
         self.fuel.charge()?;
-        let (meaning, resolution) = self.resolve_token_word(word);
-        self.record_consumed_word(kind, resolution.meaning_lookup());
+        let (meaning, control_sequence) = self.resolve_token_word(word);
+        self.record_consumed_word(kind, word.requires_meaning_lookup());
         if !self.is_observed()
             && !self
                 .command
@@ -713,9 +713,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             if N::EXPAND_BOUNDARIES
                 && let tex_state::meaning::MeaningWord::Macro { flags, definition } = meaning
             {
-                let name = resolution
-                    .control_sequence()
-                    .ok_or_else(CommandError::input_invariant)?;
+                let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
                 match self.activate_read_macro(word, origin, flags, definition, name) {
                     Ok(())
                     | Err(
@@ -733,7 +731,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 self.expand_primitive(
                     primitive,
                     TracedTokenWord::from_parts(word, origin),
-                    resolution.control_sequence(),
+                    control_sequence,
                     true,
                 )?;
                 return Ok(std::ops::ControlFlow::Continue(()));
@@ -744,12 +742,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 self.command
                     .roots
                     .alignment
-                    .account_literal_catcode(resolution.literal_catcode());
+                    .account_literal_catcode(word.literal_catcode());
                 let _ = native.consume_native_terminal(
                     self,
                     TracedTokenWord::from_parts(word, origin),
                     &meaning,
-                    resolution.control_sequence(),
+                    control_sequence,
                 );
                 return Ok(std::ops::ControlFlow::Break(
                     DeliveryStatus::CharacterRunBoundary,
@@ -767,9 +765,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             line,
             suppress,
             meaning,
-            resolution.control_sequence(),
+            control_sequence,
         ));
-        self.settle_hot_delivery(command, resolution.literal_catcode())?;
+        self.settle_hot_delivery(command, word.literal_catcode())?;
         Ok(std::ops::ControlFlow::Break(
             DeliveryStatus::CharacterRunBoundary,
         ))

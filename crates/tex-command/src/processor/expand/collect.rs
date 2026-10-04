@@ -62,10 +62,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     if literal.is_some_and(|cat| cat != Catcode::Active) && !OBSERVED && !MEANING {
                         false
                     } else {
-                        let (resolved, resolution) = processor.resolve_token_word(word);
-                        lookup = resolution.meaning_lookup();
+                        let (resolved, control_sequence) = processor.resolve_token_word(word);
+                        lookup = word.requires_meaning_lookup();
                         let outer = resolved.is_outer();
-                        meaning = Some((resolved, resolution));
+                        meaning = Some((resolved, control_sequence));
                         outer
                     };
                 processor.record_consumed_word(kind, lookup);
@@ -77,7 +77,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .delivery_mode
                         .requires_semantic_settlement(suppress, outer);
                 if exceptional {
-                    let (meaning, resolution) =
+                    let (meaning, control_sequence) =
                         meaning.unwrap_or_else(|| processor.resolve_token_word(word));
                     let mut command = CurrentCommand::from_delivered_parts(
                         word,
@@ -89,7 +89,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         },
                         suppress,
                         meaning,
-                        resolution.control_sequence(),
+                        control_sequence,
                     );
                     processor.settle_hot_delivery_in::<OBSERVED>(&mut command, literal)?;
                     if matches!(
@@ -217,10 +217,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let outer = if literal.is_some_and(|cat| cat != Catcode::Active) && !OBSERVED {
                         false
                     } else {
-                        let (resolved, resolution) = processor.resolve_token_word(word);
-                        lookup = resolution.meaning_lookup();
+                        let (resolved, control_sequence) = processor.resolve_token_word(word);
+                        lookup = word.requires_meaning_lookup();
                         let outer = resolved.is_outer();
-                        meaning = Some((resolved, resolution));
+                        meaning = Some((resolved, control_sequence));
                         outer
                     };
                     processor.record_consumed_word(kind, lookup);
@@ -230,7 +230,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .delivery_mode
                             .requires_semantic_settlement(suppress, outer);
                     if exceptional {
-                        let (meaning, resolution) =
+                        let (meaning, control_sequence) =
                             meaning.unwrap_or_else(|| processor.resolve_token_word(word));
                         let mut command = CurrentCommand::from_delivered_parts(
                             word,
@@ -242,7 +242,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             },
                             suppress,
                             meaning,
-                            resolution.control_sequence(),
+                            control_sequence,
                         );
                         processor.settle_hot_delivery_in::<OBSERVED>(&mut command, literal)?;
                         if matches!(
@@ -294,7 +294,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             // Only illegal parameter recovery needs a backed-up command.
                             // A control-sequence meaning is retained from its single lookup;
                             // a literal's meaning is decoded lazily on this error branch.
-                            let (meaning, resolution) =
+                            let (meaning, control_sequence) =
                                 meaning.unwrap_or_else(|| processor.resolve_token_word(word));
                             let mut command: CurrentCommand<G> =
                                 CurrentCommand::from_delivered_parts(
@@ -307,7 +307,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                     },
                                     suppress,
                                     meaning,
-                                    resolution.control_sequence(),
+                                    control_sequence,
                                 );
                             command.set_alignment_adjustment(adjustment);
                             processor.back_input(command)

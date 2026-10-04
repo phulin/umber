@@ -166,7 +166,7 @@ impl<G> CurrentCommand<G> {
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
-    ) -> tex_state::token::PackedMeaningResolution {
+    ) {
         if let Some(command) = destination {
             command.write_resolved_delivery(
                 word,
@@ -177,7 +177,7 @@ impl<G> CurrentCommand<G> {
                 state,
             )
         } else {
-            let (command, resolution) = CurrentCommand::from_resolved_delivery(
+            let command = CurrentCommand::from_resolved_delivery(
                 word,
                 origin,
                 direct_source,
@@ -186,7 +186,6 @@ impl<G> CurrentCommand<G> {
                 state,
             );
             *destination = Some(command);
-            resolution
         }
     }
 }
@@ -205,20 +204,17 @@ impl<G> CurrentCommand<G> {
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
-    ) -> (Self, tex_state::token::PackedMeaningResolution) {
+    ) -> Self {
         let mut meaning = MeaningWord::Static(Meaning::UNDEFINED_WORD);
-        let resolution = state.write_packed_token_command_into(word, &mut meaning);
-        (
-            Self::from_delivered_parts(
-                word,
-                origin,
-                direct_source,
-                direct_source_line,
-                suppress_expandable,
-                meaning,
-                resolution.control_sequence(),
-            ),
-            resolution,
+        let control_sequence = state.write_packed_token_command_into(word, &mut meaning);
+        Self::from_delivered_parts(
+            word,
+            origin,
+            direct_source,
+            direct_source_line,
+            suppress_expandable,
+            meaning,
+            control_sequence,
         )
     }
 
@@ -283,7 +279,7 @@ impl<G> CurrentCommand<G> {
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
-    ) -> tex_state::token::PackedMeaningResolution {
+    ) {
         #[cfg(test)]
         update_command_ownership_counters(|counters| {
             counters.resolved_writes = counters.resolved_writes.saturating_add(1);
@@ -300,9 +296,7 @@ impl<G> CurrentCommand<G> {
                 suppress_expandable,
             ),
         };
-        let resolution = state.write_packed_token_command_into(word, &mut self.command);
-        self.site.control_sequence = resolution.control_sequence();
-        resolution
+        self.site.control_sequence = state.write_packed_token_command_into(word, &mut self.command);
     }
 
     pub(crate) const fn spelling_word(&self) -> TokenWord {

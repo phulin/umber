@@ -620,3 +620,20 @@ their existing zero-value policy. General dimension reads project the actual
 scalar directly, while generic journal reads retain the complete typed bank
 cell needed for save and restore. The replaced scalar math-parameter trait
 method and command-context getter are deleted.
+
+## Resolution returns only demanded identity
+
+Packed-token resolution writes the actual native meaning and returns only
+the resolved control-sequence identity. Active characters still resolve their
+registered symbol once; frozen, parameter and non-active literal words return
+no identity. The input word already owns its literal category and whether its
+spelling demands meaning lookup. Reader consumers use those projections
+directly, without a parallel metadata result.
+
+`PackedMeaningResolution` and its literal/lookup fields are deleted. Raw
+command constructors write their final command and identity without returning
+metadata or a command/metadata tuple. Profiling records a lookup only on
+branches that actually resolve the word; native collection's literal shortcut
+retains its existing zero-lookup accounting. Brace handling uses the original
+spelling's category rather than its effective meaning, preserving active,
+frozen, suppression, alignment, observation and recovery semantics.

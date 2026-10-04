@@ -177,18 +177,6 @@ const _: () = assert!(core::mem::size_of::<Token>() == 8);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TokenWord(u32);
 
-/// Copy-small result of resolving one resident packed token.
-///
-/// The resolver already decodes a literal character's category to construct
-/// its meaning. Command delivery consumes that same fact for brace handling
-/// instead of decoding the packed spelling a second time.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PackedMeaningResolution {
-    meaning_lookup: bool,
-    literal_catcode: Option<Catcode>,
-    control_sequence: Option<Symbol>,
-}
-
 /// In-place destination for one packed-token command resolution.
 ///
 /// The implementing value is the caller's actual current-command slot, not a
@@ -224,22 +212,6 @@ impl<G> PackedCommandTarget<G> for crate::meaning::MeaningWord<G> {
         definition: crate::DefinitionRef<G>,
     ) {
         *self = Self::Macro { flags, definition };
-    }
-}
-
-impl PackedMeaningResolution {
-    #[must_use]
-    pub const fn control_sequence(self) -> Option<Symbol> {
-        self.control_sequence
-    }
-    #[must_use]
-    pub const fn meaning_lookup(self) -> bool {
-        self.meaning_lookup
-    }
-
-    #[must_use]
-    pub const fn literal_catcode(self) -> Option<Catcode> {
-        self.literal_catcode
     }
 }
 
@@ -372,6 +344,13 @@ impl TokenWord {
         self.0 >> Self::KIND_SHIFT == Self::KIND_CS
     }
 
+    /// Whether resolving this spelling performs control-sequence meaning lookup.
+    #[must_use]
+    #[inline(always)]
+    pub const fn requires_meaning_lookup(self) -> bool {
+        self.is_control_sequence() || matches!(self.literal_catcode(), Some(Catcode::Active))
+    }
+
     /// The control sequence this word spells, when it is an ordinary one.
     #[must_use]
     #[inline(always)]
@@ -406,7 +385,7 @@ impl<G> crate::CommandContext<'_, G> {
         &self,
         word: TokenWord,
         target: &mut impl PackedCommandTarget<G>,
-    ) -> PackedMeaningResolution {
+    ) -> Option<Symbol> {
         use crate::meaning::Meaning;
 
         let kind = word.0 >> TokenWord::KIND_SHIFT;
@@ -420,41 +399,27 @@ impl<G> crate::CommandContext<'_, G> {
                 let control_sequence = (cat == Catcode::Active)
                     .then(|| self.active_character_symbol(ch))
                     .flatten();
-                let meaning_lookup = if cat == Catcode::Active {
+                if cat == Catcode::Active {
                     if let Some(symbol) = control_sequence {
                         self.compact_control_sequence_meaning_word(symbol)
                             .write_command_into(target);
                     } else {
                         target.write_static_meaning_word(Meaning::UNDEFINED_WORD);
                     }
-                    true
                 } else {
                     target.write_static_meaning_word(Meaning::char_token_word(ch, cat));
-                    false
-                };
-                PackedMeaningResolution {
-                    meaning_lookup,
-                    literal_catcode: Some(cat),
-                    control_sequence,
                 }
+                control_sequence
             }
             TokenWord::KIND_CS => {
                 let symbol = Symbol::from_packed_slot(payload);
                 self.compact_control_sequence_meaning_word(symbol)
                     .write_command_into(target);
-                PackedMeaningResolution {
-                    meaning_lookup: true,
-                    literal_catcode: None,
-                    control_sequence: Some(symbol),
-                }
+                Some(symbol)
             }
             TokenWord::KIND_PARAM => {
                 target.write_static_meaning_word(Meaning::UNDEFINED_WORD);
-                PackedMeaningResolution {
-                    meaning_lookup: false,
-                    literal_catcode: None,
-                    control_sequence: None,
-                }
+                None
             }
             TokenWord::KIND_FROZEN => {
                 let frozen = FrozenToken::from_raw(payload as u16);
@@ -477,11 +442,7 @@ impl<G> crate::CommandContext<'_, G> {
                 } else {
                     target.write_static_meaning_word(Meaning::UNDEFINED_WORD);
                 }
-                PackedMeaningResolution {
-                    meaning_lookup: false,
-                    literal_catcode: None,
-                    control_sequence: None,
-                }
+                None
             }
             _ => unreachable!("two-bit packed-token kind"),
         }

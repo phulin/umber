@@ -9,19 +9,18 @@ use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use std::ops::ControlFlow;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord};
-use tex_state::token::PackedMeaningResolution;
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(always)]
     pub(super) fn resolve_token_word(
         &self,
         word: tex_state::token::TokenWord,
-    ) -> (MeaningWord<G>, PackedMeaningResolution) {
+    ) -> (MeaningWord<G>, Option<Symbol>) {
         let mut meaning = MeaningWord::Static(Meaning::UNDEFINED_WORD);
-        let resolution = self
+        let control_sequence = self
             .state
             .write_packed_token_command_into(word, &mut meaning);
-        (meaning, resolution)
+        (meaning, control_sequence)
     }
 
     #[inline(always)]
@@ -81,8 +80,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 // recursive primitive expansion and matching stay outlined.
                 #[inline(always)]
                 |processor, word, origin, suppress, site, kind| {
-                    let (meaning, resolution) = processor.resolve_token_word(word);
-                    processor.record_consumed_word(kind, resolution.meaning_lookup());
+                    let (meaning, control_sequence) = processor.resolve_token_word(word);
+                    processor.record_consumed_word(kind, word.requires_meaning_lookup());
                     if !OBSERVED
                         && let MeaningWord::Macro { flags, definition } = meaning
                         && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
@@ -94,8 +93,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 flags.contains(MeaningFlags::OUTER),
                             )
                     {
-                        let name = resolution
-                            .control_sequence()
+                        let name = control_sequence
                             .ok_or_else(CommandError::input_invariant)?;
                         terminal.before_action(processor);
                         let result = if Consumer::RAW_TOKEN {
@@ -127,7 +125,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 if spliced { Ok(()) } else {
                                     processor.expand_primitive(primitive,
                                         tex_state::token::TracedTokenWord::from_parts(word, origin),
-                                        resolution.control_sequence(), true)
+                                        control_sequence, true)
                                 }
                             });
                             if let Err(failure) = result {
@@ -143,11 +141,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             (protected || matches!(native_action, ExpandedCommandAction::Return))
                             && terminal.accepts_native_terminal(processor, &meaning)
                         {
-                            processor.command.roots.alignment.account_literal_catcode(resolution.literal_catcode());
+                            processor.command.roots.alignment.account_literal_catcode(word.literal_catcode());
                             terminal.before_action(processor);
                             let result = terminal.native_terminal(processor,
                                 tex_state::token::TracedTokenWord::from_parts(word, origin),
-                                &meaning, resolution.control_sequence())?;
+                                &meaning, control_sequence)?;
                             expanded = false;
                             return Ok(result.map_break(|()| DeliveryStatus::Command));
                         }
@@ -165,14 +163,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         line,
                         suppress,
                         meaning,
-                        resolution.control_sequence(),
+                        control_sequence,
                     ));
                     if native {
                         processor.command.roots.alignment.account_literal_brace(
-                            command, resolution.literal_catcode());
+                            command, word.literal_catcode());
                     } else {
                         processor.settle_hot_delivery_in::<OBSERVED>(
-                            command, resolution.literal_catcode())?;
+                            command, word.literal_catcode())?;
                     }
                     if Consumer::RAW_TOKEN
                         && matches!(

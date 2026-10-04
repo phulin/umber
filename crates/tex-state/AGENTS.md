@@ -527,8 +527,9 @@ Definition-owned parameter programs expose literal delimiter views only for none
 - `src/token.rs`: Token and catcode value definitions, constructors,
   classification helpers, destination-directed packed command resolution
   which writes the consumer's final native `MeaningWord` without class
-  construction and returns its
-  control-sequence identity, lookup fact, and already-decoded literal catcode, and inline-small
+  construction and returns only the resolved control-sequence identity. Lookup
+  classification and literal categories remain projections of the input word;
+  no resolution-metadata result is constructed. Inline-small
   rooted traced-token buffers with
   sparse provenance ownership and spillover storage. Generated runs sharing
   one origin pack every word against its id and move that structural root into

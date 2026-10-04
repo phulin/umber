@@ -403,47 +403,62 @@ fn unexpandable_main_control_classifies_once_and_reuses_one_slot() {
 
 #[test]
 #[cfg(feature = "profiling")]
-fn raw_main_loop_exit_preserves_the_existing_expanded_work_boundary() {
+fn main_loop_lookahead_counts_only_x_token_deliveries() {
     crate::test_harness::with_universe(|universe| {
-        let token = Token::Char {
-            ch: ' ',
-            cat: Catcode::Space,
-        };
-        let mut command = CommandState::default();
-        crate::test_harness::push(&mut command, [token]);
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-        let work_before = fuel.work();
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
-        let mut destination = None;
+        // TeX82 section 1038 returns letters directly after get_next. A
+        // non-character such as a space reaches x_token before reswitch.
+        for (token, expected_expanded_deliveries) in [
+            (
+                Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Letter,
+                },
+                0,
+            ),
+            (
+                Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                },
+                1,
+            ),
+        ] {
+            let mut command = CommandState::default();
+            crate::test_harness::push(&mut command, [token]);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let work_before = fuel.work();
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut diagnostic_effects,
+            );
+            let mut destination = None;
 
-        assert_eq!(
-            processor
-                .main_control_until(&mut destination, true, &mut ())
-                .expect("raw main-loop exit"),
-            crate::DeliveryStatus::Command
-        );
-        assert_eq!(
-            destination
-                .as_ref()
-                .expect("main-loop exit occupies its caller destination")
-                .spelling()
-                .semantic_token(),
-            token
-        );
-        drop(processor);
-        assert_eq!(
-            fuel.work().expanded_deliveries - work_before.expanded_deliveries,
-            0
-        );
+            assert_eq!(
+                processor
+                    .main_control_until(&mut destination, true, &mut ())
+                    .expect("raw main-loop exit"),
+                crate::DeliveryStatus::Command
+            );
+            assert_eq!(
+                destination
+                    .as_ref()
+                    .expect("main-loop exit occupies its caller destination")
+                    .spelling()
+                    .semantic_token(),
+                token
+            );
+            drop(processor);
+            assert_eq!(
+                fuel.work().expanded_deliveries - work_before.expanded_deliveries,
+                expected_expanded_deliveries
+            );
+        }
     });
 }
 
