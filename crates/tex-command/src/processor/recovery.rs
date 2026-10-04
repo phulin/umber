@@ -360,25 +360,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// remain here.
     pub fn recover_stop_for_vertical_mode(
         &mut self,
-        command: CurrentCommand<G>,
+        spelling: TracedTokenWord,
+        exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<(), CommandError> {
-        self.insert_par_before(command)
-    }
-    /// Performs Web2C `partoken.ch`'s boundary replay for a positive
-    /// `\partokencontext`.
-    ///
-    /// The boundary command is backed up first and the current `\par`
-    /// control sequence is installed above it with `inserted` ownership.
-    /// This is the same raw-input transition as TeX82 §1095's
-    /// `head_for_vmode`; only the caller's boundary predicate differs.
-    pub fn insert_partoken_before(
-        &mut self,
-        command: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
-        self.insert_par_before(command)
-    }
-    fn insert_par_before(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
-        self.back_input(command)?;
+        self.back_consumed_word(spelling, exceptional)?;
         let par = TracedTokenWord::pack(
             Token::Cs(
                 self.state
@@ -444,9 +429,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// inserted" diagnostic text; only the raw input recovery lives here.
     pub fn recover_missing_math_shift(
         &mut self,
-        command: CurrentCommand<G>,
+        spelling: TracedTokenWord,
+        exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<(), CommandError> {
-        self.back_input(command)?;
+        self.back_consumed_word(spelling, exceptional)?;
         let dollar_token = Token::Char {
             ch: '$',
             cat: Catcode::MathShift,
@@ -493,7 +479,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// intervening group.
     pub fn recover_off_save(
         &mut self,
-        command: CurrentCommand<G>,
+        spelling: TracedTokenWord,
+        exceptional: Option<&CurrentCommand<G>>,
         closing: &[Token],
     ) -> Result<(), CommandError> {
         observe!(
@@ -501,12 +488,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             CommandObservation::Diagnostic(crate::observation::DiagnosticRecord {
                 severity: "error",
                 diagnostic: "off_save_replay",
-                arguments: vec![DiagnosticArgument::Token(
-                    self.observed_command_spelling(&command),
-                )],
+                arguments: vec![DiagnosticArgument::Token(exceptional.map_or_else(
+                    || self.observed_token(spelling),
+                    |command| self.observed_command_spelling(command)
+                ),)],
             },),
         );
-        self.back_input(command)?;
+        self.back_consumed_word(spelling, exceptional)?;
         let level = self.command.push_token_level(
             transient_replay(
                 closing
@@ -543,16 +531,24 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// The command remains on its existing backup level, which raw input
     /// retires on the following delivery attempt. Keeping the diagnostic here
     /// makes that observer order command-owned just like replay recovery.
-    pub fn report_off_save_bottom_drop(&mut self, command: &CurrentCommand<G>) {
-        self.observe_command_diagnostic("off_save_bottom_drop", command);
-    }
-    /// Performs TeX82 §1131's end-v instance of [`Self::recover_off_save`].
-    pub fn recover_endv_off_save(
+    pub fn report_off_save_bottom_drop(
         &mut self,
-        command: CurrentCommand<G>,
-        closing: Token,
-    ) -> Result<(), CommandError> {
-        self.recover_off_save(command, &[closing])
+        spelling: TracedTokenWord,
+        exceptional: Option<&CurrentCommand<G>>,
+    ) {
+        if self.is_observed() {
+            let token = exceptional.map_or_else(
+                || self.observed_token(spelling),
+                |command| self.observed_command_spelling(command),
+            );
+            self.observe(CommandObservation::Diagnostic(
+                crate::observation::DiagnosticRecord {
+                    severity: "error",
+                    diagnostic: "off_save_bottom_drop",
+                    arguments: vec![DiagnosticArgument::Token(token)],
+                },
+            ));
+        }
     }
     /// Looks up the frozen (redefinition-proof) control-sequence token for a
     /// primitive by its canonical name, e.g. TeX82's `frozen_end_group` /

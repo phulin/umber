@@ -130,7 +130,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     /// Ordinary synchronous consumers back up spelling; exceptional deliveries
     /// preserve their actual alignment correction and observed command identity.
-    pub(crate) fn back_consumed_word(
+    pub fn back_consumed_word(
         &mut self,
         spelling: TracedTokenWord,
         exceptional: Option<&CurrentCommand<G>>,
@@ -142,7 +142,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    pub(crate) fn capture_consumed_site(
+    /// Captures demanded diagnostic facts at the actual terminal consumer.
+    pub fn capture_consumed_site(
         &self,
         spelling: TracedTokenWord,
         meaning: &MeaningWord<G>,

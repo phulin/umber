@@ -149,12 +149,12 @@ pub use scanners::{
     PdfThreadRequest, RegisteredInput, RestrictedIntegerClass, ScalarProvenance, ScannedAccent,
     ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind,
     ScannedBoxRegister, ScannedBoxShift, ScannedBoxShiftPayload, ScannedCharacterDefinition,
-    ScannedDiscretionaryOpening, ScannedDisplayDiagnostic, ScannedFileName,
-    ScannedGeneratedFontDefinition, ScannedHyphenationData, ScannedInsertConstruction,
-    ScannedLeaderPayload, ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter,
-    ScannedMathFraction, ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec,
-    ScannedScalar, ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit, StructuredProvenance,
-    TokenRequest, WriteStreamSelector,
+    ScannedDisplayDiagnostic, ScannedFileName, ScannedGeneratedFontDefinition,
+    ScannedHyphenationData, ScannedInsertConstruction, ScannedLeaderPayload,
+    ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFraction,
+    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedScalar,
+    ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, TokenRequest,
+    WriteStreamSelector,
 };
 pub use snapshot::{
     CommandRestoreError, CommandSummary, CommandSummaryError, PreparedCommandRestore,

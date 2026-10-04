@@ -20,7 +20,10 @@ packed meanings, immutable input and macro owners, mutation journals, full
 checkpoint capture and restore, and concrete TeX semantic routines remain the
 storage and semantic authorities. The old execution dispatcher, native
 eligibility switch, assignment dispatcher and processor-loan macros are deleted
-first. No fallback to them, compatibility adapter, or second interpreter is
+first. The remaining DirectDispatch scan/application adapters and their owner
+are also deleted. Only concrete character admission, opcode constants, token
+publication and group primitives move into the new interpreter modules.
+No fallback to them, compatibility adapter, or second interpreter is
 permitted. During cutover the source tree is deliberately not buildable; tests
 resume when the sole replacement is wired.
 

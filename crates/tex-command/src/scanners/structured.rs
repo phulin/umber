@@ -58,9 +58,9 @@ pub use token_requests::TokenRequest;
 
 pub use box_values::{
     ScannedAccent, ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister,
-    ScannedBoxShift, ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
-    ScannedInsertConstruction, ScannedLeaderPayload, ScannedPackingSpec, ScannedRuleSpec,
-    ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit,
+    ScannedBoxShift, ScannedBoxShiftPayload, ScannedDisplayDiagnostic, ScannedInsertConstruction,
+    ScannedLeaderPayload, ScannedPackingSpec, ScannedRuleSpec, ScannedSetBoxAssignment,
+    ScannedSetBoxPath, ScannedVSplit,
 };
 pub use definition_values::{
     ExpandedWriteText, FontLoadRequest, FontSizeRecovery, GeneratedFontKind, PdfActionDestination,

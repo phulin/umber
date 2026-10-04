@@ -16,9 +16,9 @@ use tex_command::{
     RegisteredSourceKind, ResourceFulfillment, ResourceInstallOutcome, ResourceNeed,
     ResourceProvider, RestrictedIntegerClass, ScannedAccent, ScannedAccentBase,
     ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
-    ScannedDiscretionaryOpening, ScannedDisplayDiagnostic, ScannedGeneratedFontDefinition,
-    ScannedInsertConstruction, ScannedLeaderPayload, ScannedPackingSpec, ScannedSetBoxPath,
-    ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    ScannedDisplayDiagnostic, ScannedGeneratedFontDefinition, ScannedInsertConstruction,
+    ScannedLeaderPayload, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit, SourceRegistration,
+    SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -67,15 +67,12 @@ mod code_table;
 mod cold;
 mod definition_assignments;
 mod delivery;
-mod direct;
-mod discretionary;
 mod execution_state;
 mod executor_facts;
 use execution_state::ExecutionState;
 mod host_boundaries;
 mod interpreter;
 mod leader_values;
-mod math_commands;
 mod resources;
 mod root_source;
 mod semantic;
@@ -462,7 +459,8 @@ impl<G> ReplayBoxes<G> {
 
 #[derive(Clone, Debug)]
 struct ActiveDiscretionary {
-    parts: Vec<tex_state::page_node_arena::PageListSpan>,
+    parts: [tex_state::page_node_arena::PageListSpan; 3],
+    completed: usize,
     rejected: bool,
 }
 
@@ -2231,10 +2229,8 @@ impl<G> MainControl<G> {
                 self.fire_pending_page_output(stores, &mut diagnostic_effects, pending)
                     .map(|()| ReplayStep::Continue)
             } else {
-                self.execute_control_chunk(
+                self.interpret_chunk(
                     stores,
-                    None,
-                    None,
                     &mut diagnostic_effects,
                     tracked_mark.is_some(),
                     &mut resource_provider,
@@ -2242,7 +2238,7 @@ impl<G> MainControl<G> {
                     &mut completed_native_commands,
                 )
             };
-            operations += completed_native_commands + 1;
+            operations += completed_native_commands.max(1);
             self.update_save_stack_highwater(stores);
             let boundary = self.episode_commit_boundary(
                 stores,
@@ -2618,9 +2614,9 @@ impl<G> MainControl<G> {
             }
             (command, cursor)
         };
-        let applied = self.execute_control(
+        let applied = self.interpret_fetched(
             stores,
-            Some(command),
+            command,
             Some(cursor),
             &mut diagnostic_effects,
             false,
@@ -3052,219 +3048,6 @@ impl<G> MainControl<G> {
                 }
             }
         }
-        Ok(())
-    }
-
-    /// Runs one live `math_choice_group` to its closing brace.
-    ///
-    /// TeX82 §1172/§1174 use
-    /// ``push_math(math_choice_group); scan_left_brace``: the body is ordinary
-    /// input that main control reads until §1174's `build_choices` sees its
-    /// matching `}`. The mandatory brace has already been consumed by the
-    /// scanner that requested this group; this branch path opens the
-    /// save/mode levels and steps until that specific branch closes. Ordinary
-    /// §1153 `math_group` fields instead return directly to the production
-    /// main-control loop through [`Self::accept_math_field`].
-    fn execute_live_math_choice_group(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        tracked_region_is_active: bool,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
-        // The depth sampled before `push_math`, not the innermost group
-        // kind, is what identifies this group's own closing brace: a nested
-        // subformula opens another `math_group`, and any brace group inside
-        // the body opens a `simple_group`.
-        let enclosing_depth = stores
-            .command_context()
-            .expect("live generation")
-            .group_frames()
-            .len();
-        enter_group(
-            &mut stores.command_context().expect("math-group admission"),
-            &mut self.command,
-            diagnostic_effects,
-            GroupKind::MathChoice,
-        );
-        self.execution.modes.push_at_line(
-            Mode::Math,
-            self.command
-                .current_file_line_number()
-                .try_into()
-                .unwrap_or(i32::MAX),
-        )?;
-        // This group opener and its body execute inside one outer command
-        // operation. e-TeX [19.282] nevertheless prints the tracinggroups
-        // entry synchronously before fetching the first body command. A body
-        // `\message`, `\write`, or show completion writes through World, so
-        // commit the already-complete detached entry before nested main
-        // control can overtake it.
-        stores
-            .world_mut()
-            .publish_diagnostic_effects_preserving(diagnostic_effects);
-        self.execution.main_loop_active = false;
-        while stores
-            .command_context()
-            .expect("live generation")
-            .group_frames()
-            .len()
-            > enclosing_depth
-        {
-            let step = self.execute_nested_operation(
-                stores,
-                None,
-                diagnostic_effects,
-                tracked_region_is_active,
-                resource_provider,
-            )?;
-            // `execute_live_math_choice_group` fuses the body into its opener's
-            // outer operation, but TeX finishes each nested command before
-            // fetching the next one. Publish its completed diagnostic
-            // program at that same boundary so a following immediate World
-            // write cannot overtake tracing from `\vcenter`, math choices,
-            // or any other nested group transition.
-            stores
-                .world_mut()
-                .publish_diagnostic_effects_preserving(diagnostic_effects);
-            match step {
-                ReplayStep::End | ReplayStep::EndOfInput => {
-                    return Err(ExecError::MissingToken {
-                        context: "math group closing brace",
-                    });
-                }
-                ReplayStep::Continue => {}
-            }
-        }
-        self.finish_math_level(stores, diagnostic_effects)
-    }
-
-    /// Closes any `\left` group TeX82 §1192 would have to recover, then pops
-    /// the math mode level and finishes its mlist (§1184's `fin_mlist`).
-    fn finish_math_level(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
-        self.execution.main_loop_active = false;
-        while left_group_open(&self.execution.modes, stores) {
-            // The `\right.` applied below is exactly the closer §1065 selects
-            // for `math_left_group`, so the report is §1064's `off_save`.
-            let mut command_context = stores.command_context().expect("live generation");
-            let context = self.command.output_open_context(&command_context);
-            report_escaped_error(
-                &mut command_context,
-                diagnostic_effects,
-                "Missing ",
-                "right.",
-                " inserted",
-                &OFF_SAVE_HELP,
-                context,
-            )?;
-            drop(command_context);
-            self.apply_math_delimiter(
-                MathDelimiterBoundary {
-                    kind: MathDelimiterBoundaryKind::Right,
-                    delimiter: tex_command::ScannedMathDelimiter {
-                        code: 0,
-                        missing_delimiter: false,
-                        provenance: tex_command::StructuredProvenance {
-                            primary: tex_state::token::OriginId::UNKNOWN,
-                        },
-                    },
-                },
-                stores,
-                diagnostic_effects,
-            )?;
-        }
-        let mut context = stores.command_context().expect("math-list admission");
-        let mut level = crate::box_runtime::commit_current_list(
-            &mut self.execution.modes,
-            &mut context,
-            diagnostic_effects,
-            self.fuel.fuel_mut(),
-        )?;
-        let (nodes, incomplete) = {
-            let mut list = level.list_mutation();
-            (list.take_nodes(), list.take_incomplete_fraction())
-        };
-        finish_math_list(nodes, incomplete, &mut context)
-    }
-
-    /// Opens and runs one `\mathchoice` branch: TeX82 §1172/§1174's
-    /// ``push_math(math_choice_group); scan_left_brace`` followed by the live
-    /// body main control reads until `build_choices` closes it.
-    fn execute_math_choice_branch(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        tracked_region_is_active: bool,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
-        self.command_scan_math_choice_group(stores, diagnostic_effects, resource_provider)?;
-        self.execute_live_math_choice_group(
-            stores,
-            diagnostic_effects,
-            tracked_region_is_active,
-            resource_provider,
-        )
-    }
-
-    /// Stores one completed TeX82 §1151 field or opens its live §1153 group.
-    ///
-    /// §1151 ends with `math_type(p):=math_char; character(p):=qi(c mod 256)`
-    /// and §1151's own `fam` rule -- it never builds a noad, so `c`'s class
-    /// bits are deliberately dropped here. The scalar case is a value, not
-    /// deferred input: the command processor has already read, expanded, and
-    /// classified everything the field consumed, so nothing is replayed and
-    /// no input level is opened (`umber2-johp.265`).
-    fn accept_math_field(
-        &mut self,
-        field: tex_command::MathFieldEpisode,
-        target: ActiveMathFieldTarget,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<(), ExecError> {
-        let field = match field.body {
-            MathFieldBody::Missing => MathField::Empty,
-            MathFieldBody::Character(code) => MathField::MathChar(
-                math_char(
-                    &stores.command_context().expect("live generation"),
-                    u32::from(code),
-                    field.provenance.primary,
-                )?
-                .1,
-            ),
-            MathFieldBody::OpenGroup => {
-                // TeX82 §1153 returns to `main_control` immediately after
-                // `push_math(math_group)`. The field body is not an inner
-                // executor loop: each of its commands must therefore retain
-                // the normal typed delivery/scanner/resource continuation.
-                // `EndMathGroup` consumes this exact destination at §1186.
-                enter_group(
-                    &mut stores.command_context().expect("math-group admission"),
-                    &mut self.command,
-                    diagnostic_effects,
-                    GroupKind::Math,
-                );
-                self.execution.modes.push_at_line(
-                    Mode::Math,
-                    self.command
-                        .current_file_line_number()
-                        .try_into()
-                        .unwrap_or(i32::MAX),
-                )?;
-                self.execution.active_math_fields.push(target);
-                self.execution.main_loop_active = false;
-                return Ok(());
-            }
-        };
-        fill_math_field_target(
-            &mut self.execution.modes,
-            &mut stores.command_context().expect("math-field admission"),
-            target,
-            field,
-        );
         Ok(())
     }
 
@@ -4230,47 +4013,6 @@ impl<G> MainControl<G> {
         Ok(ReplayStep::Continue)
     }
 
-    fn command_scan_math_field(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<tex_command::MathFieldEpisode, ExecError> {
-        let mut context = stores.command_context().expect("live generation");
-        let mut host_facts = ExecutorHostFacts {
-            modes: &self.execution.modes,
-            pdf_ignore_depth: self.execution.pdf_ignore_depth,
-            telemetry: &mut self.execution.episode_telemetry,
-        };
-        let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
-            command_processor_with_resource_provider(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
-                provider,
-                &mut self.declined_resource_attempt,
-                &mut self.operation_observations,
-                diagnostic_effects,
-                &mut context,
-            )
-        } else {
-            command_processor(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
-                &mut self.operation_observations,
-                diagnostic_effects,
-                &mut context,
-            )
-        };
-        let scanned = processor.scan_math_field_episode();
-        scanned.map_err(command_error)
-    }
-
-    /// Runs TeX82 §436's `scan_fifteen_bit_int` after an executor-owned
-    /// diagnostic has completed, as required by §1110's text-accent path.
     fn command_scan_math_character(
         &mut self,
         stores: &mut Universe<G>,
@@ -4307,48 +4049,6 @@ impl<G> MainControl<G> {
             )
         };
         processor.scan_math_character().map_err(command_error)
-    }
-
-    /// TeX82 §1172/§1174's `scan_left_brace` for one `\mathchoice` branch.
-    /// §403 recovery opens the group anyway, so the recovered flag is
-    /// diagnostic only.
-    fn command_scan_math_choice_group(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<bool, ExecError> {
-        let mut context = stores.command_context().expect("live generation");
-        let mut host_facts = ExecutorHostFacts {
-            modes: &self.execution.modes,
-            pdf_ignore_depth: self.execution.pdf_ignore_depth,
-            telemetry: &mut self.execution.episode_telemetry,
-        };
-        let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
-            command_processor_with_resource_provider(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
-                provider,
-                &mut self.declined_resource_attempt,
-                &mut self.operation_observations,
-                diagnostic_effects,
-                &mut context,
-            )
-        } else {
-            command_processor(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
-                &mut self.operation_observations,
-                diagnostic_effects,
-                &mut context,
-            )
-        };
-        let scanned = processor.scan_math_choice_group();
-        scanned.map_err(command_error)
     }
 
     /// Atomic observed variant of [`Self::advance`]. Observations are held
@@ -4524,14 +4224,25 @@ impl<G> MainControl<G> {
         tracked_region_is_active: bool,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
-        self.execute_control(
-            stores,
-            command,
-            None,
-            diagnostic_effects,
-            tracked_region_is_active,
-            resource_provider,
-        )
+        if let Some(command) = command {
+            self.interpret_fetched(
+                stores,
+                command,
+                None,
+                diagnostic_effects,
+                tracked_region_is_active,
+                resource_provider,
+            )
+        } else {
+            self.interpret_chunk(
+                stores,
+                diagnostic_effects,
+                tracked_region_is_active,
+                resource_provider,
+                1,
+                &mut 0,
+            )
+        }
     }
 
     fn apply_error_stop_transition(
@@ -4931,14 +4642,13 @@ pub(crate) struct ScriptTarget {
 /// newer tail.
 pub(crate) fn reserve_script_target<G>(
     mut list: crate::mode::ModeListMutation<'_>,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     kind: MathScriptKind,
 ) -> Result<ScriptTarget, ExecError> {
-    let mut context = stores.command_context().expect("math script admission");
     // `t<>empty`: the tail was eligible but already carries this script.
-    let tail_index = list.nodes(&context).len().checked_sub(1);
-    let (eligible, occupied) = match tail_index.and_then(|index| list.nodes(&context).get(index)) {
+    let tail_index = list.nodes(stores).len().checked_sub(1);
+    let (eligible, occupied) = match tail_index.and_then(|index| list.nodes(stores).get(index)) {
         Some(tex_state::node_view::NodeView::MathNoad(noad))
             if !matches!(
                 noad.kind,
@@ -4959,9 +4669,9 @@ pub(crate) fn reserve_script_target<G>(
     let node_index = if eligible && !occupied {
         tail_index.expect("eligible tail has an index")
     } else {
-        let index = list.nodes(&context).len();
+        let index = list.nodes(stores).len();
         list.push(
-            &mut context,
+            stores,
             Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
                 MathField::Empty,
@@ -4969,7 +4679,6 @@ pub(crate) fn reserve_script_target<G>(
         );
         index
     };
-    drop(context);
 
     if occupied {
         let (message, help) = match kind {
@@ -5086,16 +4795,15 @@ fn apply_limits<G>(
 
 fn start_fraction<G>(
     mut list: crate::mode::ModeListMutation<'_>,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fraction: tex_command::ScannedMathFraction,
 ) -> bool {
     if list.incomplete_fraction().is_some() {
         return false;
     }
     let numerator = list.take_span();
-    let context = stores.command_context().expect("live generation");
     list.set_incomplete_fraction(
-        &context,
+        stores,
         crate::mode::IncompleteFraction {
             numerator,
             thickness: match fraction.thickness {

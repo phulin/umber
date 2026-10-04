@@ -44,10 +44,6 @@ not allocate a vector merely to publish one already-complete node.
   complete-job versus fragment completion, and terminal parking. Ownership
   transitions are direct calls into the private sibling modules below; none is
   a facade or second command front.
-- `src/main_control/math_commands.rs`: Concrete math semantic routines selected
-  directly by the one mode/packed-command switch. They consume real scalar
-  operands and final kinds, preserve live field destinations and group/recovery
-  ordering, and contain no generic request or application dispatcher.
 - `src/main_control/execution_state.rs`: the actual execution, mode, box,
   alignment, math, output and driver owner, disjoint from command input and
   processor loans. Main control owns `CommandState` directly; no interpreter
@@ -57,18 +53,29 @@ not allocate a vector merely to publish one already-complete node.
 - `src/main_control/interpreter/`: sole replacement core under construction.
   `mod.rs` keeps the actual processor live across canonical expanded fetching
   and raw horizontal lookahead, applies the real host budget and publishes
-  demanded scanner reports before mutations. `dispatch.rs` owns the single
+  demanded scanner reports before mutations. `assignments.rs` scans and applies concrete register, parameter, macro and
+  let mutations without ending the processor loan. `prefixes.rs` owns only
+  TeX's actual prefix bits and the synchronous prefixed-command scan.
+  `material.rs` scans and appends glue, kerns and penalties directly to live lists.
+  `discretionary.rs` closes all three live break parts through native unsave;
+  actual completed spans occupy three fixed slots, with no per-break vector
+  or discarded scanner-result wrapper.
+  `math.rs` appends actual styles/math characters, reserves noad nuclei before
+  field scanning and transfers live braced fields and all four math-choice branches through native groups. The former math command adapters and nested math-choice execution loop are deleted.
+  `recovery.rs` backs native spelling through canonical input, starts paragraphs
+  before everypar replay, and inserts demanded math-shift recovery. `dispatch.rs` owns the single
   terminal mode/meaning switch; no native eligibility path or ordinary command
-  product precedes it. Missing selected-command and real input-boundary wiring
+  product precedes it. `characters.rs`, `codes.rs`, `groups.rs`, `publication.rs` retain actual
+  character admission, native selectors, unsave and final token publication.
+  `glue_identity.rs` owns TeX pointer reassignment; `driver.rs` owns actual
+  projection/high-water observations and admits the actual processor once for
+  each interpreter invocation. Ordinary driver entry has no command slot;
+  diagnostic preflight dispatches only its genuinely already-fetched record. Missing selected-command and real input-boundary wiring
   remains a compile-time cutover gap, not a runtime fallback.
-- `src/main_control/direct/`: retained concrete scan/application routines and
-  character/publication helpers used during the persistent-interpreter cutover.
-  The old `dispatch.rs`, `native.rs`, `native_assignments.rs` and
-  `scan_macros.rs` have been deleted. Do not restore their eligibility switch,
-  duplicated assignment dispatch, processor-loan macros or compatibility path.
-  `mod.rs` temporarily retains cold handler wiring while the sole replacement
-  interpreter is implemented. The tree is deliberately unbuildable during
-  this cutover; the replacement contract is in `docs/minimal_hot_loop.md`.
+- The former `src/main_control/direct/` directory is deleted completely,
+  including its dispatcher owner and processor reconstruction adapters. Do not
+  restore it or add an equivalent compatibility dispatcher. Genuine opcode,
+  character, group and publication primitives live under `interpreter/`.
 - `src/main_control/semantic/`: concrete source-free typed semantic routines
   grouped by assignments, registers, fonts, text, paragraph/page state, groups,
   boxes/builders/leaders, alignment/recovery, math, diagnostics, streams, and
@@ -97,10 +104,6 @@ not allocate a vector merely to publish one already-complete node.
 - `src/main_control/root_source.rs`: immutable root-source registration,
   editor rebind, startup framing, and root completion policy on the same
   `MainControl` owner. See `docs/main_control_responsibilities.md`.
-- `src/main_control/discretionary.rs`: `\discretionary` group and part
-  lifecycle plus the `\-` shorthand. It mutates the existing mode and node
-  owners under the sole main-control episode; operand scanning remains in
-  `tex-command` and host boundaries remain in `host_boundaries.rs`.
 - `src/main_control/executor_facts.rs`: the borrow-scoped live mode and
   effective-tail provider, retaining either the actual mutable execution loan or
   a genuine immutable cold query loan, plus the stack-branded checked-save and delivery

@@ -1089,7 +1089,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// rejected the brace in `\message\relax{...}` and every plain-TeX idiom
     /// that parks a `\relax` in front of a mandatory group
     /// (`umber2-johp.209`).
-    pub(crate) fn scan_left_brace(&mut self) -> Result<Option<OriginId>, CommandError> {
+    pub fn scan_left_brace(&mut self) -> Result<Option<OriginId>, CommandError> {
         let mut opening = None;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
             let character = match meaning {

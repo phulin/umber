@@ -205,10 +205,3 @@ pub struct ScannedAccent {
     pub accent: i32,
     pub accent_provenance: StructuredProvenance,
 }
-
-/// The source position at which TeX82 §1117/§1120 opened one live
-/// `\discretionary` part.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ScannedDiscretionaryOpening {
-    pub provenance: StructuredProvenance,
-}

@@ -676,7 +676,7 @@ pub(in crate::main_control) fn detached_showgroups<G>(
                 // completed, followed by `{` for the currently live part.
                 let completed = active_discretionaries
                     .get(discretionary_index)
-                    .map_or(0, |active| active.parts.len());
+                    .map_or(0, |active| active.completed);
                 discretionary_index = discretionary_index.saturating_add(1);
                 format!("\\discretionary{}{{", "{}".repeat(completed))
             }

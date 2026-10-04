@@ -1,74 +1,5 @@
-//! Apply scanned groups values directly.
+//! Actual group entry, warning and native unsave semantics.
 use super::*;
-impl<G> DirectDispatch<'_, '_, G> {
-    pub(super) fn execute_begin_simple_group(&mut self) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, _, _, _, command, boxes, _, _, _, _, _, _| {
-                semantic::execute_begin_simple_group(stores, command, boxes)
-            },
-        )
-    }
-
-    pub(super) fn execute_end_simple_group(&mut self) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, _, _, _, command, boxes, _, _, _, _, _, _| {
-                semantic::execute_end_simple_group(stores, command, boxes)
-            },
-        )
-    }
-
-    pub(super) fn execute_output_routine_opening_brace(&mut self) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, modes, _, _, command, boxes, _, _, _, _, _, _| {
-                semantic::execute_output_routine_opening_brace(stores, modes, command, boxes)
-            },
-        )
-    }
-
-    pub(super) fn execute_end_output_routine(&mut self) -> Result<ReplayStep, ExecError> {
-        self.report_scan()?;
-
-        self.control.execution.main_loop_active = false;
-
-        self.control.apply_direct_leaf(
-            self.stores,
-            self.effects,
-            self.provider,
-            self.output_start,
-            None,
-            |stores, modes, _, _, command, boxes, _, _, _, _, _, _| {
-                semantic::execute_end_output_routine(stores, modes, command, boxes)
-            },
-        )
-    }
-}
 
 impl<G> MainControl<G> {
     pub(super) fn apply_native_group_leave(
@@ -150,4 +81,50 @@ pub(in crate::main_control) fn begin_native_group<G>(
     }
     enter_group(context, command, effects, kind);
     Ok(ReplayStep::Continue)
+}
+
+pub(super) fn close_tex_group<G>(
+    processor: &mut Processor<'_, '_, G>,
+    code: u64,
+    spelling: TracedTokenWord,
+    meaning: &tex_state::meaning::MeaningWord<G>,
+    control_sequence: Option<Symbol>,
+    exceptional: Option<&tex_command::CurrentCommand<G>>,
+) -> Result<ReplayStep, ExecError> {
+    let group = processor
+        .with_execution_owners(|context, _, _, _, _, _, _, _, _| context.innermost_group_kind());
+    match (code, group) {
+        (codes::CHAR_END_GROUP, Some(GroupKind::Simple))
+        | (codes::PRIMITIVE_END_GROUP, Some(GroupKind::SemiSimple)) => {
+            report_scan(processor)?;
+            processor.with_execution_owners(
+                |context, _, effects, fuel, _, execution, _, _, _| {
+                    execution.main_loop_active = false;
+                    crate::box_runtime::flush_pending_hchars_with_fuel(
+                        &mut execution.modes,
+                        context,
+                        effects,
+                        fuel,
+                    )
+                },
+            )?;
+            finish_native_group_leave(
+                processor,
+                group.expect("selected native group"),
+                "ordinary group",
+            )
+        }
+        (codes::CHAR_END_GROUP, Some(GroupKind::Math)) => math::close_field(processor),
+        (codes::CHAR_END_GROUP, Some(GroupKind::MathChoice)) => math::close_choice(processor),
+        (codes::CHAR_END_GROUP, Some(GroupKind::Disc)) => discretionary::close_part(processor),
+        _ => close_mode_group(
+            processor,
+            code,
+            group,
+            spelling,
+            meaning,
+            control_sequence,
+            exceptional,
+        ),
+    }
 }

@@ -9,7 +9,9 @@ use tex_state::token::Catcode;
 
 impl<G> CurrentCommand<G> {
     #[inline(always)]
-    pub(crate) const fn native_meaning(&self) -> &MeaningWord<G> {
+    /// Borrows the already-delivered meaning for a genuine preflight consumer.
+    #[must_use]
+    pub const fn native_meaning(&self) -> &MeaningWord<G> {
         &self.command
     }
 

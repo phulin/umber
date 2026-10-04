@@ -98,19 +98,4 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             _ => Err(CommandError::input_invariant()),
         }
     }
-
-    /// Consumes only §1117/§1120's opening brace. The body remains on the
-    /// live input stack and returns to main control in restricted horizontal
-    /// mode; in particular, no macro or conditional from the body is expanded
-    /// before the executor has installed `disc_group`.
-    pub fn scan_discretionary_opening(
-        &mut self,
-    ) -> Result<ScannedDiscretionaryOpening, CommandError> {
-        let opening = self.scan_left_brace()?;
-        Ok(ScannedDiscretionaryOpening {
-            provenance: StructuredProvenance {
-                primary: opening.unwrap_or(OriginId::UNKNOWN),
-            },
-        })
-    }
 }

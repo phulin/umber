@@ -34,8 +34,13 @@ The removed `ResidentWord`/`TokenMeaning` chain and duplicated font column must
 not return as adapters. One interpreted token resolves once into the final
 native meaning. Continuing scalar scanners and expanded replacement collection consume native
 spelling and meaning synchronously, without a `CurrentCommand` for accepted
-words. Explicit command-returning scanners and main control still use their
-existing delivery slot while that execution boundary is being removed. Raw macro matching
+words. Explicit command-returning scanners retain their genuine exceptional delivery.
+The replacement main-control interpreter holds its actual processor across
+expanded fetching, horizontal lookahead, operand scanning, and semantic writes.
+Ordinary driver entry has no command slot. Discretionary and math-choice bodies
+return to this same loop through native groups; their old nested execution
+and processor reconstruction adapters are deleted. Discretionary completion
+stores three actual list spans in fixed slots rather than a heap vector. Raw macro matching
 and unexpanded replacement grammar consume final spelling and origin directly;
 their ordinary accepted words construct no command merely to project those fields.
 Recovery, tracing and observation

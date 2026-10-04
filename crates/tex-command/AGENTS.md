@@ -19,6 +19,12 @@ operand dispatch selects its actual scanner in the executor's one mode/command
 switch. MathRequest, duplicate noad/limit/equation selectors and the mu-material
 wrapper are absent; script markers carry their actual kind.
 
+Executor group-open consumers call the canonical `scan_left_brace` directly.
+The discarded discretionary opening wrapper and its scanner adapter are deleted.
+Recovery entry points consume native spelling plus a genuine exceptional record
+only when present; math-shift, paragraph and off-save backup share that native
+input seam. No recovery command record is built for ordinary spelling.
+
 The bulk character reader resolves its boundary once and offers accepted words
 directly to the main-control consumer. Only declined or exceptional boundaries
 construct a command record. Native acceptance preserves fuel charging, source
@@ -185,7 +191,8 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   enters a durable snapshot or format boundary.
   Command identity is derived at diagnostic/observation consumers from the native word and existing frozen-noexpand flag; no duplicate identity column is materialized during ordinary delivery.
 - `src/command/native_meaning.rs`: demanded class, primitive and scalar
-  projections on the actual delivered command. No separately classified
+  projections on the actual delivered command. Diagnostic preflight can borrow
+  its actual native meaning directly without a decode/re-encode handoff. No separately classified
   command-word type or cached class is constructed by resolution.
 - `src/command/identity.rs`: demanded diagnostic/observer command identity and
   canonical conversion/xray selectors on that same actual command.
@@ -851,3 +858,10 @@ The duplicate CommandClass enum and its CurrentCommand class projection are dele
 Math fields and delimiter operands consume native expanded words directly. Structural delimiter boundaries share the ordinary non-radical grammar; their duplicate hot nonblank fetch loop is deleted. Ordinary scalar cases construct no command record; braced fields, active restart, rejected-delimiter backup and demanded diagnostics retain canonical chronology.
 
 The mandatory brace scanner consumes native expanded words and returns only the accepted origin or inserted-brace decision. ScannedLeftBrace<G>, its returned CurrentCommand, the unused raw branch and raw/expanded boolean selector are deleted. Real brace origins, EOF failure, backed-up recovery context and synthetic alignment accounting remain distinct.
+
+The replacement interpreter consumes `consume_main_control` and
+`consume_main_loop_lookahead` directly. Native backup and diagnostic capture
+borrow actual spelling, meaning and optional exceptional delivery facts.
+`recover_missing_math_shift` takes that spelling and exceptional record instead
+of requiring a newly constructed ordinary command. There is no overload for
+the deleted command-valued signature.
