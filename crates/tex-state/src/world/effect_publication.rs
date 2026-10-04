@@ -9,8 +9,14 @@ impl World {
     }
 
     #[must_use]
-    pub fn effect_pos(&self) -> EffectPos {
-        EffectPos(self.effect_base.raw() + self.effects.len() as u64)
+    #[inline(always)]
+    pub const fn effect_pos(&self) -> EffectPos {
+        self.effect_end
+    }
+
+    /// The committed prefix is projected only by cold publication owners.
+    pub(super) fn effect_base(&self) -> EffectPos {
+        EffectPos(self.effect_end.raw() - self.effects.len() as u64)
     }
 
     #[must_use]
@@ -496,7 +502,7 @@ impl World {
     #[must_use]
     pub fn effect_position(&self, index: usize) -> Option<EffectPos> {
         (index < self.effects.len()).then(|| {
-            EffectPos(self.effect_base.raw() + u64::try_from(index).unwrap_or(u64::MAX) + 1)
+            EffectPos(self.effect_base().raw() + u64::try_from(index).unwrap_or(u64::MAX) + 1)
         })
     }
 
@@ -513,7 +519,7 @@ impl World {
     ) -> Result<(), WorldError> {
         let replacement = replacement.into();
         let (path_id, path) = self.retain_stream_path(replacement.clone());
-        let next_effect_position = self.effect_base.0 + 1;
+        let next_effect_position = self.effect_base().0 + 1;
         let slot = {
             let Some(EffectRecord::StreamOpen { slot, target }) = self.effects_mut().first_mut()
             else {

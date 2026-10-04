@@ -673,3 +673,10 @@ Recursive fixed-box copying keeps batch publication and variable-body codecs
 outlined. Their bounded local buffers run after descendant copying returns;
 they must not become scratch in every suspended fixed-box ancestor frame.
 The existing small-stack recursive-copy test validates that placement.
+
+World's actual effect cursor stores the absolute current end. Appending an
+effect advances that scalar; committing a prefix only drains its actual
+records. Cold commit/retry/checkpoint sites derive the retained base from
+end minus record count. Rollback, candidate detach/rejection and retained
+forks install the corresponding real end. No extra dirty flag or cached
+length belongs to native command delivery.

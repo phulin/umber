@@ -385,3 +385,10 @@ an actual print and updates the existing shown-mode owner immediately; cold
 shipout processors borrow that same owner directly. Deferred write expansion
 uses TeX82 §1370's no-mode setting at this producer, with no returned trace
 flag or subsequent shown-mode repair.
+
+Native continuation keeps its operation count locally and publishes it once
+at the actual invocation return, including failures. The shared terminal entry
+owns demanded reporting, character-run exit and tracing. An ordinary relax
+then goes directly to continuation without constructing a successful
+MainControlStep result; other semantic arms return their actual step through
+the same native switch. No additional command eligibility front is introduced.

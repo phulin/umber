@@ -48,120 +48,137 @@ pub(super) fn run<G>(
     completed_operations: &mut usize,
     observation_receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<MainControlStep, ExecError> {
-    let initial_effect_pos =
-        processor.with_execution_owners(|context, _, _, _, _, _, _, _, _| context.effect_pos());
-    while *completed_operations < remaining_operations {
-        let lookahead = processor
-            .with_execution_owners(|_, _, _, _, _, execution, _, _, _| execution.main_loop_active);
+    let mut completed = *completed_operations;
+    let result = (|| {
+        let initial_effect_pos =
+            processor.with_execution_owners(|context, _, _, _, _, _, _, _, _| context.effect_pos());
+        while completed < remaining_operations {
+            let lookahead = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                execution.main_loop_active
+            });
 
-        let mut completion = None;
-        let observing = processor.is_observed();
-        let mut consume = {
-            #[inline(always)]
-            |processor: &mut Processor<'_, '_, G>,
-             spelling: TracedTokenWord,
-             meaning: &tex_state::meaning::MeaningWord<G>,
-             control_sequence: Option<Symbol>,
-             exceptional: Option<&tex_command::CurrentCommand<G>>| {
-                let code = codes::of(meaning);
-                match dispatch::execute(
-                    processor,
-                    spelling,
-                    meaning,
-                    control_sequence,
-                    exceptional,
-                    observation_receipts,
-                    code,
-                ) {
-                    Ok(MainControlStep::Continue) => {
-                        *completed_operations += 1;
-                        let (mut next_lookahead, host_boundary) = processor.with_execution_owners(
-                            |context, _, effects, _, _, execution, _, _, _| {
-                                // Relax can only flush character shaping or publish a
-                                // demanded scanner/trace diagnostic. It cannot close a
-                                // mode list, start page output or prepare a World job.
-                                let diagnostic_boundary = context.effect_pos()
-                                    != initial_effect_pos
-                                    || effects.has_first_recoverable();
-                                if code == codes::RELAX {
-                                    (false, diagnostic_boundary)
-                                } else {
-                                    (
-                                        execution.main_loop_active,
-                                        diagnostic_boundary
-                                            || execution.paragraph_checkpoint_cut
-                                            || execution.prepared_shipout.is_some()
-                                            || execution.prepared_pdf_form.is_some()
-                                            || (execution.page_region_succession_pending
-                                                && !execution.modes.retains_page_node_handles())
-                                            || (!execution.boxes.output_routine_active
-                                                && (context.page_fire_up().is_some()
-                                                    || context
-                                                        .page_builder_resume_after_output_pending(
-                                                        ))),
-                                    )
+            let mut completion = None;
+            let observing = processor.is_observed();
+            let mut consume = {
+                #[inline(always)]
+                |processor: &mut Processor<'_, '_, G>,
+                 spelling: TracedTokenWord,
+                 meaning: &tex_state::meaning::MeaningWord<G>,
+                 control_sequence: Option<Symbol>,
+                 exceptional: Option<&tex_command::CurrentCommand<G>>| {
+                    let code = codes::of(meaning);
+                    if let Err(error) =
+                        dispatch::enter(processor, spelling, meaning, control_sequence, code)
+                    {
+                        completion = Some(Err(error));
+                        return Ok(ControlFlow::Break(()));
+                    }
+                    if code != codes::RELAX {
+                        match dispatch::reswitch(
+                            processor,
+                            spelling,
+                            meaning,
+                            control_sequence,
+                            exceptional,
+                            observation_receipts,
+                            0,
+                            code,
+                        ) {
+                            Ok(MainControlStep::Continue) => {}
+                            result => {
+                                if result.is_ok() {
+                                    completed += 1;
                                 }
-                            },
-                        );
-                        if host_boundary {
-                            completion = Some(Ok(MainControlStep::Continue));
-                            return Ok(ControlFlow::Break(()));
-                        }
-                        if next_lookahead && !observing {
-                            let mut characters = characters::MainSourceAdmission {
-                                etex_extended: processor.profile() == CommandProfile::ETEX26,
-                                error: None,
-                            };
-                            let appended = processor.consume_main_source_characters(
-                                remaining_operations - *completed_operations,
-                                &mut characters,
-                            )?;
-                            *completed_operations += appended as usize;
-                            if appended != 0 {
-                                next_lookahead = processor.with_execution_owners(
-                                    |_, _, _, _, _, execution, _, _, _| execution.main_loop_active,
-                                );
-                            }
-                            if let Some(error) = characters.error {
-                                completion = Some(Err(error));
+                                completion = Some(result);
                                 return Ok(ControlFlow::Break(()));
                             }
                         }
-                        if !observing
-                            && next_lookahead == lookahead
-                            && *completed_operations < remaining_operations
-                        {
-                            return Ok(ControlFlow::Continue(()));
+                    }
+                    completed += 1;
+                    let (mut next_lookahead, host_boundary) = processor.with_execution_owners(
+                        |context, _, effects, _, _, execution, _, _, _| {
+                            // Relax can only flush character shaping or publish a
+                            // demanded scanner/trace diagnostic. It cannot close a
+                            // mode list, start page output or prepare a World job.
+                            let diagnostic_boundary = context.effect_pos() != initial_effect_pos
+                                || effects.has_first_recoverable();
+                            if code == codes::RELAX {
+                                (false, diagnostic_boundary)
+                            } else {
+                                (
+                                    execution.main_loop_active,
+                                    diagnostic_boundary
+                                        || execution.paragraph_checkpoint_cut
+                                        || execution.prepared_shipout.is_some()
+                                        || execution.prepared_pdf_form.is_some()
+                                        || (execution.page_region_succession_pending
+                                            && !execution.modes.retains_page_node_handles())
+                                        || (!execution.boxes.output_routine_active
+                                            && (context.page_fire_up().is_some()
+                                                || context
+                                                    .page_builder_resume_after_output_pending())),
+                                )
+                            }
+                        },
+                    );
+                    if host_boundary {
+                        completion = Some(Ok(MainControlStep::Continue));
+                        return Ok(ControlFlow::Break(()));
+                    }
+                    if next_lookahead && !observing {
+                        let mut characters = characters::MainSourceAdmission {
+                            etex_extended: processor.profile() == CommandProfile::ETEX26,
+                            error: None,
+                        };
+                        let appended = match processor.consume_main_source_characters(
+                            remaining_operations - completed,
+                            &mut characters,
+                        ) {
+                            Ok(appended) => appended,
+                            Err(error) => {
+                                completion = Some(Err(command_error(error)));
+                                return Ok(ControlFlow::Break(()));
+                            }
+                        };
+                        completed += appended as usize;
+                        if appended != 0 {
+                            next_lookahead = processor.with_execution_owners(
+                                |_, _, _, _, _, execution, _, _, _| execution.main_loop_active,
+                            );
+                        }
+                        if let Some(error) = characters.error {
+                            completion = Some(Err(error));
+                            return Ok(ControlFlow::Break(()));
                         }
                     }
-                    result => {
-                        if result.is_ok() {
-                            *completed_operations += 1;
-                        }
-                        completion = Some(result);
+                    if !observing && next_lookahead == lookahead && completed < remaining_operations
+                    {
+                        return Ok(ControlFlow::Continue(()));
                     }
+                    Ok(ControlFlow::Break(()))
                 }
-                Ok(ControlFlow::Break(()))
+            };
+            let status = if lookahead {
+                processor.consume_main_loop_lookahead(&mut consume)
+            } else {
+                processor.consume_main_control(&mut consume)
             }
-        };
-        let status = if lookahead {
-            processor.consume_main_loop_lookahead(&mut consume)
-        } else {
-            processor.consume_main_control(&mut consume)
+            .map_err(command_error)?;
+            if let Some(completion) = completion {
+                return completion;
+            }
+            if observing && status == tex_command::DeliveryStatus::Command {
+                return Ok(MainControlStep::Continue);
+            }
+            match status {
+                tex_command::DeliveryStatus::Command => {}
+                status => return finish_input_boundary(processor, status),
+            }
         }
-        .map_err(command_error)?;
-        if let Some(completion) = completion {
-            return completion;
-        }
-        if observing && status == tex_command::DeliveryStatus::Command {
-            return Ok(MainControlStep::Continue);
-        }
-        match status {
-            tex_command::DeliveryStatus::Command => {}
-            status => return finish_input_boundary(processor, status),
-        }
-    }
-    Ok(MainControlStep::Continue)
+        Ok(MainControlStep::Continue)
+    })();
+    *completed_operations = completed;
+    result
 }
 
 /// Scanner reports publish before the selected arm mutates semantic state.

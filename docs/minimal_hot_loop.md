@@ -1023,3 +1023,24 @@ reduces code to maintain, while the measured native regression must be repaired
 in the live input back edge. Full checkpoints retain authoritative input,
 mode, group and World owners at real returns; ordinary no-op delivery needs no
 additional checkpoint record.
+
+## Native continuation accounting
+
+The reader's ordinary terminal callback handles `\relax` as an empty opcode
+arm after the shared, genuinely demanded report/character/trace entry work.
+Only semantic arms that can end execution produce a main-control step. The
+ordinary no-op back edge therefore has no intermediate successful execution
+result to construct and inspect. The invocation keeps its completed-operation
+count locally and publishes that count when it returns, including a failure;
+source-character admission consumes the same remaining budget.
+
+World stores its absolute current effect end in the scalar previously used
+for the committed effect base. Appending an actual effect advances that end.
+Committing a prefix removes records without changing the end. The committed
+base is derived from the end and retained record count only at cold commit,
+retry and checkpoint boundaries. Rollback, candidate detach/rejection and
+checkpoint forks install the corresponding actual end directly. This replaces
+the existing cursor representation; it adds no flag, cached count, journal or
+parallel publication state. Full checkpoints continue to validate their real
+base, retained count and end, while the native continuation reads the actual
+end without traversing the effect vector.

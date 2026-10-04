@@ -10,7 +10,7 @@ impl World {
             "a provisional page-output receipt crossed a World checkpoint"
         );
         WorldSnapshot {
-            effect_base: self.effect_base,
+            effect_base: self.effect_base(),
             page_effect_artifact_cursor: self.page_effect_artifact_cursor,
             effect_len: self.effects.len(),
             effect_publication_disposition_len: self.effect_publication_dispositions.len(),
@@ -108,7 +108,7 @@ impl World {
     }
 
     fn snapshot_effects_are_retained(&self, snapshot: &WorldSnapshot) -> bool {
-        snapshot.effect_pos >= self.effect_base
+        snapshot.effect_pos >= self.effect_base()
             && snapshot.effect_pos
                 == EffectPos(snapshot.effect_base.raw() + snapshot.effect_len as u64)
             && snapshot.effect_len <= self.effects.len()
@@ -119,7 +119,7 @@ impl World {
         self.input_identities
             .rollback(snapshot.input_identities)
             .expect("World input identity mark must name a retained ancestor");
-        self.effect_base = snapshot.effect_base;
+        self.effect_end = snapshot.effect_pos;
         self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
         if self.effects.len() != snapshot.effect_len {
             Arc::make_mut(&mut self.effects).truncate(snapshot.effect_len);
@@ -312,6 +312,7 @@ impl World {
             .artifact_publications
             .extend(Arc::make_mut(&mut self.artifact_publications).drain(artifact_mark..));
 
+        self.effect_end = snapshot.effect_pos;
         self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
         self.next_effect_sequence = snapshot.next_effect_sequence;
         self.next_publication_sequence = snapshot.next_publication_sequence;
@@ -411,6 +412,7 @@ impl World {
         Arc::make_mut(&mut self.committed_artifacts).append(&mut detached.committed_artifacts);
         Arc::make_mut(&mut self.artifact_publications).append(&mut detached.artifact_publications);
         self.detached = detached;
+        self.effect_end = tail.head.effect_pos;
         self.rollback(&tail.head);
     }
 
@@ -443,9 +445,8 @@ impl World {
             self.page_effect_prefix_len() as u64,
             snapshot.effect_pos.raw()
         );
+        self.effect_end = snapshot.effect_pos;
         self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
-
-        self.effect_base = snapshot.effect_pos;
         self.effects = Arc::new(Vec::new());
         self.effect_sequences = Arc::new(Vec::new());
         self.effect_publications = Arc::new(Vec::new());

@@ -14,6 +14,31 @@ pub(super) fn execute<'state, 'host, G>(
     observation_receipts: &mut Option<Vec<MutationRecord>>,
     code: u64,
 ) -> Result<MainControlStep, ExecError> {
+    enter(processor, spelling, meaning, control_sequence, code)?;
+    if code == codes::RELAX {
+        return Ok(MainControlStep::Continue);
+    }
+    reswitch(
+        processor,
+        spelling,
+        meaning,
+        control_sequence,
+        exceptional,
+        observation_receipts,
+        0,
+        code,
+    )
+}
+
+/// Work demanded before the actual terminal opcode executes.
+#[inline(always)]
+pub(super) fn enter<G>(
+    processor: &mut Processor<'_, '_, G>,
+    spelling: TracedTokenWord,
+    meaning: &MeaningWord<G>,
+    control_sequence: Option<Symbol>,
+    code: u64,
+) -> Result<(), ExecError> {
     if processor.has_pending_reports() {
         report_scan(processor)?;
     }
@@ -44,19 +69,7 @@ pub(super) fn execute<'state, 'host, G>(
             .map_err(|error| capture_error(processor, spelling, error))?;
     }
     trace::command(processor, code, meaning, control_sequence);
-    if code == codes::RELAX {
-        return Ok(MainControlStep::Continue);
-    }
-    reswitch(
-        processor,
-        spelling,
-        meaning,
-        control_sequence,
-        exceptional,
-        observation_receipts,
-        0,
-        code,
-    )
+    Ok(())
 }
 
 #[inline(always)]

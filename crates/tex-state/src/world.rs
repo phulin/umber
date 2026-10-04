@@ -2183,7 +2183,9 @@ pub struct World {
     /// Number of prefix-or-live effects already embedded in a committed page.
     /// This is an in-session page-staging cursor, not detached identity.
     page_effect_artifact_cursor: usize,
-    effect_base: EffectPos,
+    /// Absolute end of the live semantic effect timeline. Prefix commit
+    /// changes the retained records, not this position.
+    effect_end: EffectPos,
     effects: Arc<Vec<EffectRecord>>,
     effect_sequences: Arc<Vec<EffectSequence>>,
     effect_publications: Arc<Vec<Option<EffectPublicationId>>>,
@@ -2635,7 +2637,7 @@ impl Clone for World {
             backend: self.backend.clone(),
             accepted_effects: self.accepted_effects.clone(),
             page_effect_artifact_cursor: self.page_effect_artifact_cursor,
-            effect_base: self.effect_base,
+            effect_end: self.effect_end,
             effects: self.effects.clone(),
             effect_sequences: self.effect_sequences.clone(),
             effect_publications: self.effect_publications.clone(),
@@ -2707,7 +2709,7 @@ impl PartialEq for World {
         self.backend == other.backend
             && self.accepted_effects == other.accepted_effects
             && self.page_effect_artifact_cursor == other.page_effect_artifact_cursor
-            && self.effect_base == other.effect_base
+            && self.effect_end == other.effect_end
             && self.effects == other.effects
             && self.stream_bufs == other.stream_bufs
             && self.committed_write_streams == other.committed_write_streams
@@ -2931,7 +2933,7 @@ impl World {
             backend,
             accepted_effects: None,
             page_effect_artifact_cursor: 0,
-            effect_base: EffectPos::default(),
+            effect_end: EffectPos::default(),
             effects: Arc::new(Vec::new()),
             effect_sequences: Arc::new(Vec::new()),
             effect_publications: Arc::new(Vec::new()),
@@ -4293,6 +4295,7 @@ impl World {
                 })
                 .unwrap_or((None, None, None));
             let pending = self.effects.len();
+            self.effect_end.0 -= pending as u64;
             self.effects_mut().clear();
             Arc::make_mut(&mut self.effect_sequences).clear();
             Arc::make_mut(&mut self.effect_publications).clear();
@@ -4844,7 +4847,7 @@ impl World {
         if let Some(error) = &self.effect_commit_poison {
             return Err(error.clone());
         }
-        if effect_pos <= self.effect_base {
+        if effect_pos <= self.effect_base() {
             return Ok(());
         }
         if effect_pos > self.effect_pos() {
@@ -4857,11 +4860,11 @@ impl World {
                     self.effect_pos().raw()
                 ),
             )
-            .effect_commit(self.effect_base, EffectRetrySafety::Safe));
+            .effect_commit(self.effect_base(), EffectRetrySafety::Safe));
         }
 
         let mut applied = 0usize;
-        let count = (effect_pos.raw() - self.effect_base.raw()) as usize;
+        let count = (effect_pos.raw() - self.effect_base().raw()) as usize;
         for index in 0..count {
             if let Err(err) = self.apply_effect(index) {
                 if applied > 0 {
@@ -4874,7 +4877,6 @@ impl World {
                     Arc::make_mut(&mut self.effect_semantic_record_ordinals).drain(0..applied);
                     Arc::make_mut(&mut self.effect_placement_intra_orders).drain(0..applied);
                     Arc::make_mut(&mut self.stream_open_contexts).drain(0..applied);
-                    self.effect_base.0 += applied as u64;
                 }
                 let retry_safety = match err.retry_safety() {
                     EffectRetrySafety::Safe => EffectRetrySafety::Safe,
@@ -4882,7 +4884,7 @@ impl World {
                         EffectRetrySafety::Poisoned
                     }
                 };
-                let err = err.effect_commit(self.effect_base, retry_safety);
+                let err = err.effect_commit(self.effect_base(), retry_safety);
                 if retry_safety == EffectRetrySafety::Poisoned {
                     self.effect_commit_poison = Some(err.clone());
                 }
@@ -4900,7 +4902,6 @@ impl World {
         Arc::make_mut(&mut self.effect_semantic_record_ordinals).drain(0..applied);
         Arc::make_mut(&mut self.effect_placement_intra_orders).drain(0..applied);
         Arc::make_mut(&mut self.stream_open_contexts).drain(0..applied);
-        self.effect_base = effect_pos;
         Ok(())
     }
 
@@ -5025,7 +5026,7 @@ impl World {
                 "shell escape must be disabled for rollback-capable editor sessions",
             ));
         }
-        if self.effect_base != EffectPos::default() {
+        if self.effect_base() != EffectPos::default() {
             return Err(WorldError::new(
                 "begin retained session",
                 None,
@@ -5246,6 +5247,7 @@ impl World {
             identity.effects.push(stable_hash(&record));
         }
         self.effects_mut().push(record);
+        self.effect_end.0 += 1;
         let terminal = self.active_terminal_publication;
         let sequence = if let Some(publication) = terminal {
             publication.sequence
@@ -5430,7 +5432,7 @@ impl World {
     fn apply_effect(&mut self, index: usize) -> Result<(), WorldError> {
         match &self.effects[index] {
             EffectRecord::StreamOpen { slot, target } => {
-                let position = EffectPos(self.effect_base.0 + index as u64 + 1);
+                let position = EffectPos(self.effect_base().0 + index as u64 + 1);
                 Self::truncate_output(&mut self.backend, target.path()).map_err(|mut error| {
                     error.stream_open_unavailable = Some(Box::new(StreamOpenFailure {
                         position,

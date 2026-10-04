@@ -3234,6 +3234,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     /// Reads the real publication position before the next native command.
+    #[inline(always)]
     pub fn effect_pos(&self) -> crate::EffectPos {
         self.resident.world.effect_pos()
     }
