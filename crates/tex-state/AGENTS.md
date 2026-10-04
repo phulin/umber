@@ -460,8 +460,9 @@ Definition-owned parameter programs expose literal delimiter views only for none
   chunk continuation across append-interleaved walks, zero-hash disabled
   execution, identity-preserving split/compose/fork settlement, and exact
   recursive cross-region semantic copy used only by lifetime transitions. Its
-  payload is explicitly `Node<PageListId>` so the replacement topology cannot
-  retain child coordinates from the superseded row arena during migration.
+  payload is a compact `NodeRecord` with child coordinates in the paired typed
+  annex. Construction validates those children directly in one traversal;
+  logical `Node<PageListId>` values remain semantic inputs and demanded views.
 - `src/page/tests.rs`: Page snapshot value isolation, mark-value, and semantic
   hash rollback tests, including exhausted cold capture counters preserving
   rootless material for retry.
@@ -634,3 +635,5 @@ refresh bookkeeping on append, unsave or checkpoint transitions.
   dependency poisoning apply to every group close.
 
 The checked packed-token frame leaf constructor is inlined across crate boundaries so token-frame owners initialize their final row directly. Its native identity, source context, positions, bounds, kind and flags retain their canonical meanings; no alternate frame encoding is added.
+
+Generated node construction validates child coordinates directly from the final record and borrowed annex, computing node and paired-annex dependency floors together. NodeRecordDependencies and its fixed twelve-slot array are deleted; construction has no temporary child collection or second dependency traversal. The visitor propagates the caller's schema error before child-admission errors, retaining exact reservation rollback and checkpoint reachability.

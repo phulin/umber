@@ -10,7 +10,7 @@ use std::ops::Range;
 
 use crate::fork_arena::{
     ActiveListBuilder, AdmittedListChunkCursor, ArenaListId, ArenaListView, ForkArenaCounters,
-    ForkArenaError, OperationMark, PageMaterialLane, RegionValue, UniqueArenaList,
+    ForkArenaError, OperationMark, PageMaterialLane, UniqueArenaList,
 };
 use crate::node::Node;
 use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
@@ -392,52 +392,6 @@ pub(crate) struct ConstructedNodeMetadata {
     pub(crate) tex82_words: (usize, usize),
     pub(crate) etex_words: (usize, usize),
     pub(crate) font: Option<crate::ids::FontId>,
-}
-
-/// Direct child coordinates decoded from one compact resident record.
-///
-/// Compact records keep list handles in their typed annex, so they cannot
-/// implement [`RegionValue`] by themselves without borrowing that annex.  A
-/// small fixed projection lets construction validate dependencies after the
-/// destination is initialized without expanding the record into an owned
-/// [`Node`].
-struct NodeRecordDependencies {
-    lists: [Option<ArenaListId<PageMaterialLane>>; 12],
-    len: usize,
-}
-
-impl NodeRecordDependencies {
-    fn from_record(
-        record: PageMaterialNode,
-        annex: NodeAnnexView<'_>,
-    ) -> Result<Self, ForkArenaError> {
-        let mut dependencies = Self {
-            lists: [None; 12],
-            len: 0,
-        };
-        let valid = record.visit_node_lists(annex, |child| {
-            if child.is_empty() {
-                return;
-            }
-            let slot = dependencies
-                .lists
-                .get_mut(dependencies.len)
-                .expect("a TeX node has at most twelve direct child lists");
-            *slot = Some(child.coordinate());
-            dependencies.len += 1;
-        });
-        valid.map_or(Err(ForkArenaError::InvalidRange), |_| Ok(dependencies))
-    }
-}
-
-impl RegionValue<PageMaterialLane> for NodeRecordDependencies {
-    fn visit_region_lists(&self, visit: &mut dyn FnMut(ArenaListId<PageMaterialLane>)) {
-        for list in self.lists[..self.len].iter().flatten().copied() {
-            visit(list);
-        }
-    }
-
-    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
 }
 
 /// Persistent coordinate-only construction state for one active node list.
@@ -2233,11 +2187,21 @@ impl<'a> PageMaterialArena<'a> {
                 identity_enabled,
                 &mut annex,
                 |slot, annex| initialize(crate::NodeDestination::new_record(slot, annex)),
-                |record, annex| {
+                |record, annex, arena, pool| {
                     let annex_dependency_floor = annex.dependency_floor();
                     let annex = annex.view();
                     let font = record.direct_font(annex);
-                    let dependencies = NodeRecordDependencies::from_record(*record, annex)?;
+                    let (dependency_floor, child_annex_floor) = arena
+                        .dependency_floors_for_region_lists(pool, |visit| {
+                            record
+                                .visit_node_lists(annex, |child| visit(child.coordinate()))
+                                .ok_or(ForkArenaError::InvalidRange)
+                        })?;
+                    let paired_dependency_floor = match (child_annex_floor, annex_dependency_floor)
+                    {
+                        (Some(child), Some(annex)) => Some(child.min(annex)),
+                        (child, annex) => child.or(annex),
+                    };
                     let metadata = ConstructedNodeMetadata {
                         tex82_words: record.tex_memory_words(annex, false),
                         etex_words: record.tex_memory_words(annex, true),
@@ -2248,7 +2212,12 @@ impl<'a> PageMaterialArena<'a> {
                     } else {
                         0
                     };
-                    Ok((identity, metadata, dependencies, annex_dependency_floor))
+                    Ok((
+                        identity,
+                        metadata,
+                        dependency_floor,
+                        paired_dependency_floor,
+                    ))
                 },
             )
         };

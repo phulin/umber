@@ -53,7 +53,10 @@ pub(crate) fn copy_consumed_direct_cut_into<Source, Destination>(
                             Some(mapped)
                         },
                     );
-                    relocated.is_some().then_some(())
+                    relocated
+                        .as_ref()
+                        .map(|_| ())
+                        .ok_or(ForkArenaError::InvalidRegion)
                 })?;
             let (record, annex_floor) = relocated.ok_or(ForkArenaError::InvalidRange)?;
             dependency_floor = dependency_floor.min(child_floor.unwrap_or(usize::MAX));

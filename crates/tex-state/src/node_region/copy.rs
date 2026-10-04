@@ -377,7 +377,7 @@ impl<'a> CopyContext<'a> {
             self.destination
                 .dependency_floors_for_region_lists(self.pool, |visit| {
                     visit(root);
-                    Some(())
+                    Ok(())
                 })?;
         let identity = if self.semantic_identity_enabled {
             list.semantic_identity()

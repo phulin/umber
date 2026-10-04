@@ -4505,7 +4505,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// derived only after that slot contains the final value. A rejected child
     /// coordinate truncates the one unpublished reservation and restores the
     /// active root exactly.
-    pub(crate) fn construct_region_value_active_list<Context, Observation, Dependencies>(
+    pub(crate) fn construct_region_value_active_list<Context, Observation>(
         &mut self,
         pool: &mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
@@ -4515,12 +4515,11 @@ impl<T, Lane> ForkArena<T, Lane> {
         inspect: impl FnOnce(
             &T,
             &Context,
+            &Self,
+            &ChunkPool<T>,
         )
-            -> Result<(u64, Observation, Dependencies, Option<usize>), ForkArenaError>,
-    ) -> Result<(Option<u64>, Observation), ForkArenaError>
-    where
-        Dependencies: RegionValue<Lane>,
-    {
+            -> Result<(u64, Observation, Option<usize>, Option<usize>), ForkArenaError>,
+    ) -> Result<(Option<u64>, Observation), ForkArenaError> {
         let operation = self.operation_mark(pool);
         let previous_root = self.active_list_open_mut(builder)?.root;
         let placeholder_identity = identity_enabled.then_some(0);
@@ -4561,16 +4560,8 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .payload
                 .get(key, self.owner, offset)
                 .ok_or(ForkArenaError::InvalidRange)?;
-            let (identity, observation, dependencies, context_paired_dependency_floor) =
-                inspect(value, context)?;
-            let dependency_floor = self.region_value_dependency_floor(pool, &dependencies)?;
-            let paired_dependency_floor = [
-                self.paired_dependency_floor_for(pool, &dependencies)?,
-                context_paired_dependency_floor,
-            ]
-            .into_iter()
-            .flatten()
-            .min();
+            let (identity, observation, dependency_floor, paired_dependency_floor) =
+                inspect(value, context, self, pool)?;
             let item_identity = identity_enabled.then_some(identity);
             pool.payload.complete_reservation(
                 key,
@@ -4700,12 +4691,12 @@ impl<T, Lane> ForkArena<T, Lane> {
     pub(crate) fn dependency_floors_for_region_lists(
         &self,
         pool: &ChunkPool<T>,
-        visit_lists: impl FnOnce(&mut dyn FnMut(ArenaListId<Lane>)) -> Option<()>,
+        visit_lists: impl FnOnce(&mut dyn FnMut(ArenaListId<Lane>)) -> Result<(), ForkArenaError>,
     ) -> Result<(Option<usize>, Option<usize>), ForkArenaError> {
         let mut dependency_floor = usize::MAX;
         let mut paired_dependency_floor = usize::MAX;
         let mut valid = true;
-        let decoded = visit_lists(&mut |list| {
+        visit_lists(&mut |list| {
             if list.is_empty() || !valid {
                 return;
             }
@@ -4716,8 +4707,8 @@ impl<T, Lane> ForkArena<T, Lane> {
                 }
                 Err(_) => valid = false,
             }
-        });
-        if decoded.is_none() || !valid {
+        })?;
+        if !valid {
             return Err(ForkArenaError::InvalidRegion);
         }
         Ok((

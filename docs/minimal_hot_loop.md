@@ -583,3 +583,21 @@ Observed and alignment deliveries retain their existing exceptional record
 only within the canonical reader, without returning it as a scanner product.
 
 Math operand consumers also project character, character-definition, math-character and primitive operands directly from the packed meaning. The general Meaning decoder is absent from field and delimiter classification; invalid operands demand their diagnostic identity only when rejected.
+
+## Direct node-construction dependency validation
+
+Generated nodes initialize their final reserved slot, then validate direct
+child lists from the record and its existing annex view. The existing arena
+visitor computes both node and paired-annex dependency floors in one traversal.
+Construction returns only those two actual scalars, the optional semantic
+identity and the consumer's memory/font metadata. No child-coordinate array
+or temporary dependency implementation is constructed or traversed afterward.
+
+The constructor's inspection callback borrows the actual immutable arena and
+pool alongside its final record and annex. These borrows end before reservation
+completion mutates metadata. `NodeRecordDependencies` and its twelve-slot array
+are deleted; no wrapper, cache or alternate publication path replaces them.
+Schema decoding reports `InvalidRange`, child admission reports `InvalidRegion`,
+and schema failures keep priority when both fail. Failed reservations restore
+the exact node and annex suffix and prior builder root. Successful construction
+retains the authoritative dependency floors for checkpoints and region moves.
