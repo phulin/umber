@@ -140,28 +140,30 @@ pub(in crate::main_control) fn execute_kern<G>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::main_control) fn execute_delete_last<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    primitive: &mut UnexpandablePrimitive,
-    context: &mut tex_command::DiagnosticContextCoordinate,
+    state: &CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    primitive: UnexpandablePrimitive,
+    context: tex_command::DiagnosticContextCoordinate,
 ) -> Result<MainControlStep, ExecError> {
     {
-        let state = &*command.state;
         crate::box_runtime::execute_delete_last(
-            *primitive,
+            primitive,
             |stores| {
                 state
-                    .render_diagnostic_context(*context, stores)
+                    .render_diagnostic_context(context, stores)
                     .map_err(|_| {
                         ExecError::Command(tex_command::CommandError::StaleDiagnosticContext)
                     })
             },
             modes,
             stores,
-            command.diagnostic_effects,
-            command.fuel,
+            effects,
+            fuel,
         )?;
         Ok(MainControlStep::Continue)
     }

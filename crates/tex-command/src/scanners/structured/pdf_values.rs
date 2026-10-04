@@ -149,19 +149,6 @@ pub enum PdfFormRequest<T = AttemptTokenListId> {
     },
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct ScannedPdfFontAction {
-    pub font: Option<FontId>,
-    pub first: Option<AttemptTokenListId>,
-    pub second: Option<AttemptTokenListId>,
-}
-
-/// Completed `\\pdfrefobj` operand.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PdfReferenceObjectRequest {
-    pub object: i32,
-}
-
 /// Completed document-level PDF token-list assignment.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfDocumentFragmentRequest<T = AttemptTokenListId> {

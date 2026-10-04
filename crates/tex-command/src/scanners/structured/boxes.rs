@@ -27,13 +27,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         Ok(ScannedSetBoxAssignment { index, path })
     }
 
-    /// Scans the register operand of TeX82 §1079's `make_box(box_code)` and
-    /// e-TeX 2.6 [47.1079]'s sparse-array replacement.
-    pub fn scan_box_register(&mut self) -> Result<ScannedBoxRegister, CommandError> {
-        let result = self.scan_profile_register_index();
-        Ok(ScannedBoxRegister { index: result? })
-    }
-
     /// Scans TeX82 §1082's `\\vsplit <number> to <dimen>` prefix.
     ///
     /// e-TeX 2.6 [47.1082] widens the source box selector from
@@ -179,28 +172,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             tokens: scanned.replacement_text,
             provenance,
         })
-    }
-
-    /// e-TeX 2.6 `etex.ch` [49.1296]'s extended box-register scan for
-    /// `\\showbox`.
-    ///
-    /// The change from TeX82's `scan_eight_bit_int` to `scan_register_num`
-    /// retains the restricted scanner's invalid-to-zero recovery before the
-    /// box lookup.
-    pub fn scan_showbox(&mut self) -> Result<(u16, StructuredProvenance), CommandError> {
-        let class = if self.command.profile().capabilities().supports_etex() {
-            RestrictedIntegerClass::Register
-        } else {
-            RestrictedIntegerClass::EightBit
-        };
-        let result = self.scan_restricted_integer(class);
-        let index = result?;
-        Ok((
-            u16::try_from(index.value).expect("recovered register number is in range"),
-            StructuredProvenance {
-                primary: index.provenance.primary,
-            },
-        ))
     }
 
     /// Scans the payload prefix of TeX82 §1090's leader commands.
@@ -509,13 +480,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 | Some(Meaning::Relax) => continue,
                 Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)) => {
                     return Ok(ScannedBoxShiftPayload::BoxRegister {
-                        index: self.scan_box_register()?.index,
+                        index: self.scan_profile_register_index()?,
                         copy: false,
                     });
                 }
                 Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy)) => {
                     return Ok(ScannedBoxShiftPayload::BoxRegister {
-                        index: self.scan_box_register()?.index,
+                        index: self.scan_profile_register_index()?,
                         copy: true,
                     });
                 }

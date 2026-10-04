@@ -803,3 +803,9 @@ pub(super) const PRIMITIVE_EQ_NO: u64 = Meaning::runtime_word_control_code(
 pub(super) const PRIMITIVE_LEFT_EQ_NO: u64 = Meaning::runtime_word_control_code(
     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LeftEqNo).encode(),
 );
+
+pub(super) const CHAR_PARAMETER: u64 =
+    Meaning::runtime_word_control_code(Meaning::char_token_word('\0', Catcode::Parameter));
+pub(super) const END_CS_NAME: u64 = Meaning::runtime_word_control_code(
+    Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndCsName).encode(),
+);

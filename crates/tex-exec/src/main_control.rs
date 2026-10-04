@@ -12,9 +12,8 @@ use tex_command::{
     CommandProcessor, CommandProfile, CommandState, FatalError, FontLoadRequest, FontResource,
     GeneratedFontKind, HyphenationDataKind, ImmediateExtension, MathDelimiterBoundary,
     MathDelimiterBoundaryKind, MathFieldBody, MathFractionKind, MathScriptKind, PdfImageRequest,
-    PdfImageResource, PdfReferenceObjectRequest, PreparedAlignmentCellTemplates,
-    RegisteredSourceKind, ResourceFulfillment, ResourceInstallOutcome, ResourceNeed,
-    ResourceProvider, RestrictedIntegerClass, ScannedAccent, ScannedAccentBase,
+    PdfImageResource, PreparedAlignmentCellTemplates, RegisteredSourceKind, ResourceFulfillment,
+    ResourceInstallOutcome, ResourceNeed, ResourceProvider, RestrictedIntegerClass,
     ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
     ScannedDisplayDiagnostic, ScannedGeneratedFontDefinition, ScannedInsertConstruction,
     ScannedLeaderPayload, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit, SourceRegistration,
@@ -589,8 +588,6 @@ struct CommandMachine<'a, 'provider, G> {
     emit_dvi_override: Option<bool>,
     immediate_prints: &'a mut Vec<ImmediatePrint>,
     prepared_shipout: &'a mut Option<PreparedShipout>,
-    pending_show_completion: Option<PendingShowCompletion>,
-    pending_outer_page_build_context: Option<String>,
     output_routine_active: bool,
 }
 
@@ -669,11 +666,6 @@ impl<G> tex_command::CommandHostFacts<G> for CommandMachineHostFacts<'_, G> {
             Self::Forbidden => panic!("semantic application cannot query command host facts"),
         }
     }
-}
-
-struct PendingShowCompletion {
-    long: bool,
-    context: String,
 }
 
 fn reborrow_observer<'loan>(
@@ -843,14 +835,6 @@ impl<G> CommandMachine<'_, '_, G> {
         let observer = reborrow_observer(&mut self.observations);
         self.state
             .publish_named_token_list_pushes(context, self.diagnostic_effects, observer);
-    }
-
-    fn defer_show_completion(&mut self, long: bool, context: String) {
-        assert!(
-            self.pending_show_completion.is_none(),
-            "one command operation completes at most one show diagnostic"
-        );
-        self.pending_show_completion = Some(PendingShowCompletion { long, context });
     }
 
     fn processor<'episode, 'admission>(
@@ -1978,8 +1962,6 @@ impl<G> MainControl<G> {
             emit_dvi_override: self.execution.emit_dvi_override,
             immediate_prints: &mut self.execution.immediate_prints,
             prepared_shipout: &mut self.execution.prepared_shipout,
-            pending_show_completion: None,
-            pending_outer_page_build_context: None,
             output_routine_active: self.execution.boxes.output_routine_active,
         }
     }
@@ -2697,180 +2679,6 @@ impl<G> MainControl<G> {
         result
     }
 
-    /// TeX82 §1123's `make_accent`.
-    ///
-    /// The accent's font is `cur_font` *before* §1270's `do_assignments`, and
-    /// §1124 re-reads `cur_font` for the base character. That is the whole
-    /// point of plain.tex's `\t`
-    /// (``\def\t#1{{\edef\next{\the\font}\the\textfont1\accent"7F\next#1}}``):
-    /// the tie accent comes from the math italic font `\the\textfont1`
-    /// selected, and the base character from the text font `\next` restores.
-    ///
-    /// This is a host-owned step because §1270's loop body is
-    /// `prefixed_command` -- it executes whole commands between the two
-    /// scans -- and because tex.web executes each of them *in place*. A
-    /// scanner that stopped on the assignment and backed it up instead would
-    /// push a backup level, emit a recovery record and deliver the command
-    /// twice (`umber2-johp.196`, `umber2-johp.264`).
-    fn apply_accent(
-        &mut self,
-        scanned: ScannedAccent,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        tracked_region_is_active: bool,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<MainControlStep, ExecError> {
-        if matches!(
-            self.execution.modes.current_mode(),
-            Mode::Vertical | Mode::InternalVertical
-        ) {
-            let mut context = stores.command_context().expect("live generation");
-            start_paragraph(
-                &mut self.command,
-                &mut self.execution.modes,
-                &mut context,
-                diagnostic_effects,
-                true,
-            )?;
-        }
-        let mut context = stores.command_context().expect("live generation");
-        crate::box_runtime::flush_pending_hchars_with_fuel(
-            &mut self.execution.modes,
-            &mut context,
-            diagnostic_effects,
-            self.fuel.fuel_mut(),
-        )?;
-        let accent = u8::try_from(scanned.accent).map_err(|_| ExecError::InvalidCode {
-            context: "\\accent",
-            value: scanned.accent,
-        })?;
-        let accent_font = context.current_font();
-        // §1123's `p:=new_character(f,cur_val); if p<>null then`: a missing
-        // accent character skips `do_assignments` and the base lookahead
-        // entirely, so nothing after this point runs.
-        let Some(accent_metrics) = context.font_char_metrics(accent_font, accent) else {
-            crate::diagnostics::report_missing_character_warning(
-                &mut context,
-                diagnostic_effects,
-                accent_font,
-                char::from(accent),
-                self.command_profile() == CommandProfile::ETEX26,
-            );
-            return Ok(MainControlStep::Continue);
-        };
-        drop(context);
-        let base = self.do_assignments_then_accent_base(
-            stores,
-            diagnostic_effects,
-            tracked_region_is_active,
-            resource_provider,
-        )?;
-        let accent_origin = scanned.accent_provenance.primary;
-        let etex_extended = self.command_profile() == CommandProfile::ETEX26;
-        let mut context = stores.command_context().expect("live generation");
-        let mut geometry = pack_geometry_sink(
-            &self.command,
-            self.operation_observations
-                .as_mut()
-                .map(|buffer| buffer as &mut dyn CommandObserver),
-        );
-        apply_accent_nodes(
-            &mut self.execution.modes,
-            &mut context,
-            diagnostic_effects,
-            &mut geometry,
-            etex_extended,
-            AccentPlacement {
-                accent,
-                accent_font,
-                accent_metrics,
-                accent_origin,
-                base,
-            },
-        )
-    }
-
-    /// TeX82 §1270's `do_assignments` followed by §1124's classification of
-    /// the token it stops on.
-    ///
-    /// §1270 is `loop begin <Get the next non-blank non-relax non-call token>;
-    /// if cur_cmd<=max_non_prefixed_command then return; ...prefixed_command...
-    /// end`, and §1124 then reads that same `cur_cmd`/`cur_chr` -- there is no
-    /// second fetch and no `back_input` between them. Only §1124's own `else`
-    /// branch backs a command up.
-    fn do_assignments_then_accent_base(
-        &mut self,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-        tracked_region_is_active: bool,
-        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<Option<(u8, tex_state::token::OriginId)>, ExecError> {
-        // None of §1270's assignments is a §1030 `main_loop` entry.
-        self.execution.main_loop_active = false;
-        loop {
-            let outcome = {
-                let mut context = stores.command_context().expect("live generation");
-                let mut host_facts = ExecutorHostFacts {
-                    modes: &self.execution.modes,
-                    pdf_ignore_depth: self.execution.pdf_ignore_depth,
-                    telemetry: &mut self.execution.episode_telemetry,
-                };
-                let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
-                    command_processor_with_resource_provider(
-                        &mut self.command,
-                        self.fuel.fuel_mut(),
-                        &mut self.capabilities,
-                        &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
-                        provider,
-                        &mut self.declined_resource_attempt,
-                        &mut self.operation_observations,
-                        diagnostic_effects,
-                        &mut context,
-                    )
-                } else {
-                    command_processor(
-                        &mut self.command,
-                        self.fuel.fuel_mut(),
-                        &mut self.capabilities,
-                        &mut host_facts as &mut dyn tex_command::CommandHostFacts<G>,
-                        &mut self.operation_observations,
-                        diagnostic_effects,
-                        &mut context,
-                    )
-                };
-                let outcome = processor.scan_accent_base();
-                outcome.map_err(command_error)?
-            };
-            match outcome {
-                ScannedAccentBase::Character {
-                    character,
-                    provenance,
-                } => return Ok(Some((character, provenance.primary))),
-                ScannedAccentBase::Missing => return Ok(None),
-                ScannedAccentBase::Assignment(command) => {
-                    // §1211's `prefixed_command` is exactly what main
-                    // control's big case routes every code above
-                    // `max_non_prefixed_command` to, so this dispatches the
-                    // delivered command in place rather than re-fetching it.
-                    self.execution.set_box_forbidden_depth += 1;
-                    let step = self.execute_nested_operation(
-                        stores,
-                        Some(command),
-                        diagnostic_effects,
-                        tracked_region_is_active,
-                        resource_provider,
-                    );
-                    self.execution.set_box_forbidden_depth -= 1;
-                    match step? {
-                        MainControlStep::Continue => {}
-                        MainControlStep::End | MainControlStep::EndOfInput => return Ok(None),
-                    }
-                    self.execution.main_loop_active = false;
-                }
-            }
-        }
-    }
-
     /// TeX82 §§1006--1028's typed page/output boundary.  The page builder
     /// and packing stay here with the mode nest; `CommandProcessor` alone
     /// installs the selected output token-list replay.
@@ -2969,8 +2777,6 @@ impl<G> MainControl<G> {
                         emit_dvi_override: self.execution.emit_dvi_override,
                         immediate_prints: &mut self.execution.immediate_prints,
                         prepared_shipout: &mut self.execution.prepared_shipout,
-                        pending_show_completion: None,
-                        pending_outer_page_build_context: None,
                         output_routine_active: self.execution.boxes.output_routine_active,
                     };
                     let publication =

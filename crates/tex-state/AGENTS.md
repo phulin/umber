@@ -48,13 +48,17 @@ Definition-owned parameter programs expose literal delimiter views only for none
   definitions, token/glue allocation, and dependency-aware mutations without
   per-read owner admission. It opens, commits, and restores ordinary state and
   page suffixes directly so adjacent commands retain the same admitted owners.
+  Read-stream open/close methods mutate the actual World owner inside that
+  admission, reusing live input records or materializing retained bytes once.
   Copy-small host artifact/effect boundaries can be
   captured from the same episode before semantic application without
   reconstructing the context. Page-material allocation/copy counters remain
   observable through this boundary so retained-range zero-copy gates are not
   inferred from a separate arena owner.
 - `src/command_context/pdf_commands.rs`: PDF ledger, form, font-resource,
-  color-stack, and navigation projections of the same admitted command borrow.
+  color-stack, navigation and actual World random-seed/timer mutations of the
+  same admitted command borrow. These job-state changes share the existing
+  World authority; no additional host boundary or retained action is required.
 - `src/command_context/page_material.rs`: Borrowed page-material construction,
   direct mode-tail node initialization, range, traversal, shipout-scratch, and generated mode-source removal
   projections of that command borrow.

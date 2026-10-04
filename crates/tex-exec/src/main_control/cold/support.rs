@@ -686,9 +686,17 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             Ok(MainControlStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-            let id = read_box_register(*index, *copy, stores, command);
+            let id = read_box_register(*index, *copy, stores);
             let node = crate::box_runtime::first_box_node(stores, id);
-            append_shifted_box(modes, stores, node, shift.delta, command)?;
+            append_shifted_box(
+                modes,
+                stores,
+                node,
+                shift.delta,
+                command.state,
+                command.diagnostic_effects,
+                command.fuel,
+            )?;
             Ok(MainControlStep::Continue)
         }
         ScannedBoxShiftPayload::LastBox { error_context } => {
@@ -700,7 +708,15 @@ pub(in crate::main_control) fn apply_box_shift<G>(
                 command.fuel,
                 |stores| render_diagnostic_context(state, stores, **error_context),
             )?;
-            append_shifted_box(modes, stores, node, shift.delta, command)?;
+            append_shifted_box(
+                modes,
+                stores,
+                node,
+                shift.delta,
+                command.state,
+                command.diagnostic_effects,
+                command.fuel,
+            )?;
             Ok(MainControlStep::Continue)
         }
         ScannedBoxShiftPayload::VSplit(split) => {
@@ -720,7 +736,15 @@ pub(in crate::main_control) fn apply_box_shift<G>(
                 split.height,
                 &split.split_context,
             )?;
-            append_shifted_box(modes, stores, node, shift.delta, command)?;
+            append_shifted_box(
+                modes,
+                stores,
+                node,
+                shift.delta,
+                command.state,
+                command.diagnostic_effects,
+                command.fuel,
+            )?;
             Ok(MainControlStep::Continue)
         }
         ScannedBoxShiftPayload::Construction(construction) => {
@@ -791,7 +815,6 @@ pub(in crate::main_control) fn read_box_register<G>(
     index: u16,
     copy: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
-    _command: &CommandMachine<'_, '_, G>,
 ) -> Option<tex_state::page_node_arena::PageListId> {
     if !copy {
         return stores.take_box_to_page(index);
@@ -830,34 +853,34 @@ impl<G> ReplayBoxes<G> {
 /// according to its context. `\hbox`/`\vbox`/`\vtop` bodies reach the same
 /// three dispositions through `BoxEndGroup`, which cannot share this entry
 /// point because §1083 defers them to their group's closing brace.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::main_control) fn box_end<G>(
     context: BoxContext,
     node: Option<Node>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
-    _prepared_dvi_pages: &mut PreparedDviPages,
-    command: &mut CommandMachine<'_, '_, G>,
+    command: &CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    prepared_shipout: &mut Option<PreparedShipout>,
+    receipts: Option<&mut Vec<MutationRecord>>,
 ) -> Result<(), ExecError> {
     match context {
-        BoxContext::Append(delta) => append_shifted_box(modes, stores, node, delta, command),
+        BoxContext::Append(delta) => {
+            append_shifted_box(modes, stores, node, delta, command, effects, fuel)
+        }
         // §1077 defines the register unconditionally: a void `cur_box` makes
         // the destination void, it does not leave the old value in place.
         BoxContext::SetBox(pending) => {
             let boxed = node.map(|node| stores.publish_page_nodes([node]));
-            commit_set_box_target(
-                pending,
-                boxed,
-                stores,
-                command.diagnostic_effects,
-                command.assignment_receipts.as_deref_mut(),
-            );
+            commit_set_box_target(pending, boxed, stores, effects, receipts);
             Ok(())
         }
         // §1075 guards `ship_out` with `cur_box<>null`.
         BoxContext::ShipOut(region) => {
             if let Some(node) = node {
-                debug_assert!(command.prepared_shipout.is_none());
-                *command.prepared_shipout = Some(PreparedShipout {
+                debug_assert!(prepared_shipout.is_none());
+                *prepared_shipout = Some(PreparedShipout {
                     source: PreparedShipoutSource::Page(node),
                     region: Some(region),
                 });
@@ -1038,25 +1061,17 @@ pub(in crate::main_control) fn append_shifted_box<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     node: Option<Node>,
     delta: Scaled,
-    command: &mut CommandMachine<'_, '_, G>,
+    command: &CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let Some(mut node) = node else {
         return Ok(());
     };
     crate::box_runtime::apply_box_shift_delta(&mut node, delta)?;
-    let _ = crate::box_runtime::append_box_node_to_current_list(
-        modes,
-        stores,
-        command.diagnostic_effects,
-        node,
-        command.fuel,
-    )?;
-    crate::vertical::build_page_if_outer_vertical(
-        modes,
-        stores,
-        command.diagnostic_effects,
-        &*command.state,
-    )
+    let _ =
+        crate::box_runtime::append_box_node_to_current_list(modes, stores, effects, node, fuel)?;
+    crate::vertical::build_page_if_outer_vertical(modes, stores, effects, command)
 }
 
 pub(in crate::main_control) fn apply_scanned_rule<G>(

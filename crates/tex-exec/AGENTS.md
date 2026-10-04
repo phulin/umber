@@ -51,7 +51,10 @@ not allocate a vector merely to publish one already-complete node.
   actual owner once, including checkpoint forks. The execution owner implements
   live host fact queries; component-only cold loans share those exact queries.
 - `src/main_control/interpreter/`: sole replacement core under construction.
-  `mod.rs` keeps the actual processor live across canonical expanded fetching
+  `accent.rs` scans the actual accent and runs permitted assignments in the
+  same processor before its base character, retaining the real accent font
+  and metrics across those assignments. The reconstruction loop and accent
+  request variants are deleted. `mod.rs` keeps the actual processor live across canonical expanded fetching
   and raw horizontal lookahead, applies the real host budget and publishes
   demanded scanner reports before mutations. `assignments.rs` scans and applies concrete register, parameter, macro and
   let mutations without ending the processor loan. `prefixes.rs` owns only
@@ -78,7 +81,7 @@ not allocate a vector merely to publish one already-complete node.
   character, group and publication primitives live under `interpreter/`.
 - `src/main_control/semantic/`: concrete source-free typed semantic routines
   grouped by assignments, registers, fonts, text, paragraph/page state, groups,
-  boxes/builders/leaders, alignment/recovery, diagnostics, streams, and
+  boxes/builders/leaders, alignment, diagnostics, streams, and
   PDF. Each routine borrows the actual admitted native owners; no operation
   union, readiness phase, context dereference facade, compatibility executor, or universal payload exists. Input stream scanners return a move-only final definition owner for read assignment; no attempt-definition promotion remains.
 - `src/main_control/semantic_owners.rs`: actual semantic-owner admission and
@@ -99,7 +102,8 @@ not allocate a vector merely to publish one already-complete node.
   checkpoint intent. Shipout contributes only output-ledger evidence. Native
   scratch is reclaimed by consumers; there is no direct-operation cleanup.
 - `src/main_control/resources.rs`: typed host-resource resolution and
-  installation for fonts, input streams, and PDF images. It borrows the same
+  installation for PDF images; font and input-stream acquisition now consumes
+  the actual capabilities/provider loans in the interpreter. It borrows the same
   `MainControl` and `Universe` owners and preserves checkpoint-replay errors.
 - `src/main_control/root_source.rs`: immutable root-source registration,
   editor rebind, startup framing, and root completion policy on the same
@@ -285,9 +289,16 @@ through executor and session; successful results construct no failure payload.
   including packed math style, defined-symbol and numeric math heads. Selected
   arms scan actual operands inside the retained processor. `trace.rs` produces
   command displays only when tracing demands them. `boxes.rs` closes live box,
-  insertion and adjustment groups through native unsave. `streams.rs` publishes
+  insertion and adjustment groups through native unsave. It also consumes
+  box/copy/lastbox/vsplit results into their actual append, register or shipout
+  destinations. Unboxing and saved discards call their concrete list kernels. `streams.rs` publishes
   retained deferred-write tokens and renders immediately consumed message and
-  special text directly from scanner storage. `fonts.rs` scans font operands
+  special text directly from scanner storage. `diagnostics.rs` completes demanded displays and their error dialogue in
+  the live processor; deferred show-completion and outer-page-build fields
+  are deleted. `pdf.rs` selects actual graphics/navigation/form kernels with live owner
+  loans, preserving pre-operand PDF-output and mode checks. It scans concrete
+  PDF font operands and renders immediately consumed
+  font-map and ToUnicode text directly into final bytes. `fonts.rs` scans font operands
   and acquires metrics through the actual capabilities and provider loans;
   no separate font-resolution admission remains. `termination.rs` owns real
   residual-page ejection and final input retirement. `driver.rs` releases the

@@ -7,11 +7,13 @@
 use super::*;
 use std::ops::ControlFlow;
 
+mod accent;
 mod arithmetic;
 mod assignments;
 mod boxes;
 mod characters;
 mod codes;
+mod diagnostics;
 mod discretionary;
 mod dispatch;
 mod driver;
@@ -20,6 +22,7 @@ mod glue_identity;
 mod groups;
 mod material;
 mod math;
+mod pdf;
 mod prefixes;
 mod publication;
 mod recovery;

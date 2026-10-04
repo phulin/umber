@@ -58,11 +58,9 @@ impl<G> MainControl<G> {
             emit_dvi_override: self.execution.emit_dvi_override,
             immediate_prints: &mut self.execution.immediate_prints,
             prepared_shipout: &mut self.execution.prepared_shipout,
-            pending_show_completion: None,
-            pending_outer_page_build_context: None,
             output_routine_active: self.execution.boxes.output_routine_active,
         };
-        let (mut result, mut pending_page_output) = {
+        let (mut result, pending_page_output) = {
             let mut admitted_context = stores.command_context().expect("live semantic generation");
             let context = &mut admitted_context;
             let result = apply_leaf(
@@ -85,56 +83,6 @@ impl<G> MainControl<G> {
             let pending_page_output = PendingPageOutputFacts::capture(context);
             (result, pending_page_output)
         };
-        if result.is_ok()
-            && let Some(completion) = command.pending_show_completion.take()
-        {
-            // TeX82 §§1293/1298 completes a long `\show` only after
-            // `end_diagnostic` has restored the selector and made the whole
-            // dump visible. The dump is an operation-local detached program,
-            // whereas `error` still owns the live World dialogue, so release
-            // command admission, atomically publish the dump, and only then
-            // enter the synchronous `! OK.` completion. This also preserves
-            // the dump when ErrorStop exits from the dialogue.
-            stores
-                .world_mut()
-                .publish_diagnostic_effects_preserving(command.diagnostic_effects);
-            let completion_result = {
-                let mut context = stores
-                    .command_context()
-                    .expect("show completion has a live generation");
-                crate::diagnostics::complete_show(
-                    &mut context,
-                    command.diagnostic_effects,
-                    completion.long,
-                    Some(completion.context),
-                )
-            };
-            if let Err(error) = completion_result {
-                result = Err(error);
-            }
-        }
-        if result.is_ok()
-            && let Some(context) = command.pending_outer_page_build_context.take()
-        {
-            // TeX82 §1099 runs `build_page` after §1100 has closed the
-            // insertion group. Group-command and restoration traces are
-            // detached, while §993/§1009 recovery still uses the live error
-            // dialogue. Publish the completed group-close program at this
-            // outer admission boundary before page building can report.
-            stores
-                .world_mut()
-                .publish_diagnostic_effects_preserving(command.diagnostic_effects);
-            let mut stores = stores.command_context().expect("live generation");
-            match crate::vertical::build_page_if_outer_vertical_with_error_context(
-                &self.execution.modes,
-                &mut stores,
-                command.diagnostic_effects,
-                &context,
-            ) {
-                Ok(()) => pending_page_output = PendingPageOutputFacts::capture(&stores),
-                Err(error) => result = Err(error),
-            }
-        }
         if result.is_ok() {
             if !command.immediate_prints.is_empty() {
                 // TeX82 §1375 performs an immediate write only after its

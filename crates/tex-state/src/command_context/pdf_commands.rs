@@ -3,6 +3,14 @@
 use super::*;
 
 impl<'a, G> CommandContext<'a, G> {
+    pub fn set_pdf_random_seed(&mut self, seed: i32) {
+        self.resident.world.set_pdf_random_seed(seed);
+    }
+
+    pub fn reset_pdf_timer(&mut self) {
+        self.resident.world.reset_pdf_timer();
+    }
+
     pub fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
         self.resident.world.pdf_uniform_deviate(bound)
     }

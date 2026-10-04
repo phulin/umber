@@ -89,14 +89,15 @@ pub(in crate::main_control) fn execute_pdf_x_image<G>(
 pub(in crate::main_control) fn execute_pdf_ref_x_image<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    object: &mut i32,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    object: i32,
 ) -> Result<MainControlStep, ExecError> {
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode("pdfrefximage"));
         }
-        let image = u32::try_from(*object)
+        let image = u32::try_from(object)
             .ok()
             .and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok())
             .and_then(|id| stores.pdf_external_image_record(id))
@@ -105,8 +106,8 @@ pub(in crate::main_control) fn execute_pdf_ref_x_image<G>(
         crate::box_runtime::append_whatsit(
             modes,
             stores,
-            command.diagnostic_effects,
-            command.fuel,
+            effects,
+            fuel,
             Whatsit::PdfRefXImage {
                 object: image.id().raw(),
                 width: dimensions.width,
@@ -121,8 +122,9 @@ pub(in crate::main_control) fn execute_pdf_ref_x_image<G>(
 pub(in crate::main_control) fn execute_pdf_interword_space<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    control: &mut tex_state::node::PdfAccessibilityControl,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    control: tex_state::node::PdfAccessibilityControl,
 ) -> Result<MainControlStep, ExecError> {
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -138,9 +140,9 @@ pub(in crate::main_control) fn execute_pdf_interword_space<G>(
         crate::box_runtime::append_whatsit(
             modes,
             stores,
-            command.diagnostic_effects,
-            command.fuel,
-            Whatsit::PdfAccessibility(*control),
+            effects,
+            fuel,
+            Whatsit::PdfAccessibility(control),
         )?;
         Ok(MainControlStep::Continue)
     }
@@ -149,12 +151,13 @@ pub(in crate::main_control) fn execute_pdf_interword_space<G>(
 pub(in crate::main_control) fn execute_pdf_running_link<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    enabled: &mut bool,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    enabled: bool,
 ) -> Result<MainControlStep, ExecError> {
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
-            return Err(ExecError::PdfExtensionInDviMode(if *enabled {
+            return Err(ExecError::PdfExtensionInDviMode(if enabled {
                 "pdfrunninglinkon"
             } else {
                 "pdfrunninglinkoff"
@@ -163,87 +166,37 @@ pub(in crate::main_control) fn execute_pdf_running_link<G>(
         crate::box_runtime::append_whatsit(
             modes,
             stores,
-            command.diagnostic_effects,
-            command.fuel,
-            Whatsit::PdfRunningLink(*enabled),
+            effects,
+            fuel,
+            Whatsit::PdfRunningLink(enabled),
         )?;
         Ok(MainControlStep::Continue)
     }
 }
 
-pub(in crate::main_control) fn execute_pdf_space_font<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    tokens: &mut tex_state::TokenListId<G>,
-) -> Result<MainControlStep, ExecError> {
-    {
-        if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
-            return Err(ExecError::PdfExtensionInDviMode("pdfspacefont"));
-        }
-        let name = pdf_graphics_text(tokens, stores);
-        stores.set_pdf_space_font_name(name);
-        Ok(MainControlStep::Continue)
-    }
-}
-
-pub(in crate::main_control) fn execute_pdf_graphics<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    request: &mut tex_command::PdfGraphicsRequest<tex_state::TokenListId<G>>,
-) -> Result<MainControlStep, ExecError> {
-    apply_pdf_graphics_request(
-        request,
-        stores,
-        modes,
-        command.state,
-        command.diagnostic_effects,
-        command.fuel,
-    )
-}
-
-pub(in crate::main_control) fn execute_pdf_object<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    request: &mut tex_command::PdfObjectRequest<tex_state::TokenListId<G>>,
-) -> Result<MainControlStep, ExecError> {
-    apply_pdf_object_request(request, stores, false)
-}
-
 pub(in crate::main_control) fn execute_pdf_reference_object<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    request: &mut PdfReferenceObjectRequest,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    object: i32,
 ) -> Result<MainControlStep, ExecError> {
     {
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Err(ExecError::PdfExtensionInDviMode("pdfrefobj"));
         }
-        let object = u32::try_from(request.object)
+        let object = u32::try_from(object)
             .ok()
             .filter(|object| stores.pdf_raw_object(*object).is_some())
             .ok_or(ExecError::PdfReferencedObjectNotFound)?;
         crate::box_runtime::append_whatsit(
             modes,
             stores,
-            command.diagnostic_effects,
-            command.fuel,
+            effects,
+            fuel,
             Whatsit::PdfReferenceObject { object },
         )?;
         Ok(MainControlStep::Continue)
-    }
-}
-
-pub(in crate::main_control) fn execute_pdf_form<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    request: &mut tex_command::PdfFormRequest<tex_state::TokenListId<G>>,
-) -> Result<MainControlStep, ExecError> {
-    {
-        apply_pdf_form_request(request, stores, modes, command, false).map(|pending| {
-            debug_assert!(pending.is_none());
-            MainControlStep::Continue
-        })
     }
 }
 
@@ -286,29 +239,14 @@ pub(in crate::main_control) fn execute_pdf_document_fragment<G>(
     }
 }
 
-pub(in crate::main_control) fn execute_pdf_navigation<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    request: &mut tex_command::PdfNavigationRequest<tex_state::TokenListId<G>>,
-) -> Result<MainControlStep, ExecError> {
-    apply_pdf_navigation_request(
-        request,
-        stores,
-        modes,
-        command.diagnostic_effects,
-        command.fuel,
-    )
-}
-
 pub(in crate::main_control) fn execute_pdf_font_expand<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    font: &mut FontId,
-    spec: &mut tex_typeset::expansion::FontExpansionSpec,
+    font: FontId,
+    spec: tex_typeset::expansion::FontExpansionSpec,
 ) -> Result<MainControlStep, ExecError> {
     {
         stores.configure_font_expansion(
-            *font,
+            font,
             tex_state::font::FontExpansion {
                 stretch: spec.stretch() as u16,
                 shrink: spec.shrink() as u16,
@@ -322,15 +260,12 @@ pub(in crate::main_control) fn execute_pdf_font_expand<G>(
 
 pub(in crate::main_control) fn execute_pdf_font_action<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    primitive: &mut UnexpandablePrimitive,
-    font: &mut Option<FontId>,
-    first: &mut Option<tex_state::TokenListId<G>>,
-    second: &mut Option<tex_state::TokenListId<G>>,
+    primitive: UnexpandablePrimitive,
+    font: Option<FontId>,
+    first: Option<Vec<u8>>,
+    second: Option<Vec<u8>>,
 ) -> Result<MainControlStep, ExecError> {
     {
-        let first = first
-            .as_ref()
-            .map(|tokens| pdf_graphics_text(tokens, stores));
         match primitive {
             UnexpandablePrimitive::PdfFontAttr => stores.set_pdf_font_attribute(
                 font.expect("font attribute scanned a font"),
@@ -344,12 +279,7 @@ pub(in crate::main_control) fn execute_pdf_font_action<G>(
                 .disable_pdf_builtin_to_unicode(font.expect("no builtin ToUnicode scanned a font")),
             UnexpandablePrimitive::PdfGlyphToUnicode => {
                 let glyph = first.expect("glyph mapping scanned a glyph");
-                let unicode = pdf_graphics_text(
-                    second
-                        .as_ref()
-                        .expect("glyph mapping scanned a Unicode value"),
-                    stores,
-                );
+                let unicode = second.expect("glyph mapping scanned a Unicode value");
                 match parse_glyph_to_unicode(&glyph, &unicode) {
                     GlyphToUnicodeParse::Mapping(mapping) => {
                         stores.set_pdf_glyph_to_unicode(mapping)
@@ -468,7 +398,14 @@ pub(in crate::main_control) fn execute_immediate_extension<G>(
                 apply_pdf_object_request(request, stores, true)?;
             }
             tex_command::ImmediateExtension::PdfForm(request) => {
-                let pending = apply_pdf_form_request(request, stores, modes, command, true)?;
+                let pending = apply_pdf_form_request(
+                    request,
+                    stores,
+                    modes,
+                    command.diagnostic_effects,
+                    command.fuel,
+                    true,
+                )?;
                 assert!(
                     pending.is_none(),
                     "immediate form publication is intercepted before generic cold apply"

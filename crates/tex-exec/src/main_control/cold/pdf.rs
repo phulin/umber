@@ -603,7 +603,8 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
     request: &mut tex_command::PdfFormRequest<tex_state::TokenListId<G>>,
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
     immediate: bool,
 ) -> Result<Option<tex_state::PdfFormRecord<G>>, ExecError> {
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -622,8 +623,8 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
-                command.diagnostic_effects,
-                command.fuel,
+                effects,
+                fuel,
                 Whatsit::PdfRefXForm {
                     object: form.object(),
                     width: form.width(),

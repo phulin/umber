@@ -66,37 +66,6 @@ impl ScannedFileName {
 
 pub(crate) const FILE_NAME_POOL_CAPACITY: usize = 32_000;
 
-/// Completed input-stream operation.  The command core owns every operand;
-/// replay only acquires an already-registered immutable resource and mutates
-/// World stream state.
-#[derive(Debug)]
-pub enum InputStreamRequest<G> {
-    Open {
-        stream: i32,
-        file_name: ScannedFileName,
-    },
-    Close {
-        stream: i32,
-    },
-    /// TeX82 §482's `read_toks` has already run: the collected list is
-    /// carried here, not a stream the executor must go read itself.
-    ///
-    /// §1225 calls `read_toks(n,r)` inside `prefixed_command`, so the
-    /// collection is part of scanning `\\read` and belongs to the command
-    /// core. Replay only installs the parameterless macro §482 built.
-    Read {
-        /// §1225's plain `scan_int`, unrestricted: §482 maps anything outside
-        /// `0..=15` onto stream 16 (the terminal) without diagnosing it.
-        stream: i32,
-        target: Symbol,
-        /// Effective TeX82 §1214 scope selected by `prefixed_command`
-        /// before §1225 enters `read_toks`.
-        global: bool,
-        /// Move-only final definition owner, retained until native assignment.
-        definition: tex_state::PublishedDefinition<G>,
-    },
-}
-
 /// A completed TeX82 §53 `\immediate` extension request.
 ///
 /// Command control owns the recursive expanded lookahead and all operand

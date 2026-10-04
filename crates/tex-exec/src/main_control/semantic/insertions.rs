@@ -1,12 +1,15 @@
 //! Native insert/adjust construction.
 use super::super::*;
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::main_control) fn execute_begin_insert<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
+    command: &mut CommandState<G>,
+    effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
     boxes: &mut ReplayBoxes<G>,
-    construction: &mut ScannedInsertConstruction,
+    mut construction: ScannedInsertConstruction,
 ) -> Result<MainControlStep, ExecError> {
     {
         // TeX82 §1099's `begin_insert_or_adjust`: `scan_eight_bit_int`
@@ -27,7 +30,7 @@ pub(in crate::main_control) fn execute_begin_insert<G>(
             if let Some(context) = construction.reserved_class_context.take() {
                 report.context(context);
             }
-            report.error().defer_recovery(command.diagnostic_effects)?;
+            report.error().defer_recovery(effects)?;
             class = 0;
         }
         let class = class as u16;
@@ -38,30 +41,20 @@ pub(in crate::main_control) fn execute_begin_insert<G>(
             // Material before the insertion remains in the box body.
             // Finish its pending character run before opening the page
             // interval that hpack will migrate out of this box.
-            crate::box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.diagnostic_effects,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, effects, fuel)?;
             Some(stores.begin_page_node_region())
         } else {
             None
         };
-        enter_group(
-            stores,
-            command.state,
-            command.diagnostic_effects,
-            GroupKind::Insert,
-        );
+        enter_group(stores, command, effects, GroupKind::Insert);
         modes.push_at_line(
             Mode::InternalVertical,
-            i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
+            i32::try_from(command.current_file_line_number()).unwrap_or(i32::MAX),
         )?;
         // §1099: `normal_paragraph` resets \parshape/\looseness/\hangindent/
         // \hangafter local to the just-opened insert group, exactly like
         // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
-        crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
+        crate::paragraph_end::normal_paragraph(modes, stores, effects);
         boxes.push_box(
             stores,
             ActiveReplayBox {
@@ -79,25 +72,6 @@ pub(in crate::main_control) fn execute_begin_insert<G>(
         );
         // Unlike `\hbox`/`\vbox`/`\vtop`, §1099 never begins the
         // `\everyhbox`/`\everyvbox` token list for an insertion body.
-        Ok(MainControlStep::Continue)
-    }
-}
-
-pub(in crate::main_control) fn execute_illegal_insert_or_adjust<G>(
-    stores: &mut tex_state::CommandContext<'_, G>,
-    modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, '_, G>,
-    token: &mut Token,
-) -> Result<MainControlStep, ExecError> {
-    {
-        let context = command.state.output_open_context(&*stores);
-        crate::diagnostics::report_illegal_case_with_context(
-            stores,
-            command.diagnostic_effects,
-            *token,
-            modes.current_mode(),
-            Some(context),
-        )?;
         Ok(MainControlStep::Continue)
     }
 }

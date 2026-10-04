@@ -93,7 +93,17 @@ pub(in crate::main_control) fn execute_set_box<G>(
                 origin: tex_state::page_node_arena::BuiltBoxOrigin::LastBox,
             });
             let context = boxes.take_box_context(false);
-            box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+            box_end(
+                context,
+                node,
+                modes,
+                stores,
+                command.state,
+                command.diagnostic_effects,
+                command.fuel,
+                command.prepared_shipout,
+                command.assignment_receipts.as_deref_mut(),
+            )?;
             return Ok(MainControlStep::Continue);
         }
 
@@ -199,10 +209,20 @@ pub(in crate::main_control) fn execute_set_box<G>(
                             tex_state::page_node_arena::BuiltBoxOrigin::SetBoxRegisterTake
                         }
                     };
-                    let id = read_box_register(*index, *copy, stores, command);
+                    let id = read_box_register(*index, *copy, stores);
                     let node = crate::box_runtime::first_box_node(stores, id);
                     let context = boxes.take_box_context(false);
-                    box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+                    box_end(
+                        context,
+                        node,
+                        modes,
+                        stores,
+                        command.state,
+                        command.diagnostic_effects,
+                        command.fuel,
+                        command.prepared_shipout,
+                        command.assignment_receipts.as_deref_mut(),
+                    )?;
                 }
                 ScannedBoxShiftPayload::LastBox { .. } => {
                     unreachable!("setbox lastbox is ordered before its destination suffix")
@@ -232,7 +252,17 @@ pub(in crate::main_control) fn execute_set_box<G>(
                         &split.split_context,
                     )?;
                     let context = boxes.take_box_context(false);
-                    box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+                    box_end(
+                        context,
+                        node,
+                        modes,
+                        stores,
+                        command.state,
+                        command.diagnostic_effects,
+                        command.fuel,
+                        command.prepared_shipout,
+                        command.assignment_receipts.as_deref_mut(),
+                    )?;
                 }
                 ScannedBoxShiftPayload::Construction(construction) => begin_replay_box(
                     *construction,

@@ -21,6 +21,18 @@ wrapper are absent; script markers carry their actual kind.
 
 Executor group-open consumers call the canonical `scan_left_brace` directly.
 The discarded discretionary opening wrapper and its scanner adapter are deleted.
+PDF font actions scan their actual font and balanced text in main control.
+Their immediately consumed text renders directly from attempt storage into
+final bytes; the discarded `ScannedPdfFontAction` and scanner adapter are
+removed. PDF object references scan their actual integer directly; their
+discarded result wrapper is absent. Showbox uses the actual profile-register
+scanner; its discarded index/provenance adapter is removed. Box/copy operands
+likewise read the actual register index without a `ScannedBoxRegister`. Read
+scanning returns its actual target and final definition owner. The unused
+open/close/read request union and retained stream/scope columns are deleted.
+Text accents execute their real assignment/base grammar in main control;
+`ScannedAccent` and `ScannedAccentBase` plus their scanner adapters are absent. There is no intermediate retained token list for font-map or
+ToUnicode text.
 Recovery entry points consume native spelling plus a genuine exceptional record
 only when present; math-shift, paragraph and off-save backup share that native
 input seam. No recovery command record is built for ordinary spelling.

@@ -26,11 +26,12 @@ pub(super) fn no_boundary<G>(
         );
     }
     let mut completion = None;
-    processor
-        .consume_expanded_words(&mut |processor, spelling, meaning, symbol, exceptional| {
+    let status = processor
+        .consume_main_control(&mut |processor, spelling, meaning, symbol, exceptional| {
             if let tex_state::meaning::MeaningWord::Static(word) = meaning {
                 let code = Meaning::runtime_word_control_code(*word);
                 if code == codes::PRIMITIVE_NO_BOUNDARY {
+                    trace::command(processor, code, meaning, symbol);
                     return Ok(ControlFlow::Continue(()));
                 }
                 if matches!(
@@ -60,8 +61,46 @@ pub(super) fn no_boundary<G>(
             Ok(ControlFlow::Break(()))
         })
         .map_err(command_error)?;
-    completion.unwrap_or(Ok(MainControlStep::EndOfInput))
+    match completion {
+        Some(step) => step,
+        None => finish_input_boundary(processor, status),
+    }
 }
+pub(super) fn ignore_spaces<G>(
+    processor: &mut Processor<'_, '_, G>,
+    receipts: &mut Option<Vec<MutationRecord>>,
+) -> Result<MainControlStep, ExecError> {
+    let mut completion = None;
+    let status = processor
+        .consume_main_control(&mut |processor, spelling, meaning, symbol, exceptional| {
+            if let tex_state::meaning::MeaningWord::Static(word) = meaning {
+                let code = Meaning::runtime_word_control_code(*word);
+                if code == codes::CHAR_SPACE {
+                    return Ok(ControlFlow::Continue(()));
+                }
+                if code == codes::PRIMITIVE_IGNORE_SPACES {
+                    trace::command(processor, code, meaning, symbol);
+                    return Ok(ControlFlow::Continue(()));
+                }
+            }
+            completion = Some(dispatch::execute(
+                processor,
+                spelling,
+                meaning,
+                symbol,
+                exceptional,
+                receipts,
+                0,
+            ));
+            Ok(ControlFlow::Break(()))
+        })
+        .map_err(command_error)?;
+    match completion {
+        Some(step) => step,
+        None => finish_input_boundary(processor, status),
+    }
+}
+
 /// The one main-loop admission owner for ordinary source text and its scalar
 /// boundaries. The command processor invokes `admit` once for a borrowed
 /// prefix and again only for exceptional scalar events; this concrete owner

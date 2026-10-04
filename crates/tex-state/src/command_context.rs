@@ -652,6 +652,32 @@ impl<'a, G> CommandContext<'a, G> {
         }
     }
 
+    pub fn close_in(&mut self, slot: crate::StreamSlot) {
+        self.resident.world.close_in(slot);
+    }
+
+    pub fn open_in_record(
+        &mut self,
+        slot: crate::StreamSlot,
+        record: crate::InputRecordId,
+    ) -> Result<(), crate::WorldError> {
+        self.resident.world.open_in_record(slot, record)
+    }
+
+    pub fn open_in_bytes(
+        &mut self,
+        slot: crate::StreamSlot,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<(), crate::WorldError> {
+        self.resident.world.set_memory_file(name, bytes.to_vec())?;
+        let content = crate::InputReadState::read_input_file(
+            &mut self.resident.world.input_open_context(),
+            std::path::Path::new(name),
+        )?;
+        self.resident.world.open_in_content(slot, &content)
+    }
+
     /// Reborrows the operation's World through the narrow input-resource
     /// capability. The provider call must finish before this closure returns;
     /// no World or input-state borrow can therefore survive a checkpoint or

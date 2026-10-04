@@ -33,6 +33,31 @@ pub(super) fn execute<'state, 'host, G>(
             };
             prefixes::scan(processor, prefixes | flag, observation_receipts)
         }
+        codes::PRIMITIVE_IGNORE_SPACES => {
+            characters::ignore_spaces(processor, observation_receipts)
+        }
+        codes::CHAR_PARAMETER => {
+            recovery::illegal_case(processor, spelling, meaning, control_sequence, exceptional)
+        }
+        codes::END_CS_NAME => {
+            processor.with_execution_owners(
+                |context, command, effects, _, _, execution, _, _, _| {
+                    execution.main_loop_active = false;
+                    let display = command.output_open_context(context);
+                    report_escaped_error(
+                        context,
+                        effects,
+                        "Extra ",
+                        "endcsname",
+                        "",
+                        &["I'm ignoring this, since I wasn't doing a \\csname."],
+                        display,
+                    )
+                },
+            )?;
+            recovery::finish_error_dialogue(processor)?;
+            Ok(MainControlStep::Continue)
+        }
         codes::RELAX => {
             processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
                 execution.main_loop_active = false;
@@ -421,6 +446,408 @@ pub(super) fn execute<'state, 'host, G>(
                     }
                     Ok(MainControlStep::Continue)
                 },
+            )
+        }
+        codes::PRIMITIVE_PDF_LP_CODE
+        | codes::PRIMITIVE_PDF_RP_CODE
+        | codes::PRIMITIVE_PDF_EF_CODE
+        | codes::PRIMITIVE_PDF_TAG_CODE
+        | codes::PRIMITIVE_PDF_KNBS_CODE
+        | codes::PRIMITIVE_PDF_STBS_CODE
+        | codes::PRIMITIVE_PDF_SHBS_CODE
+        | codes::PRIMITIVE_PDF_KNBC_CODE
+        | codes::PRIMITIVE_PDF_KNAC_CODE => {
+            let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) =
+                meaning.resolve()
+            else {
+                unreachable!("PDF font code selector")
+            };
+            pdf::font_code(
+                processor,
+                pdf_font_code_table(primitive),
+                observation_receipts,
+            )
+        }
+        codes::PRIMITIVE_PDF_NO_LIGATURES => pdf::no_ligatures(processor, observation_receipts),
+        codes::PRIMITIVE_PDF_FONT_EXPAND => pdf::font_expand(processor),
+        codes::PRIMITIVE_PDF_FONT_ATTR
+        | codes::PRIMITIVE_PDF_INCLUDE_CHARS
+        | codes::PRIMITIVE_PDF_NO_BUILTIN_TO_UNICODE
+        | codes::PRIMITIVE_PDF_GLYPH_TO_UNICODE
+        | codes::PRIMITIVE_PDF_MAP_FILE
+        | codes::PRIMITIVE_PDF_MAP_LINE => {
+            let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) =
+                meaning.resolve()
+            else {
+                unreachable!("PDF font action selector")
+            };
+            pdf::font_action(processor, primitive)
+        }
+        codes::PRIMITIVE_PDF_LITERAL
+        | codes::PRIMITIVE_PDF_SET_MATRIX
+        | codes::PRIMITIVE_PDF_SAVE
+        | codes::PRIMITIVE_PDF_RESTORE
+        | codes::PRIMITIVE_PDF_COLOR_STACK
+        | codes::PRIMITIVE_PDF_SAVE_POS
+        | codes::PRIMITIVE_PDF_SNAP_REF_POINT
+        | codes::PRIMITIVE_PDF_SNAP_Y
+        | codes::PRIMITIVE_PDF_SNAP_Y_COMP => {
+            let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) =
+                meaning.resolve()
+            else {
+                unreachable!("PDF graphics selector")
+            };
+            pdf::graphics(processor, primitive, spelling, exceptional)
+        }
+        codes::PRIMITIVE_PDF_ANNOT
+        | codes::PRIMITIVE_PDF_START_LINK
+        | codes::PRIMITIVE_PDF_END_LINK
+        | codes::PRIMITIVE_PDF_OUTLINE
+        | codes::PRIMITIVE_PDF_DEST
+        | codes::PRIMITIVE_PDF_THREAD
+        | codes::PRIMITIVE_PDF_START_THREAD
+        | codes::PRIMITIVE_PDF_END_THREAD => {
+            let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) =
+                meaning.resolve()
+            else {
+                unreachable!("PDF navigation selector")
+            };
+            let name = match primitive {
+                UnexpandablePrimitive::PdfAnnot => "pdfannot",
+                UnexpandablePrimitive::PdfStartLink => "pdfstartlink",
+                UnexpandablePrimitive::PdfEndLink => "pdfendlink",
+                UnexpandablePrimitive::PdfOutline => "pdfoutline",
+                UnexpandablePrimitive::PdfDest => "pdfdest",
+                UnexpandablePrimitive::PdfThread => "pdfthread",
+                UnexpandablePrimitive::PdfStartThread => "pdfstartthread",
+                UnexpandablePrimitive::PdfEndThread => "pdfendthread",
+                _ => unreachable!("navigation selector"),
+            };
+            pdf::require_output(processor, spelling, exceptional, name)?;
+            if matches!(
+                primitive,
+                UnexpandablePrimitive::PdfStartLink | UnexpandablePrimitive::PdfEndLink
+            ) {
+                let vertical =
+                    processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                        matches!(
+                            execution.modes.current_mode(),
+                            Mode::Vertical | Mode::InternalVertical
+                        )
+                    });
+                if vertical {
+                    processor
+                        .back_consumed_word(spelling, exceptional)
+                        .map_err(command_error)?;
+                    return Err(ExecError::PdfLinkInVerticalMode(name));
+                }
+            }
+            pdf::navigation(processor, primitive)
+        }
+        codes::PRIMITIVE_PDF_X_FORM | codes::PRIMITIVE_PDF_REF_X_FORM => {
+            let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) =
+                meaning.resolve()
+            else {
+                unreachable!("PDF form selector")
+            };
+            pdf::require_output(
+                processor,
+                spelling,
+                exceptional,
+                if primitive == UnexpandablePrimitive::PdfXForm {
+                    "pdfxform"
+                } else {
+                    "pdfrefxform"
+                },
+            )?;
+            pdf::form(processor, primitive)
+        }
+        codes::PRIMITIVE_PDF_OBJECT => {
+            pdf::require_output(processor, spelling, exceptional, "pdfobj")?;
+            pdf::object(processor)
+        }
+        codes::PRIMITIVE_PDF_INFO
+        | codes::PRIMITIVE_PDF_CATALOG
+        | codes::PRIMITIVE_PDF_NAMES
+        | codes::PRIMITIVE_PDF_TRAILER
+        | codes::PRIMITIVE_PDF_TRAILER_ID => {
+            let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) =
+                meaning.resolve()
+            else {
+                unreachable!("PDF document fragment selector")
+            };
+            if primitive == UnexpandablePrimitive::PdfNames {
+                pdf::require_output(processor, spelling, exceptional, "pdfnames")?;
+            }
+            pdf::document_fragment(processor, primitive)
+        }
+        codes::PRIMITIVE_PDF_REF_X_IMAGE | codes::PRIMITIVE_PDF_REFERENCE_OBJECT => {
+            let name = if code == codes::PRIMITIVE_PDF_REF_X_IMAGE {
+                "pdfrefximage"
+            } else {
+                "pdfrefobj"
+            };
+            pdf::require_output(processor, spelling, exceptional, name)?;
+            let object = processor.scan_integer().map_err(command_error)?.value;
+            report_scan(processor)?;
+            processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
+                execution.main_loop_active = false;
+                if code == codes::PRIMITIVE_PDF_REF_X_IMAGE {
+                    semantic::execute_pdf_ref_x_image(
+                        context,
+                        &mut execution.modes,
+                        effects,
+                        fuel,
+                        object,
+                    )
+                } else {
+                    semantic::execute_pdf_reference_object(
+                        context,
+                        &mut execution.modes,
+                        effects,
+                        fuel,
+                        object,
+                    )
+                }
+            })
+        }
+        codes::PRIMITIVE_PDF_INTERWORD_SPACE_ON
+        | codes::PRIMITIVE_PDF_INTERWORD_SPACE_OFF
+        | codes::PRIMITIVE_PDF_FAKE_SPACE => {
+            let control = match code {
+                codes::PRIMITIVE_PDF_INTERWORD_SPACE_ON => {
+                    tex_state::node::PdfAccessibilityControl::InterwordSpaceOn
+                }
+                codes::PRIMITIVE_PDF_INTERWORD_SPACE_OFF => {
+                    tex_state::node::PdfAccessibilityControl::InterwordSpaceOff
+                }
+                _ => tex_state::node::PdfAccessibilityControl::FakeSpace,
+            };
+            processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
+                execution.main_loop_active = false;
+                semantic::execute_pdf_interword_space(
+                    context,
+                    &mut execution.modes,
+                    effects,
+                    fuel,
+                    control,
+                )
+            })
+        }
+        codes::PRIMITIVE_PDF_RUNNING_LINK_ON | codes::PRIMITIVE_PDF_RUNNING_LINK_OFF => processor
+            .with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
+                execution.main_loop_active = false;
+                semantic::execute_pdf_running_link(
+                    context,
+                    &mut execution.modes,
+                    effects,
+                    fuel,
+                    code == codes::PRIMITIVE_PDF_RUNNING_LINK_ON,
+                )
+            }),
+        codes::PRIMITIVE_PDF_SET_RANDOM_SEED => {
+            let seed = processor
+                .scan_integer()
+                .map_err(command_error)?
+                .value
+                .saturating_abs();
+            report_scan(processor)?;
+            processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+                execution.main_loop_active = false;
+                context.set_pdf_random_seed(seed);
+            });
+            Ok(MainControlStep::Continue)
+        }
+        codes::PRIMITIVE_PDF_RESET_TIMER => {
+            processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+                execution.main_loop_active = false;
+                context.reset_pdf_timer();
+            });
+            Ok(MainControlStep::Continue)
+        }
+        codes::PRIMITIVE_PDF_SPACE_FONT => {
+            pdf::require_output(processor, spelling, exceptional, "pdfspacefont")?;
+            pdf::space_font(processor)
+        }
+        codes::PRIMITIVE_SHOW => diagnostics::show(processor, false),
+        codes::PRIMITIVE_SHOW_THE => diagnostics::show(processor, true),
+        codes::PRIMITIVE_SHOW_TOKENS => diagnostics::tokens(processor),
+        codes::PRIMITIVE_SHOW_LISTS => diagnostics::lists(processor),
+        codes::PRIMITIVE_SHOW_IFS => diagnostics::conditions(processor),
+        codes::PRIMITIVE_SHOW_GROUPS => diagnostics::groups(processor),
+        codes::PRIMITIVE_SHOW_BOX => diagnostics::box_register(processor),
+        codes::PRIMITIVE_INSERT | codes::PRIMITIVE_V_ADJUST => {
+            let adjust = code == codes::PRIMITIVE_V_ADJUST;
+            if adjust {
+                let vertical =
+                    processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                        matches!(
+                            execution.modes.current_mode(),
+                            Mode::Vertical | Mode::InternalVertical
+                        )
+                    });
+                if vertical {
+                    return recovery::illegal_case(
+                        processor,
+                        spelling,
+                        meaning,
+                        control_sequence,
+                        exceptional,
+                    );
+                }
+            }
+            let construction = processor
+                .scan_insert_construction(adjust)
+                .map_err(command_error)?;
+            report_scan(processor)?;
+            let step = processor.with_execution_owners(
+                |context, command, effects, fuel, _, execution, _, _, _| {
+                    execution.main_loop_active = false;
+                    semantic::execute_begin_insert(
+                        context,
+                        &mut execution.modes,
+                        command,
+                        effects,
+                        fuel,
+                        &mut execution.boxes,
+                        construction,
+                    )
+                },
+            )?;
+            recovery::finish_error_dialogue(processor)?;
+            Ok(step)
+        }
+        codes::PRIMITIVE_WD | codes::PRIMITIVE_HT | codes::PRIMITIVE_DP => {
+            let index = processor
+                .scan_profile_register_index()
+                .map_err(command_error)?;
+            processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_dimension().map_err(command_error)?;
+            let dimension = match code {
+                codes::PRIMITIVE_WD => tex_state::BoxDimension::Width,
+                codes::PRIMITIVE_HT => tex_state::BoxDimension::Height,
+                _ => tex_state::BoxDimension::Depth,
+            };
+            report_scan(processor)?;
+            let step = processor.with_execution_owners(
+                |context, _, effects, _, _, execution, _, _, _| {
+                    execution.main_loop_active = false;
+                    semantic::execute_box_dimension_assignment(
+                        context, effects, index, dimension, value,
+                    )
+                },
+            )?;
+            processor.complete_assignment().map_err(command_error)?;
+            Ok(step)
+        }
+        codes::PRIMITIVE_UN_PENALTY | codes::PRIMITIVE_UN_KERN | codes::PRIMITIVE_UN_SKIP => {
+            let primitive = match code {
+                codes::PRIMITIVE_UN_PENALTY => UnexpandablePrimitive::UnPenalty,
+                codes::PRIMITIVE_UN_KERN => UnexpandablePrimitive::UnKern,
+                _ => UnexpandablePrimitive::UnSkip,
+            };
+            let coordinate = processor.diagnostic_context_coordinate();
+            report_scan(processor)?;
+            let step = processor.with_execution_owners(
+                |context, command, effects, fuel, _, execution, _, _, _| {
+                    execution.main_loop_active = false;
+                    semantic::execute_delete_last(
+                        context,
+                        &mut execution.modes,
+                        command,
+                        effects,
+                        fuel,
+                        primitive,
+                        coordinate,
+                    )
+                },
+            )?;
+            recovery::finish_error_dialogue(processor)?;
+            Ok(step)
+        }
+        codes::PRIMITIVE_BOX | codes::PRIMITIVE_COPY => boxes::register(
+            processor,
+            code == codes::PRIMITIVE_COPY,
+            false,
+            observation_receipts,
+        ),
+        codes::PRIMITIVE_UN_H_BOX
+        | codes::PRIMITIVE_UN_H_COPY
+        | codes::PRIMITIVE_UN_V_BOX
+        | codes::PRIMITIVE_UN_V_COPY
+        | codes::PRIMITIVE_PAGE_DISCARDS
+        | codes::PRIMITIVE_SPLIT_DISCARDS => {
+            let horizontal = matches!(code, codes::PRIMITIVE_UN_H_BOX | codes::PRIMITIVE_UN_H_COPY);
+            let discard = matches!(
+                code,
+                codes::PRIMITIVE_PAGE_DISCARDS | codes::PRIMITIVE_SPLIT_DISCARDS
+            );
+            let mode = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                execution.modes.current_mode()
+            });
+            if horizontal && matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                return recovery::start_paragraph_and_reswitch(
+                    processor,
+                    spelling,
+                    meaning,
+                    control_sequence,
+                    exceptional,
+                );
+            }
+            if !horizontal {
+                if mode == Mode::Horizontal {
+                    processor
+                        .recover_stop_for_vertical_mode(spelling, exceptional)
+                        .map_err(command_error)?;
+                    return Ok(MainControlStep::Continue);
+                }
+                if mode == Mode::RestrictedHorizontal {
+                    return recovery::off_save(
+                        processor,
+                        spelling,
+                        meaning,
+                        control_sequence,
+                        exceptional,
+                    );
+                }
+                if discard && matches!(mode, Mode::Math | Mode::DisplayMath) {
+                    return recovery::insert_math_shift(
+                        processor,
+                        spelling,
+                        meaning,
+                        control_sequence,
+                        exceptional,
+                    );
+                }
+            }
+            let primitive = match code {
+                codes::PRIMITIVE_UN_H_BOX => UnexpandablePrimitive::UnHBox,
+                codes::PRIMITIVE_UN_H_COPY => UnexpandablePrimitive::UnHCopy,
+                codes::PRIMITIVE_UN_V_BOX => UnexpandablePrimitive::UnVBox,
+                codes::PRIMITIVE_UN_V_COPY => UnexpandablePrimitive::UnVCopy,
+                codes::PRIMITIVE_PAGE_DISCARDS => UnexpandablePrimitive::PageDiscards,
+                _ => UnexpandablePrimitive::SplitDiscards,
+            };
+            if discard {
+                boxes::discards(processor, primitive)
+            } else {
+                boxes::unbox(processor, primitive)
+            }
+        }
+        codes::PRIMITIVE_V_SPLIT => boxes::split(processor, observation_receipts),
+        codes::PRIMITIVE_LAST_BOX => boxes::last(processor, observation_receipts),
+        codes::PRIMITIVE_OPEN_IN => streams::open_in(processor),
+        codes::PRIMITIVE_CLOSE_IN => streams::close_in(processor),
+        codes::PRIMITIVE_READ | codes::PRIMITIVE_READ_LINE => {
+            let global = effective_global(
+                processor.int_param(IntParam::GLOBAL_DEFS),
+                prefixes & prefixes::GLOBAL != 0,
+            );
+            streams::read(
+                processor,
+                code == codes::PRIMITIVE_READ_LINE,
+                global,
+                observation_receipts,
             )
         }
         codes::FONT => {
@@ -1402,7 +1829,24 @@ pub(super) fn execute<'state, 'host, G>(
                 material::mu_kern(processor)
             }
         }
-        codes::PRIMITIVE_ACCENT if math_mode(processor) => math::text_accent(processor),
+        codes::PRIMITIVE_ACCENT => {
+            let mode = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                execution.modes.current_mode()
+            });
+            match mode {
+                Mode::Math | Mode::DisplayMath => math::text_accent(processor),
+                Mode::Vertical | Mode::InternalVertical => recovery::start_paragraph_and_reswitch(
+                    processor,
+                    spelling,
+                    meaning,
+                    control_sequence,
+                    exceptional,
+                ),
+                Mode::Horizontal | Mode::RestrictedHorizontal => {
+                    accent::apply(processor, observation_receipts)
+                }
+            }
+        }
         codes::PRIMITIVE_EQ_NO | codes::PRIMITIVE_LEFT_EQ_NO => {
             let side = if code == codes::PRIMITIVE_LEFT_EQ_NO {
                 crate::mode::EqNoSide::Left

@@ -57,7 +57,10 @@ close through native unsave and transfer their real node spans. Immediately
 consumed messages render from scanner storage without publishing a discarded
 token list. Deferred writes retain their final token owner. Job termination
 retires input in the processor, then moves its actual incomplete-conditional
-notices to the host for one-time terminal publication after admission ends. Real output, diagnostics, tracing,
+notices to the host for one-time terminal publication after admission ends.
+Demanded shows publish their diagnostic program and complete the dialogue
+within the live processor. Deferred show-completion and outer-page-build
+fields are removed; insertion closure builds its page at the actual producer. Real output, diagnostics, tracing,
 observation and host-budget demands publish at their consuming boundaries.
 
 The replacement must pass the complete native, profiling and authoritative

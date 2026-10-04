@@ -57,10 +57,9 @@ mod token_requests;
 pub use token_requests::TokenRequest;
 
 pub use box_values::{
-    ScannedAccent, ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister,
-    ScannedBoxShift, ScannedBoxShiftPayload, ScannedDisplayDiagnostic, ScannedInsertConstruction,
-    ScannedLeaderPayload, ScannedPackingSpec, ScannedRuleSpec, ScannedSetBoxAssignment,
-    ScannedSetBoxPath, ScannedVSplit,
+    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
+    ScannedDisplayDiagnostic, ScannedInsertConstruction, ScannedLeaderPayload, ScannedPackingSpec,
+    ScannedRuleSpec, ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit,
 };
 pub use definition_values::{
     ExpandedWriteText, FontLoadRequest, FontSizeRecovery, GeneratedFontKind, PdfActionDestination,
@@ -70,8 +69,8 @@ pub use definition_values::{
 };
 use input_values::FILE_NAME_POOL_CAPACITY;
 pub use input_values::{
-    AlignmentCellOpening, FileNameComponents, ImmediateExtension, InputStreamRequest,
-    RegisteredInput, ScannedFileName, WriteStreamSelector,
+    AlignmentCellOpening, FileNameComponents, ImmediateExtension, RegisteredInput, ScannedFileName,
+    WriteStreamSelector,
 };
 pub use math_values::{
     MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
@@ -82,8 +81,7 @@ pub use pdf_values::{
     PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImagePageBox,
     PdfImagePageSelection, PdfImageRequest, PdfNavigationRequest, PdfObjectRequest,
-    PdfOutlineRequest, PdfReferenceObjectRequest, PdfStartLinkRequest, PdfThreadRequest,
-    ScannedPdfFontAction,
+    PdfOutlineRequest, PdfStartLinkRequest, PdfThreadRequest,
 };
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {

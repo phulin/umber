@@ -1,67 +1,51 @@
-//! Direct streams semantics on native owners.
+//! Final read definitions publish into the actual assignment owner.
 use super::super::*;
 
-pub(in crate::main_control) fn execute_input_stream<G>(
+pub(in crate::main_control) fn execute_read_definition<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-    request: tex_command::InputStreamRequest<G>,
+    effects: &mut DiagnosticEffects,
+    receipts: &mut Option<Vec<MutationRecord>>,
+    target: Symbol,
+    definition: tex_state::PublishedDefinition<G>,
+    global: bool,
 ) -> Result<MainControlStep, ExecError> {
-    {
-        match request {
-            tex_command::InputStreamRequest::Open { .. }
-            | tex_command::InputStreamRequest::Close { .. } => {
-                unreachable!("input open/close executes at the MainControl outer barrier")
-            }
-            // TeX82 §482 has already collected the list inside the
-            // command core, which also reported §1225's missing-`to`
-            // recovery at the point tex.web reports it; the definition is
-            // all that is left.
-            tex_command::InputStreamRequest::Read {
-                target,
+    // TeX82 §1225 installs `read_toks`'s freshly allocated
+    // macro through `define(p,call,cur_val)`, so e-TeX
+    // [17.687-750] traces the same pre/post eqtb write as a
+    // `\def`, immediately after collection and before the
+    // next command is fetched.
+    let record = receipts.is_some().then(|| MutationRecord {
+        target: MutationTarget::Meaning,
+        key: ObservationValue::Name(stores.resolve(target).to_owned()),
+        value: ObservationValue::Tokens(observed_read_body(&definition.reference(), stores)),
+        global,
+    });
+    AssignmentCommitter::new(stores, effects).unscoped_with_effects(
+        |stores, diagnostic_effects| {
+            assignment_tracing::trace_meaning_write(
+                stores,
+                diagnostic_effects,
+                Token::Cs(target),
+                true,
                 global,
-                definition,
-                ..
-            } => {
-                // TeX82 §1225 installs `read_toks`'s freshly allocated
-                // macro through `define(p,call,cur_val)`, so e-TeX
-                // [17.687-750] traces the same pre/post eqtb write as a
-                // `\def`, immediately after collection and before the
-                // next command is fetched.
-                let record = command.observes_mutations().then(|| MutationRecord {
-                    target: MutationTarget::Meaning,
-                    key: ObservationValue::Name(stores.resolve(target).to_owned()),
-                    value: ObservationValue::Tokens(observed_read_body(
-                        &definition.reference(),
-                        stores,
-                    )),
-                    global,
-                });
-                AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped_with_effects(
-                    |stores, diagnostic_effects| {
-                        assignment_tracing::trace_meaning_write(
-                            stores,
-                            diagnostic_effects,
-                            Token::Cs(target),
-                            true,
-                            global,
-                            |stores| {
-                                stores
-                                    .assign_published_definition(
-                                        target,
-                                        definition,
-                                        MeaningFlags::EMPTY,
-                                        assignment_scope(global),
-                                    )
-                                    .expect("prepared read definition belongs to admitted state")
-                            },
-                        );
-                    },
-                );
-                if let Some(record) = record {
-                    command.retain_assignment_mutation(record);
-                }
-            }
-        }
-        Ok(MainControlStep::Continue)
+                |stores| {
+                    stores
+                        .assign_published_definition(
+                            target,
+                            definition,
+                            MeaningFlags::EMPTY,
+                            assignment_scope(global),
+                        )
+                        .expect("prepared read definition belongs to admitted state")
+                },
+            );
+        },
+    );
+    if let Some(record) = record {
+        receipts
+            .as_mut()
+            .expect("read mutation observation requested")
+            .push(record);
     }
+    Ok(MainControlStep::Continue)
 }

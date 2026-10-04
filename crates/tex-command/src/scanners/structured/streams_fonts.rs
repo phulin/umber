@@ -1,86 +1,48 @@
 use super::*;
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
-    /// Scans TeX82's `\\openin`, `\\closein`, `\\read`, and e-TeX's
-    /// `\\readline` operands without exposing a raw delivery to replay.
-    pub fn scan_input_stream_request(
+    /// Collects TeX82 §1225's target and final `read_toks` definition owner.
+    pub fn scan_read_definition(
         &mut self,
-        primitive: tex_state::meaning::UnexpandablePrimitive,
-        read_global: bool,
-    ) -> Result<InputStreamRequest<G>, CommandError> {
-        use tex_state::meaning::UnexpandablePrimitive;
-        match primitive {
-            // §§1272--1275's `in_stream` command scans §435's
-            // `scan_four_bit_int`. Recovery is complete before the request is
-            // committed; §435 reports from the original integer here,
-            // before filename acquisition and stream mutation.
-            UnexpandablePrimitive::OpenIn => {
-                let result = self.scan_restricted_integer(RestrictedIntegerClass::FourBit);
-                let scanned = result?;
-                let result = self.scan_optional_equals();
-                result?;
-                let result = self.scan_file_name();
-                let file_name = result?;
-                Ok(InputStreamRequest::Open {
-                    stream: scanned.value,
+        raw_catcodes: bool,
+    ) -> Result<(Symbol, tex_state::PublishedDefinition<G>), CommandError> {
+        // §1225's `read_to_cs` scans a plain `scan_int`, *not*
+        // §435's four-bit selector: §482 answers an out-of-range
+        // stream with `if (n<0)or(n>15) then m:=16`, reading from the
+        // terminal, and no error is reported at all.
+        let result = self.scan_integer();
+        let stream = result?.value;
+        // tex.web §1225 reports a missing `to` and inserts it, then
+        // runs `get_r_token` regardless: the keyword is recovered,
+        // not required. §1225 reports it *here*, between the failed
+        // keyword and `get_r_token`, so §82's context still shows the
+        // target as `<to be read again>` and no `read_toks` prompt has
+        // been printed yet.
 
-                    file_name,
-                })
-            }
-            UnexpandablePrimitive::CloseIn => {
-                let result = self.scan_restricted_integer(RestrictedIntegerClass::FourBit);
-                let scanned = result?;
-                Ok(InputStreamRequest::Close {
-                    stream: scanned.value,
-                })
-            }
-            UnexpandablePrimitive::Read | UnexpandablePrimitive::ReadLine => {
-                // §1225's `read_to_cs` scans a plain `scan_int`, *not*
-                // §435's four-bit selector: §482 answers an out-of-range
-                // stream with `if (n<0)or(n>15) then m:=16`, reading from the
-                // terminal, and no error is reported at all.
-                let result = self.scan_integer();
-                let stream = result?.value;
-                // tex.web §1225 reports a missing `to` and inserts it, then
-                // runs `get_r_token` regardless: the keyword is recovered,
-                // not required. §1225 reports it *here*, between the failed
-                // keyword and `get_r_token`, so §82's context still shows the
-                // target as `<to be read again>` and no `read_toks` prompt has
-                // been printed yet.
-
-                let result = self.scan_keyword("to");
-                let found_to = result?;
-                if !found_to {
-                    let context = self.command.output_open_context(self.state);
-                    let mut report = self.state.print_err("Missing `to' inserted");
-                    report.help(&[
-                        "You should have said `\\read<number> to \\cs'.",
-                        "I'm going to look for the \\cs now.",
-                    ]);
-                    report.context(context);
-                    let outcome = report.error();
-                    self.finish_error_outcome(outcome)?;
-                }
-                // §1215's `get_r_token` backs a rejected ordinary target up
-                // immediately. Its §325 stack-conservation step first retires
-                // the exhausted keyword-mismatch backup, leaving the rejected
-                // target live below §483's temporary read-line source.
-                let target = self.scan_definition_target()?;
-                // TeX82 §1225: `\\read` scans `n`, `to`, and `r`, then runs
-                // §482's `read_toks(n,r)` on the spot. The collector needs
-                // live input levels, category codes, `align_state`, and
-                // `scanner_status`, all of which are the command core's.
-                let definition =
-                    self.read_toks(stream, target, primitive == UnexpandablePrimitive::ReadLine)?;
-                Ok(InputStreamRequest::Read {
-                    stream,
-                    target,
-                    global: read_global,
-                    definition,
-                })
-            }
-            _ => Err(CommandError::input_invariant()),
+        let result = self.scan_keyword("to");
+        let found_to = result?;
+        if !found_to {
+            let context = self.command.output_open_context(self.state);
+            let mut report = self.state.print_err("Missing `to' inserted");
+            report.help(&[
+                "You should have said `\\read<number> to \\cs'.",
+                "I'm going to look for the \\cs now.",
+            ]);
+            report.context(context);
+            let outcome = report.error();
+            self.finish_error_outcome(outcome)?;
         }
+        // §1215's `get_r_token` backs a rejected ordinary target up
+        // immediately. Its §325 stack-conservation step first retires
+        // the exhausted keyword-mismatch backup, leaving the rejected
+        // target live below §483's temporary read-line source.
+        let target = self.scan_definition_target()?;
+        // TeX82 §1225: `\\read` scans `n`, `to`, and `r`, then runs
+        // §482's `read_toks(n,r)` on the spot. The collector needs
+        // live input levels, category codes, `align_state`, and
+        // `scanner_status`, all of which are the command core's.
+        let definition = self.read_toks(stream, target, raw_catcodes)?;
+        Ok((target, definition))
     }
 
     /// Scans a complete ordinary font definition without retaining a raw

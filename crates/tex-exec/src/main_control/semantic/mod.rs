@@ -25,8 +25,6 @@ mod paragraph;
 pub(super) use paragraph::*;
 mod pdf;
 pub(super) use pdf::*;
-mod recovery;
-pub(super) use recovery::*;
 mod registers;
 pub(super) use registers::*;
 mod streams;

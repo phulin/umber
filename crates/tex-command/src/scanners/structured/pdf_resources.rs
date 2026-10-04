@@ -138,61 +138,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    pub fn scan_pdf_reference_object_request(
-        &mut self,
-    ) -> Result<PdfReferenceObjectRequest, CommandError> {
-        let result = self.scan_integer();
-        Ok(PdfReferenceObjectRequest {
-            object: result?.value,
-        })
-    }
-
-    pub fn scan_pdf_font_action(
-        &mut self,
-        primitive: UnexpandablePrimitive,
-    ) -> Result<ScannedPdfFontAction, CommandError> {
-        let needs_font = matches!(
-            primitive,
-            UnexpandablePrimitive::PdfFontAttr
-                | UnexpandablePrimitive::PdfIncludeChars
-                | UnexpandablePrimitive::PdfNoBuiltinToUnicode
-        );
-        let font = if needs_font {
-            let scan = self.scan_font_selector();
-            Some(scan?)
-        } else {
-            None
-        };
-        if primitive == UnexpandablePrimitive::PdfNoBuiltinToUnicode {
-            return Ok(ScannedPdfFontAction {
-                font,
-                first: None,
-                second: None,
-            });
-        }
-        let first = match self.scan_balanced_text(true) {
-            Ok(first) => first.tokens,
-            Err(error) => {
-                return Err(error);
-            }
-        };
-        let second = if primitive == UnexpandablePrimitive::PdfGlyphToUnicode {
-            match self.scan_balanced_text(true) {
-                Ok(second) => Some(second.tokens),
-                Err(error) => {
-                    return Err(error);
-                }
-            }
-        } else {
-            None
-        };
-        Ok(ScannedPdfFontAction {
-            font,
-            first: Some(first),
-            second,
-        })
-    }
-
     pub fn scan_pdf_document_fragment_request(
         &mut self,
         primitive: UnexpandablePrimitive,

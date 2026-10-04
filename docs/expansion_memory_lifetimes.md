@@ -266,6 +266,15 @@ includes output. Interrupted executor/input/mode owners retire before backing
 suffixes, after every selected component passes preflight. Production capture
 occurs only after the synchronous driver returns and rechecks quiescence.
 
+Immediately consumed PDF font-map, attribute and ToUnicode text renders from
+scanner attempt storage into the final byte value. Its attempt owner retires
+at that consuming seam. No `ScannedPdfFontAction`, intermediate retained token
+list or scanner application adapter survives. Box/copy and PDF-reference
+operands consume the native integer directly, without index/result wrappers.
+Read scanning returns the actual target and final published definition owner;
+input opening/closing consumes its operands in place. No stream request union
+or copied read scope survives.
+
 Page/box/node/PDF lifetimes remain their specialized exclusive region and
 version-root contracts. `.6` deletes redundant group protocols and `.15` deletes operation protocols while
 preserving real transfers; `.12` audits complete checkpoint restore/drop,

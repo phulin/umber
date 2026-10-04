@@ -110,17 +110,6 @@ pub struct ScannedBoxShift {
     pub payload: ScannedBoxShiftPayload,
 }
 
-/// The completed register operand of TeX82's `\\box` command.
-///
-/// `make_box(box_code)` calls §433's `scan_eight_bit_int` before main control
-/// can apply the resulting box-list operation. Keeping that scan here
-/// preserves the raw digit delivery, bounded recovery, and integer-scanner
-/// backup entirely in command control.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ScannedBoxRegister {
-    pub index: u16,
-}
-
 /// The complete command-owned operand of TeX82's `\\vsplit`.
 ///
 /// The keyword's absence is preserved so replay can issue its diagnostic, but
@@ -169,39 +158,4 @@ pub struct ScannedRuleSpec {
     pub width: Option<Scaled>,
     pub height: Option<Scaled>,
     pub depth: Option<Scaled>,
-}
-
-/// One step of TeX82 §1123's post-`scan_char_num` lookahead for `\accent`.
-///
-/// §1123's `make_accent` does not classify the base character directly after
-/// the accent code: it runs §1270's `do_assignments` in between, and §1270's
-/// loop body is `prefixed_command` -- executor state, not scanner state. The
-/// lookahead is therefore delivered one command at a time.
-#[derive(Debug, Eq, PartialEq)]
-// Assignment delivery is an allocation-free handoff consumed immediately;
-// boxing it would put a heap allocation in ordinary accent lookahead.
-#[allow(clippy::large_enum_variant)]
-pub enum ScannedAccentBase<G> {
-    /// §1124's `letter`, `other_char`, `char_given`, or `char_num` base.
-    Character {
-        character: u8,
-        provenance: StructuredProvenance,
-    },
-    /// §1270's `prefixed_command`: the delivered assignment the executor must
-    /// run before the lookahead continues.
-    Assignment(CurrentCommand<G>),
-    /// §1124's `else back_input`, already performed, or end of input. Either
-    /// way §1123 appends the accent by itself.
-    Missing,
-}
-
-/// Completed command-owned operands for TeX82 §1123's text `\accent`.
-///
-/// Only `scan_char_num`'s accent code is command-owned. The base character
-/// arrives through [`CommandProcessor::scan_accent_base`], one §1270
-/// `do_assignments` iteration at a time.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ScannedAccent {
-    pub accent: i32,
-    pub accent_provenance: StructuredProvenance,
 }
