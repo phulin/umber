@@ -1,14 +1,12 @@
 //! Direct main-control calls over the sole persistent interpreter.
 use super::*;
-#[macro_use]
-mod scan_macros;
 mod apply_alignment;
 mod apply_alignment_recovery;
 mod apply_box_builders;
 mod apply_boxes;
 mod apply_diagnostics;
 mod apply_fonts;
-mod apply_groups;
+pub(in crate::main_control) mod apply_groups;
 mod apply_leaders;
 mod apply_math;
 mod apply_page_state;
@@ -17,12 +15,8 @@ mod apply_pdf;
 mod apply_recovery;
 mod apply_streams;
 mod apply_text;
-mod characters;
-mod command_codes;
-mod dispatch;
-mod native;
-mod native_assignments;
-use native::NativeMainControl;
+pub(in crate::main_control) mod characters;
+pub(in crate::main_control) mod command_codes;
 mod scan_alignment_delivery;
 mod scan_alignment_events;
 mod scan_alignment_peek;

@@ -137,7 +137,7 @@ pub(super) fn finish_native_group_leave<G, Facts: tex_command::CommandHostFacts<
 }
 
 /// Source-free group entry through the sole actual mode and save-stack owners.
-pub(super) fn begin_native_group<G>(
+pub(in crate::main_control) fn begin_native_group<G>(
     context: &mut CommandContext<'_, G>,
     command: &mut tex_command::CommandState<G>,
     effects: &mut DiagnosticEffects,

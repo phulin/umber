@@ -1,7 +1,7 @@
 # Minimal hot loop
 
-Status: ownership redesign implemented; native main-control consumption remains
-in progress, 2026-10-03.
+Status: command-processing core replacement in progress, 2026-10-04.
+The former dispatch loop is being deleted before its replacement is built.
 Tracking: Beads `umber2-i0n5`. The selected storage and lifecycle authority is
 [Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md).
 [Main-control dispatch](main_control_dispatch.md) maps the direct interpreter.
@@ -12,6 +12,52 @@ storage, and executes one direct mode/command/prefix switch. It uses one mutable
 engine per job/checkpoint family. Independent jobs and format admissions have
 independent generations. Accepted alternates and retained named roots are cold
 histories, not another mutable eqtb or interpreter.
+
+## Persistent interpreter replacement
+
+The command-processing core is replaced as one implementation. The existing
+packed meanings, immutable input and macro owners, mutation journals, full
+checkpoint capture and restore, and concrete TeX semantic routines remain the
+storage and semantic authorities. The old execution dispatcher, native
+eligibility switch, assignment dispatcher and processor-loan macros are deleted
+first. No fallback to them, compatibility adapter, or second interpreter is
+permitted. During cutover the source tree is deliberately not buildable; tests
+resume when the sole replacement is wired.
+
+One interpreter invocation borrows the actual command state, admitted universe,
+mode/execution state, fuel, effects and host capabilities. Its processor remains
+live across ordinary reads, expansion, scanning and application. The canonical
+reader keeps its existing source, macro, alignment and conditional semantics;
+the final terminal enters the interpreter's sole mode/meaning switch directly.
+There is no native-eligibility test followed by a separate ordinary dispatcher.
+The selected arm scans actual operands and applies them through the same live
+owners. Ordinary dispatch does not construct CurrentCommand. Recovery and
+instrumentation may construct diagnostic evidence at their actual consuming
+boundary, retaining original spelling, origin, noexpand treatment and alignment
+adjustment where semantics require them.
+
+The interpreter preserves TeX's fetch, reswitch, prefix and horizontal-lookahead
+labels. Literal horizontal spaces keep the canonical expanded-fetch rule;
+ordinary letter/other lookahead retains its raw rule. Prefixes keep their actual
+flags until the selected assignment consumes them. An operand scanner cannot
+replace the already-selected command's meaning. Pending glyphs flush at their
+real semantic boundary. Nested math, alignment, output and recovery execution
+use this same interpreter and the existing semantic stacks.
+
+Full checkpoints remain host-owned aggregate roots admitted only at the
+existing safe boundaries. Resource misses unwind ordinary calls before the
+host restores a full checkpoint. Local group first writes and host checkpoint
+first writes retain their separate preimages in the existing journal; reads and
+unchanged groups create neither history. No per-command rollback or successful
+settlement/cleanup stage is introduced. Real output, diagnostics, tracing,
+observation and host-budget demands publish at their consuming boundaries.
+
+The replacement must pass the complete native, profiling and authoritative
+formatting/lint gates and preserve the ordered canonical divergence baseline.
+Frozen binaries are measured against the pre-replacement engine and pinned
+pdfTeX on expansion, scanning, groups, assignments, text and math, plus complete
+LaTeX output. Regressions require explanation and correction; no arbitrary
+percentage substitutes for completing the architecture and its semantics.
 
 ## Implemented ownership and hot work
 

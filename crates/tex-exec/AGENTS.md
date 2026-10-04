@@ -54,36 +54,21 @@ not allocate a vector merely to publish one already-complete node.
   wrapper or temporary replacement owner remains. Constructors initialize each
   actual owner once, including checkpoint forks. The execution owner implements
   live host fact queries; component-only cold loans share those exact queries.
-- `src/main_control/direct/`: the single packed mode/command/prefix switch in
-  `dispatch.rs` and the reader-owned `native_assignments.rs` assignment switch, with synchronous `scan_*` routines and concrete `apply_*`
-  methods organized by native command responsibility. `scan_macros.rs` releases
-  actual scanner loans at cold owner and publication boundaries. The native
-  fetch/reswitch loop borrows the complete actual execution owner, refreshing its mode for each command and querying box/trace/pointer state at the consuming arm. It retains its actual processor and context through RELAX, ordinary groups,
-  integer/dimension/glue/token registers and parameters, arithmetic, definitions, let assignments, raw aftergroup/afterassignment operands, kerns, horizontal/vertical glue and setlanguage, consuming scanner products at their actual destination and respecting the caller's remaining budget. Font selection, font dimensions and character controls, generated fonts, hyphenation data, character-code banks and PDF font controls scan and mutate in their selected arm through that same processor. Their replaced scanner/application adapters are deleted; source-free helpers borrow actual context, effects, command state for recovery and demanded mutation receipts. Character and register shorthands, catcodes, paragraph shapes and penalty arrays also scan and apply through that same loan; their command-machine and second-scanner wrappers are deleted. Array assignment decodes old values only for demanded tracing and streams durable words without a temporary encoded-word vector. External font loading retains its actual resource resolution boundary. Horizontal glue and setlanguage lend their actual context, modes, effects and fuel directly; their former whole-executor adapters are deleted. An existing pending
-  character buffer is flushed through the actual mutable mode loan. Source-character admission borrows execution through that same processor; its scalar boundary keeps the existing destination and cursor, without opening a temporary forbidden-facts processor. Actual diagnostic,
-  observer/tracked, page/output, afterassignment and budget demands release the
-  loan at the actual owner boundary; no command settlement tail exists. `scan_arithmetic.rs` scans concrete
-  the final typed operand in that same processor; target selection and invalid-target
-  diagnostics remain in the actual switch arm. Scalar scans consume typed values
-  without generic frame publication/projection. Fetch/reswitch borrows the one
-  initialized command slot at remaining semantic ownership boundaries. Ordinary
-  relax words execute through the executor-owned terminal consumer inside the
-  canonical reader; substantive groups, fonts and assignments run through
-  one outlined semantic handler to bound the per-word reader code size; the old post-fetch relax continuation is deleted. The
-  consumer borrows actual driver counters and preserves pre-fetched raw
-  character lookahead. Remaining commands clear their tag at successful continuation and
-  copying only values needed across real input overwrites
-  and cold ownership boundaries. Native observation receipts have one demanded
-  owner per processor loan; ordinary commands do not create/drop absent receipts. Register scans likewise stay in their native
-  switch arms. These paths own no operation value or continuation. `characters.rs` consumes borrowed
-  source spans in the existing horizontal loop. `publication.rs` validates and
-  reserves the complete scanner token root set in the already-admitted context before streaming final native
-  token owners and committing token assignments. Scalar and glue scans execute directly in their selected switch arm; no separate scanner admission or assignment application wrapper remains for these state-only writes. `command_codes.rs` derives switch keys from packed meanings;
-  Native §1090 vertical cases use those keys directly in the switch.
-  Brace ownership, math-family selection and vertical paragraph entry are actual packed switch arms; unrelated commands perform none of their owner tests.
-  The startup prologue admits once; scalar page/save queries borrow their real
-  stores without generation admission, and the page owner has one fire-up
-  seam with demand-only named-list publication.
+- `src/main_control/interpreter/`: sole replacement core under construction.
+  `mod.rs` keeps the actual processor live across canonical expanded fetching
+  and raw horizontal lookahead, applies the real host budget and publishes
+  demanded scanner reports before mutations. `dispatch.rs` owns the single
+  terminal mode/meaning switch; no native eligibility path or ordinary command
+  product precedes it. Missing selected-command and real input-boundary wiring
+  remains a compile-time cutover gap, not a runtime fallback.
+- `src/main_control/direct/`: retained concrete scan/application routines and
+  character/publication helpers used during the persistent-interpreter cutover.
+  The old `dispatch.rs`, `native.rs`, `native_assignments.rs` and
+  `scan_macros.rs` have been deleted. Do not restore their eligibility switch,
+  duplicated assignment dispatch, processor-loan macros or compatibility path.
+  `mod.rs` temporarily retains cold handler wiring while the sole replacement
+  interpreter is implemented. The tree is deliberately unbuildable during
+  this cutover; the replacement contract is in `docs/minimal_hot_loop.md`.
 - `src/main_control/semantic/`: concrete source-free typed semantic routines
   grouped by assignments, registers, fonts, text, paragraph/page state, groups,
   boxes/builders/leaders, alignment/recovery, math, diagnostics, streams, and

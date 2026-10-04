@@ -98,7 +98,7 @@ impl<G> tex_command::MainCharacterConsumer<G, &mut ExecutionState<G>> for MainSo
 }
 
 /// Append an actual scalar glyph and select the next fetch role in its owner.
-pub(super) fn append_native_character<G>(
+pub(in crate::main_control) fn append_native_character<G>(
     context: &mut CommandContext<'_, G>,
     effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
@@ -125,7 +125,7 @@ pub(super) fn append_native_character<G>(
 }
 
 /// Append an actual math noad, or retain §1155's active-character treatment.
-pub(super) fn append_native_math_character<'state, 'host, G>(
+pub(in crate::main_control) fn append_native_math_character<'state, 'host, G>(
     processor: &mut CommandProcessor<'state, 'host, G, &'state mut ExecutionState<G>>,
     ch: char,
     origin: OriginId,
