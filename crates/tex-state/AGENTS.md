@@ -56,7 +56,7 @@ Definition-owned parameter programs expose literal delimiter views only for none
 - `src/command_context/pdf_commands.rs`: PDF ledger, form, font-resource,
   color-stack, and navigation projections of the same admitted command borrow.
 - `src/command_context/page_material.rs`: Borrowed page-material construction,
-  range, traversal, shipout-scratch, and generated mode-source removal
+  direct mode-tail node initialization, range, traversal, shipout-scratch, and generated mode-source removal
   projections of that command borrow.
   Fixed-size node publications pass their actual arrays directly; no heap
   vector is required solely to admit a single wrapper.
@@ -390,6 +390,12 @@ Definition-owned parameter programs expose literal delimiter views only for none
   and fresh-builder receipts, and focused warmed
   1/4,096-node allocation/copy/chunk-work proof over the live page-material
   owner. Public page reads return borrowed cursors; cold detachment is explicit.
+- `src/page_node_arena/construction.rs`: Shared final-record construction for
+  live mode-list tails and real multi-node active builders. Single-node appends
+  create no builder, finalized segment, or splice receipt.
+- `src/page_node_arena/construction_tests.rs`: Tail packing, retained prefix
+  reads, conservative restored move authority, interleaved roots, and
+  rejected-node retry against the direct-construction ownership contract.
 - `src/page_node_arena/consumed_box_projection.rs`: Consumed unbox child
   projection that rebinds authenticated nested-box provenance while copying
   only surviving direct records and keeping child closures in place.

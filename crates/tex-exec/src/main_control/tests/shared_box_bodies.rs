@@ -8,9 +8,9 @@ use tex_state::GenerationBrand;
 
 use super::*;
 
-/// A flat vbox body of distinct kerns and penalties, large enough to freeze.
+/// A flat body that exceeds eight packed chunks after direct-tail construction.
 fn big_body() -> String {
-    (1..=48)
+    (1..=96)
         .map(|index| format!("\\kern{index}sp\\penalty{index}"))
         .collect()
 }
@@ -40,7 +40,7 @@ fn run_shared(source: &str, test: impl for<'id> FnOnce(&mut Universe<GenerationB
 }
 
 fn expected_body() -> Vec<String> {
-    (1..=48)
+    (1..=96)
         .flat_map(|index| [format!("k{index}"), format!("p{index}")])
         .collect()
 }

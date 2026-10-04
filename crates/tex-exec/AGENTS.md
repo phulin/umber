@@ -231,7 +231,8 @@ not allocate a vector merely to publish one already-complete node.
   TFM runs use `Common` without per-character Unicode classification. Font
   changes retain their existing flush and checkpoint semantics.
 - `src/mode.rs` and `src/mode/tests.rs`: mode nest, page-arena list roots with
-  detached active builders, checked `PageListSpan` live roots carried only
+  direct single-node tail construction and actual multi-node active builders,
+  checked `PageListSpan` live roots carried only
   within their admitting `PageRegion`, an owned mode-list slot that downgrades
   restored roots, a move-only removal seam for generated paragraph and
   alignment source ownership, direct-value paragraph/alignment glue, copy-only

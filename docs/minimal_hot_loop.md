@@ -769,3 +769,44 @@ The active list's separate lifetime rollback mark remains authoritative for
 aborting the complete list; full checkpoints retain their existing owner and
 truncation ordering. No extra flag, transaction wrapper, or alternate constructor
 is introduced.
+
+## Direct mode-list tail construction
+
+A single-node mode append initializes its reserved resident record in the
+actual `ModePageListSlot` root. It does not open an empty active builder,
+finalize a one-node generated segment, then immediately splice that segment
+into the list. In the direct node layout an empty builder requires a fresh
+block; using the existing root instead allows the allocator to reuse its
+current unsealed tail until capacity, a sealed checkpoint boundary, or an
+intervening list allocation requires a successor.
+
+The generic region-value constructor accepts the actual mutable list root.
+Both mode-tail construction and genuine active batch construction use that
+one reservation, initialization, child-dependency inspection, and optional
+identity calculation. The root advances only after the record is valid.
+A failure restores the real payload append mark and, if written, the annex
+writer's existing operation coordinate. There is no successful settlement,
+cleanup operation, staged command, or per-node ownership receipt.
+
+Mode construction admits its destination root once. Other retained mode
+members are validated by their own consumers and full restoration boundaries;
+appending a node does not readmit the whole mode before and after mutation.
+The existing `move_enabled` fact remains conservative for restored history.
+Appending does not grant move authority over a shared historical prefix.
+Demand-maintained semantic identity extends its existing sequence directly
+with the new node's identity; no one-node summary is produced and concatenated.
+Font admission and TeX logical-memory bookkeeping use the actual constructed
+metadata through the same command-context authority as batch construction.
+
+Allocator reservation retains pool, owner, lineage, and capacity checks.
+Successor allocation already links the correct previous tail and propagates
+paired dependency floors. Node allocator rotation seals the initialized block it leaves,
+including when a separate list starts. A rejected append restores the captured
+allocator tail, so partially filled blocks remain available for a valid retry.
+Empty multi-block reservations remain writable until their producer fills them;
+packed-word append runs retain their existing block admission.
+Old spans remain length-bounded views of their
+original prefixes. Full checkpoints still seal and retain their real arena
+owners, and restoration preserves owner/root/truncation order. Source shaping,
+paragraphs, and other actual multi-node producers retain batch builders.
+There is no alternate single-node path or compatibility adapter.

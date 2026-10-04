@@ -3560,6 +3560,11 @@ impl<T, Lane> ForkArena<T, Lane> {
         previous: Option<(LogicalChunkId, u32)>,
     ) -> Result<LogicalChunkId, ForkArenaError> {
         self.bind_pool(pool)?;
+        if pool.payload.layout == ChunkStorageLayout::OptionalSlots
+            && let Some(tail) = self.live_key_at(self.live_payload_len().saturating_sub(1))
+        {
+            self.seal_payload_chunk(pool, tail)?;
+        }
         let key = pool
             .payload
             .allocate_list_block(self.owner, self.lineage, previous)?;
@@ -4505,10 +4510,17 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// derived only after that slot contains the final value. A rejected child
     /// coordinate truncates the one unpublished reservation and restores the
     /// active root exactly.
-    pub(crate) fn construct_region_value_active_list<Context, Observation>(
+    pub(crate) fn active_list_root_mut<'a>(
+        &self,
+        builder: &'a mut ActiveListBuilder<T, Lane>,
+    ) -> Result<&'a mut ArenaListId<Lane>, ForkArenaError> {
+        Ok(&mut self.active_list_open_mut(builder)?.root)
+    }
+
+    pub(crate) fn construct_region_value<Context, Observation>(
         &mut self,
         pool: &mut ChunkPool<T>,
-        builder: &mut ActiveListBuilder<T, Lane>,
+        destination: &mut ArenaListId<Lane>,
         identity_enabled: bool,
         context: &mut Context,
         initialize: impl FnOnce(&mut Option<T>, &mut Context),
@@ -4521,7 +4533,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             -> Result<(u64, Observation, Option<usize>, Option<usize>), ForkArenaError>,
     ) -> Result<(Option<u64>, Observation), ForkArenaError> {
         let operation = self.operation_mark(pool);
-        let previous_root = self.active_list_open_mut(builder)?.root;
+        let previous_root = *destination;
         let placeholder_identity = identity_enabled.then_some(0);
         let mut root = previous_root;
         {
@@ -4534,9 +4546,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             ) {
                 Ok(slot) => slot,
                 Err(error) => {
+                    let was_active = self.active_builder;
                     self.active_builder = false;
                     let restored = self.restore_operation(pool, operation);
-                    self.active_builder = true;
+                    self.active_builder = was_active;
                     restored.expect("failed destination reservation restores its exact suffix");
                     return Err(error);
                 }
@@ -4551,7 +4564,6 @@ impl<T, Lane> ForkArena<T, Lane> {
                 "node initializer fills its reserved destination"
             );
         }
-        self.active_list_open_mut(builder)?.root = root;
 
         let key = root.tail.raw;
         let offset = root.tail.offset - 1;
@@ -4585,14 +4597,15 @@ impl<T, Lane> ForkArena<T, Lane> {
             Ok((item_identity, observation))
         })();
         if completed.is_err() {
-            self.active_list_open_mut(builder)?.root = previous_root;
+            let was_active = self.active_builder;
             self.active_builder = false;
             let restored = self.restore_operation(pool, operation);
-            self.active_builder = true;
+            self.active_builder = was_active;
             restored.expect("failed destination construction restores its exact suffix");
             self.counters.new_semantic_nodes = self.counters.new_semantic_nodes.saturating_sub(1);
         }
         if completed.is_ok() {
+            *destination = root;
             self.counters.destination_values_constructed = self
                 .counters
                 .destination_values_constructed
@@ -5565,10 +5578,22 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         root: ArenaListId<Lane>,
     ) -> Result<(), ForkArenaError> {
-        if root.is_empty() || pool.payload.is_sealed(root.tail.raw, self.owner)? {
+        if root.is_empty() {
             return Ok(());
         }
-        let unused = pool.payload.seal(root.tail.raw, self.owner)?;
+        self.seal_payload_chunk(pool, root.tail.raw)
+    }
+
+    fn seal_payload_chunk(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        key: LogicalChunkId,
+    ) -> Result<(), ForkArenaError> {
+        let metadata = pool.payload.validate(key, self.owner)?;
+        if metadata.sealed || metadata.used == 0 {
+            return Ok(());
+        }
+        let unused = pool.payload.seal(key, self.owner)?;
         self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
         self.counters.unused_sealed_bytes = self.counters.unused_sealed_bytes.saturating_add(
             u64::try_from(unused.saturating_mul(pool.payload.resident_slot_bytes()))

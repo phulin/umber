@@ -30,6 +30,9 @@ type OwnedPageMaterialNode = Node<PageListId>;
 type SelectedBoxBodyRanges = (Vec<Range<usize>>, Vec<Range<usize>>);
 type PreflightedBoxBody = (Node<PageListId>, Vec<Range<usize>>, Vec<Range<usize>>);
 
+mod construction;
+#[cfg(test)]
+mod construction_tests;
 mod consumed_source;
 mod output_carrier;
 pub use consumed_source::{
@@ -2171,79 +2174,6 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<(), ForkArenaError> {
         self.construct_active_list(builder, |destination| destination.owned(node))
             .map(|_| ())
-    }
-
-    /// Constructs one generated node directly in its final checked arena slot.
-    pub(crate) fn construct_active_list(
-        &mut self,
-        builder: &mut PageMaterialActiveListBuilder,
-        initialize: impl FnOnce(crate::NodeDestination<'_>),
-    ) -> Result<ConstructedNodeMetadata, ForkArenaError> {
-        let identity_enabled = builder.identity.is_some();
-        let (constructed, annex_operation) = {
-            let mut annex =
-                NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena);
-            let constructed = self.region.pub_arena.construct_region_value_active_list(
-                &mut self.pool.chunks,
-                &mut builder.inner,
-                identity_enabled,
-                &mut annex,
-                |slot, annex| initialize(crate::NodeDestination::new_record(slot, annex)),
-                |record, annex, arena, pool| {
-                    let annex_dependency_floor = annex.dependency_floor();
-                    let annex = annex.view();
-                    let font = record.direct_font(annex);
-                    let (dependency_floor, child_annex_floor) = arena
-                        .dependency_floors_for_region_lists(pool, |visit| {
-                            record
-                                .visit_node_lists(annex, |child| visit(child.coordinate()))
-                                .ok_or(ForkArenaError::InvalidRange)
-                        })?;
-                    let paired_dependency_floor = match (child_annex_floor, annex_dependency_floor)
-                    {
-                        (Some(child), Some(annex)) => Some(child.min(annex)),
-                        (child, annex) => child.or(annex),
-                    };
-                    let metadata = ConstructedNodeMetadata {
-                        tex82_words: record.tex_memory_words(annex, false),
-                        etex_words: record.tex_memory_words(annex, true),
-                        font,
-                    };
-                    let identity = if identity_enabled {
-                        record.semantic_identity(annex)
-                    } else {
-                        0
-                    };
-                    Ok((
-                        identity,
-                        metadata,
-                        dependency_floor,
-                        paired_dependency_floor,
-                    ))
-                },
-            );
-            (constructed, annex.operation())
-        };
-        let (item_identity, metadata) = match constructed {
-            Ok(constructed) => constructed,
-            Err(error) => {
-                if let Some(operation) = annex_operation {
-                    self.region
-                        .annex_arena
-                        .restore_unsealed_copy_operation(&mut self.pool.annex_chunks, operation)
-                        .expect("failed destination construction restores its annex suffix");
-                }
-                return Err(error);
-            }
-        };
-        if let Some(item_identity) = item_identity {
-            if let Some(identity) = &mut builder.identity {
-                identity.push_back(item_identity);
-            }
-            builder.identity_work.hashed_values =
-                builder.identity_work.hashed_values.saturating_add(1);
-        }
-        Ok(metadata)
     }
 
     pub fn append_to_active_list(

@@ -193,6 +193,33 @@ impl<'a, G> CommandContext<'a, G> {
             .page_nodes
             .construct_active_list(builder, initialize)
             .expect("page active-list builder belongs to its live owner");
+        self.observe_constructed_node(metadata);
+    }
+
+    pub fn construct_mode_node(
+        &mut self,
+        slot: &mut crate::page_node_arena::ModePageListSlot,
+        initialize: impl FnOnce(crate::NodeDestination<'_>),
+    ) {
+        let metadata = self
+            .page_nodes
+            .construct_mode_node(slot, initialize)
+            .expect("mode destination belongs to its live page owner");
+        self.observe_constructed_node(metadata);
+    }
+
+    pub fn push_mode_node(
+        &mut self,
+        slot: &mut crate::page_node_arena::ModePageListSlot,
+        node: crate::node::Node,
+    ) {
+        self.construct_mode_node(slot, |destination| destination.owned(node));
+    }
+
+    fn observe_constructed_node(
+        &mut self,
+        metadata: crate::page_node_arena::ConstructedNodeMetadata,
+    ) {
         if let Some(font) = metadata.font {
             assert!(
                 self.resident.fonts.contains(font),

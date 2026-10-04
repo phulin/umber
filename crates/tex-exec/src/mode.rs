@@ -322,12 +322,7 @@ impl ModeList {
     }
 
     pub fn push<G>(&mut self, stores: &mut CommandContext<'_, G>, node: Node) {
-        assert!(self.admit_page_region(stores));
-        stores.open_page_active_list(&mut self.active);
-        stores.push_page_active_list(&mut self.active, node);
-        let suffix = stores.finalize_generated_page_active_segment(&mut self.active);
-        stores.append_fresh_mode_segment(&mut self.nodes, suffix);
-        assert!(self.admit_page_region(stores));
+        stores.push_mode_node(&mut self.nodes, node);
     }
 
     pub fn construct<G>(
@@ -335,12 +330,7 @@ impl ModeList {
         stores: &mut CommandContext<'_, G>,
         initialize: impl FnOnce(tex_state::NodeDestination<'_>),
     ) {
-        assert!(self.admit_page_region(stores));
-        stores.open_page_active_list(&mut self.active);
-        stores.construct_page_active_list(&mut self.active, initialize);
-        let suffix = stores.finalize_generated_page_active_segment(&mut self.active);
-        stores.append_fresh_mode_segment(&mut self.nodes, suffix);
-        assert!(self.admit_page_region(stores));
+        stores.construct_mode_node(&mut self.nodes, initialize);
     }
 
     pub fn append<G>(
