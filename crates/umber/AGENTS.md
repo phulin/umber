@@ -91,7 +91,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/cli_resource/input_receipt.rs`: deterministic native CLI input-admission
   receipt over accepted local and distribution resources, with consumed status
   derived from the accepted semantic input-dependency ledger.
-- `src/cli_resource/tests.rs`: retained-resource reuse and superseded-revision cancellation coverage.
+- `src/cli_resource/tests.rs`: retained-resource reuse and superseded-revision cancellation coverage. Memory-backed resource fixtures admit a fixed job clock through the actual session constructor, preserving exact log comparisons across minute boundaries.
 - `src/distribution_verify.rs`: explicit pinned local root/shard/object graph verifier, streaming object authentication, and complete-work report.
 - `src/distribution_verify/tests.rs`: exhaustive distribution verifier positive and corruption controls.
 - `src/watch.rs`: polling incremental watch driver, bounded distribution-owner reuse across replacement sessions, same-thread non-atomic engine ownership with a separate file monitor, supersession/Ctrl-C cancellation, DVI publication, and phase latency reporting.

@@ -526,6 +526,7 @@ impl<'owner> NativeCompileSession<'owner> {
             owner.resolver(options)?,
             reachability_store,
             collect_input_admissions,
+            World::real().job_clock(),
         )
     }
 
@@ -536,7 +537,14 @@ impl<'owner> NativeCompileSession<'owner> {
         owner: &NativeDistributionOwner,
     ) -> Result<NativeCompileSession<'static>, NativeRunError> {
         let store = Box::leak(Box::new(tex_incr::new_reachability_store()));
-        NativeCompileSession::new_with_owners(options, cancellation, owner, store, false)
+        NativeCompileSession::new_with_resolver(
+            options,
+            cancellation,
+            owner.resolver(options)?,
+            store,
+            false,
+            tex_state::JobClock::DEFAULT,
+        )
     }
 
     #[cfg(test)]
@@ -559,6 +567,7 @@ impl<'owner> NativeCompileSession<'owner> {
         mut distribution: DistributionResolver,
         reachability_store: &'owner tex_state::ReachabilityStore,
         collect_input_admissions: bool,
+        clock: tex_state::JobClock,
     ) -> Result<Self, NativeRunError> {
         let setup_started = std::time::Instant::now();
         let source_started = std::time::Instant::now();
@@ -632,7 +641,6 @@ impl<'owner> NativeCompileSession<'owner> {
         if distribution_root.is_some() {
             distribution.set_lookup_manifest(LookupManifest::new(prefetch_identity));
         }
-        let clock = World::real().job_clock();
         let name = options
             .input
             .file_name()
