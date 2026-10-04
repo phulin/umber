@@ -601,3 +601,19 @@ Schema decoding reports `InvalidRange`, child admission reports `InvalidRegion`,
 and schema failures keep priority when both fail. Failed reservations restore
 the exact node and annex suffix and prior builder root. Successful construction
 retains the authoritative dependency floors for checkpoints and region moves.
+
+## Explicit command-record consumption
+
+The shared expanded reader consumes ordinary macros, primitive expansion and
+accepted native terminals before entering any command-record code. An explicit
+record consumer, observation or exceptional delivery enters the separate
+record-consuming function with the actual spelling, resolved meaning and
+delivery facts. That function constructs the demanded final record, applies
+existing alignment and observation semantics, and invokes the same consumer.
+
+The function remains outside the reader's compiled body. It adds no input
+loop, intermediate product, compatibility entry, successful cleanup or
+continuation owner. The reader's existing expanded flag and final destination
+are borrowed directly. End-template insertion, protected macros, undefined
+control sequences, raw alignment delimiters and recovery retain their exact
+ordering and existing restart decisions.

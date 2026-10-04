@@ -246,7 +246,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   suppression, outer validation, alignment and template sentinels keep their
   actual settlement boundary. One read/interpret loop invokes native consumers directly or initializes explicitly requested delivery records. Matching's local
   storage lives in its activation call; prefix diagnostics consume spelling and
-  invocation facts without a command or delivery geometry.
+  invocation facts without a command or delivery geometry. Explicit record
+  delivery is outlined from native reader specializations and borrows their
+  existing destination and expanded flag; it adds no carrier or cleanup stage.
 - `src/processor/expand/skipping.rs`: TeX82 §494's continuing raw consumer.
   Source and resident words update actual brace/conditional nesting directly;
   only an unmatched delimiter completes the skip. Ordinary skipped words have
