@@ -715,6 +715,23 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // independently consulting live state at a later seam.
                     self.suppress_left_boundary = suppress_left_boundary;
 
+                    if matches!(mode, Mode::Math | Mode::DisplayMath)
+                        && let Some(
+                            style @ (codes::PRIMITIVE_DISPLAY_STYLE
+                            | codes::PRIMITIVE_TEXT_STYLE
+                            | codes::PRIMITIVE_SCRIPT_STYLE
+                            | codes::PRIMITIVE_SCRIPT_SCRIPT_STYLE),
+                        ) = command_code
+                    {
+                        return retained_completed!(
+                            receipts,
+                            |context, _state, _effects, _fuel, _observer, execution| {
+                                native::append_math_style(context, execution, style);
+                                Ok(ReplayStep::Continue)
+                            }
+                        );
+                    }
+
                     // Math operands are scanned exclusively by `tex-command`.  The replay
                     // driver receives a typed scalar request and schedules any opaque field
                     // episode only after this processor borrow has ended.

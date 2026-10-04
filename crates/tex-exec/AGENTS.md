@@ -289,6 +289,9 @@ when raised. Resource failures move the same command-owned need/cause packet
 through executor and session; successful results construct no failure payload.
 
 - `src/main_control/direct/native.rs`: the main-control terminal consumer,
+  including packed math style heads that append the actual node directly. The
+  retained observed dispatcher shares that append operation; no style scanner
+  request or duplicate style enum remains. The consumer continues
   borrowing actual driver operation counts and diagnostic origins. Ordinary
   relax, font selections and simple/semi-simple group words continue inside the canonical
   expanded reader. Entry and unsave share the actual group helpers; group exit

@@ -659,3 +659,16 @@ pub(super) const PRIMITIVE_END_R: u64 = Meaning::runtime_word_control_code(
 
 pub(super) const CHAR_GIVEN: u64 =
     Meaning::runtime_word_control_code(Meaning::CharGiven('\0').encode());
+
+pub(super) const PRIMITIVE_DISPLAY_STYLE: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DisplayStyle).encode(),
+);
+pub(super) const PRIMITIVE_TEXT_STYLE: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::TextStyle).encode(),
+);
+pub(super) const PRIMITIVE_SCRIPT_STYLE: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ScriptStyle).encode(),
+);
+pub(super) const PRIMITIVE_SCRIPT_SCRIPT_STYLE: u64 = Meaning::runtime_word_control_code(
+    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ScriptScriptStyle).encode(),
+);

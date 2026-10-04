@@ -477,10 +477,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             UnexpandablePrimitive::MSkip => Request::MuMaterial(self.scan_math_mu_material(true)?),
             UnexpandablePrimitive::MKern => Request::MuMaterial(self.scan_math_mu_material(false)?),
             UnexpandablePrimitive::MathChoice => Request::Choice,
-            UnexpandablePrimitive::DisplayStyle => Request::Style(MathStyleKind::Display),
-            UnexpandablePrimitive::TextStyle => Request::Style(MathStyleKind::Text),
-            UnexpandablePrimitive::ScriptStyle => Request::Style(MathStyleKind::Script),
-            UnexpandablePrimitive::ScriptScriptStyle => Request::Style(MathStyleKind::ScriptScript),
             UnexpandablePrimitive::EqNo => Request::EquationNumber(ScannedEquationNumber {
                 side: EquationNumberSide::Right,
             }),

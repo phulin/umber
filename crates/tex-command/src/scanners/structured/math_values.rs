@@ -202,7 +202,6 @@ pub enum MathRequest {
     Script(ScannedMathScript),
     Limits(MathLimitKind),
     Fraction(ScannedMathFraction),
-    Style(MathStyleKind),
     Choice,
     Delimiter(ScannedMathDelimiter),
     Radical(ScannedMathDelimiter),
@@ -218,12 +217,4 @@ pub enum MathLimitKind {
     Limits,
     NoLimits,
     DisplayLimits,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MathStyleKind {
-    Display,
-    Text,
-    Script,
-    ScriptScript,
 }

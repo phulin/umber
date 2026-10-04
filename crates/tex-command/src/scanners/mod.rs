@@ -16,7 +16,7 @@ pub use structured::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
     FontLoadRequest, FontSizeRecovery, GeneratedFontKind, ImmediateExtension, InputStreamRequest,
     MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
-    MathFieldEpisode, MathFractionKind, MathLimitKind, MathRequest, MathScriptKind, MathStyleKind,
+    MathFieldEpisode, MathFractionKind, MathLimitKind, MathRequest, MathScriptKind,
     MathTextFieldKind, PdfActionDestination, PdfActionIdentifier, PdfActionSpec, PdfActionTarget,
     PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImagePageBox,

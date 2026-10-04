@@ -637,3 +637,19 @@ branches that actually resolve the word; native collection's literal shortcut
 retains its existing zero-lookup accounting. Brace handling uses the original
 spelling's category rather than its effective meaning, preserving active,
 frozen, suppression, alignment, observation and recovery semantics.
+
+## Native math style heads
+
+The four math style commands consume their packed opcode in the actual
+main-control terminal consumer. In math mode they append the final
+`Node::MathStyle` directly; they do not construct a command or return a
+scanner request. Their native admission retains the same report, active
+alignment, tracked-region and page-succession boundaries as math characters.
+
+Observed or otherwise declined delivery keeps the actual fetched record,
+then invokes the same concrete style append through the retained semantic
+owner loan. Reports still precede mutation, and tracing, operation counting
+and full checkpoint ownership use their existing paths. Non-math-mode
+commands retain missing-dollar recovery. `MathStyleKind`, its duplicate
+four-way conversion and the style variant of `MathRequest` are deleted
+without a replacement carrier or compatibility entry.

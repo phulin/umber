@@ -506,3 +506,60 @@ fn vertical_par_resets_normal_paragraph_parameters_without_material() {
         },
     );
 }
+
+#[test]
+fn math_style_heads_append_the_same_mlist_in_native_observed_and_traced_delivery() {
+    // TeX82 §1171 appends each selected style directly to the current mlist.
+    for (observed, traced) in [(false, false), (true, false), (false, true)] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            let source = if traced {
+                br"\tracingcommands=2 \catcode`\$=3 $\displaystyle\textstyle\scriptstyle\scriptscriptstyle$\end".as_slice()
+            } else {
+                br"\catcode`\$=3 $\displaystyle\textstyle\scriptstyle\scriptscriptstyle$\end"
+                    .as_slice()
+            };
+            register_source(&mut control, source);
+            let mut observations = ObservationRecorder::default();
+            for _ in 0..64 {
+                let step = if observed {
+                    control.advance_with_observer(stores, &mut observations)
+                } else {
+                    control.advance(stores)
+                }
+                .expect("math style delivery executes");
+                assert!(matches!(
+                    step,
+                    StepResult::Progress(MainControlStep::Continue)
+                ));
+                let styles = admitted!(stores, |context| control
+                    .execution
+                    .modes
+                    .current_list()
+                    .nodes(context)
+                    .iter()
+                    .filter_map(|node| {
+                        match node.to_owned() {
+                            Node::MathStyle(style) => Some(style),
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>());
+                if styles.len() == 4 {
+                    assert_eq!(
+                        styles,
+                        [
+                            MathStyle::Display,
+                            MathStyle::Text,
+                            MathStyle::Script,
+                            MathStyle::ScriptScript
+                        ]
+                    );
+                    assert_eq!(control.execution.modes.current_mode(), Mode::Math);
+                    return;
+                }
+            }
+            panic!("style commands failed to append the four requested styles");
+        });
+    }
+}

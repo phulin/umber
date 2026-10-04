@@ -79,6 +79,15 @@ impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
                     return std::ops::ControlFlow::Break(());
                 }
             }
+            codes::PRIMITIVE_DISPLAY_STYLE
+            | codes::PRIMITIVE_TEXT_STYLE
+            | codes::PRIMITIVE_SCRIPT_STYLE
+            | codes::PRIMITIVE_SCRIPT_SCRIPT_STYLE => {
+                processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+                    append_math_style(context, execution, code);
+                    Ok(ReplayStep::Continue)
+                })
+            }
             codes::CHAR_SPACE => processor.with_execution_owners(
                 |context, _, effects, fuel, _, execution, _, _, _| {
                     execution.main_loop_active = false;
@@ -269,6 +278,19 @@ impl<'state, 'host, G, const TEXT_BOUNDARY: bool>
                         && !execution.page_region_succession_pending
                         && !context.tracked_region_is_active()
                 }),
+            codes::PRIMITIVE_DISPLAY_STYLE
+            | codes::PRIMITIVE_TEXT_STYLE
+            | codes::PRIMITIVE_SCRIPT_STYLE
+            | codes::PRIMITIVE_SCRIPT_SCRIPT_STYLE => {
+                processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
+                    matches!(
+                        execution.modes.current_mode(),
+                        Mode::Math | Mode::DisplayMath
+                    ) && execution.active_alignment.is_none()
+                        && !execution.page_region_succession_pending
+                        && !context.tracked_region_is_active()
+                })
+            }
             codes::CHAR_SPACE | codes::PRIMITIVE_BEGIN_GROUP => true,
             codes::CHAR_BEGIN_GROUP => {
                 processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
@@ -324,4 +346,24 @@ impl<'state, 'host, G, const TEXT_BOUNDARY: bool>
         }
         self.consume_substantive_terminal(processor, spelling, meaning, control_sequence)
     }
+}
+
+/// TeX82 section 1171 appends the actual style node without an operand scan.
+pub(super) fn append_math_style<G>(
+    context: &mut tex_state::CommandContext<'_, G>,
+    execution: &mut ExecutionState<G>,
+    code: u64,
+) {
+    let style = match code {
+        codes::PRIMITIVE_DISPLAY_STYLE => MathStyle::Display,
+        codes::PRIMITIVE_TEXT_STYLE => MathStyle::Text,
+        codes::PRIMITIVE_SCRIPT_STYLE => MathStyle::Script,
+        codes::PRIMITIVE_SCRIPT_SCRIPT_STYLE => MathStyle::ScriptScript,
+        _ => unreachable!("admitted math style opcode"),
+    };
+    execution.main_loop_active = false;
+    execution
+        .modes
+        .current_list_mutation()
+        .push(context, Node::MathStyle(style));
 }

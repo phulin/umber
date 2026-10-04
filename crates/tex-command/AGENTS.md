@@ -9,6 +9,8 @@ Let and futurelet scan through separate entries for their real TeX82 grammars;
 there is no boolean-selected binding frame or futurelet forwarding helper.
 Math-font family selectors consume the actual restricted integer directly;
 the unused family request and math-request variant are absent.
+Math style heads have no scanner operand or request variant; execution appends
+its actual node style directly, and the duplicate `MathStyleKind` is absent.
 
 The bulk character reader resolves its boundary once and offers accepted words
 directly to the main-control consumer. Only declined or exceptional boundaries

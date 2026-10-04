@@ -12,7 +12,7 @@ use tex_command::{
     CommandProcessor, CommandProfile, CommandState, FatalError, FontLoadRequest, FontResource,
     GeneratedFontKind, HyphenationDataKind, ImmediateExtension, MathDelimiterBoundary,
     MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathRequest, MathScriptKind,
-    MathStyleKind, MathTextFieldKind, PdfImageRequest, PdfImageResource, PdfReferenceObjectRequest,
+    MathTextFieldKind, PdfImageRequest, PdfImageResource, PdfReferenceObjectRequest,
     PreparedAlignmentCellTemplates, RegisteredSourceKind, ResourceFulfillment,
     ResourceInstallOutcome, ResourceNeed, ResourceProvider, RestrictedIntegerClass, ScannedAccent,
     ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
@@ -3372,15 +3372,6 @@ impl<G> MainControl<G> {
                     report.error().defer_recovery(diagnostic_effects)?;
                 }
             }
-            MathRequest::Style(style) => self.execution.modes.current_list_mutation().push(
-                &mut stores.command_context().expect("math style admission"),
-                Node::MathStyle(match style {
-                    MathStyleKind::Display => MathStyle::Display,
-                    MathStyleKind::Text => MathStyle::Text,
-                    MathStyleKind::Script => MathStyle::Script,
-                    MathStyleKind::ScriptScript => MathStyle::ScriptScript,
-                }),
-            ),
             MathRequest::Choice => {
                 // TeX82 §1172's `append_choices` opens the first branch with
                 // `push_math(math_choice_group); scan_left_brace`, and
