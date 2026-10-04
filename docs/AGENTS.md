@@ -56,6 +56,10 @@ remains open.
 definition-owned matcher and collector integration, and direct operation path
 using the current full-book profile and explicit acceptance boundaries.
 
+`active_input_frame.md` selects actual current input ownership with suspended
+frames, direct native reads, exact source/macro retirement and cold traversal
+and checkpoint invariants for the reader replacement.
+
 `native_meaning_word.md` selects the two-word native command encoding, full
 font and definition identity preservation, ownership boundaries and enum
 deletion; it adds no opcode cache or identity registry.
