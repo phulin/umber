@@ -976,3 +976,47 @@ At the character-loop lookahead label, §1038 calls `x_token` (§381), whose
 1030's `get_x_token` (§380) converts it in place. These are real TeX input
 transitions; no artificial replacement token is added to ordinary main-control
 fetching. Fuel and observations follow the words actually read at each label.
+
+## Whole no-op pathway
+
+A quiet `\relax` has no semantic state mutation, group-stack work, arena
+publication or checkpoint bookkeeping. The irreducible work is fetching the
+actual input word, advancing its cursor, resolving its current meaning, and
+charging the real fuel and operation budgets. When it ends a horizontal
+character run, the actual glyph builder must finish that run. Enabled tracing
+and pending errors must publish at their canonical positions. Expansion before
+the terminal can also produce a genuine World boundary; a no-op must preserve
+that boundary even though the terminal itself produces no effect.
+
+The current native arm is empty, but the whole path still crosses shared
+reader classification, an execution result and continuation decisions.
+Concrete callbacks are already inlined: their bodies, input-row reselection
+and owner queries remain executable work. The instruction comparison for the
+same INITEX microbench measured 228 marginal instructions per relax after the
+preparation deletion, against 154 in the pre-rebuild engine and 91 in the
+clean reference. The current core therefore still has a runtime regression.
+
+The minimal target is one input back edge containing resolved-meaning
+selection and terminal execution. Ordinary completion advances directly to
+that back edge. An externally consumed completion value exists only when the
+reader actually returns at a budget, EOF, error, resource or output boundary.
+Input storage is selected at its actual row/span boundary; synchronous
+execution that changes input invalidates that borrow before the next word.
+There is no saved command or separate success-tail owner between these labels.
+
+World boundary decisions belong to the actual effect producers and the
+reader's real return sites. The current per-terminal effect-position and
+recoverable-error polling can only disappear when those producers end the
+current loan themselves. Moving the decision must preserve effects produced
+by expansion as well as terminal execution. Adding a parallel dirty-state
+protocol would create another owner to maintain through checkpoint restore.
+
+The old `MainControlConsumer`, `MainControlWords`, `main_control_until` and
+`main_loop_source_step_into` front has no production caller. Its eligibility
+selection and alternate character-boundary reader are deletion candidates;
+the semantic coverage currently invoking that front belongs on the production
+native reader. Deleting this source removes a competing implementation to
+maintain, but the measured native regression must be repaired in the live
+input back edge. Full checkpoints retain authoritative input, mode, group and
+World owners at real returns; ordinary no-op delivery needs no additional
+checkpoint record.
