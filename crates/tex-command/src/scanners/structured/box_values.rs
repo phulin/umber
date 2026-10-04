@@ -1,28 +1,5 @@
 use super::*;
 
-/// The complete command-owned operand of TeX82's `\setbox` assignment.
-///
-/// TeX82 §1241 calls §1084's `scan_box` from inside `prefixed_command`, so
-/// the required `make_box` command never returns to §1030's `big_switch` and
-/// must not receive a second main-control command trace.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedSetBoxAssignment {
-    pub index: u16,
-    pub path: ScannedSetBoxPath,
-}
-
-/// The two distinct TeX82 §1241 paths after `\setbox` has scanned its
-/// register and optional equals sign.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ScannedSetBoxPath {
-    /// `set_box_allowed` was false, so §1241 calls `error` immediately.
-    /// No box command has been fetched or backed up.
-    Forbidden { error_context: String },
-    /// `set_box_allowed` was true and §1084's ordinary `scan_box` ran.
-    /// A missing payload has therefore already backed up its rejected command.
-    Payload(ScannedBoxShiftPayload),
-}
-
 /// The completed command-owned prefix of a TeX82 box construction.
 ///
 /// `scan_spec` (§645) "scans a box specification and left brace": the optional
@@ -80,36 +57,6 @@ pub struct ScannedInsertConstruction {
     pub reserved_class_context: Option<String>,
 }
 
-/// The completed command-owned operand of TeX82 §1084's `scan_box`.
-///
-/// Box shifts and `\setbox` share this exact `make_box` vocabulary and
-/// recovery; the historical type name is retained as part of the public API.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ScannedBoxShiftPayload {
-    /// `scan_box`'s "A <box> was supposed to be here" recovery: the rejected
-    /// command has already been backed up for ordinary replay.
-    Missing,
-    BoxRegister {
-        index: u16,
-        copy: bool,
-    },
-    /// §1081 may diagnose against the live input while taking the last box.
-    LastBox {
-        error_context: Box<crate::DiagnosticContextCoordinate>,
-    },
-    VSplit(ScannedVSplit),
-    Construction(ScannedBoxConstruction),
-}
-
-/// A completed TeX82 §1073 box-shift prefix: the already-signed shift amount
-/// (tex.web's `box_context`) paired with the following box operand it
-/// applies to.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedBoxShift {
-    pub delta: Scaled,
-    pub payload: ScannedBoxShiftPayload,
-}
-
 /// The complete command-owned operand of TeX82's `\\vsplit`.
 ///
 /// The keyword's absence is preserved so replay can issue its diagnostic, but
@@ -133,19 +80,6 @@ pub struct ScannedDisplayDiagnostic {
     /// terminating period and error completion.
     pub content: String,
     pub provenance: StructuredProvenance,
-}
-
-/// The completed payload prefix of TeX82's `\\leaders` family.
-///
-/// A constructed box deliberately remains a construction request: its body is
-/// replayed through the ordinary box lifecycle before command control scans
-/// the following glue operand.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ScannedLeaderPayload {
-    Missing,
-    BoxRegister { index: u16, copy: bool },
-    Construction(ScannedBoxConstruction),
-    Rule(ScannedRuleSpec),
 }
 
 /// A completed TeX82 `\hrule` or `\vrule` specification.

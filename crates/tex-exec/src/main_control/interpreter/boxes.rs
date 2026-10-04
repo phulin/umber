@@ -13,12 +13,10 @@ pub(super) fn begin<G>(
     processor.with_execution_owners(
         |context, command, effects, fuel, observer, execution, _, _, _| {
             execution.main_loop_active = false;
-            let target = execution.boxes.pending_setbox.take();
-            let shipout = execution.boxes.pending_shipout.take();
             begin_replay_box(
                 construction,
-                target,
-                shipout,
+                None,
+                None,
                 &mut execution.modes,
                 context,
                 &mut execution.boxes,
@@ -78,7 +76,7 @@ pub(super) fn close<G>(
         },
     )?;
     groups::finish_native_group_leave(processor, group, "box group")?;
-    processor.with_execution_owners(
+    let step = processor.with_execution_owners(
         |context, command, effects, fuel, observer, execution, _, _, _| {
             let diagnostic = crate::pack_report::PackDiagnosticContext {
                 current_line: command
@@ -140,7 +138,7 @@ pub(super) fn close<G>(
                     .boxes
                     .pop_box(context)
                     .expect("live vcenter owner");
-                return Ok(MainControlStep::Continue);
+                return Ok::<_, ExecError>(MainControlStep::Continue);
             }
             let active = execution
                 .boxes
@@ -211,7 +209,15 @@ pub(super) fn close<G>(
             }
             Ok(MainControlStep::Continue)
         },
-    )
+    )?;
+    let leader = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+        execution.boxes.pending_leader.is_some()
+    });
+    if leader {
+        leaders::finish_leader(processor)
+    } else {
+        Ok(step)
+    }
 }
 
 fn close_insertion<G>(
@@ -325,74 +331,6 @@ fn close_insertion<G>(
     )
 }
 
-pub(super) fn register<G>(
-    processor: &mut Processor<'_, '_, G>,
-    copy: bool,
-    ships_out: bool,
-    receipts: &mut Option<Vec<MutationRecord>>,
-) -> Result<MainControlStep, ExecError> {
-    let index = processor
-        .scan_profile_register_index()
-        .map_err(command_error)?;
-    report_scan(processor)?;
-    processor.with_execution_owners(|context, command, effects, fuel, _, execution, _, _, _| {
-        execution.main_loop_active = false;
-        let isolated_append = !ships_out
-            && execution.boxes.pending_setbox.is_none()
-            && matches!(
-                execution.modes.current_mode(),
-                Mode::Horizontal | Mode::RestrictedHorizontal | Mode::InternalVertical
-            )
-            && context.box_register(index).is_some();
-        if isolated_append {
-            crate::box_runtime::flush_pending_hchars(&mut execution.modes, context, effects, fuel)?;
-        }
-        let start = isolated_append.then(|| context.begin_page_node_region());
-        let pinned = (ships_out && copy)
-            .then(|| context.pin_box_for_shipout(index))
-            .flatten();
-        let node = match pinned {
-            Some(node) => Some(node),
-            None => {
-                let root = read_box_register(index, copy, context);
-                crate::box_runtime::first_box_node(context, root)
-            }
-        };
-        let destination = execution.boxes.take_box_context(ships_out);
-        if let Some(start) = start {
-            debug_assert!(matches!(destination, BoxContext::Append(_)));
-            crate::box_runtime::append_box_node_with_segment(
-                &mut execution.modes,
-                context,
-                effects,
-                fuel,
-                node.expect("nonvoid box register wrapper"),
-                start,
-                Vec::new(),
-            )?;
-            crate::vertical::build_page_if_outer_vertical(
-                &execution.modes,
-                context,
-                effects,
-                command,
-            )?;
-        } else {
-            box_end(
-                destination,
-                node,
-                &mut execution.modes,
-                context,
-                command,
-                effects,
-                fuel,
-                &mut execution.prepared_shipout,
-                receipts.as_mut(),
-            )?;
-        }
-        Ok(MainControlStep::Continue)
-    })
-}
-
 pub(super) fn unbox<G>(
     processor: &mut Processor<'_, '_, G>,
     primitive: UnexpandablePrimitive,
@@ -440,125 +378,4 @@ pub(super) fn discards<G>(
         )?;
         Ok(MainControlStep::Continue)
     })
-}
-
-pub(super) fn split<G>(
-    processor: &mut Processor<'_, '_, G>,
-    receipts: &mut Option<Vec<MutationRecord>>,
-) -> Result<MainControlStep, ExecError> {
-    let split = processor.scan_vsplit().map_err(command_error)?;
-    report_scan(processor)?;
-    if let Some(display) = &split.missing_to_context {
-        processor.with_execution_owners(|context, _, effects, _, _, _, _, _, _| {
-            report_missing_vsplit_to(display, effects, context)
-        })?;
-        recovery::finish_error_dialogue(processor)?;
-    }
-    processor.with_execution_owners(
-        |context, command, effects, fuel, observer, execution, _, _, _| {
-            execution.main_loop_active = false;
-            let isolated_append = execution.boxes.pending_setbox.is_none()
-                && matches!(
-                    execution.modes.current_mode(),
-                    Mode::Horizontal | Mode::RestrictedHorizontal | Mode::InternalVertical
-                )
-                && context.box_register(split.index).is_some();
-            if isolated_append {
-                crate::box_runtime::flush_pending_hchars(
-                    &mut execution.modes,
-                    context,
-                    effects,
-                    fuel,
-                )?;
-            }
-            let start = isolated_append.then(|| context.begin_page_node_region());
-            let diagnostic_context =
-                command_diagnostic_context(command, execution.boxes.output_routine_active);
-            let mut geometry = pack_geometry_sink(command, observer);
-            let node = crate::box_runtime::split_vbox_register(
-                context,
-                effects,
-                &mut geometry,
-                &diagnostic_context,
-                split.index,
-                split.height,
-                &split.split_context,
-            )?;
-            let destination = execution.boxes.take_box_context(false);
-            match (start, node) {
-                (Some(start), Some(node)) => {
-                    debug_assert!(matches!(destination, BoxContext::Append(_)));
-                    crate::box_runtime::append_box_node_with_segment(
-                        &mut execution.modes,
-                        context,
-                        effects,
-                        fuel,
-                        node,
-                        start,
-                        Vec::new(),
-                    )?;
-                }
-                (start, node) => {
-                    if let Some(start) = start {
-                        context
-                            .release_page_node_region(start)
-                            .expect("void split construction");
-                    }
-                    box_end(
-                        destination,
-                        node,
-                        &mut execution.modes,
-                        context,
-                        command,
-                        effects,
-                        fuel,
-                        &mut execution.prepared_shipout,
-                        receipts.as_mut(),
-                    )?;
-                }
-            }
-            Ok(MainControlStep::Continue)
-        },
-    )
-}
-
-pub(super) fn last<G>(
-    processor: &mut Processor<'_, '_, G>,
-    receipts: &mut Option<Vec<MutationRecord>>,
-) -> Result<MainControlStep, ExecError> {
-    let coordinate = processor.diagnostic_context_coordinate();
-    report_scan(processor)?;
-    let step = processor.with_execution_owners(
-        |context, command, effects, fuel, _, execution, _, _, _| {
-            execution.main_loop_active = false;
-            let node = crate::box_runtime::take_last_box(
-                &mut execution.modes,
-                context,
-                effects,
-                fuel,
-                |context| {
-                    command
-                        .render_diagnostic_context(coordinate, context)
-                        .map_err(|_| {
-                            ExecError::Command(tex_command::CommandError::StaleDiagnosticContext)
-                        })
-                },
-            )?;
-            let destination = execution.boxes.take_box_context(false);
-            box_end(
-                destination,
-                node,
-                &mut execution.modes,
-                context,
-                command,
-                effects,
-                fuel,
-                &mut execution.prepared_shipout,
-                receipts.as_mut(),
-            )?;
-            Ok::<MainControlStep, ExecError>(MainControlStep::Continue)
-        },
-    )?;
-    recovery::finish_error_dialogue(processor)?;
-    Ok(step)
 }

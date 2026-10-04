@@ -35,12 +35,7 @@ pub(super) fn command<G>(
             );
         let suppress = raw_character
             || execution.boxes.pending_leader.is_some()
-            || (execution.boxes.output_routine_opening_pending && code == codes::CHAR_BEGIN_GROUP)
-            || (execution.boxes.pending_shipout.is_some()
-                && matches!(
-                    code,
-                    codes::PRIMITIVE_H_BOX | codes::PRIMITIVE_V_BOX | codes::PRIMITIVE_V_TOP
-                ));
+            || (execution.boxes.output_routine_opening_pending && code == codes::CHAR_BEGIN_GROUP);
         (mode, suppress)
     });
     if !suppress {

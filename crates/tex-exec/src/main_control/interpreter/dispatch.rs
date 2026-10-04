@@ -33,6 +33,67 @@ pub(super) fn execute<'state, 'host, G>(
             };
             prefixes::scan(processor, prefixes | flag, observation_receipts)
         }
+        codes::PRIMITIVE_SET_BOX => {
+            let global = effective_global(
+                processor.int_param(IntParam::GLOBAL_DEFS),
+                prefixes & prefixes::GLOBAL != 0,
+            );
+            box_inputs::set_box(processor, global, observation_receipts)
+        }
+        codes::PRIMITIVE_SHIPOUT => box_inputs::scan(
+            processor,
+            box_inputs::Destination::Shipout,
+            observation_receipts,
+        ),
+        codes::PRIMITIVE_LEADERS | codes::PRIMITIVE_C_LEADERS | codes::PRIMITIVE_X_LEADERS => {
+            let kind = match code {
+                codes::PRIMITIVE_LEADERS => GlueKind::Leaders,
+                codes::PRIMITIVE_C_LEADERS => GlueKind::Cleaders,
+                _ => GlueKind::Xleaders,
+            };
+            box_inputs::scan(
+                processor,
+                box_inputs::Destination::Leader(kind),
+                observation_receipts,
+            )
+        }
+        codes::PRIMITIVE_RAISE
+        | codes::PRIMITIVE_LOWER
+        | codes::PRIMITIVE_MOVE_LEFT
+        | codes::PRIMITIVE_MOVE_RIGHT => {
+            let mode = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                execution.modes.current_mode()
+            });
+            let allowed = match code {
+                codes::PRIMITIVE_RAISE | codes::PRIMITIVE_LOWER => matches!(
+                    mode,
+                    Mode::Horizontal | Mode::RestrictedHorizontal | Mode::Math | Mode::DisplayMath
+                ),
+                _ => matches!(mode, Mode::Vertical | Mode::InternalVertical),
+            };
+            if !allowed {
+                return recovery::illegal_case(
+                    processor,
+                    spelling,
+                    meaning,
+                    control_sequence,
+                    exceptional,
+                );
+            }
+            let amount = processor.scan_dimension().map_err(command_error)?;
+            report_scan(processor)?;
+            let delta = if matches!(code, codes::PRIMITIVE_RAISE | codes::PRIMITIVE_MOVE_LEFT) {
+                -amount
+            } else {
+                amount
+            };
+            box_inputs::scan(
+                processor,
+                box_inputs::Destination::List(delta),
+                observation_receipts,
+            )
+        }
+        codes::PRIMITIVE_IMMEDIATE => streams::immediate(processor, spelling, exceptional),
         codes::PRIMITIVE_IGNORE_SPACES => {
             characters::ignore_spaces(processor, observation_receipts)
         }
@@ -560,11 +621,11 @@ pub(super) fn execute<'state, 'host, G>(
                     "pdfrefxform"
                 },
             )?;
-            pdf::form(processor, primitive)
+            pdf::form(processor, primitive, false)
         }
         codes::PRIMITIVE_PDF_OBJECT => {
             pdf::require_output(processor, spelling, exceptional, "pdfobj")?;
-            pdf::object(processor)
+            pdf::object(processor, false)
         }
         codes::PRIMITIVE_PDF_INFO
         | codes::PRIMITIVE_PDF_CATALOG
@@ -765,10 +826,10 @@ pub(super) fn execute<'state, 'host, G>(
             recovery::finish_error_dialogue(processor)?;
             Ok(step)
         }
-        codes::PRIMITIVE_BOX | codes::PRIMITIVE_COPY => boxes::register(
+        codes::PRIMITIVE_BOX | codes::PRIMITIVE_COPY => box_inputs::register(
             processor,
             code == codes::PRIMITIVE_COPY,
-            false,
+            box_inputs::Destination::List(Scaled::from_raw(0)),
             observation_receipts,
         ),
         codes::PRIMITIVE_UN_H_BOX
@@ -834,8 +895,16 @@ pub(super) fn execute<'state, 'host, G>(
                 boxes::unbox(processor, primitive)
             }
         }
-        codes::PRIMITIVE_V_SPLIT => boxes::split(processor, observation_receipts),
-        codes::PRIMITIVE_LAST_BOX => boxes::last(processor, observation_receipts),
+        codes::PRIMITIVE_V_SPLIT => box_inputs::split(
+            processor,
+            box_inputs::Destination::List(Scaled::from_raw(0)),
+            observation_receipts,
+        ),
+        codes::PRIMITIVE_LAST_BOX => box_inputs::last(
+            processor,
+            box_inputs::Destination::List(Scaled::from_raw(0)),
+            observation_receipts,
+        ),
         codes::PRIMITIVE_OPEN_IN => streams::open_in(processor),
         codes::PRIMITIVE_CLOSE_IN => streams::close_in(processor),
         codes::PRIMITIVE_READ | codes::PRIMITIVE_READ_LINE => {
@@ -849,6 +918,26 @@ pub(super) fn execute<'state, 'host, G>(
                 global,
                 observation_receipts,
             )
+        }
+        codes::PRIMITIVE_LEFT | codes::PRIMITIVE_RIGHT | codes::PRIMITIVE_MIDDLE => {
+            if !math_mode(processor) {
+                return recovery::insert_math_shift(
+                    processor,
+                    spelling,
+                    meaning,
+                    control_sequence,
+                    exceptional,
+                );
+            }
+            if code == codes::PRIMITIVE_LEFT {
+                delimiters::left(processor)
+            } else {
+                delimiters::close(processor, code == codes::PRIMITIVE_MIDDLE)
+            }
+        }
+        codes::PRIMITIVE_PDF_X_IMAGE => {
+            pdf::require_output(processor, spelling, exceptional, "pdfximage")?;
+            pdf::image(processor)
         }
         codes::FONT => {
             let MeaningWord::Font(font) = meaning else {
@@ -993,9 +1082,9 @@ pub(super) fn execute<'state, 'host, G>(
         codes::PRIMITIVE_MESSAGE | codes::PRIMITIVE_ERR_MESSAGE => {
             streams::message(processor, code == codes::PRIMITIVE_ERR_MESSAGE)
         }
-        codes::PRIMITIVE_OPEN_OUT => streams::open_out(processor),
-        codes::PRIMITIVE_CLOSE_OUT => streams::close_out(processor),
-        codes::PRIMITIVE_WRITE => streams::write(processor),
+        codes::PRIMITIVE_OPEN_OUT => streams::open_out(processor, false),
+        codes::PRIMITIVE_CLOSE_OUT => streams::close_out(processor, false),
+        codes::PRIMITIVE_WRITE => streams::write(processor, false),
         codes::PRIMITIVE_SPECIAL => streams::special(processor),
         codes::PRIMITIVE_UPPERCASE | codes::PRIMITIVE_LOWERCASE => {
             processor

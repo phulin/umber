@@ -3,6 +3,13 @@
 use super::*;
 
 impl<'a, G> CommandContext<'a, G> {
+    pub fn same_run_output_hash(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<Option<crate::ContentHash>, crate::WorldError> {
+        self.resident.world.same_run_output_hash(path)
+    }
+
     pub fn set_pdf_random_seed(&mut self, seed: i32) {
         self.resident.world.set_pdf_random_seed(seed);
     }

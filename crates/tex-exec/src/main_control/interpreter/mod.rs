@@ -10,9 +10,11 @@ use std::ops::ControlFlow;
 mod accent;
 mod arithmetic;
 mod assignments;
+mod box_inputs;
 mod boxes;
 mod characters;
 mod codes;
+mod delimiters;
 mod diagnostics;
 mod discretionary;
 mod dispatch;
@@ -20,12 +22,14 @@ mod driver;
 mod fonts;
 mod glue_identity;
 mod groups;
+mod leaders;
 mod material;
 mod math;
 mod pdf;
 mod prefixes;
 mod publication;
 mod recovery;
+mod resources;
 mod streams;
 mod termination;
 mod trace;
@@ -69,6 +73,7 @@ pub(super) fn run<G>(
                                     execution.main_loop_active,
                                     execution.paragraph_checkpoint_cut
                                         || execution.prepared_shipout.is_some()
+                                        || execution.prepared_pdf_form.is_some()
                                         || effects.has_first_recoverable()
                                         || (!execution.boxes.output_routine_active
                                             && (context.page_fire_up().is_some()

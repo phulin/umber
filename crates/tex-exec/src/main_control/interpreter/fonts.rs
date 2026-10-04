@@ -62,24 +62,19 @@ fn resolve<G>(
                 let need = ResourceNeed::Font {
                     request: request.clone(),
                 };
-                let Some(provider) = provider.as_deref_mut() else {
+                let Some(outcome) = resources::resolve_provider(
+                    context,
+                    capabilities,
+                    provider.take(),
+                    attempted_resource,
+                    &need,
+                    false,
+                )?
+                else {
                     return Err(ExecError::MissingFont {
                         request: Box::new(request.clone()),
                     });
                 };
-                let resolution = provider.resolve(context, &need);
-                let outcome = capabilities
-                    .install_resource_resolution(&need, resolution, false)
-                    .map_err(|_| {
-                        ExecError::ResourceFailure(Box::new(
-                            tex_command::ResourceFailureDiagnostic {
-                                need: need.clone(),
-                                failure: tex_command::ResourceFailure::message(
-                                    "resource provider returned a mismatched typed answer",
-                                ),
-                            },
-                        ))
-                    })?;
                 match outcome {
                     ResourceInstallOutcome::Fulfilled(ResourceFulfillment::Font {
                         resource,
@@ -90,17 +85,12 @@ fn resolve<G>(
                     ResourceInstallOutcome::Fulfilled(_) => unreachable!("typed font fulfillment"),
                     ResourceInstallOutcome::Unavailable => return Ok(FontResource::Unavailable),
                     ResourceInstallOutcome::Declined => {
-                        if let Some(attempted) = attempted_resource {
-                            *attempted = Some(need);
-                        }
                         return Err(ExecError::MissingFont {
                             request: Box::new(request.clone()),
                         });
                     }
-                    ResourceInstallOutcome::Failed(failure) => {
-                        return Err(ExecError::ResourceFailure(Box::new(
-                            tex_command::ResourceFailureDiagnostic { need, failure },
-                        )));
+                    ResourceInstallOutcome::Failed(_) => {
+                        unreachable!("failed provider outcomes are returned as errors")
                     }
                 }
             }

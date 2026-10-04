@@ -14,17 +14,15 @@ pub use restricted::RestrictedIntegerClass;
 pub use scalar::{InternalValue, ScalarProvenance, ScannedScalar};
 pub use structured::{
     AlignmentCellOpening, ExpandedWriteText, FileNameComponents, FontLoadRequest, FontSizeRecovery,
-    GeneratedFontKind, ImmediateExtension, MathDelimiterBoundary, MathDelimiterBoundaryKind,
-    MathFamilySize, MathFieldBody, MathFieldEpisode, MathFractionKind, MathScriptKind,
-    PdfActionDestination, PdfActionIdentifier, PdfActionSpec, PdfActionTarget,
+    GeneratedFontKind, MathFamilySize, MathFieldBody, MathFieldEpisode, MathFractionKind,
+    MathScriptKind, PdfActionDestination, PdfActionIdentifier, PdfActionSpec, PdfActionTarget,
     PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImagePageBox,
     PdfImagePageSelection, PdfImageRequest, PdfNavigationRequest, PdfObjectRequest,
     PdfOutlineRequest, PdfStartLinkRequest, PdfThreadRequest, RegisteredInput, ScannedBalancedText,
-    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
-    ScannedCharacterDefinition, ScannedDisplayDiagnostic, ScannedFileName,
-    ScannedGeneratedFontDefinition, ScannedInsertConstruction, ScannedLeaderPayload,
+    ScannedBoxConstruction, ScannedBoxKind, ScannedCharacterDefinition, ScannedDisplayDiagnostic,
+    ScannedFileName, ScannedGeneratedFontDefinition, ScannedInsertConstruction,
     ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFraction,
-    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment,
-    ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, TokenRequest, WriteStreamSelector,
+    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedVSplit,
+    StructuredProvenance, TokenRequest, WriteStreamSelector,
 };

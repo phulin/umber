@@ -56,7 +56,6 @@ impl<G> MainControl<G> {
             shown_mode: &mut self.execution.shown_mode,
             initex: self.execution.initex,
             emit_dvi_override: self.execution.emit_dvi_override,
-            immediate_prints: &mut self.execution.immediate_prints,
             prepared_shipout: &mut self.execution.prepared_shipout,
             output_routine_active: self.execution.boxes.output_routine_active,
         };
@@ -84,48 +83,6 @@ impl<G> MainControl<G> {
             (result, pending_page_output)
         };
         if result.is_ok() {
-            if !command.immediate_prints.is_empty() {
-                // TeX82 §1375 performs an immediate write only after its
-                // token list has been expanded. Expansion/command traces are
-                // detached during that scan, while the resulting write is an
-                // outer World publication; commit the former first so the
-                // expanded text cannot overtake its own trace.
-                stores
-                    .world_mut()
-                    .publish_diagnostic_effects_preserving(command.diagnostic_effects);
-            }
-            for print in command.immediate_prints.drain(..) {
-                match print.encoded {
-                    Some(bytes) if print.ensure_line_start => {
-                        stores.world_mut().publish_print_nl_encoded_bytes(
-                            print.sink,
-                            &bytes,
-                            print.max_print_line,
-                        );
-                    }
-                    Some(bytes) => {
-                        stores.world_mut().publish_print_encoded_bytes(
-                            print.sink,
-                            &bytes,
-                            print.max_print_line,
-                        );
-                    }
-                    None if print.ensure_line_start => {
-                        stores.world_mut().publish_print_nl_text(
-                            print.sink,
-                            &print.text,
-                            print.max_print_line,
-                        );
-                    }
-                    None => {
-                        stores.world_mut().publish_print_text(
-                            print.sink,
-                            &print.text,
-                            print.max_print_line,
-                        );
-                    }
-                }
-            }
             if let Some(shipout) = command.prepared_shipout.take() {
                 // TeX82 §§367/1006 print the delivered command and page
                 // cost before §638 opens the shipout marker. Both reports
@@ -150,7 +107,6 @@ impl<G> MainControl<G> {
                 }
             }
         } else {
-            command.immediate_prints.clear();
             stores.release_shipout_source();
             if let Some(shipout) = command.prepared_shipout.take()
                 && let Some(region) = shipout.region

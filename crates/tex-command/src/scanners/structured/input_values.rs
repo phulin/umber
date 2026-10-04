@@ -66,36 +66,6 @@ impl ScannedFileName {
 
 pub(crate) const FILE_NAME_POOL_CAPACITY: usize = 32_000;
 
-/// A completed TeX82 §53 `\immediate` extension request.
-///
-/// Command control owns the recursive expanded lookahead and all operand
-/// scanning.  In particular, a non-I/O lookahead has already been backed up
-/// when `Continue` is returned, so replay never needs raw input access.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ImmediateExtension<T = AttemptTokenListId> {
-    Continue,
-    /// The recursive expanded-command lookahead found a PDF-only extension,
-    /// whose own pdftex.web case runs `check_pdfoutput` before every operand
-    /// scan. The stomach turns this typed command identity into the canonical
-    /// DVI-mode error without giving the scanner the diagnostic channel.
-    PdfExtensionInDviMode(UnexpandablePrimitive),
-    OpenOut {
-        /// TeX82 §435's effective stream after `scan_four_bit_int`.
-        stream: u8,
-        file_name: ScannedFileName,
-    },
-    Write {
-        stream: WriteStreamSelector,
-        tokens: T,
-    },
-    CloseOut {
-        stream: WriteStreamSelector,
-    },
-    PdfObject(PdfObjectRequest<T>),
-    PdfForm(PdfFormRequest<T>),
-    PdfImage(PdfImageRequest<T>),
-}
-
 /// TeX82 §§1342/1350's normalized selector stored in a write whatsit.
 ///
 /// Slots 16 and 17 are deliberately represented rather than clamped: they

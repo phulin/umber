@@ -171,6 +171,7 @@ pub(super) fn navigation<G>(
 pub(super) fn form<G>(
     processor: &mut Processor<'_, '_, G>,
     primitive: UnexpandablePrimitive,
+    immediate: bool,
 ) -> Result<MainControlStep, ExecError> {
     let scanned = processor
         .scan_pdf_form_request(primitive)
@@ -185,22 +186,26 @@ pub(super) fn form<G>(
             &mut execution.modes,
             effects,
             fuel,
-            false,
+            immediate,
         )?;
-        debug_assert!(pending.is_none());
+        execution.prepared_pdf_form = pending;
         Ok(MainControlStep::Continue)
     })
 }
 
 pub(super) fn object<G>(
     processor: &mut Processor<'_, '_, G>,
+    immediate: bool,
 ) -> Result<MainControlStep, ExecError> {
     let scanned = processor.scan_pdf_object_request().map_err(command_error)?;
     report_scan(processor)?;
     processor.with_execution_owners(|context, command, _, _, _, execution, _, _, _| {
         execution.main_loop_active = false;
         let mut request = publication::publish_tokens(command, context, scanned)?;
-        apply_pdf_object_request(&mut request, context, false)
+        if immediate && matches!(request, tex_command::PdfObjectRequest::Reserve) {
+            return Err(ExecError::PdfImmediateReservedObject);
+        }
+        apply_pdf_object_request(&mut request, context, immediate)
     })
 }
 
@@ -243,4 +248,51 @@ pub(super) fn space_font<G>(
         context.set_pdf_space_font_name(name);
     });
     Ok(MainControlStep::Continue)
+}
+
+pub(super) fn image<G>(processor: &mut Processor<'_, '_, G>) -> Result<MainControlStep, ExecError> {
+    let mut request = processor.scan_pdf_image_request().map_err(command_error)?;
+    report_scan(processor)?;
+    processor.with_execution_owners(
+        |context, command, _, _, _, execution, capabilities, provider, attempted| {
+            execution.main_loop_active = false;
+            let resource =
+                resources::image(&mut request, context, capabilities, provider, attempted)?;
+            let source = match resource {
+                PdfImageResource::Available(source) => source,
+                PdfImageResource::Unavailable => {
+                    return Err(ExecError::PdfImageOpen {
+                        name: request.name,
+                        message: "image is unavailable".to_owned(),
+                    });
+                }
+                PdfImageResource::Invalid(message) => {
+                    return Err(ExecError::PdfImageOpen {
+                        name: request.name,
+                        message,
+                    });
+                }
+            };
+            let dimensions =
+                pdf_image_dimensions(&source, request.width, request.height, request.depth);
+            let attributes = if let Some(tokens) = request.attr {
+                let text = streams::token_text(context, command, &tokens)?;
+                command
+                    .discard_attempt_tokens(tokens)
+                    .expect("consumed image attributes");
+                tex_byte_text(&text)
+            } else {
+                Vec::new()
+            };
+            context
+                .allocate_pdf_external_image(
+                    source,
+                    dimensions,
+                    request.color_space_object,
+                    attributes,
+                )
+                .map_err(|_| ExecError::PdfObjectCapacity)?;
+            Ok(MainControlStep::Continue)
+        },
+    )
 }

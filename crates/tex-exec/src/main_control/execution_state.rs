@@ -137,8 +137,8 @@ pub(super) struct ExecutionState<G> {
     /// direct operation. This replay state is published only after its
     /// corresponding World artifact/effect roots commit.
     pub(super) prepared_dvi_pages: PreparedDviPages,
-    pub(super) immediate_prints: Vec<ImmediatePrint>,
     pub(super) prepared_shipout: Option<PreparedShipout>,
+    pub(super) prepared_pdf_form: Option<tex_state::PdfFormRecord<G>>,
     /// Actual terminal notices, moved once after command admission ends.
     pub(super) pending_job_end: Option<(bool, Vec<tex_command::IncompleteCondition>)>,
     /// A detached page has committed, but a live mode still owns page-region
@@ -245,8 +245,8 @@ impl<G> ExecutionState<G> {
             error_operation_committed: false,
             completed_replay_episode: None,
             prepared_dvi_pages: PreparedDviPages::default(),
-            immediate_prints: Vec::new(),
             prepared_shipout: None,
+            prepared_pdf_form: None,
             pending_job_end: None,
             page_region_succession_pending: false,
             paragraph_checkpoint_demand: None,

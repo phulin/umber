@@ -33,135 +33,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         })
     }
 
-    /// Scans TeX82 §53's one-token `\immediate` extension execution.
-    ///
-    /// `do_extension` calls `get_x_token`, executes only `openout`, `write`,
-    /// and `closeout`, and backs every other expanded command up for ordinary
-    /// main control.  The integer, optional-equals, filename, and write-text
-    /// scans remain in this command-owned episode.
-    pub fn scan_immediate_extension(
-        &mut self,
-        pdf_output_enabled: bool,
-    ) -> Result<ImmediateExtension, CommandError> {
-        let mut destination = None;
-        let command = loop {
-            if self.request_expanded_token(&mut destination)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            let command = destination
-                .take()
-                .ok_or_else(|| CommandError::input_invariant())?;
-            if !matches!(
-                static_meaning(command.meaning()),
-                Some(Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                })
-            ) {
-                break command;
-            }
-        };
-        match static_meaning(command.meaning()) {
-            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut)) => {
-                self.finish_immediate_open_out()
-            }
-            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write)) => {
-                let stream = self.scan_immediate_write_stream_selector()?;
-                self.finish_immediate_write(stream)
-            }
-            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut)) => {
-                let stream = self.scan_immediate_write_stream_selector()?;
-                Ok(ImmediateExtension::CloseOut { stream })
-            }
-            Some(Meaning::UnexpandablePrimitive(
-                primitive @ (UnexpandablePrimitive::PdfObject
-                | UnexpandablePrimitive::PdfXForm
-                | UnexpandablePrimitive::PdfXImage),
-            )) => self.finish_immediate_pdf(command, primitive, pdf_output_enabled),
-            _ => {
-                self.back_input(command)?;
-                Ok(ImmediateExtension::Continue)
-            }
-        }
-    }
-
-    fn scan_immediate_write_stream_selector(
-        &mut self,
-    ) -> Result<WriteStreamSelector, CommandError> {
-        let result = self.scan_integer();
-        let value = result?.value;
-        Ok(if value < 0 {
-            WriteStreamSelector::Negative
-        } else if value > 15 {
-            WriteStreamSelector::AboveRange
-        } else {
-            WriteStreamSelector::Stream(value as u8)
-        })
-    }
-
-    fn finish_immediate_write(
-        &mut self,
-        stream: WriteStreamSelector,
-    ) -> Result<ImmediateExtension, CommandError> {
-        // TeX82 §53 first saves write text without expansion, then
-        // `write_out` replays it under an outer `\\endwrite` stopper.
-        let tokens = match self.scan_immediate_write_text() {
-            Ok(tokens) => tokens,
-            Err(error) => {
-                return Err(error);
-            }
-        };
-        let expanded = match self.expand_write_text(tokens) {
-            Ok(expanded) => expanded,
-            Err(error) => {
-                return Err(error);
-            }
-        };
-        Ok(ImmediateExtension::Write {
-            stream,
-            tokens: expanded.tokens,
-        })
-    }
-
-    fn finish_immediate_pdf(
-        &mut self,
-        command: CurrentCommand<G>,
-        primitive: UnexpandablePrimitive,
-        pdf_output_enabled: bool,
-    ) -> Result<ImmediateExtension, CommandError> {
-        if !pdf_output_enabled {
-            // pdftex.web §1623 leaves the looked-ahead primitive current after
-            // `check_pdfoutput`. The executor also restores the outer
-            // `\immediate`, so preserving this inner delivery keeps the two
-            // commands in source order for a later PDF-mode retry.
-            self.back_input(command)?;
-            return Ok(ImmediateExtension::PdfExtensionInDviMode(primitive));
-        }
-
-        match primitive {
-            UnexpandablePrimitive::PdfObject => self
-                .scan_pdf_object_request()
-                .map(ImmediateExtension::PdfObject),
-            UnexpandablePrimitive::PdfXForm => self
-                .scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)
-                .map(ImmediateExtension::PdfForm),
-            UnexpandablePrimitive::PdfXImage => self
-                .scan_pdf_image_request()
-                .map(ImmediateExtension::PdfImage),
-            _ => Err(CommandError::input_invariant()),
-        }
-    }
-
-    fn finish_immediate_open_out(&mut self) -> Result<ImmediateExtension, CommandError> {
-        let result = self.scan_restricted_integer(RestrictedIntegerClass::FourBit);
-        let stream = result?.value as u8;
-        let result = self.scan_optional_equals();
-        result?;
-        let result = self.scan_file_name();
-        let file_name = result?;
-        Ok(ImmediateExtension::OpenOut { stream, file_name })
-    }
-
     /// Expands TeX82 §§1369--1372 write text inside the artificial brace and
     /// frozen-`\endwrite` input episode installed by `write_out`.
     ///
@@ -330,7 +201,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// terminator has been validated and backed up. Unlike general-text
     /// callers, §53's `new_write_whatsit` enters the absorbing collection at
     /// that already-backed-up brace.
-    fn scan_immediate_write_text(&mut self) -> Result<AttemptTokenListId, CommandError> {
+    pub fn scan_immediate_write_text(&mut self) -> Result<AttemptTokenListId, CommandError> {
         let scanned = self.scan_toks(ScanToksMode::GeneralAfterOpening {
             expanded: false,
             primary: OriginId::UNKNOWN,

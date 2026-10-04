@@ -51,6 +51,9 @@ not allocate a vector merely to publish one already-complete node.
   actual owner once, including checkpoint forks. The execution owner implements
   live host fact queries; component-only cold loans share those exact queries.
 - `src/main_control/interpreter/`: sole replacement core under construction.
+  `delimiters.rs` scans actual delimiters and unsaves math-left groups
+  through the live processor. Right boundaries append into the actual closed
+  math tail without publishing an immediately consumed one-node sequence.
   `accent.rs` scans the actual accent and runs permitted assignments in the
   same processor before its base character, retaining the real accent font
   and metrics across those assignments. The reconstruction loop and accent
@@ -75,6 +78,14 @@ not allocate a vector merely to publish one already-complete node.
   each interpreter invocation. Ordinary driver entry has no command slot;
   diagnostic preflight dispatches only its genuinely already-fetched record. Missing selected-command and real input-boundary wiring
   remains a compile-time cutover gap, not a runtime fallback.
+- `src/main_control/interpreter/box_inputs.rs`: the one native `scan_box`
+  operand selection and actual destinations. Direct register handoffs create
+  no temporary construction mark; lastbox removal precedes destination
+  interval creation. `leaders.rs` consumes actual following glue at the
+  producing boundary. Old box, shift and leader request unions, the old
+  box-builder/leader executor files, and pending-setbox/shipout mailboxes are
+  deleted. Immediate stream output consumes scanner storage directly; there
+  is no deferred extension union or immediate-print queue.
 - The former `src/main_control/direct/` directory is deleted completely,
   including its dispatcher owner and processor reconstruction adapters. Do not
   restore it or add an equivalent compatibility dispatcher. Genuine opcode,
@@ -94,17 +105,16 @@ not allocate a vector merely to publish one already-complete node.
 - `src/main_control/code_table.rs`: the shared TeX82 code-table value bounds,
   diagnostic, and zero-substitution rule. It returns a scanned value to the
   existing hot or cold assignment committer; it owns no command or table state.
-- `src/main_control/leader_values.rs`: the concrete constructed/register
-  leader payload that the leader-glue scanner consumes.
 - `src/main_control/host_boundaries.rs`: demanded evidence ownership,
   bounded host-driver accounting, halt, resource-need and diagnostic publication, ordered
   semantic/effect/artifact publication, and exact-cut main-source paragraph
   checkpoint intent. Shipout contributes only output-ledger evidence. Native
   scratch is reclaimed by consumers; there is no direct-operation cleanup.
-- `src/main_control/resources.rs`: typed host-resource resolution and
-  installation for PDF images; font and input-stream acquisition now consumes
-  the actual capabilities/provider loans in the interpreter. It borrows the same
-  `MainControl` and `Universe` owners and preserves checkpoint-replay errors.
+- `src/main_control/interpreter/resources.rs`: typed provider fulfillment and
+  PDF-image cache validation through the live context and host owners. Font
+  and input-probe acquisition share its typed installer; image attributes
+  render directly from attempt storage into their final PDF ledger entry.
+  Same-run image provenance reads the actual World through the context.
 - `src/main_control/root_source.rs`: immutable root-source registration,
   editor rebind, startup framing, and root completion policy on the same
   `MainControl` owner. See `docs/main_control_responsibilities.md`.

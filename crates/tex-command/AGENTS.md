@@ -31,7 +31,9 @@ likewise read the actual register index without a `ScannedBoxRegister`. Read
 scanning returns its actual target and final definition owner. The unused
 open/close/read request union and retained stream/scope columns are deleted.
 Text accents execute their real assignment/base grammar in main control;
-`ScannedAccent` and `ScannedAccentBase` plus their scanner adapters are absent. There is no intermediate retained token list for font-map or
+`ScannedAccent` and `ScannedAccentBase` plus their scanner adapters are absent.
+Left/right/middle scan actual delimiters directly; the duplicate boundary
+request, kind and scanner wrapper are deleted. There is no intermediate retained token list for font-map or
 ToUnicode text.
 Recovery entry points consume native spelling plus a genuine exceptional record
 only when present; math-shift, paragraph and off-save backup share that native
@@ -877,3 +879,7 @@ borrow actual spelling, meaning and optional exceptional delivery facts.
 `recover_missing_math_shift` takes that spelling and exceptional record instead
 of requiring a newly constructed ordinary command. There is no overload for
 the deleted command-valued signature.
+
+Immediate I/O selection is executor-owned native terminal dispatch. `write.rs`
+retains the real write-text scan and sentinel expansion; the former
+`ImmediateExtension` request union and command reconstruction scanner are deleted.

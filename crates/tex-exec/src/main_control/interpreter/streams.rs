@@ -1,6 +1,67 @@
 //! Streams and text consume actual scanner storage at their final destination.
 use super::*;
 
+pub(super) fn immediate<G>(
+    processor: &mut Processor<'_, '_, G>,
+    outer: TracedTokenWord,
+    outer_exceptional: Option<&tex_command::CurrentCommand<G>>,
+) -> Result<MainControlStep, ExecError> {
+    let mut result = None;
+    let status = processor
+        .consume_main_control(&mut |processor, spelling, meaning, _, exceptional| {
+            let code = match meaning {
+                tex_state::meaning::MeaningWord::Static(word) => {
+                    Meaning::runtime_word_control_code(*word)
+                }
+                _ => codes::FONT,
+            };
+            if code == codes::CHAR_SPACE {
+                return Ok(ControlFlow::Continue(()));
+            }
+            result = Some((|| {
+                let pdf_name = match code {
+                    codes::PRIMITIVE_PDF_OBJECT => Some("pdfobj"),
+                    codes::PRIMITIVE_PDF_X_FORM => Some("pdfxform"),
+                    codes::PRIMITIVE_PDF_X_IMAGE => Some("pdfximage"),
+                    _ => None,
+                };
+                if let Some(name) = pdf_name
+                    && processor.int_param(IntParam::PDF_OUTPUT) <= 0
+                {
+                    processor
+                        .back_consumed_word(spelling, exceptional)
+                        .map_err(command_error)?;
+                    processor
+                        .back_consumed_word(outer, outer_exceptional)
+                        .map_err(command_error)?;
+                    return Err(ExecError::PdfExtensionInDviMode(name));
+                }
+                match code {
+                    codes::PRIMITIVE_OPEN_OUT => open_out(processor, true),
+                    codes::PRIMITIVE_WRITE => write(processor, true),
+                    codes::PRIMITIVE_CLOSE_OUT => close_out(processor, true),
+                    codes::PRIMITIVE_PDF_OBJECT => pdf::object(processor, true),
+                    codes::PRIMITIVE_PDF_X_FORM => {
+                        pdf::form(processor, UnexpandablePrimitive::PdfXForm, true)
+                    }
+                    codes::PRIMITIVE_PDF_X_IMAGE => pdf::image(processor),
+                    _ => {
+                        processor
+                            .back_consumed_word(spelling, exceptional)
+                            .map_err(command_error)?;
+                        Ok(MainControlStep::Continue)
+                    }
+                }
+            })());
+            Ok(ControlFlow::Break(()))
+        })
+        .map_err(command_error)?;
+    match result {
+        Some(result) => result,
+        None => finish_input_boundary(processor, status),
+    }
+}
+
 pub(super) fn token_text<G>(
     context: &CommandContext<'_, G>,
     command: &CommandState<G>,
@@ -49,6 +110,7 @@ pub(super) fn message<G>(
 
 pub(super) fn open_out<G>(
     processor: &mut Processor<'_, '_, G>,
+    immediate: bool,
 ) -> Result<MainControlStep, ExecError> {
     let stream = processor
         .scan_restricted_integer(RestrictedIntegerClass::FourBit)
@@ -57,29 +119,63 @@ pub(super) fn open_out<G>(
     processor.scan_optional_equals().map_err(command_error)?;
     let path = processor.scan_file_name().map_err(command_error)?.packed();
     report_scan(processor)?;
-    processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
-        execution.main_loop_active = false;
-        crate::box_runtime::append_whatsit(
-            &mut execution.modes,
-            context,
-            effects,
-            fuel,
-            Whatsit::OpenOut {
-                slot: StreamSlot::new(stream),
-                path,
-            },
-        )?;
-        Ok(MainControlStep::Continue)
-    })
+    processor.with_execution_owners(
+        |context, command, effects, fuel, _, execution, capabilities, _, _| {
+            execution.main_loop_active = false;
+            if immediate {
+                let target = replay_openout_target(path);
+                context.open_output_stream(StreamSlot::new(stream), target.clone().into());
+                capabilities.invalidate_input_unavailability_for_output(&target);
+                capabilities
+                    .invalidate_font_unavailability_for_output(std::path::Path::new(&target));
+                capabilities.invalidate_pdf_images_for_output(std::path::Path::new(&target));
+                if command.engine_semantics().supports_pdftex() {
+                    context.publish_diagnostic_effects_before_synchronous_print(effects);
+                    let printer = context.printer();
+                    let terminal_open = printer.terminal_offset() > 0;
+                    let log_open = printer.log_offset() > 0;
+                    let (sink, text) = crate::diagnostics::report_openout(
+                        context.int_param(IntParam::TRACING_ONLINE),
+                        terminal_open,
+                        log_open,
+                        stream,
+                        &target,
+                    );
+                    context.publish_openout_notice(effects, sink, &text);
+                }
+                return Ok(MainControlStep::Continue);
+            }
+
+            crate::box_runtime::append_whatsit(
+                &mut execution.modes,
+                context,
+                effects,
+                fuel,
+                Whatsit::OpenOut {
+                    slot: StreamSlot::new(stream),
+                    path,
+                },
+            )?;
+            Ok(MainControlStep::Continue)
+        },
+    )
 }
 
 pub(super) fn close_out<G>(
     processor: &mut Processor<'_, '_, G>,
+    immediate: bool,
 ) -> Result<MainControlStep, ExecError> {
     let stream = processor.scan_write_stream().map_err(command_error)?;
     report_scan(processor)?;
     processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
         execution.main_loop_active = false;
+        if immediate {
+            if let Some(slot) = stream.stream_slot() {
+                context.close_output_stream(slot);
+            }
+            return Ok(MainControlStep::Continue);
+        }
+
         crate::box_runtime::append_whatsit(
             &mut execution.modes,
             context,
@@ -93,15 +189,45 @@ pub(super) fn close_out<G>(
     })
 }
 
-pub(super) fn write<G>(processor: &mut Processor<'_, '_, G>) -> Result<MainControlStep, ExecError> {
+pub(super) fn write<G>(
+    processor: &mut Processor<'_, '_, G>,
+    immediate: bool,
+) -> Result<MainControlStep, ExecError> {
     let stream = processor.scan_write_stream().map_err(command_error)?;
-    let tokens = processor
-        .scan_balanced_text(false)
-        .map_err(command_error)?
-        .tokens;
+    let tokens = if immediate {
+        let tokens = processor
+            .scan_immediate_write_text()
+            .map_err(command_error)?;
+        processor
+            .expand_write_text(tokens)
+            .map_err(command_error)?
+            .tokens
+    } else {
+        processor
+            .scan_balanced_text(false)
+            .map_err(command_error)?
+            .tokens
+    };
     report_scan(processor)?;
     processor.with_execution_owners(|context, command, effects, fuel, _, execution, _, _, _| {
         execution.main_loop_active = false;
+        if immediate {
+            let text = token_text(context, command, &tokens)?;
+            command
+                .discard_attempt_tokens(tokens)
+                .expect("consumed immediate write owner");
+            let mut text = crate::diagnostics::print_text_with_newlinechar(context, &text);
+            text.push('\n');
+            let bytes = command
+                .profile()
+                .encode_output_text(&text)
+                .expect("write text belongs to the active command character domain");
+            if let Some(sink) = immediate_write_sink(stream, context) {
+                context.publish_immediate_write(effects, sink, &text, &bytes);
+            }
+            return Ok(MainControlStep::Continue);
+        }
+
         let tokens = publication::publish_tokens(command, context, tokens)?;
         let tokens = context.node_token_list(&tokens);
         crate::box_runtime::append_whatsit(
@@ -208,22 +334,17 @@ pub(super) fn open_in<G>(
                 let need = ResourceNeed::InputProbe {
                     request: request.clone(),
                 };
-                let Some(provider) = provider.as_deref_mut() else {
+                let Some(outcome) = resources::resolve_provider(
+                    context,
+                    capabilities,
+                    provider.take(),
+                    attempted,
+                    &need,
+                    false,
+                )?
+                else {
                     return Err(ExecError::MissingInputProbe { request });
                 };
-                let resolution = provider.resolve(context, &need);
-                let outcome = capabilities
-                    .install_resource_resolution(&need, resolution, false)
-                    .map_err(|_| {
-                        ExecError::ResourceFailure(Box::new(
-                            tex_command::ResourceFailureDiagnostic {
-                                need: need.clone(),
-                                failure: tex_command::ResourceFailure::message(
-                                    "resource provider returned a mismatched typed answer",
-                                ),
-                            },
-                        ))
-                    })?;
                 match outcome {
                     ResourceInstallOutcome::Fulfilled(ResourceFulfillment::InputProbe {
                         resource,
@@ -236,15 +357,10 @@ pub(super) fn open_in<G>(
                     }
                     ResourceInstallOutcome::Unavailable => break None,
                     ResourceInstallOutcome::Declined => {
-                        if let Some(attempted) = attempted {
-                            *attempted = Some(need);
-                        }
                         return Err(ExecError::MissingInputProbe { request });
                     }
-                    ResourceInstallOutcome::Failed(failure) => {
-                        return Err(ExecError::ResourceFailure(Box::new(
-                            tex_command::ResourceFailureDiagnostic { need, failure },
-                        )));
+                    ResourceInstallOutcome::Failed(_) => {
+                        unreachable!("failed provider outcomes are returned as errors")
                     }
                 }
             };

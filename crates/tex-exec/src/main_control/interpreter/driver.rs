@@ -206,6 +206,54 @@ impl<G> MainControl<G> {
                 observations.committed(CommandObservation::Effect(engine_termination_effect()));
             }
         }
+        if result.is_ok()
+            && let Some(form) = self.execution.prepared_pdf_form.take()
+        {
+            stores
+                .world_mut()
+                .publish_diagnostic_effects_preserving(effects);
+            let demand = stores.provenance_demand();
+            let budget = stores.provenance_budgets().detached_artifact_recipe_bytes;
+            let staged = (|| {
+                let resolver = {
+                    let mut context = stores
+                        .command_context()
+                        .expect("immediate form source admission");
+                    let page = context
+                        .copy_pdf_form_to_page(form.object())
+                        .ok_or(ExecError::PdfXFormVoidBox)?;
+                    DetachedArtifactSourceResolver::capture_page_list(page, &context, demand)
+                };
+                let mut command =
+                    self.command_machine_with_resource_provider(effects, provider.take());
+                let modes = match &command.host_facts {
+                    CommandMachineHostFacts::Live(facts) => facts.modes,
+                    _ => unreachable!("actual form traverses the live mode owner"),
+                };
+                let mut geometry = DetachedShipoutGeometry::default();
+                let staged = publish_immediate_pdf_form(
+                    form,
+                    &mut command,
+                    modes,
+                    stores,
+                    &resolver,
+                    demand,
+                    budget,
+                    &mut geometry,
+                );
+                *provider = command.resource_provider.take();
+                if let Some(geometry) = geometry.0 {
+                    crate::shipout::ShipoutGeometrySink::committed_shipout_geometry(
+                        &mut command.shipout_geometry_sink(),
+                        geometry,
+                    );
+                }
+                staged
+            })();
+            if let Err(error) = staged {
+                result = Err(error);
+            }
+        }
         if result.is_ok() {
             if let Some(shipout) = self.execution.prepared_shipout.take() {
                 stores

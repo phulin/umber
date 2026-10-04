@@ -139,21 +139,18 @@ pub use profile::{
 };
 pub use scanners::{
     AlignmentCellOpening, ExpandedWriteText, FileNameComponents, FontLoadRequest, FontSizeRecovery,
-    GeneratedFontKind, HyphenationDataKind, ImmediateExtension, InternalValue,
-    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
+    GeneratedFontKind, HyphenationDataKind, InternalValue, MathFamilySize, MathFieldBody,
     MathFieldEpisode, MathFractionKind, MathScriptKind, PdfActionDestination, PdfActionIdentifier,
     PdfActionSpec, PdfActionTarget, PdfAnnotationRequest, PdfColorStackActionRequest,
     PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest,
     PdfImagePageBox, PdfImagePageSelection, PdfImageRequest, PdfNavigationRequest,
     PdfObjectRequest, PdfOutlineRequest, PdfStartLinkRequest, PdfThreadRequest, RegisteredInput,
     RestrictedIntegerClass, ScalarProvenance, ScannedBalancedText, ScannedBoxConstruction,
-    ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload, ScannedCharacterDefinition,
-    ScannedDisplayDiagnostic, ScannedFileName, ScannedGeneratedFontDefinition,
-    ScannedHyphenationData, ScannedInsertConstruction, ScannedLeaderPayload,
+    ScannedBoxKind, ScannedCharacterDefinition, ScannedDisplayDiagnostic, ScannedFileName,
+    ScannedGeneratedFontDefinition, ScannedHyphenationData, ScannedInsertConstruction,
     ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFraction,
-    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedScalar,
-    ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, TokenRequest,
-    WriteStreamSelector,
+    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedScalar, ScannedVSplit,
+    StructuredProvenance, TokenRequest, WriteStreamSelector,
 };
 pub use snapshot::{
     CommandRestoreError, CommandSummary, CommandSummaryError, PreparedCommandRestore,

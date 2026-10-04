@@ -867,3 +867,21 @@ original prefixes. Full checkpoints still seal and retain their real arena
 owners, and restoration preserves owner/root/truncation order. Source shaping,
 paragraphs, and other actual multi-node producers retain batch builders.
 There is no alternate single-node path or compatibility adapter.
+
+## Native box operands and immediate I/O
+
+The live interpreter selects `scan_box` heads directly. Its caller supplies
+the actual TeX destination: the current list with a shift, a register and
+resolved assignment scope, shipout, or leader glue. The scanner does not
+construct a box-command request or a second operand union. A construction
+keeps its destination only in the live box group. An existing box moves
+directly to its final destination. Lastbox rewrites its source list before
+the destination arena interval opens. Exclusive register handoffs do not
+open and immediately release a construction interval.
+
+Immediate I/O executes directly through the admitted World. Expanded write
+text consumes attempt storage into its final print, with traces published
+before the text. Immediate forms keep only the actual prepared form record
+until their required World traversal; checkpoint and format admission reject
+that live output boundary. There is no deferred extension request or print
+queue for successful ordinary execution.

@@ -273,7 +273,9 @@ list or scanner application adapter survives. Box/copy and PDF-reference
 operands consume the native integer directly, without index/result wrappers.
 Read scanning returns the actual target and final published definition owner;
 input opening/closing consumes its operands in place. No stream request union
-or copied read scope survives.
+or copied read scope survives. Math-left boundaries consume the actual
+delimiter with no duplicate kind/request. Their groups unsave in the live
+processor, and the final right noad appends into the real closed math tail.
 
 Page/box/node/PDF lifetimes remain their specialized exclusive region and
 version-root contracts. `.6` deletes redundant group protocols and `.15` deletes operation protocols while
@@ -450,3 +452,9 @@ Active mathcode expansion uses its already current native spelling, actual macro
 Resident rows store the actual packed frame beside their token owner. The one-field TokenRowHeader wrapper is deleted; policy projections borrow the actual row. Cross-crate inlining of the small checked token-frame initializer avoids temporary frame return/copies during macro activation. Row admission, argument publication, retirement and native checkpoint copies retain their existing ownership and accounting.
 
 The authoritative InputLevel contains one packed frame and one InputStorage union, including its sole boxed SourceSlot. SourceLevel, ResidentTokenRow, ResidentTokenStorage and ResidentSourceTop are deleted. MacroBodyCursor retains the actual immutable definition and final argument region; parameter input borrows that region. SourceSlot advances with the real packed frame, and full checkpoint copies retain only their admitted source or durable/traced word owners. No additional row wrapper, source view, compatibility accessor or native lifetime counter is introduced.
+
+Native immediate writes and image attributes render attempt tokens directly
+into their final print or PDF entry. No retained token-list publication or
+intermediate extension request precedes that consumption. Native box operands
+select an actual destination through the canonical reader; exclusive register
+transfers allocate neither a command payload nor a construction interval.

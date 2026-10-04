@@ -10,14 +10,11 @@ use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentIdentity, AlignmentRequest,
     AlignmentRequestResult, CommandError, CommandHostCapabilities, CommandHostContext,
     CommandProcessor, CommandProfile, CommandState, FatalError, FontLoadRequest, FontResource,
-    GeneratedFontKind, HyphenationDataKind, ImmediateExtension, MathDelimiterBoundary,
-    MathDelimiterBoundaryKind, MathFieldBody, MathFractionKind, MathScriptKind, PdfImageRequest,
+    GeneratedFontKind, MathFieldBody, MathFractionKind, MathScriptKind, PdfImageRequest,
     PdfImageResource, PreparedAlignmentCellTemplates, RegisteredSourceKind, ResourceFulfillment,
     ResourceInstallOutcome, ResourceNeed, ResourceProvider, RestrictedIntegerClass,
-    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
-    ScannedDisplayDiagnostic, ScannedGeneratedFontDefinition, ScannedInsertConstruction,
-    ScannedLeaderPayload, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit, SourceRegistration,
-    SourceRegistrationError,
+    ScannedBoxConstruction, ScannedBoxKind, ScannedGeneratedFontDefinition,
+    ScannedInsertConstruction, ScannedPackingSpec, SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -43,8 +40,8 @@ use tex_state::token::{Catcode, Token};
 use tex_state::token::{OriginId, TracedTokenWord};
 use tex_state::{
     CommandContext, DependencyEngineField, DependencyKey, DependencyRegionError, DependencyValue,
-    GroupKind, InputReadState, ObservedDependency, ParagraphShapeLine, PenaltyArrayKind, PrintSink,
-    StreamSlot, TrackedRegionBarrier, Universe,
+    GroupKind, ObservedDependency, ParagraphShapeLine, PenaltyArrayKind, PrintSink, StreamSlot,
+    TrackedRegionBarrier, Universe,
 };
 use tex_typeset::PackSpec;
 
@@ -71,8 +68,6 @@ mod executor_facts;
 use execution_state::ExecutionState;
 mod host_boundaries;
 mod interpreter;
-mod leader_values;
-mod resources;
 mod root_source;
 mod semantic;
 mod semantic_owners;
@@ -83,7 +78,6 @@ use cold::*;
 use delivery::*;
 use executor_facts::ExecutorHostFacts;
 use host_boundaries::*;
-use leader_values::*;
 
 fn font_metrics(resource: &FontResource) -> Option<&tex_state::FileContent> {
     match resource {
@@ -179,15 +173,6 @@ fn next_non_blank_x_token_into<G, Facts: tex_command::CommandHostFacts<G>>(
         }
         *destination = None;
     }
-}
-
-#[derive(Debug)]
-struct ImmediatePrint {
-    sink: PrintSink,
-    text: String,
-    encoded: Option<Vec<u8>>,
-    max_print_line: usize,
-    ensure_line_start: bool,
 }
 
 #[derive(Debug)]
@@ -404,8 +389,6 @@ struct ActiveReplayAlignment<G> {
 
 #[derive(Debug)]
 struct ReplayBoxes<G> {
-    pending_setbox: Option<PendingSetBox>,
-    pending_shipout: Option<tex_state::node_region::PageClosureBuildMark>,
     pending_leader: Option<(GlueKind, LeaderPayload)>,
     active_boxes: Vec<ActiveReplayBox>,
     suspended_alignments: Vec<ActiveReplayAlignment<G>>,
@@ -418,8 +401,6 @@ struct ReplayBoxes<G> {
 impl<G> Default for ReplayBoxes<G> {
     fn default() -> Self {
         Self {
-            pending_setbox: None,
-            pending_shipout: None,
             pending_leader: None,
             active_boxes: Vec::new(),
             suspended_alignments: Vec::new(),
@@ -444,9 +425,7 @@ impl<G> ReplayBoxes<G> {
     }
 
     fn format_dump_is_quiescent(&self) -> bool {
-        self.pending_setbox.is_none()
-            && self.pending_shipout.is_none()
-            && self.pending_leader.is_none()
+        self.pending_leader.is_none()
             && self.active_boxes.is_empty()
             && self.suspended_alignments.is_empty()
             && !self.recovery_simple_group_pending
@@ -586,7 +565,6 @@ struct CommandMachine<'a, 'provider, G> {
     /// commands whose whole behavior it selects.
     initex: bool,
     emit_dvi_override: Option<bool>,
-    immediate_prints: &'a mut Vec<ImmediatePrint>,
     prepared_shipout: &'a mut Option<PreparedShipout>,
     output_routine_active: bool,
 }
@@ -1101,9 +1079,9 @@ impl<G> MainControl<G> {
             && self.operation_observations.is_none()
             && self.execution.operation_receipt_start.is_none()
             && self.execution.prepared_shipout.is_none()
+            && self.execution.prepared_pdf_form.is_none()
             && self.execution.pending_job_end.is_none()
             && !self.execution.page_region_succession_pending
-            && self.execution.immediate_prints.is_empty()
             && self.execution.pending_resource_site.is_none()
             && !self.execution.halted
             && !self.execution.boxes.output_routine_active
@@ -1396,10 +1374,10 @@ impl<G> MainControl<G> {
             || self.operation_observations.is_some()
             || self.execution.operation_receipt_start.is_some()
             || self.execution.prepared_shipout.is_some()
+            || self.execution.prepared_pdf_form.is_some()
             || self.execution.pending_job_end.is_some()
             || self.execution.page_region_succession_pending
             || !self.execution.prepared_dvi_pages.is_empty()
-            || !self.execution.immediate_prints.is_empty()
             || self.execution.pending_resource_site.is_some()
         {
             return Err(crate::FormatDumpError::LiveExecutorState);
@@ -1611,8 +1589,8 @@ impl<G> MainControl<G> {
         self.execution.error_operation_committed = false;
         self.execution.completed_replay_episode = None;
         self.execution.prepared_dvi_pages = PreparedDviPages::default();
-        self.execution.immediate_prints.clear();
         self.execution.prepared_shipout = None;
+        self.execution.prepared_pdf_form = None;
         self.execution.pending_job_end = None;
         self.execution.page_region_succession_pending = false;
         self.execution.paragraph_checkpoint_demand = None;
@@ -1960,7 +1938,6 @@ impl<G> MainControl<G> {
             shown_mode: &mut self.execution.shown_mode,
             initex: self.execution.initex,
             emit_dvi_override: self.execution.emit_dvi_override,
-            immediate_prints: &mut self.execution.immediate_prints,
             prepared_shipout: &mut self.execution.prepared_shipout,
             output_routine_active: self.execution.boxes.output_routine_active,
         }
@@ -2033,9 +2010,9 @@ impl<G> MainControl<G> {
             && self.operation_observations.is_none()
             && self.execution.operation_receipt_start.is_none()
             && self.execution.prepared_shipout.is_none()
+            && self.execution.prepared_pdf_form.is_none()
             && self.execution.pending_job_end.is_none()
             && !self.execution.page_region_succession_pending
-            && self.execution.immediate_prints.is_empty()
             && self.execution.pending_resource_site.is_none()
             && !self.execution.halted
             && !self.execution.boxes.output_routine_active
@@ -2775,7 +2752,6 @@ impl<G> MainControl<G> {
                         shown_mode: &mut self.execution.shown_mode,
                         initex: self.execution.initex,
                         emit_dvi_override: self.execution.emit_dvi_override,
-                        immediate_prints: &mut self.execution.immediate_prints,
                         prepared_shipout: &mut self.execution.prepared_shipout,
                         output_routine_active: self.execution.boxes.output_routine_active,
                     };
@@ -3665,162 +3641,6 @@ impl<G> MainControl<G> {
         // build_page has emitted its tracingpages state.
         self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostic_effects, diagnostics)
-    }
-
-    fn apply_math_delimiter(
-        &mut self,
-        boundary: MathDelimiterBoundary,
-        stores: &mut Universe<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<MainControlStep, ExecError> {
-        match boundary.kind {
-            MathDelimiterBoundaryKind::Left => {
-                // TeX82 §1191's `push_math(math_left_group)` opens both a
-                // mode level and a save-stack level. Keeping those owners
-                // paired lets §1193 route a premature `$` through §1027's
-                // `off_save`, which inserts `\right.` before retrying it.
-                enter_group(
-                    &mut stores.command_context().expect("math-left admission"),
-                    &mut self.command,
-                    diagnostic_effects,
-                    GroupKind::MathLeft,
-                );
-                self.execution.modes.push_at_line(
-                    Mode::Math,
-                    self.command
-                        .current_file_line_number()
-                        .try_into()
-                        .unwrap_or(i32::MAX),
-                )?;
-                self.execution.active_math_left_boundaries.push(false);
-                self.execution.modes.current_list_mutation().push(
-                    &mut stores.command_context().expect("math-left admission"),
-                    Node::MathNoad(MathNoad::new(
-                        NoadKind::LeftDelimiter {
-                            delimiter: boundary.delimiter.code,
-                        },
-                        MathField::Empty,
-                    )),
-                );
-            }
-            MathDelimiterBoundaryKind::Middle => {
-                if left_group_open(&self.execution.modes, stores) {
-                    // e-TeX 2.6 [48.1191] treats `\middle` as a boundary
-                    // between two consecutive `math_left_group` segments:
-                    // `fin_mlist; unsave; push_math(math_left_group)`.  In
-                    // particular, assignments made since the preceding
-                    // `\left` or `\middle` are restored before the next
-                    // segment starts.
-                    let content = take_finished_math_list(&mut self.execution.modes, stores)?;
-                    let mut context = stores.command_context().expect("math-middle admission");
-                    let _ = crate::box_runtime::commit_current_list(
-                        &mut self.execution.modes,
-                        &mut context,
-                        diagnostic_effects,
-                        self.fuel.fuel_mut(),
-                    )?;
-                    unsave_group(
-                        &mut context,
-                        &mut self.command_machine(diagnostic_effects),
-                        GroupKind::MathLeft,
-                    )
-                    .map_err(|_| ExecError::MissingToken {
-                        context: "math left group",
-                    })?;
-                    self.execution.active_math_left_boundaries.pop();
-
-                    enter_group(
-                        &mut context,
-                        &mut self.command,
-                        diagnostic_effects,
-                        GroupKind::MathLeft,
-                    );
-                    self.execution.modes.push_at_line(
-                        Mode::Math,
-                        self.command
-                            .current_file_line_number()
-                            .try_into()
-                            .unwrap_or(i32::MAX),
-                    )?;
-                    self.execution.active_math_left_boundaries.push(true);
-                    let content = context.reclaim_unique_page_list(content);
-                    let mut list = self.execution.modes.current_list_mutation();
-                    list.append_unique_list(&mut context, content);
-                    list.push(
-                        &mut context,
-                        Node::MathNoad(MathNoad::new(
-                            NoadKind::MiddleDelimiter {
-                                delimiter: boundary.delimiter.code,
-                            },
-                            MathField::Empty,
-                        )),
-                    );
-                } else {
-                    // etex.ch [48.1192] splits §1192's report by noad type.
-                    let mut command_context = stores.command_context().expect("live generation");
-                    let context = self.command.output_open_context(&command_context);
-                    report_escaped_error(
-                        &mut command_context,
-                        diagnostic_effects,
-                        "Extra ",
-                        "middle",
-                        "",
-                        &["I'm ignoring a \\middle that had no matching \\left."],
-                        context,
-                    )?;
-                }
-            }
-            MathDelimiterBoundaryKind::Right => {
-                if !left_group_open(&self.execution.modes, stores) {
-                    // TeX82 §1192's `<Try to recover from mismatched \right>`
-                    // in its `math_shift_group` arm.
-                    let mut command_context = stores.command_context().expect("live generation");
-                    let context = self.command.output_open_context(&command_context);
-                    report_escaped_error(
-                        &mut command_context,
-                        diagnostic_effects,
-                        "Extra ",
-                        "right",
-                        "",
-                        &["I'm ignoring a \\right that had no matching \\left."],
-                        context,
-                    )?;
-                    return Ok(MainControlStep::Continue);
-                }
-                let content = take_finished_math_list(&mut self.execution.modes, stores)?;
-                let mut context = stores.command_context().expect("math-right admission");
-                let _ = crate::box_runtime::commit_current_list(
-                    &mut self.execution.modes,
-                    &mut context,
-                    diagnostic_effects,
-                    self.fuel.fuel_mut(),
-                )?;
-                unsave_group(
-                    &mut context,
-                    &mut self.command_machine(diagnostic_effects),
-                    GroupKind::MathLeft,
-                )
-                .map_err(|_| ExecError::MissingToken {
-                    context: "math left group",
-                })?;
-                self.execution.active_math_left_boundaries.pop();
-                let boundary = context.publish_page_nodes([Node::MathNoad(MathNoad::new(
-                    NoadKind::RightDelimiter {
-                        delimiter: boundary.delimiter.code,
-                    },
-                    MathField::Empty,
-                ))]);
-                let content = context.compose_page_node_sequences(&[content, boundary]);
-                self.execution.modes.current_list_mutation().push(
-                    &mut context,
-                    Node::MathNoad(MathNoad::new(
-                        NoadKind::Normal(NoadClass::Inner),
-                        MathField::SubMlist(content),
-                    )),
-                );
-            }
-        }
-        Ok(MainControlStep::Continue)
     }
 
     fn command_scan_math_character(
@@ -4835,42 +4655,6 @@ fn report_unpaired_display_end<G>(
         context,
     )?;
     Ok(())
-}
-
-fn left_group_open<G>(modes: &ModeNest, stores: &mut Universe<G>) -> bool {
-    // e-TeX etex.ch [48.1192] admits `\middle` through the same
-    // `math_left_group` case as `\right`.  Seeing a leading left noad is not
-    // sufficient: a simple group nested inside that left/right group is an
-    // invalid context and must take the `Extra \middle` recovery arm.
-    if stores
-        .command_context()
-        .expect("live generation")
-        .innermost_group_kind()
-        != Some(GroupKind::MathLeft)
-    {
-        return false;
-    }
-    let starts_left_node = |node: Option<tex_state::node_view::NodeView<'_>>| {
-        matches!(
-            node,
-            Some(tex_state::node_view::NodeView::MathNoad(MathNoad {
-                kind: NoadKind::LeftDelimiter { .. },
-                ..
-            }))
-        )
-    };
-    let context = stores.command_context().expect("math-left query admission");
-    starts_left_node(modes.current_list().nodes(&context).first())
-        || modes
-            .current_list()
-            .incomplete_fraction()
-            .is_some_and(|fraction| {
-                context
-                    .page_node_span(fraction.numerator)
-                    .ok()
-                    .and_then(|list| list.nodes().first())
-                    .is_some_and(|node| starts_left_node(Some(node)))
-            })
 }
 
 /// Copy-small page-output state captured while the operation's authoritative

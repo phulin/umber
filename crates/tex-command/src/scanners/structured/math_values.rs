@@ -111,22 +111,6 @@ pub struct MathFieldEpisode {
     pub provenance: StructuredProvenance,
 }
 
-/// The structural delimiter boundary selected by `\left`, `\right`, or
-/// e-TeX's `\middle`. The corresponding delimiter scan is complete before
-/// this value crosses the command boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MathDelimiterBoundary {
-    pub kind: MathDelimiterBoundaryKind,
-    pub delimiter: ScannedMathDelimiter,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MathDelimiterBoundaryKind {
-    Left,
-    Right,
-    Middle,
-}
-
 /// The generalized-fraction form selected before its numerator is frozen.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MathFractionKind {

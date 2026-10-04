@@ -174,18 +174,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         Ok(self.scan_left_brace()?.is_none())
     }
 
-    /// Completes the delimiter immediately following a structural math
-    /// boundary (`\left`, `\right`, or `\middle`).
-    pub fn scan_math_delimiter_boundary(
-        &mut self,
-        kind: MathDelimiterBoundaryKind,
-    ) -> Result<MathDelimiterBoundary, CommandError> {
-        Ok(MathDelimiterBoundary {
-            kind,
-            delimiter: self.scan_delimiter(false)?,
-        })
-    }
-
     /// Scans TeX82 §436's `scan_fifteen_bit_int` math-character number.
     pub fn scan_math_character(&mut self) -> Result<ScannedMathCharacter, CommandError> {
         let result = self.scan_restricted_integer(RestrictedIntegerClass::FifteenBit);

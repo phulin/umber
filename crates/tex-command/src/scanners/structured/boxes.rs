@@ -1,32 +1,6 @@
 use super::*;
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
-    /// Scans TeX82 §1241's complete `\setbox` assignment operand.
-    ///
-    /// TeX.web's `prefixed_command` dispatches `set_box` to §433's
-    /// `scan_eight_bit_int` then `scan_optional_equals`, followed immediately
-    /// by the `set_box_allowed` test. Its false branch reports directly,
-    /// without fetching a box command; its true branch enters §1084's
-    /// `scan_box`. None of the scanned operand returns to main control.
-    /// e-TeX 2.6 [49.1241] widens only the target to `scan_register_num` while
-    /// retaining the same complete operand ownership and backup transitions.
-    pub fn scan_setbox_assignment(
-        &mut self,
-        set_box_allowed: bool,
-    ) -> Result<ScannedSetBoxAssignment, CommandError> {
-        let index = self.scan_profile_register_index()?;
-        let result = self.scan_optional_equals();
-        result?;
-        let path = if set_box_allowed {
-            ScannedSetBoxPath::Payload(self.scan_box_payload()?)
-        } else {
-            ScannedSetBoxPath::Forbidden {
-                error_context: self.command.output_open_context(self.state),
-            }
-        };
-        Ok(ScannedSetBoxAssignment { index, path })
-    }
-
     /// Scans TeX82 §1082's `\\vsplit <number> to <dimen>` prefix.
     ///
     /// e-TeX 2.6 [47.1082] widens the source box selector from
@@ -172,49 +146,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             tokens: scanned.replacement_text,
             provenance,
         })
-    }
-
-    /// Scans the payload prefix of TeX82 §1090's leader commands.
-    pub fn scan_leader_payload(&mut self) -> Result<ScannedLeaderPayload, CommandError> {
-        let mut destination = None;
-        match self.request_expanded_token(&mut destination)? {
-            DeliveryStatus::End => return Ok(ScannedLeaderPayload::Missing),
-            DeliveryStatus::Command => {}
-            _ => return Err(CommandError::input_invariant()),
-        };
-        let command = destination
-            .take()
-            .ok_or_else(|| CommandError::input_invariant())?;
-        match static_meaning(command.meaning()) {
-            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)) => {
-                let result = self.scan_eight_bit_register_index();
-                Ok(ScannedLeaderPayload::BoxRegister {
-                    index: result?,
-                    copy: false,
-                })
-            }
-            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy)) => {
-                let result = self.scan_eight_bit_register_index();
-                Ok(ScannedLeaderPayload::BoxRegister {
-                    index: result?,
-                    copy: true,
-                })
-            }
-            Some(Meaning::UnexpandablePrimitive(
-                primitive @ (UnexpandablePrimitive::HBox
-                | UnexpandablePrimitive::VBox
-                | UnexpandablePrimitive::VTop),
-            )) => Ok(ScannedLeaderPayload::Construction(
-                self.scan_box_construction(primitive)?,
-            )),
-            Some(Meaning::UnexpandablePrimitive(
-                primitive @ (UnexpandablePrimitive::HRule | UnexpandablePrimitive::VRule),
-            )) => Ok(ScannedLeaderPayload::Rule(self.scan_rule_spec(primitive)?)),
-            _ => {
-                self.back_input(command)?;
-                Ok(ScannedLeaderPayload::Missing)
-            }
-        }
     }
 
     /// Scans the complete expanded specification of a TeX82 rule.
@@ -423,95 +354,5 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             pre,
             reserved_class_context,
         })
-    }
-
-    /// Scans TeX82 §1073's box-shift prefix (`\raise`, `\lower`, `\moveleft`,
-    /// `\moveright`) once the caller has already validated `abs(mode)+cur_cmd`
-    /// legality (tex.web's "Forbidden cases": `vmode+vmove`, `hmode+hmove`,
-    /// and `mmode+hmove` never reach `scan_normal_dimen` at all).
-    ///
-    /// The main-control case reads: `t:=cur_chr; scan_normal_dimen; if t=0
-    /// then scan_box(cur_val) else scan_box(-cur_val)`. `\lower`/`\moveright`
-    /// have `chr_code=0` and keep the scanned dimension; `\raise`/`\moveleft`
-    /// have `chr_code=1` and negate it. This is `box_context`, later stored
-    /// verbatim as `shift_amount(cur_box)`.
-    pub fn scan_box_shift(
-        &mut self,
-        primitive: UnexpandablePrimitive,
-    ) -> Result<ScannedBoxShift, CommandError> {
-        let result = self.scan_dimension();
-        let amount = result?;
-        let delta = match primitive {
-            UnexpandablePrimitive::Lower | UnexpandablePrimitive::MoveRight => amount,
-            UnexpandablePrimitive::Raise | UnexpandablePrimitive::MoveLeft => -amount,
-            _ => return Err(CommandError::input_invariant()),
-        };
-        let payload = self.scan_box_payload()?;
-        Ok(ScannedBoxShift { delta, payload })
-    }
-
-    /// Scans TeX82 §1084's `scan_box` operand for a box-shift prefix: `scan_box`
-    /// begins with "the next non-blank non-relax" token (§1084's own
-    /// `get_x_token` loop), then requires `cur_cmd=make_box`. Since `box_context`
-    /// here is always a signed dimension (bounded by `max_dimen`), it can never
-    /// reach `leader_flag`, so `scan_box`'s rule-spec branch never applies to a
-    /// box-shift operand -- only `\hbox`/`\vbox`/`\vtop`, `\box`, `\copy`,
-    /// `\lastbox`, and `\vsplit` are accepted, matching `scan_box_value`'s
-    /// `make_box` family exactly. Anything else is `scan_box`'s "A <box> was
-    /// supposed to be here" recovery: the rejected command is backed up
-    /// (`back_error`) for ordinary replay, and replay alone reports the
-    /// diagnostic since it needs a `Universe` sink.
-    fn scan_box_payload(&mut self) -> Result<ScannedBoxShiftPayload, CommandError> {
-        let mut destination = None;
-        loop {
-            match self.request_expanded_token(&mut destination)? {
-                DeliveryStatus::End => return Ok(ScannedBoxShiftPayload::Missing),
-                DeliveryStatus::Command => {}
-                _ => return Err(CommandError::input_invariant()),
-            };
-            let command = destination
-                .take()
-                .ok_or_else(|| CommandError::input_invariant())?;
-            match static_meaning(command.meaning()) {
-                Some(Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                })
-                | Some(Meaning::Relax) => continue,
-                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)) => {
-                    return Ok(ScannedBoxShiftPayload::BoxRegister {
-                        index: self.scan_profile_register_index()?,
-                        copy: false,
-                    });
-                }
-                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy)) => {
-                    return Ok(ScannedBoxShiftPayload::BoxRegister {
-                        index: self.scan_profile_register_index()?,
-                        copy: true,
-                    });
-                }
-                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox)) => {
-                    return Ok(ScannedBoxShiftPayload::LastBox {
-                        error_context: Box::new(self.diagnostic_context_coordinate()),
-                    });
-                }
-                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit)) => {
-                    return Ok(ScannedBoxShiftPayload::VSplit(self.scan_vsplit()?));
-                }
-                Some(Meaning::UnexpandablePrimitive(
-                    primitive @ (UnexpandablePrimitive::HBox
-                    | UnexpandablePrimitive::VBox
-                    | UnexpandablePrimitive::VTop),
-                )) => {
-                    return Ok(ScannedBoxShiftPayload::Construction(
-                        self.scan_box_construction(primitive)?,
-                    ));
-                }
-                _ => {
-                    self.back_input(command)?;
-                    return Ok(ScannedBoxShiftPayload::Missing);
-                }
-            }
-        }
     }
 }

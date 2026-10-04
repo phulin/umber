@@ -35,9 +35,8 @@ fn scan_math_delimiter(tokens: impl IntoIterator<Item = Token>) -> (u32, u32, Op
         );
         let expected_code = processor.state.delcode('.') as u32;
         let code = processor
-            .scan_math_delimiter_boundary(super::MathDelimiterBoundaryKind::Left)
+            .scan_delimiter(false)
             .expect("delimiter boundary")
-            .delimiter
             .code;
         let mut destination = None;
         let next = match processor
@@ -154,9 +153,9 @@ fn math_delimiter_consumes_one_expanded_command_before_adjacent_source() {
         );
         let expected_code = processor.state.delcode('.') as u32;
         let scanned = processor
-            .scan_math_delimiter_boundary(super::MathDelimiterBoundaryKind::Left)
+            .scan_delimiter(false)
             .expect("macro delimiter boundary");
-        assert_eq!(scanned.delimiter.code, expected_code);
+        assert_eq!(scanned.code, expected_code);
 
         let mut destination = None;
         assert_eq!(
@@ -191,11 +190,9 @@ fn math_delimiter_recovery_backs_up_only_the_rejected_operand() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let scanned = processor
-            .scan_math_delimiter_boundary(super::MathDelimiterBoundaryKind::Left)
-            .expect("delimiter recovery");
-        assert_eq!(scanned.delimiter.code, 0);
-        assert!(scanned.delimiter.missing_delimiter);
+        let scanned = processor.scan_delimiter(false).expect("delimiter recovery");
+        assert_eq!(scanned.code, 0);
+        assert!(scanned.missing_delimiter);
 
         let mut destination = None;
         assert_eq!(

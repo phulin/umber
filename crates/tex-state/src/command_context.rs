@@ -34,6 +34,7 @@ mod page_builder;
 mod page_material;
 pub use page_material::PageNodeSource;
 mod pdf_commands;
+mod stream_output;
 #[cfg(test)]
 mod tests;
 

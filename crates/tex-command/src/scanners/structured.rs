@@ -57,9 +57,8 @@ mod token_requests;
 pub use token_requests::TokenRequest;
 
 pub use box_values::{
-    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
-    ScannedDisplayDiagnostic, ScannedInsertConstruction, ScannedLeaderPayload, ScannedPackingSpec,
-    ScannedRuleSpec, ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedVSplit,
+    ScannedBoxConstruction, ScannedBoxKind, ScannedDisplayDiagnostic, ScannedInsertConstruction,
+    ScannedPackingSpec, ScannedRuleSpec, ScannedVSplit,
 };
 pub use definition_values::{
     ExpandedWriteText, FontLoadRequest, FontSizeRecovery, GeneratedFontKind, PdfActionDestination,
@@ -69,13 +68,11 @@ pub use definition_values::{
 };
 use input_values::FILE_NAME_POOL_CAPACITY;
 pub use input_values::{
-    AlignmentCellOpening, FileNameComponents, ImmediateExtension, RegisteredInput, ScannedFileName,
-    WriteStreamSelector,
+    AlignmentCellOpening, FileNameComponents, RegisteredInput, ScannedFileName, WriteStreamSelector,
 };
 pub use math_values::{
-    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
-    MathFieldEpisode, MathFractionKind, MathScriptKind, ScannedMathCharacter, ScannedMathDelimiter,
-    ScannedMathFraction,
+    MathFamilySize, MathFieldBody, MathFieldEpisode, MathFractionKind, MathScriptKind,
+    ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFraction,
 };
 pub use pdf_values::{
     PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,

@@ -55,6 +55,9 @@ Definition-owned parameter programs expose literal delimiter views only for none
   reconstructing the context. Page-material allocation/copy counters remain
   observable through this boundary so retained-range zero-copy gates are not
   inferred from a separate arena owner.
+- `src/command_context/stream_output.rs`: immediate write and openout notice
+  publication on the actual World, with preceding diagnostics and canonical
+  line framing. No deferred print record is constructed.
 - `src/command_context/pdf_commands.rs`: PDF ledger, form, font-resource,
   color-stack, navigation and actual World random-seed/timer mutations of the
   same admitted command borrow. These job-state changes share the existing

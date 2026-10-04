@@ -22,7 +22,6 @@ pub use generated::{
 };
 pub(crate) use parameters::fresh_parameter_defaults;
 pub use parameters::{PrimitiveParameterView, primitive_parameter_views};
-pub(crate) use prefixed::is_prefixed_command;
 pub use prefixed::is_prefixed_command as exceeds_max_non_prefixed_command;
 pub use registry::{
     install_etex_expandable_primitives, install_etex_unexpandable_primitives,
