@@ -66,15 +66,6 @@ pub enum MathScriptKind {
     Superscript,
 }
 
-/// A script marker whose following math field is collected by the canonical
-/// math-field episode.  Keeping the marker typed prevents replay from ever
-/// reinterpreting `^` or `_` as source tokens.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ScannedMathScript {
-    pub kind: MathScriptKind,
-    pub provenance: StructuredProvenance,
-}
-
 /// How the stomach must realize one completed math field.
 ///
 /// TeX82 §1151's `scan_math` has exactly two outcomes. An unbraced field is
@@ -198,7 +189,7 @@ pub enum MathTextFieldKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MathRequest {
     TextField(MathTextFieldKind),
-    Script(ScannedMathScript),
+    Script(MathScriptKind),
     Limits(MathLimitKind),
     Fraction(ScannedMathFraction),
     Choice,

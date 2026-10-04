@@ -715,147 +715,138 @@ impl<G> DirectDispatch<'_, '_, G> {
                     // independently consulting live state at a later seam.
                     self.suppress_left_boundary = suppress_left_boundary;
 
-                    if matches!(mode, Mode::Math | Mode::DisplayMath)
-                        && let Some(
+                    if matches!(mode, Mode::Math | Mode::DisplayMath) {
+                        if let Some(
                             style @ (codes::PRIMITIVE_DISPLAY_STYLE
                             | codes::PRIMITIVE_TEXT_STYLE
                             | codes::PRIMITIVE_SCRIPT_STYLE
                             | codes::PRIMITIVE_SCRIPT_SCRIPT_STYLE),
                         ) = command_code
-                    {
-                        return retained_completed!(
-                            receipts,
-                            |context, _state, _effects, _fuel, _observer, execution| {
-                                native::append_math_style(context, execution, style);
-                                Ok(ReplayStep::Continue)
-                            }
-                        );
-                    }
+                        {
+                            return retained_completed!(
+                                receipts,
+                                |context, _state, _effects, _fuel, _observer, execution| {
+                                    native::append_math_style(context, execution, style);
+                                    Ok(ReplayStep::Continue)
+                                }
+                            );
+                        }
 
-                    if matches!(mode, Mode::Math | Mode::DisplayMath)
-                        && let ResolvedMeaning::Static(Meaning::MathCharGiven(code)) =
+                        if let ResolvedMeaning::Static(Meaning::MathCharGiven(code)) =
                             command.meaning()
-                    {
-                        let origin = command.origin();
-                        return retained_completed!(
-                            receipts,
-                            |context, _state, _effects, _fuel, _observer, execution| {
-                                native::append_math_character_code(
-                                    context,
-                                    execution,
-                                    u32::from(code),
-                                    origin,
-                                )
-                                .map(|()| ReplayStep::Continue)
-                            }
-                        );
-                    }
+                        {
+                            let origin = command.origin();
+                            return retained_completed!(
+                                receipts,
+                                |context, _state, _effects, _fuel, _observer, execution| {
+                                    native::append_math_character_code(
+                                        context,
+                                        execution,
+                                        u32::from(code),
+                                        origin,
+                                    )
+                                    .map(|()| ReplayStep::Continue)
+                                }
+                            );
+                        }
 
-                    if matches!(mode, Mode::Math | Mode::DisplayMath)
-                        && let Some(
+                        if let Some(
                             numeric @ (codes::PRIMITIVE_MATH_CHAR | codes::PRIMITIVE_DELIMITER),
                         ) = command_code
-                    {
-                        let class = if numeric == codes::PRIMITIVE_MATH_CHAR {
-                            RestrictedIntegerClass::FifteenBit
-                        } else {
-                            RestrictedIntegerClass::TwentySevenBit
-                        };
-                        let scanned = processor
-                            .scan_restricted_integer(class)
-                            .map_err(command_error)
-                            .map_err(|error| scan_error(error, scan_origin))?;
-                        let value = scanned.value as u32;
-                        let value = if numeric == codes::PRIMITIVE_DELIMITER {
-                            value >> 12
-                        } else {
-                            value
-                        };
-                        return retained_completed!(
-                            receipts,
-                            |context, _state, _effects, _fuel, _observer, execution| {
-                                native::append_math_character_code(
-                                    context,
-                                    execution,
-                                    value,
-                                    scanned.provenance.primary,
-                                )
-                                .map(|()| ReplayStep::Continue)
-                            }
-                        );
-                    }
+                        {
+                            let class = if numeric == codes::PRIMITIVE_MATH_CHAR {
+                                RestrictedIntegerClass::FifteenBit
+                            } else {
+                                RestrictedIntegerClass::TwentySevenBit
+                            };
+                            let scanned = processor
+                                .scan_restricted_integer(class)
+                                .map_err(command_error)
+                                .map_err(|error| scan_error(error, scan_origin))?;
+                            let value = scanned.value as u32;
+                            let value = if numeric == codes::PRIMITIVE_DELIMITER {
+                                value >> 12
+                            } else {
+                                value
+                            };
+                            return retained_completed!(
+                                receipts,
+                                |context, _state, _effects, _fuel, _observer, execution| {
+                                    native::append_math_character_code(
+                                        context,
+                                        execution,
+                                        value,
+                                        scanned.provenance.primary,
+                                    )
+                                    .map(|()| ReplayStep::Continue)
+                                }
+                            );
+                        }
 
-                    // Math operands are scanned exclusively by `tex-command`.  The replay
-                    // driver receives a typed scalar request and schedules any opaque field
-                    // episode only after this processor borrow has ended.
-                    if matches!(mode, Mode::Math | Mode::DisplayMath)
-                        && let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                        // Math operands are scanned exclusively by `tex-command`.  The replay
+                        // driver receives a typed scalar request and schedules any opaque field
+                        // episode only after this processor borrow has ended.
+                        let primitive = command.static_word().and_then(|word| {
+                            if matches!(
+                                Meaning::runtime_word_class(word),
+                                tex_state::meaning::StaticCommandClass::Unexpandable
+                            ) {
+                                UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(
+                                    word,
+                                ))
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(
                             primitive @ (UnexpandablePrimitive::Left
                             | UnexpandablePrimitive::Right
                             | UnexpandablePrimitive::Middle),
-                        )) = command.meaning()
-                    {
-                        let kind = match primitive {
-                            UnexpandablePrimitive::Left => MathDelimiterBoundaryKind::Left,
-                            UnexpandablePrimitive::Right => MathDelimiterBoundaryKind::Right,
-                            UnexpandablePrimitive::Middle => MathDelimiterBoundaryKind::Middle,
-                            _ => unreachable!(),
-                        };
-                        let boundary = match processor.scan_math_delimiter_boundary(kind) {
-                            Ok(boundary) => boundary,
-                            Err(error) => {
-                                let error = command_error(error);
-                                return Err(scan_error(error, scan_origin));
-                            }
-                        };
-                        return {
-                            let (direct_arg0,) = (boundary,);
-                            finish_scan!(self.execute_math_delimiter(direct_arg0))
-                        };
-                    }
-                    if matches!(mode, Mode::Math | Mode::DisplayMath)
-                        && let Some(request) =
-                            (processor.scan_math_request(command).map_err(command_error))
-                                .map_err(|error| scan_error(error, scan_origin))?
-                    {
-                        return {
-                            let (direct_arg0,) = (request,);
-                            finish_scan!(self.execute_math(direct_arg0))
-                        };
-                    }
-                    if matches!(mode, Mode::Math | Mode::DisplayMath)
-                        && let ResolvedMeaning::Static(Meaning::CharToken {
-                            cat: Catcode::Superscript,
-                            ..
-                        }) = command.meaning()
-                    {
-                        return {
-                            let (direct_arg0,) =
-                                (MathRequest::Script(tex_command::ScannedMathScript {
-                                    kind: MathScriptKind::Superscript,
-                                    provenance: tex_command::StructuredProvenance {
-                                        primary: command.origin(),
-                                    },
-                                }),);
-                            finish_scan!(self.execute_math(direct_arg0))
-                        };
-                    }
-                    if matches!(mode, Mode::Math | Mode::DisplayMath)
-                        && let ResolvedMeaning::Static(Meaning::CharToken {
-                            cat: Catcode::Subscript,
-                            ..
-                        }) = command.meaning()
-                    {
-                        return {
-                            let (direct_arg0,) =
-                                (MathRequest::Script(tex_command::ScannedMathScript {
-                                    kind: MathScriptKind::Subscript,
-                                    provenance: tex_command::StructuredProvenance {
-                                        primary: command.origin(),
-                                    },
-                                }),);
-                            finish_scan!(self.execute_math(direct_arg0))
-                        };
+                        ) = primitive
+                        {
+                            let kind = match primitive {
+                                UnexpandablePrimitive::Left => MathDelimiterBoundaryKind::Left,
+                                UnexpandablePrimitive::Right => MathDelimiterBoundaryKind::Right,
+                                UnexpandablePrimitive::Middle => MathDelimiterBoundaryKind::Middle,
+                                _ => unreachable!(),
+                            };
+                            let boundary = match processor.scan_math_delimiter_boundary(kind) {
+                                Ok(boundary) => boundary,
+                                Err(error) => {
+                                    let error = command_error(error);
+                                    return Err(scan_error(error, scan_origin));
+                                }
+                            };
+                            return {
+                                let (direct_arg0,) = (boundary,);
+                                finish_scan!(self.execute_math_delimiter(direct_arg0))
+                            };
+                        }
+                        if let Some(primitive) = primitive
+                            && let Some(request) = (processor
+                                .scan_math_request(primitive)
+                                .map_err(command_error))
+                            .map_err(|error| scan_error(error, scan_origin))?
+                        {
+                            return {
+                                let (direct_arg0,) = (request,);
+                                finish_scan!(self.execute_math(direct_arg0))
+                            };
+                        }
+                        if command_code == Some(codes::CHAR_SUPERSCRIPT) {
+                            return {
+                                let (direct_arg0,) =
+                                    (MathRequest::Script(MathScriptKind::Superscript),);
+                                finish_scan!(self.execute_math(direct_arg0))
+                            };
+                        }
+                        if command_code == Some(codes::CHAR_SUBSCRIPT) {
+                            return {
+                                let (direct_arg0,) =
+                                    (MathRequest::Script(MathScriptKind::Subscript),);
+                                finish_scan!(self.execute_math(direct_arg0))
+                            };
+                        }
                     }
 
                     return {

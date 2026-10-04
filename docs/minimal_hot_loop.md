@@ -708,3 +708,15 @@ restricted-integer scanner; `delimiter` selects the math code with the WEB
 section 1154 twelve-bit shift. Observed delivery scans its actual scalar and
 publishes demanded reports before final append. Accent, radical and delimiter
 boundary products remain because those different grammars consume them.
+
+## Primitive-directed math dispatch
+
+Remaining general math dispatch enters its actual mode block once. Completed
+style, defined-symbol and numeric heads use their packed control code. Other
+primitive math operands receive the actual `UnexpandablePrimitive` selected
+from the static word, so the math scanner no longer receives or projects
+`CurrentCommand`. The same selected primitive supplies delimiter boundaries.
+Script markers use their packed category code and carry only the real
+`MathScriptKind`; the immediately consumed `ScannedMathScript` and its unused
+provenance are deleted. Head reporting still precedes executor-owned math
+field scanning, and live group destinations and recovery ordering are unchanged.

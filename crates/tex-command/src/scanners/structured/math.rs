@@ -403,14 +403,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// in main control; this scanner handles actual primitive operands.
     pub fn scan_math_request(
         &mut self,
-        command: &crate::CurrentCommand<G>,
+        primitive: UnexpandablePrimitive,
     ) -> Result<Option<MathRequest>, CommandError> {
         use MathRequest as Request;
         use MathTextFieldKind as Field;
-        let Some(Meaning::UnexpandablePrimitive(primitive)) = static_meaning(command.meaning())
-        else {
-            return Ok(None);
-        };
         let request = match primitive {
             UnexpandablePrimitive::MathOrd => Request::TextField(Field::Ord),
             UnexpandablePrimitive::MathOp => Request::TextField(Field::Op),

@@ -77,7 +77,7 @@ pub use math_values::{
     EquationNumberSide, MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize,
     MathFieldBody, MathFieldEpisode, MathFractionKind, MathLimitKind, MathRequest, MathScriptKind,
     MathTextFieldKind, ScannedEquationNumber, ScannedMathCharacter, ScannedMathDelimiter,
-    ScannedMathFraction, ScannedMathMuMaterial, ScannedMathScript,
+    ScannedMathFraction, ScannedMathMuMaterial,
 };
 pub use pdf_values::{
     PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,

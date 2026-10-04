@@ -682,3 +682,8 @@ pub(super) const PRIMITIVE_MATH_CHAR: u64 = Meaning::runtime_word_control_code(
 pub(super) const PRIMITIVE_DELIMITER: u64 = Meaning::runtime_word_control_code(
     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter).encode(),
 );
+
+pub(super) const CHAR_SUPERSCRIPT: u64 =
+    Meaning::runtime_word_control_code(Meaning::char_token_word('\0', Catcode::Superscript));
+pub(super) const CHAR_SUBSCRIPT: u64 =
+    Meaning::runtime_word_control_code(Meaning::char_token_word('\0', Catcode::Subscript));

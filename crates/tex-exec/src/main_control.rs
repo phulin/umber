@@ -3308,7 +3308,7 @@ impl<G> MainControl<G> {
                     self.execution.modes.current_list_mutation(),
                     stores,
                     diagnostic_effects,
-                    script.kind,
+                    script,
                 )?;
                 let episode =
                     self.command_scan_math_field(stores, diagnostic_effects, resource_provider)?;
