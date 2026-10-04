@@ -197,13 +197,11 @@ pub enum MathTextFieldKind {
 /// the next completed field/group episode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MathRequest {
-    Character(ScannedMathCharacter),
     TextField(MathTextFieldKind),
     Script(ScannedMathScript),
     Limits(MathLimitKind),
     Fraction(ScannedMathFraction),
     Choice,
-    Delimiter(ScannedMathDelimiter),
     Radical(ScannedMathDelimiter),
     Accent {
         character: Option<ScannedMathCharacter>,

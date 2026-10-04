@@ -3276,22 +3276,6 @@ impl<G> MainControl<G> {
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
         match request {
-            MathRequest::Character(value) => {
-                append_math_char(
-                    self.execution.modes.current_list_mutation(),
-                    &mut stores.command_context().expect("live generation"),
-                    u32::from(value.code),
-                    value.provenance.primary,
-                )?;
-            }
-            MathRequest::Delimiter(value) => {
-                append_math_char(
-                    self.execution.modes.current_list_mutation(),
-                    &mut stores.command_context().expect("live generation"),
-                    value.code >> 12,
-                    value.provenance.primary,
-                )?;
-            }
             MathRequest::TextField(kind) => {
                 // TeX82 §1151's caller has already allocated the noad and
                 // passes `nucleus(tail)` to `scan_math`.  This is observable

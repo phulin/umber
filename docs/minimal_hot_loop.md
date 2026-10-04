@@ -695,3 +695,16 @@ boundaries use the existing declined-delivery path. The scanner's redundant
 `MathCharGiven` request construction is deleted; actual numeric `mathchar`
 operands still use their real scanner result. Family selection, class-7
 `fam` handling, spelling origin and full checkpoint ownership are unchanged.
+
+## Native numeric math heads
+
+`mathchar` and `delimiter` heads select their real restricted-integer grammar
+inside the native terminal handler and append the final noad through the same
+code appender as defined math symbols. No `CurrentCommand` or `MathRequest`
+is constructed for ordinary numeric math heads. The scanner's generic
+`Character` and `Delimiter` requests and their application arms are deleted.
+Numeric range recovery and scanned-operand origins remain with the actual
+restricted-integer scanner; `delimiter` selects the math code with the WEB
+section 1154 twelve-bit shift. Observed delivery scans its actual scalar and
+publishes demanded reports before final append. Accent, radical and delimiter
+boundary products remain because those different grammars consume them.

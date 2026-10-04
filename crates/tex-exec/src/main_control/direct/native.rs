@@ -94,9 +94,41 @@ impl<const TEXT_BOUNDARY: bool> NativeMainControl<'_, TEXT_BOUNDARY> {
                 };
                 let code = Meaning::runtime_word_operand(*word) as u32;
                 processor.with_execution_owners(|context, _, _, _, _, execution, _, _, _| {
-                    append_math_given(context, execution, code, spelling.origin())
+                    append_math_character_code(context, execution, code, spelling.origin())
                         .map(|()| ReplayStep::Continue)
                 })
+            }
+            codes::PRIMITIVE_MATH_CHAR | codes::PRIMITIVE_DELIMITER => {
+                let class = if code == codes::PRIMITIVE_MATH_CHAR {
+                    RestrictedIntegerClass::FifteenBit
+                } else {
+                    RestrictedIntegerClass::TwentySevenBit
+                };
+                match processor
+                    .scan_restricted_integer(class)
+                    .map_err(command_error)
+                {
+                    Ok(scanned) => {
+                        let value = scanned.value as u32;
+                        let value = if code == codes::PRIMITIVE_DELIMITER {
+                            value >> 12
+                        } else {
+                            value
+                        };
+                        processor.with_execution_owners(
+                            |context, _, _, _, _, execution, _, _, _| {
+                                append_math_character_code(
+                                    context,
+                                    execution,
+                                    value,
+                                    scanned.provenance.primary,
+                                )
+                                .map(|()| ReplayStep::Continue)
+                            },
+                        )
+                    }
+                    Err(error) => Err(error),
+                }
             }
             codes::CHAR_SPACE => processor.with_execution_owners(
                 |context, _, effects, fuel, _, execution, _, _, _| {
@@ -289,6 +321,8 @@ impl<'state, 'host, G, const TEXT_BOUNDARY: bool>
                         && !context.tracked_region_is_active()
                 }),
             codes::MATH_GIVEN
+            | codes::PRIMITIVE_MATH_CHAR
+            | codes::PRIMITIVE_DELIMITER
             | codes::PRIMITIVE_DISPLAY_STYLE
             | codes::PRIMITIVE_TEXT_STYLE
             | codes::PRIMITIVE_SCRIPT_STYLE
@@ -379,8 +413,8 @@ pub(super) fn append_math_style<G>(
         .push(context, Node::MathStyle(style));
 }
 
-/// TeX82 section 1154 enters set_math_char with the head's completed code.
-pub(super) fn append_math_given<G>(
+/// TeX82 section 1154 enters set_math_char with the completed code.
+pub(super) fn append_math_character_code<G>(
     context: &mut tex_state::CommandContext<'_, G>,
     execution: &mut ExecutionState<G>,
     code: u32,

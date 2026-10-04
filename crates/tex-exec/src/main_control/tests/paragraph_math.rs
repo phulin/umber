@@ -619,3 +619,118 @@ fn defined_math_symbol_heads_preserve_fixed_and_variable_families_in_all_deliver
         });
     }
 }
+
+#[test]
+fn numeric_math_heads_preserve_code_grammar_and_variable_families_in_all_delivery_modes() {
+    // TeX82 §§436–437 and 1154–1155 restrict mathchar/delimiter and select fam.
+    for (observed, traced) in [(false, false), (true, false), (false, true)] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            let source = if traced {
+                br#"\tracingcommands=2 \catcode`\$=3 $\fam=3\mathchar"7262 \delimiter"0161000$\end"#
+                    .as_slice()
+            } else {
+                br#"\catcode`\$=3 $\fam=3\mathchar"7262 \delimiter"0161000$\end"#.as_slice()
+            };
+            register_source(&mut control, source);
+            let mut observations = ObservationRecorder::default();
+            for _ in 0..64 {
+                let step = if observed {
+                    control.advance_with_observer(stores, &mut observations)
+                } else {
+                    control.advance(stores)
+                }
+                .expect("numeric math character delivery executes");
+                assert!(matches!(
+                    step,
+                    StepResult::Progress(MainControlStep::Continue)
+                ));
+                let characters = admitted!(stores, |context| control
+                    .execution
+                    .modes
+                    .current_list()
+                    .nodes(context)
+                    .iter()
+                    .filter_map(|node| {
+                        match node.to_owned() {
+                            Node::MathNoad(noad) => {
+                                assert_eq!(noad.kind, NoadKind::Normal(NoadClass::Ord));
+                                assert_eq!(noad.subscript, MathField::Empty);
+                                assert_eq!(noad.superscript, MathField::Empty);
+                                let MathField::MathChar(character) = noad.nucleus else {
+                                    panic!("numeric math character has a character nucleus")
+                                };
+                                Some((character.family, character.character))
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>());
+                if characters.len() == 2 {
+                    assert_eq!(characters, [(3, 'b'), (1, 'a')]);
+                    assert_eq!(control.execution.modes.current_mode(), Mode::Math);
+                    return;
+                }
+            }
+            panic!("numeric heads failed to append their final noads");
+        });
+    }
+}
+
+#[test]
+fn numeric_math_heads_repair_out_of_range_codes_to_zero_in_all_delivery_modes() {
+    // TeX82 sections 436–437 replace both out-of-range values with zero.
+    for operand in [
+        br#"\mathchar"8000 "#.as_slice(),
+        br#"\delimiter"8000000 "#.as_slice(),
+    ] {
+        for (observed, traced) in [(false, false), (true, false), (false, true)] {
+            crate::test_harness::with_nonstop_plain_universe(|stores| {
+                let mut control = MainControl::tex82_initex(stores);
+                let mut source = Vec::new();
+                if traced {
+                    source.extend_from_slice(br"\tracingcommands=2 ");
+                }
+                source.extend_from_slice(br"\catcode`\$=3 $");
+                source.extend_from_slice(operand);
+                source.extend_from_slice(br"$\end");
+                register_source(&mut control, &source);
+                let mut observations = ObservationRecorder::default();
+                for _ in 0..64 {
+                    let step = if observed {
+                        control.advance_with_observer(stores, &mut observations)
+                    } else {
+                        control.advance(stores)
+                    }
+                    .expect("nonstop restricted math code recovers");
+                    assert!(matches!(
+                        step,
+                        StepResult::Progress(MainControlStep::Continue)
+                    ));
+                    let repaired = admitted!(stores, |context| control
+                        .execution
+                        .modes
+                        .current_list()
+                        .nodes(context)
+                        .iter()
+                        .find_map(|node| {
+                            let Node::MathNoad(noad) = node.to_owned() else {
+                                return None;
+                            };
+                            assert_eq!(noad.kind, NoadKind::Normal(NoadClass::Ord));
+                            let MathField::MathChar(character) = noad.nucleus else {
+                                panic!("repaired numeric head has a character nucleus");
+                            };
+                            Some((character.family, character.character))
+                        }));
+                    if let Some(character) = repaired {
+                        assert_eq!(character, (0, '\0'));
+                        assert_eq!(control.execution.modes.current_mode(), Mode::Math);
+                        return;
+                    }
+                }
+                panic!("restricted math head failed to publish its repaired zero code");
+            });
+        }
+    }
+}

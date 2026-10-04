@@ -12,7 +12,9 @@ the unused family request and math-request variant are absent.
 Math style heads have no scanner operand or request variant; execution appends
 its actual node style directly, and the duplicate `MathStyleKind` is absent.
 Defined math symbols also append their final noad directly; the scanner no
-longer constructs a request for their already-complete code.
+longer constructs a request for their already-complete code. Numeric mathchar
+and delimiter heads scan their real restricted integer in native main control;
+the duplicate Character/Delimiter math requests are absent.
 
 The bulk character reader resolves its boundary once and offers accepted words
 directly to the main-control consumer. Only declined or exceptional boundaries

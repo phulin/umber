@@ -29,7 +29,7 @@ passes ordinary terminal meanings directly to main control, which consumes
 assignment operands through synchronous scanners and writes final semantic
 state. Remaining general-dispatch, observed and recovery deliveries retain
 `CurrentCommand`; ordinary native expansion, scanners, characters, math styles
-and defined math symbols do not construct that record. Native scalar/group/definition arms reborrow the
+and defined symbols or numeric math heads do not construct that record. Native scalar/group/definition arms reborrow the
 still-live processor's actual semantic owners after their synchronous scans
 return; genuine mode, host, output and diagnostic demands end that loan.
 Macro calls and

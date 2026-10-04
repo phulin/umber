@@ -412,8 +412,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(None);
         };
         let request = match primitive {
-            UnexpandablePrimitive::MathChar => Request::Character(self.scan_math_character()?),
-            UnexpandablePrimitive::Delimiter => Request::Delimiter(self.scan_delimiter_number()?),
             UnexpandablePrimitive::MathOrd => Request::TextField(Field::Ord),
             UnexpandablePrimitive::MathOp => Request::TextField(Field::Op),
             UnexpandablePrimitive::MathBin => Request::TextField(Field::Bin),

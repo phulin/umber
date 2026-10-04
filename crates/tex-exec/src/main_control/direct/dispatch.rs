@@ -740,11 +740,45 @@ impl<G> DirectDispatch<'_, '_, G> {
                         return retained_completed!(
                             receipts,
                             |context, _state, _effects, _fuel, _observer, execution| {
-                                native::append_math_given(
+                                native::append_math_character_code(
                                     context,
                                     execution,
                                     u32::from(code),
                                     origin,
+                                )
+                                .map(|()| ReplayStep::Continue)
+                            }
+                        );
+                    }
+
+                    if matches!(mode, Mode::Math | Mode::DisplayMath)
+                        && let Some(
+                            numeric @ (codes::PRIMITIVE_MATH_CHAR | codes::PRIMITIVE_DELIMITER),
+                        ) = command_code
+                    {
+                        let class = if numeric == codes::PRIMITIVE_MATH_CHAR {
+                            RestrictedIntegerClass::FifteenBit
+                        } else {
+                            RestrictedIntegerClass::TwentySevenBit
+                        };
+                        let scanned = processor
+                            .scan_restricted_integer(class)
+                            .map_err(command_error)
+                            .map_err(|error| scan_error(error, scan_origin))?;
+                        let value = scanned.value as u32;
+                        let value = if numeric == codes::PRIMITIVE_DELIMITER {
+                            value >> 12
+                        } else {
+                            value
+                        };
+                        return retained_completed!(
+                            receipts,
+                            |context, _state, _effects, _fuel, _observer, execution| {
+                                native::append_math_character_code(
+                                    context,
+                                    execution,
+                                    value,
+                                    scanned.provenance.primary,
                                 )
                                 .map(|()| ReplayStep::Continue)
                             }
