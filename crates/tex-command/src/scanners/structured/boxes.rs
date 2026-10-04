@@ -344,7 +344,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// `scan_left_brace` has already performed that backup, so this returns
     /// on the same footing: the brace is accounted for either way.
     fn scan_box_group_opening(&mut self) -> Result<(), CommandError> {
-        let _ = self.scan_left_brace(true)?;
+        let _ = self.scan_left_brace()?;
         Ok(())
     }
 

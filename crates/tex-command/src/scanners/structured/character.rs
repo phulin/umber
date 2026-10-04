@@ -106,10 +106,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_discretionary_opening(
         &mut self,
     ) -> Result<ScannedDiscretionaryOpening, CommandError> {
-        let opening = self.scan_left_brace(true)?;
+        let opening = self.scan_left_brace()?;
         Ok(ScannedDiscretionaryOpening {
             provenance: StructuredProvenance {
-                primary: opening.origin(),
+                primary: opening.unwrap_or(OriginId::UNKNOWN),
             },
         })
     }

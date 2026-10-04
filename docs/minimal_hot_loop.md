@@ -564,3 +564,22 @@ and backs up the consumed word. Observed, alignment and recovery deliveries
 lend their existing exceptional record to the same consumer. Radical positions
 continue to scan their restricted integer directly. The duplicate hot
 nonblank/non-relax fetch loop is deleted rather than retained as an adapter.
+
+## Native mandatory brace scanning
+
+Every mandatory opening-brace caller uses TeX82 section 403 expanded input.
+The scanner consumes native expanded words directly, skips spaces and relax
+in that same reader, and returns the actual origin of an accepted brace.
+An absent origin result means that section 403 inserted the brace after
+reporting and backing up a rejected token; a real brace with an unknown
+origin remains distinct. EOF still fails admission.
+
+The scanner returns no command-bearing result enum and has no raw/expanded
+boolean dispatcher. Its unused raw branch and the generic `ScannedLeftBrace`
+carrier are deleted. Callers consume the origin or inserted-brace decision
+directly. Errors prepare the report before backup, render the context after
+backup, and apply the synthetic alignment contribution at the same positions.
+Observed and alignment deliveries retain their existing exceptional record
+only within the canonical reader, without returning it as a scanner product.
+
+Math operand consumers also project character, character-definition, math-character and primitive operands directly from the packed meaning. The general Meaning decoder is absent from field and delimiter classification; invalid operands demand their diagnostic identity only when rejected.

@@ -98,7 +98,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         kind: HyphenationDataKind,
     ) -> Result<ScannedHyphenationData, CommandError> {
         // §403: a left brace must follow `\patterns`/`\hyphenation`.
-        self.scan_left_brace(true)?;
+        self.scan_left_brace()?;
         let mut progress = HyphenationProgress {
             kind,
             words: Vec::new(),

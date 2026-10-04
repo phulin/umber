@@ -8,7 +8,9 @@
 //! to the brace depth of this collection.
 
 use tex_state::interner::{ControlSequenceKind, Symbol};
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
+use tex_state::meaning::{
+    ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord, ResolvedMeaning,
+};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 mod expanded;
@@ -384,27 +386,6 @@ impl<G> ScannedToksBuffers<G> {
         match self.storage {
             ScannedToksStorage::PendingInsertion { start, .. } => Some(PendingInsertion { start }),
             ScannedToksStorage::Tokens { .. } | ScannedToksStorage::Definition(_) => None,
-        }
-    }
-}
-
-/// TeX82 §403's result after a mandatory left-brace scan.
-#[derive(Debug)]
-// Boxing the delivered command would add a heap allocation to the scanner's
-// ordinary left-brace path; the large arm is consumed immediately.
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum ScannedLeftBrace<G> {
-    /// A real source or replay token supplied the brace.
-    Consumed(crate::CurrentCommand<G>),
-    /// §403 inserted the brace after backing up the offending command.
-    Inserted,
-}
-
-impl<G> ScannedLeftBrace<G> {
-    pub(crate) fn origin(&self) -> OriginId {
-        match self {
-            Self::Consumed(command) => command.origin(),
-            Self::Inserted => OriginId::UNKNOWN,
         }
     }
 }
@@ -1007,8 +988,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         // TeX scans the required opening brace through the ordinary
                         // expanded path even when the replacement text itself is
                         // collected unexpanded.
-                        let opening = self.scan_left_brace(true)?;
-                        let primary = opening.origin();
+                        let opening = self.scan_left_brace()?;
+                        let primary = opening.unwrap_or(OriginId::UNKNOWN);
                         self.finish_scan_toks_parameters(collector)?;
                         (None, None, primary, false, false)
                     }
@@ -1108,66 +1089,47 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// rejected the brace in `\message\relax{...}` and every plain-TeX idiom
     /// that parks a `\relax` in front of a mandatory group
     /// (`umber2-johp.209`).
-    pub(crate) fn scan_left_brace(
-        &mut self,
-        expanded: bool,
-    ) -> Result<ScannedLeftBrace<G>, CommandError> {
-        let mut destination = None;
-        loop {
-            let status = if expanded {
-                self.request_expanded_token(&mut destination)?
-            } else {
-                self.get_token_into(&mut destination)?
+    pub(crate) fn scan_left_brace(&mut self) -> Result<Option<OriginId>, CommandError> {
+        let mut opening = None;
+        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
+            let character = match meaning {
+                MeaningWord::Static(word) => Meaning::runtime_word_character(*word),
+                _ => None,
             };
-            if status != crate::DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
+            if matches!(character, Some((_, Catcode::Space)))
+                || matches!(meaning, MeaningWord::Static(Meaning::RELAX_WORD))
+            {
+                return Ok(std::ops::ControlFlow::Continue(()));
             }
-            let command = destination
-                .take()
-                .expect("command status initializes destination");
-            match command.meaning() {
-                ResolvedMeaning::Static(Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                })
-                | ResolvedMeaning::Static(Meaning::Relax) => continue,
-                ResolvedMeaning::Static(Meaning::CharToken {
-                    cat: Catcode::BeginGroup,
-                    ..
-                }) => return Ok(ScannedLeftBrace::Consumed(command)),
-                _ => {
-                    let deferred = {
-                        let mut report = self.state.print_err("Missing { inserted");
-                        report.help(&[
-                            "A left brace was mandatory here, so I've put one in.",
-                            "You might want to delete and/or insert some corrections",
-                            "so that I will find a matching right brace soon.",
-                            "(If you're confused by all this, try typing `I}' now.)",
-                        ]);
-                        report.defer()
-                    };
-                    // §403's `back_error` is `back_input; error`: the message
-                    // and help are prepared above, then the rejected command
-                    // is restored before §82 appends the period and help.
-                    // Rendering §310's display only after the backup is what
-                    // makes §314 name the rejected token on its own
-                    // `<to be read again>␣` line.
-                    self.back_input(command)?;
-                    let context = self.command.output_open_context(self.state);
-                    let mut report = self.state.resume_error_report(deferred);
-                    report.context(context);
-                    let outcome = report.error();
-                    self.finish_error_outcome(outcome)?;
-                    // §403 assigns `cur_cmd=left_brace` and increments
-                    // `align_state` exactly as raw delivery of that synthetic
-                    // brace would have done. The token itself is not pushed:
-                    // the caller continues after it while the rejected command
-                    // remains first on the backed-up input level.
-                    self.command.alignment.align_state += 1;
-                    return Ok(ScannedLeftBrace::Inserted);
-                }
+            if matches!(character, Some((_, Catcode::BeginGroup))) {
+                opening = Some(Some(spelling.origin()));
+                return Ok(std::ops::ControlFlow::Break(()));
             }
-        }
+            let deferred = {
+                let mut report = processor.state.print_err("Missing { inserted");
+                report.help(&[
+                    "A left brace was mandatory here, so I've put one in.",
+                    "You might want to delete and/or insert some corrections",
+                    "so that I will find a matching right brace soon.",
+                    "(If you're confused by all this, try typing `I}' now.)",
+                ]);
+                report.defer()
+            };
+            // §403 prepares the report before `back_error`, then renders §310
+            // from the backed-up input so §314 names the rejected token.
+            processor.back_consumed_word(spelling, exceptional)?;
+            let context = processor.command.output_open_context(processor.state);
+            let mut report = processor.state.resume_error_report(deferred);
+            report.context(context);
+            let outcome = report.error();
+            processor.finish_error_outcome(outcome)?;
+            // The synthetic brace is not input; only its align_state contribution
+            // precedes the caller while the rejected word remains backed up.
+            processor.command.alignment.align_state += 1;
+            opening = Some(None);
+            Ok(std::ops::ControlFlow::Break(()))
+        })?;
+        opening.ok_or_else(CommandError::input_invariant)
     }
 
     /// Scans the prefix before a macro replacement's compulsory opening

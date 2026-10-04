@@ -55,7 +55,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// running the real keyword scans rather than by replaying the brace.
     pub fn scan_alignment_preamble_opening(&mut self) -> Result<ScannedPackingSpec, CommandError> {
         let packing = self.scan_spec_packing()?;
-        let _ = self.scan_left_brace(true)?;
+        let _ = self.scan_left_brace()?;
         Ok(packing)
     }
 
@@ -129,7 +129,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// is not backed up: its raw delivery is the canonical `1000000 ->
     /// 1000001` transition.
     pub fn scan_alignment_noalign_opening(&mut self) -> Result<(), CommandError> {
-        let _ = self.scan_left_brace(true)?;
+        let _ = self.scan_left_brace()?;
         Ok(())
     }
 

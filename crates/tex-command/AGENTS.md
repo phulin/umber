@@ -838,3 +838,5 @@ Diagnostic input coordinates project the existing next-level identity for push/p
 The duplicate CommandClass enum and its CurrentCommand class projection are deleted. Noexpand dispatches directly on MeaningWord and its existing static class; protected replacement handling consumes the macro flags directly.
 
 Math fields and delimiter operands consume native expanded words directly. Structural delimiter boundaries share the ordinary non-radical grammar; their duplicate hot nonblank fetch loop is deleted. Ordinary scalar cases construct no command record; braced fields, active restart, rejected-delimiter backup and demanded diagnostics retain canonical chronology.
+
+The mandatory brace scanner consumes native expanded words and returns only the accepted origin or inserted-brace decision. ScannedLeftBrace<G>, its returned CurrentCommand, the unused raw branch and raw/expanded boolean selector are deleted. Real brace origins, EOF failure, backed-up recovery context and synthetic alignment accounting remain distinct.

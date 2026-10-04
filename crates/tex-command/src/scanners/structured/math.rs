@@ -1,6 +1,6 @@
 use super::*;
 use std::ops::ControlFlow;
-use tex_state::meaning::MeaningWord;
+use tex_state::meaning::{MeaningWord, StaticCommandClass};
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Completes one TeX82 §1151 `scan_math` field.
@@ -79,36 +79,29 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_math_field_episode(&mut self) -> Result<MathFieldEpisode, CommandError> {
         let mut field = None;
         self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let meaning = match meaning {
-                MeaningWord::Static(word) => Some(Meaning::from_runtime_word(*word)),
-                _ => None,
-            };
-            // §404's nonblank/non-relax fetch remains in the same reader.
-            if matches!(
-                meaning,
-                Some(
-                    Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    } | Meaning::Relax
-                )
-            ) {
-                return Ok(ControlFlow::Continue(()));
-            }
             let provenance = StructuredProvenance {
                 primary: spelling.origin(),
             };
-            match meaning {
-                Some(
-                    Meaning::CharToken {
-                        ch,
-                        cat: Catcode::Letter | Catcode::Other,
+            if let MeaningWord::Static(word) = meaning {
+                let character = Meaning::runtime_word_character(*word);
+                if matches!(character, Some((_, Catcode::Space))) || *word == Meaning::RELAX_WORD {
+                    return Ok(ControlFlow::Continue(()));
+                }
+                let character = match character {
+                    Some((ch, Catcode::Letter | Catcode::Other)) => Some(ch),
+                    _ if Meaning::runtime_word_control_code(*word)
+                        == Meaning::runtime_word_control_code(Meaning::CharGiven('A').encode()) =>
+                    {
+                        Some(
+                            char::from_u32(Meaning::runtime_word_operand(*word) as u32)
+                                .expect("validated character-definition meaning"),
+                        )
                     }
-                    | Meaning::CharGiven(ch),
-                ) => {
+                    _ => None,
+                };
+                if let Some(ch) = character {
                     let code = processor.state.mathcode(ch);
                     if code == 0o100000 {
-                        // §1152 expands the active meaning before restarting §1151.
                         processor.treat_as_active_character(ch, provenance.primary)?;
                         return Ok(ControlFlow::Continue(()));
                     }
@@ -116,42 +109,44 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         body: MathFieldBody::Character(code as u16),
                         provenance,
                     });
+                    return Ok(ControlFlow::Break(()));
                 }
-                Some(Meaning::MathCharGiven(code)) => {
+                if Meaning::runtime_word_control_code(*word)
+                    == Meaning::runtime_word_control_code(Meaning::MathCharGiven(0).encode())
+                {
                     field = Some(MathFieldEpisode {
-                        body: MathFieldBody::Character(code),
+                        body: MathFieldBody::Character(Meaning::runtime_word_operand(*word) as u16),
                         provenance,
                     });
+                    return Ok(ControlFlow::Break(()));
                 }
-                Some(Meaning::UnexpandablePrimitive(
-                    primitive @ (UnexpandablePrimitive::Char
-                    | UnexpandablePrimitive::MathChar
-                    | UnexpandablePrimitive::Delimiter),
-                )) => {
+                if Meaning::runtime_word_class(*word) == StaticCommandClass::Unexpandable
+                    && let Some(
+                        primitive @ (UnexpandablePrimitive::Char
+                        | UnexpandablePrimitive::MathChar
+                        | UnexpandablePrimitive::Delimiter),
+                    ) = UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(*word))
+                {
                     let kind = match primitive {
                         UnexpandablePrimitive::Char => MathFieldRestrictedKind::Character,
                         UnexpandablePrimitive::MathChar => MathFieldRestrictedKind::MathCharacter,
                         _ => MathFieldRestrictedKind::Delimiter,
                     };
                     field = processor.scan_math_field_restricted(provenance, kind)?;
-                    if field.is_none() {
-                        return Ok(ControlFlow::Continue(()));
-                    }
-                }
-                _ => {
-                    // §1153 backs up before §403, including a real left brace:
-                    // its reread and missing-brace recovery are observable.
-                    processor.back_consumed_word(spelling, exceptional)?;
-                    let primary = match processor.scan_left_brace(true)? {
-                        crate::scan_toks::ScannedLeftBrace::Consumed(opening) => opening.origin(),
-                        crate::scan_toks::ScannedLeftBrace::Inserted => OriginId::UNKNOWN,
-                    };
-                    field = Some(MathFieldEpisode {
-                        body: MathFieldBody::OpenGroup,
-                        provenance: StructuredProvenance { primary },
+                    return Ok(if field.is_some() {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
                     });
                 }
             }
+            // §1153 backs up before §403, including a real left brace.
+            processor.back_consumed_word(spelling, exceptional)?;
+            let primary = processor.scan_left_brace()?.unwrap_or(OriginId::UNKNOWN);
+            field = Some(MathFieldEpisode {
+                body: MathFieldBody::OpenGroup,
+                provenance: StructuredProvenance { primary },
+            });
             Ok(ControlFlow::Break(()))
         })?;
         Ok(field.unwrap_or(MathFieldEpisode {
@@ -176,10 +171,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// by `scan_left_brace` -- becomes the first thing the branch body
     /// reads. The returned flag reports only whether that recovery ran.
     pub fn scan_math_choice_group(&mut self) -> Result<bool, CommandError> {
-        Ok(matches!(
-            self.scan_left_brace(true)?,
-            crate::scan_toks::ScannedLeftBrace::Inserted
-        ))
+        Ok(self.scan_left_brace()?.is_none())
     }
 
     /// Completes the delimiter immediately following a structural math
@@ -268,29 +260,23 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                           meaning,
                                           control_sequence,
                                           exceptional| {
-            let static_meaning = match meaning {
-                MeaningWord::Static(word) => Some(Meaning::from_runtime_word(*word)),
-                _ => None,
-            };
-            let code = match static_meaning {
-                Some(
-                    Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
+            let code = if let MeaningWord::Static(word) = meaning {
+                match Meaning::runtime_word_character(*word) {
+                    Some((_, Catcode::Space)) => return Ok(ControlFlow::Continue(())),
+                    Some((ch, Catcode::Letter | Catcode::Other)) => processor.state.delcode(ch),
+                    _ if *word == Meaning::RELAX_WORD => return Ok(ControlFlow::Continue(())),
+                    _ if Meaning::runtime_word_class(*word) == StaticCommandClass::Unexpandable
+                        && UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(
+                            *word,
+                        )) == Some(UnexpandablePrimitive::Delimiter) =>
+                    {
+                        delimiter = Some(processor.scan_delimiter_number()?);
+                        return Ok(ControlFlow::Break(()));
                     }
-                    | Meaning::Relax,
-                ) => {
-                    return Ok(ControlFlow::Continue(()));
+                    _ => -1,
                 }
-                Some(Meaning::CharToken {
-                    ch,
-                    cat: Catcode::Letter | Catcode::Other,
-                }) => processor.state.delcode(ch),
-                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter)) => {
-                    delimiter = Some(processor.scan_delimiter_number()?);
-                    return Ok(ControlFlow::Break(()));
-                }
-                _ => -1,
+            } else {
+                -1
             };
             let primary = spelling.origin();
             if code < 0 {
