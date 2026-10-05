@@ -43,7 +43,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         body: &ResidentMacroBody<G>,
         parameter: usize,
-        argument: &ArgumentCursor,
+        matching: &MatchedArguments,
     ) -> Result<(), CommandError> {
         let marker = body
             .parameter_pattern()
@@ -64,8 +64,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .input
             .levels
             .arguments
-            .match_words(argument)
-            .map_err(|_| CommandError::input_invariant())?
+            .matched_words(matching, parameter as u8)
+            .iter()
         {
             crate::processor::expand_render::append_token_list_token_text(
                 self.state,

@@ -92,10 +92,21 @@ contract, without a second grammar or intermediate token collection.
 Macro matching creates each argument cursor in the consuming parameter loop.
 Delimited and undelimited scanners borrow that cursor and return only completion
 or failure. They do not return a cursor product which the caller immediately
-copies and consumes. Outer-group stripping mutates that same cursor before its
-final range enters the invocation owner. Argument sinks derive their accepted
+copies and consumes. Publication excludes a removable enclosing pair directly
+from the final range. Argument sinks derive their accepted
 count from the final vector's length change rather than incrementing a second
 counter for every write.
+
+The pending argument's arena range owns its raw length. The cursor stores only
+its region, brace grammar and held delimiter-prefix length. Visible material
+ends at the raw length minus the held prefix. Prefix reveal
+changes only the held length, and truncation changes the actual arena range.
+There are no mirrored visible-end or delimiter-start counters to update on
+accepted writes. Publication records the actual raw length before applying
+the final trim, preserving diagnostic and input-retention accounting. Completed
+argument tracing and observation read that published range. Runaway diagnostics
+read unfinished raw material, including any enclosing braces; there is no strip
+stage or duplicated completion flag.
 
 Main control opens one processor for source-character admission and its scalar
 boundary. The character consumer borrows the actual execution owner through

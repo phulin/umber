@@ -35,7 +35,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             if !self.is_observed() {
                 let run = self.consume_argument_run(tokens, paragraph_token, None)?;
                 if run.consumed != 0 && tokens.brace_depth() == 0 {
-                    strip_argument_outer_group(tokens)?;
                     return Ok(());
                 }
                 if run.at_transition && self.settle_resident_run_boundary()? {
@@ -51,10 +50,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     if processor.outer_recovered_while_matching
                         && command.is_some_and(CurrentCommand::is_effective_paragraph)
                     {
-                        if tokens
-                            .visible_len()
+                        if processor
+                            .command
+                            .input
+                            .levels
+                            .arguments
+                            .match_words(tokens)
                             .map_err(|_| CommandError::input_invariant())?
-                            != 0
+                            .next()
+                            .is_some()
                         {
                             let partial = processor
                                 .command
@@ -98,7 +102,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 })?
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
             if appended && tokens.brace_depth() == 0 {
-                strip_argument_outer_group(tokens)?;
                 return Ok(());
             }
         }
@@ -279,7 +282,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 })?
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
             if completed {
-                strip_argument_outer_group(tokens)?;
                 return Ok(());
             }
         }
@@ -372,15 +374,4 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
         Ok(())
     }
-}
-
-// TeX82 §394 strips a single enclosing group at this actual completion,
-// borrowing the caller's cursor without producing another cursor value.
-fn strip_argument_outer_group(buffer: &mut ArgumentCursor) -> Result<(), CommandError> {
-    if buffer.removable_outer_group() {
-        buffer
-            .strip_outer_group()
-            .map_err(|_| CommandError::input_invariant())?;
-    }
-    Ok(())
 }

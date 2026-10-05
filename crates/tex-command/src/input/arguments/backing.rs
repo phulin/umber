@@ -388,13 +388,9 @@ impl<G> ArgumentArena<G> {
             };
         }
         if delimiter {
-            if writer.holdback_len == 0 {
-                writer.holdback_start = writer.visible_end;
-            }
             writer.holdback_len += 1;
             Ok(writer.brace_depth())
         } else {
-            writer.visible_end += 1;
             Ok(writer.cursor.settle_argument_word(word.token_word()))
         }
     }

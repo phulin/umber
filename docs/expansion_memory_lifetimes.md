@@ -348,9 +348,18 @@ flatten once to an immutable definition or original owned word offset. No
 second matcher, copied parameter array, deferred-copy stage or successful-command
 cleanup stage exists.
 
+The ephemeral argument cursor owns brace grammar and its held-prefix length.
+The pending arena range owns the raw length;
+visible and delimiter bounds derive from it. Revealing a prefix updates only
+the held length, while truncation and publication update the actual range.
+No parallel cursor length, delimiter-start coordinate or strip-completion flag
+is retained. Publication applies the enclosing-pair trim directly to the final
+range; tracing and observation borrow that range afterwards. Recovery borrows
+unfinished raw material before publication.
+
 Scalar capture queries the live input row only when an actual source lease can
-extend. Accepted writes advance the local visible end by their consumed count;
-they do not reload the pending range length from the invocation bank.
+extend. Accepted writes update only the actual arena range and brace grammar,
+with no local visible-end counter.
 
 Parameter input rows name the invocation and argument slot and use local offsets.
 Delimiter holdback retains incomplete prefixes; the completing word finishes

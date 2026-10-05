@@ -132,7 +132,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   no accepted-prefix rescan or separate span-copy pass remains. Execution scratch owns
   no duplicate scan depth, macro argument payload, or publication capability.
 - `src/input/arguments.rs`, `src/input/arguments/tests.rs`: final macro
-  `ArgumentArena`, with one reusable vector per simultaneous invocation. Up to four immutable definition words write directly to the final pool without acquiring a source owner; larger spans retain their actual source. Scalar capture queries the source row only for an actual retained span and advances local visible length directly.
+  `ArgumentArena`, with one reusable vector per simultaneous invocation. Up to four immutable definition words write directly to the final pool without acquiring a source owner; larger spans retain their actual source. Scalar capture queries the source row only for an actual retained span and updates the actual arena range directly.
   Scalar matchers write directly to this arena while borrowing the actual input row; the per-word input-stack forwarding method is deleted.
   Each region holds at most nine final ranges; call-local `MatchedArguments` transfers only its owner coordinate, and `ArgumentCursor`
   holds brace/group facts and the unpublished delimiter suffix. Publication
@@ -823,6 +823,7 @@ Rules, all of them load-bearing (umber2-johp.141):
 
 Macro argument regions own compact per-parameter ranges in pooled traced
 spelling or a sparse lane of actual retained definition/region sources.
+The pending range owns its raw length; the stack-local cursor keeps only region identity, brace grammar and held-prefix length. Visible bounds and delimiter starts derive from the arena length, with no parallel cursor counters. Prefix reveal updates only the held length; truncation updates the actual range. Publication excludes a removable outer pair directly from the final range; no strip stage or completion flag exists. Tracing and observation read the published range, while recovery reads unfinished raw material.
 `src/input/arguments.rs` owns those compact argument ranges;
 `src/input/words.rs` owns the shared borrowed packed/traced spelling views and
 their iterators for arguments, replacements and stored input;

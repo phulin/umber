@@ -465,13 +465,24 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             } else {
                 self.scan_undelimited_argument(&mut argument, flags, paragraph_token)?;
             }
+            self.command
+                .input
+                .levels
+                .arguments
+                .publish_argument(matching, argument)
+                .map_err(|_| CommandError::input_invariant())?;
             if self.state.int_param(IntParam::TRACING_MACROS) > 0 {
-                self.trace_macro_argument(body, parameter, &argument)?;
+                self.trace_macro_argument(body, parameter, matching)?;
             }
             if self.is_observed() {
-                let argument_token_count = argument
-                    .visible_len()
-                    .map_err(|_| CommandError::input_invariant())?;
+                let argument_token_count = self
+                    .command
+                    .input
+                    .levels
+                    .arguments
+                    .matched_words(matching, parameter as u8)
+                    .iter()
+                    .len();
                 self.observe(CommandObservation::TokenList(TokenListRecord {
                     transition: "splice",
                     purpose: "macro_delimiter_match",
@@ -496,18 +507,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .input
                         .levels
                         .arguments
-                        .match_words(&argument)
-                        .expect("matched macro argument remains live until sealing")
+                        .matched_words(matching, parameter as u8)
+                        .iter()
                         .map(|token| self.observed_token(token))
                         .collect(),
                 }));
             }
-            self.command
-                .input
-                .levels
-                .arguments
-                .publish_argument(matching, argument)
-                .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(())
     }

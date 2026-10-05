@@ -48,13 +48,23 @@ fn admitted_brace_delta_drives_nested_depth_and_first_scan_facts_once() {
     }
     assert!(writer.removable_outer_group());
 
-    writer
-        .strip_outer_group()
-        .expect("outer group strips by metadata");
-    assert_eq!(writer.visible_len(), Ok(3));
+    assert_eq!(
+        arena
+            .match_words(&writer)
+            .expect("unfinished argument")
+            .collect::<Vec<_>>(),
+        words,
+        "runaway material retains its enclosing pair before publication"
+    );
     arena
         .publish_argument(&mut matching, writer)
         .expect("argument range");
+    assert_eq!(
+        arena.captured_word_len(),
+        5,
+        "raw capture accounting includes the stripped braces"
+    );
+    assert_eq!(arena.matched_words(&matching, 0).iter().len(), 3);
 
     let region = arena.publish(matching);
     assert_eq!(
@@ -123,9 +133,63 @@ fn publication_keeps_delimiter_recovery_and_empty_argument_ranges() {
 }
 
 #[test]
-fn trimmed_match_iterator_stops_at_both_stored_range_boundaries() {
+fn partial_delimiter_reveal_keeps_the_remaining_suffix_outside_the_argument() {
     let mut arena = ArgumentArena::<()>::default();
-    let matching = arena.begin_match().expect("macro match");
+    let mut matching = arena.begin_match().expect("match");
+    let mut writer = arena.begin_argument(&matching);
+    append_all(&mut arena, &mut writer, [word('p')]);
+    for ch in ['x', 'y', 'z'] {
+        arena
+            .append_delimiter_word(&mut writer, word(ch))
+            .expect("held prefix");
+    }
+    arena
+        .reveal_delimiter_words(&mut writer, 1)
+        .expect("first committed word");
+    assert_eq!(
+        arena
+            .match_words(&writer)
+            .expect("argument")
+            .collect::<Vec<_>>(),
+        [word('p'), word('x')]
+    );
+    assert_eq!(
+        arena
+            .delimiter_prefix_words(&writer)
+            .expect("remaining prefix")
+            .collect::<Vec<_>>(),
+        [word('y'), word('z')]
+    );
+    arena
+        .append_delimiter_word(&mut writer, word('w'))
+        .expect("extended prefix");
+    arena
+        .reveal_delimiter_words(&mut writer, 2)
+        .expect("next committed words");
+    assert_eq!(arena.delimiter_prefix_word(&writer, 0), Ok(word('w')));
+    assert_eq!(
+        arena.match_words(&writer).expect("visible material").len(),
+        4
+    );
+    arena
+        .truncate_delimiter_suffix(&mut writer)
+        .expect("final delimiter");
+    arena
+        .publish_argument(&mut matching, writer)
+        .expect("completed argument");
+    let region = arena.publish(matching);
+    assert_eq!(
+        arena.words(region, 0).iter().collect::<Vec<_>>(),
+        ['p', 'x', 'y', 'z'].map(word)
+    );
+    arena.release(region);
+    assert!(arena.is_empty());
+}
+
+#[test]
+fn published_iterator_stops_at_both_trimmed_range_boundaries() {
+    let mut arena = ArgumentArena::<()>::default();
+    let mut matching = arena.begin_match().expect("macro match");
     let mut writer = arena.begin_argument(&matching);
     append_all(
         &mut arena,
@@ -134,15 +198,20 @@ fn trimmed_match_iterator_stops_at_both_stored_range_boundaries() {
             brace('{', Catcode::BeginGroup),
             word('x'),
             brace('}', Catcode::EndGroup),
-            word('z'),
         ],
     );
-    // The last word models unrelated material beyond the argument. Trimming
-    // excludes the outer pair, so neither boundary may leak through the
-    // exact-size observation iterator.
-    writer.set_end_trim(1);
-    writer.strip_outer_group().expect("outer group trim");
-    let mut words = arena.match_words(&writer).expect("trimmed words");
+    // A held delimiter candidate is outside the argument. Truncate it at
+    // completion; publication excludes the enclosing pair from the actual range.
+    arena
+        .append_delimiter_word(&mut writer, word('z'))
+        .expect("delimiter");
+    arena
+        .truncate_delimiter_suffix(&mut writer)
+        .expect("completed delimiter");
+    arena
+        .publish_argument(&mut matching, writer)
+        .expect("completed argument");
+    let mut words = arena.matched_words(&matching, 0).iter();
     assert_eq!(words.len(), 1);
     assert_eq!(words.next(), Some(word('x')));
     assert_eq!(words.len(), 0);
@@ -529,7 +598,6 @@ fn forwarded_trimmed_second_argument_retains_its_original_owned_offset() {
             brace('}', Catcode::EndGroup),
         ],
     );
-    second.strip_outer_group().expect("trim second");
     arena.publish_argument(&mut parent, second).expect("second");
     let mut source = arena.publish(parent);
     let mut slot = 1;

@@ -164,11 +164,7 @@ impl<G> ArgumentArena<G> {
         };
         ArgumentCursor {
             region: matching.region,
-            start: 0,
-            visible_end: 0,
             cursor: crate::scanner_kernel::ScannerCursor::default(),
-            end_trim: 0,
-            holdback_start: 0,
             holdback_len: 0,
         }
     }
@@ -302,6 +298,14 @@ impl<G> ArgumentArena<G> {
     fn pending_len(&self, id: ArgumentRegionId) -> u32 {
         self.regions[id.index()].values[usize::from(self.pending_slot(id))].len()
     }
+    fn visible_end(&self, writer: &ArgumentCursor) -> Result<u32, ScratchError> {
+        self.pending_len(writer.region)
+            .checked_sub(writer.holdback_len)
+            .ok_or(ScratchError::InvalidCoordinate)
+    }
+    pub(crate) fn matched_words(&self, matching: &MatchedArguments, slot: u8) -> InputWords<'_> {
+        self.words(matching.region, slot)
+    }
     pub(crate) fn append_argument_word(
         &mut self,
         writer: &mut ArgumentCursor,
@@ -311,7 +315,6 @@ impl<G> ArgumentArena<G> {
             return Err(ScratchError::InvalidCoordinate);
         }
         self.append_owned(writer.region, spelling)?;
-        writer.visible_end += 1;
         Ok(writer.cursor.settle_argument_word(spelling.token_word()))
     }
     pub(crate) fn append_delimiter_word(
@@ -319,9 +322,6 @@ impl<G> ArgumentArena<G> {
         writer: &mut ArgumentCursor,
         spelling: TracedTokenWord,
     ) -> Result<(), ScratchError> {
-        if writer.holdback_len == 0 {
-            writer.holdback_start = writer.visible_end;
-        }
         self.append_owned(writer.region, spelling)?;
         writer.holdback_len += 1;
         Ok(())
@@ -334,16 +334,15 @@ impl<G> ArgumentArena<G> {
         if count > writer.holdback_len {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let end = writer.holdback_start + count;
+        let start = self.visible_end(writer)?;
+        let end = start + count;
         let words = self
             .words(writer.region, self.pending_slot(writer.region))
-            .slice(writer.visible_end as usize..end as usize)
+            .slice(start as usize..end as usize)
             .ok_or(ScratchError::InvalidCoordinate)?;
         for word in words.iter() {
             writer.cursor.settle_argument_word(word.token_word());
         }
-        writer.visible_end = end;
-        writer.holdback_start = end;
         writer.holdback_len -= count;
         Ok(())
     }
@@ -351,11 +350,8 @@ impl<G> ArgumentArena<G> {
         &mut self,
         writer: &mut ArgumentCursor,
     ) -> Result<(), ScratchError> {
-        if writer.holdback_start + writer.holdback_len != self.pending_len(writer.region) {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.truncate_pending(writer.region, writer.holdback_start);
-        writer.visible_end = writer.holdback_start;
+        let start = self.visible_end(writer)?;
+        self.truncate_pending(writer.region, start);
         writer.holdback_len = 0;
         Ok(())
     }
@@ -363,9 +359,9 @@ impl<G> ArgumentArena<G> {
         &self,
         writer: &ArgumentCursor,
     ) -> Result<InputWordIter<'_>, ScratchError> {
-        let (start, end) = writer.range()?;
+        let end = self.visible_end(writer)?;
         self.words(writer.region, self.pending_slot(writer.region))
-            .slice(start as usize..end as usize)
+            .slice(0..end as usize)
             .map(InputWords::iter)
             .ok_or(ScratchError::InvalidCoordinate)
     }
@@ -377,13 +373,19 @@ impl<G> ArgumentArena<G> {
         if writer.region != matching.region
             || self.pending_slot(matching.region) >= 9
             || writer.holdback_len != 0
-            || writer.visible_end != self.pending_len(writer.region)
         {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let (start, end) = writer.range()?;
+        let raw_len = self.pending_len(writer.region);
+        // TeX82 §394 removes an enclosing pair only from a completed argument.
+        // Unfinished runaway material keeps its original braces.
+        let start = u32::from(writer.removable_outer_group());
+        let end = raw_len
+            .checked_sub(start)
+            .filter(|&end| end >= start)
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let region = &mut self.regions[matching.region.index()];
-        region.published_raw_words += writer.visible_end as usize;
+        region.published_raw_words += raw_len as usize;
         let slot = usize::from(region.count);
         let value = &mut region.values[slot];
         if region.source_slots & (1 << slot) == 0 {
@@ -420,7 +422,7 @@ impl<G> ArgumentArena<G> {
         self.delimiter_prefix(writer).map(InputWords::iter)
     }
     fn delimiter_prefix(&self, writer: &ArgumentCursor) -> Result<InputWords<'_>, ScratchError> {
-        let start = writer.holdback_start as usize;
+        let start = self.visible_end(writer)? as usize;
         self.words(writer.region, self.pending_slot(writer.region))
             .slice(start..start + writer.holdback_len as usize)
             .ok_or(ScratchError::InvalidCoordinate)
@@ -457,7 +459,6 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
         }
         if count != 0 {
             arena.extend_region(self.region, source, slot, range.start as u32, count as u32)?;
-            self.visible_end += count as u32;
         }
         Ok(count)
     }
@@ -480,7 +481,6 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
         }
         if count != 0 {
             arena.extend_definition(self.region, body, range.start as u32, count as u32)?;
-            self.visible_end += count as u32;
         }
         Ok(count)
     }
@@ -489,17 +489,12 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
 mod tests;
 /// Stack-local writer for one pending macro argument.
 ///
-/// The argument occupies `start..visible_end` of the match words, less
-/// `end_trim` trailing words. A delimiter candidate is already appended after
-/// `visible_end` and stays unpublished until it is revealed or truncated.
+/// The arena owns its raw length. Held delimiter words are its trailing
+/// suffix. Publication derives an enclosing-pair trim from its brace grammar.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct ArgumentCursor {
     region: ArgumentRegionId,
-    start: u32,
-    visible_end: u32,
     cursor: crate::scanner_kernel::ScannerCursor,
-    end_trim: u8,
-    holdback_start: u32,
     holdback_len: u32,
 }
 
@@ -510,34 +505,5 @@ impl ArgumentCursor {
 
     pub(crate) const fn removable_outer_group(&self) -> bool {
         self.cursor.removable_outer_group()
-    }
-
-    fn range(&self) -> Result<(u32, u32), ScratchError> {
-        self.visible_end
-            .checked_sub(u32::from(self.end_trim))
-            .filter(|&end| end >= self.start)
-            .map(|end| (self.start, end))
-            .ok_or(ScratchError::InvalidCoordinate)
-    }
-
-    pub(crate) fn visible_len(&self) -> Result<usize, ScratchError> {
-        self.range().map(|(start, end)| (end - start) as usize)
-    }
-
-    pub(crate) fn strip_outer_group(&mut self) -> Result<(), ScratchError> {
-        if self.visible_len()? < 2 {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.start += 1;
-        self.end_trim = self
-            .end_trim
-            .checked_add(1)
-            .ok_or(ScratchError::CapacityOverflow)?;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    fn set_end_trim(&mut self, trim: u8) {
-        self.end_trim = trim;
     }
 }
