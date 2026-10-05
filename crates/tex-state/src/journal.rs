@@ -161,13 +161,6 @@ impl SaveStackProjection {
                 self.words = self.words.saturating_add(usize::from(words));
                 self.last_push_words = words;
             }
-            JournalEntry::GroupEnter(boundary) => {
-                let frame = boundary.frame;
-                debug_assert_eq!(self.words, frame.save_stack_words_before);
-                debug_assert_eq!(self.last_push_words, frame.last_save_push_words_before);
-                self.words = self.words.saturating_add(1);
-                self.last_push_words = 1;
-            }
             JournalEntry::Box { .. } => {
                 self.words += 2;
                 self.last_push_words = 2;
@@ -393,32 +386,49 @@ impl<G> SaveJournal<G> {
         self.first_touch_cell_visits
     }
 
+    #[inline]
     pub(crate) fn record_group_enter(&mut self, frame: GroupFrame) {
         #[cfg(feature = "profiling")]
-        self.record_profile_group_enter();
-        let boundary = GroupBoundary {
+        {
+            self.record_profile_group_enter();
+            self.record_profile_group_append();
+            self.record_profile_growth(
+                self.active_sequence.boundaries.len(),
+                self.active_sequence.boundaries.capacity(),
+                core::mem::size_of::<GroupBoundary>(),
+            );
+        }
+        debug_assert_eq!(self.save_stack.words, frame.save_stack_words_before);
+        debug_assert_eq!(
+            self.save_stack.last_push_words,
+            frame.last_save_push_words_before
+        );
+        self.save_stack.words = self.save_stack.words.saturating_add(1);
+        self.save_stack.last_push_words = 1;
+        self.active_sequence.boundaries.push(GroupBoundary {
             frame,
-            previous: self.active_sequence.top.map(SaveIndex::new),
             sparse_marker: None,
-        };
-        self.append_group_entry(JournalEntry::GroupEnter(boundary), false);
-        self.active_sequence.top = Some(self.active_sequence.entries.len() - 1);
-        self.active_sequence.depth += 1;
+        });
+        self.record_save_words_peak(self.active_sequence.boundaries.len());
     }
 
     fn append_group_entry(&mut self, mut entry: JournalEntry<G>, sparse: bool) {
         if sparse {
-            let boundary = self.active_sequence.top.expect("save has an active group");
             let marker = self
                 .active_sequence
-                .boundary(boundary)
+                .boundaries
+                .last()
+                .expect("save has an active group")
                 .sparse_marker
                 .map(SaveIndex::get);
             let marker = marker.unwrap_or_else(|| {
                 let marker = self.active_sequence.entries.len();
                 self.append_group_entry(JournalEntry::SparseMarker { head: None }, false);
-                self.active_sequence.boundary_mut(boundary).sparse_marker =
-                    Some(SaveIndex::new(marker));
+                self.active_sequence
+                    .boundaries
+                    .last_mut()
+                    .expect("active group")
+                    .sparse_marker = Some(SaveIndex::new(marker));
                 marker
             });
             let previous = self.active_sequence.sparse_head(marker);
@@ -432,9 +442,7 @@ impl<G> SaveJournal<G> {
         );
         if !sparse {
             self.save_stack.push(&entry);
-            let depth = self.active_sequence.depth
-                + usize::from(matches!(entry, JournalEntry::GroupEnter(_)));
-            self.record_save_words_peak(depth);
+            self.record_save_words_peak(self.active_sequence.boundaries.len());
         }
         #[cfg(feature = "profiling")]
         {
@@ -456,15 +464,15 @@ impl<G> SaveJournal<G> {
     pub(crate) fn record_group_exit_with_records(&mut self, frame: GroupFrame) {
         #[cfg(feature = "profiling")]
         self.record_profile_group_exit();
-        let index = self.active_sequence.top.expect("group exit has a boundary");
-        let previous = self
+        let boundary = self
             .active_sequence
-            .boundary(index)
-            .previous
-            .map(SaveIndex::get);
-        self.active_sequence.truncate(index);
-        self.active_sequence.top = previous;
-        self.active_sequence.depth -= 1;
+            .boundaries
+            .pop()
+            .expect("group exit has a boundary");
+        debug_assert_eq!(boundary.frame.lineage(), frame.lineage());
+        if self.active_sequence.entries.len() != frame.journal_start as usize {
+            self.active_sequence.truncate(frame.journal_start as usize);
+        }
         self.active_sequence.unsaving = false;
         self.save_stack = SaveStackProjection {
             words: frame.save_stack_words_before,
@@ -509,9 +517,8 @@ impl<G> SaveJournal<G> {
     }
 
     pub(crate) fn current_level(&self) -> u32 {
-        self.group_frames()
-            .last()
-            .map_or(crate::env::banks::LEVEL_ONE, |frame| frame.level())
+        // Group admission checks that depth plus the root level fits u32.
+        self.active_sequence.boundaries.len() as u32 + crate::env::banks::LEVEL_ONE
             - u32::from(self.active_sequence.unsaving)
     }
 
@@ -552,7 +559,7 @@ impl<G> SaveJournal<G> {
 
     pub(crate) fn add_box_spec_words(&mut self, words: usize) {
         self.box_spec_words += words;
-        self.record_save_words_peak(self.active_sequence.depth);
+        self.record_save_words_peak(self.active_sequence.boundaries.len());
     }
 
     pub(crate) fn remove_box_spec_words(&mut self, words: usize) {
@@ -573,7 +580,7 @@ impl<G> SaveJournal<G> {
 
     #[must_use]
     pub(crate) fn retained_bytes(&self) -> usize {
-        (self.active_sequence.entries.capacity() * core::mem::size_of::<JournalEntry<G>>())
+        self.group_capacity_bytes()
             .saturating_add(self.checkpoint_undo.retained_bytes())
     }
 
@@ -687,8 +694,7 @@ impl<G> SaveJournal<G> {
     /// has already been destructively returned to its empty root.
     pub(crate) fn reject_checkpoint_candidate(&mut self, tail: AcceptedJournalTail<G>) {
         self.active_sequence.truncate(0);
-        self.active_sequence.top = None;
-        self.active_sequence.depth = 0;
+        self.active_sequence.boundaries.clear();
         self.box_spec_words = 0;
         self.active_sequence.unsaving = false;
         self.save_stack = tail.save_stack;
@@ -793,29 +799,14 @@ impl<G> SaveJournal<G> {
 
     pub(crate) fn restore_group_cursor_after_replay(&mut self, cursor: JournalCursor<G>) {
         self.active_sequence.truncate(0);
-        self.active_sequence.top = None;
-        self.active_sequence.depth = 0;
+        self.active_sequence.boundaries.clear();
         self.box_spec_words = 0;
         self.active_sequence.unsaving = false;
         self.save_stack = cursor.save_stack;
     }
 
     pub(crate) fn group_save_len(&self) -> usize {
-        self.active_sequence.entries.len()
-    }
-
-    #[cfg(feature = "profiling")]
-    fn group_mutation_len(&self) -> usize {
-        self.active_sequence
-            .entries
-            .iter()
-            .filter(|entry| matches!(entry, JournalEntry::Mutation(_) | JournalEntry::Box { .. }))
-            .count()
-    }
-
-    #[cfg(feature = "profiling")]
-    fn group_mutation_capacity(&self) -> usize {
-        self.active_sequence.entries.capacity()
+        self.active_sequence.entries.len() + self.active_sequence.boundaries.len()
     }
 
     #[cfg(test)]
@@ -823,9 +814,15 @@ impl<G> SaveJournal<G> {
         self.group_capacity_bytes_census() + self.checkpoint_undo.retained_bytes()
     }
 
+    fn group_capacity_bytes(&self) -> usize {
+        self.active_sequence.entries.capacity() * core::mem::size_of::<JournalEntry<G>>()
+            + self.active_sequence.boundaries.capacity() * core::mem::size_of::<GroupBoundary>()
+    }
+
     #[cfg(test)]
     fn group_capacity_bytes_census(&self) -> usize {
         self.active_sequence.entries.capacity() * core::mem::size_of::<JournalEntry<G>>()
+            + self.active_sequence.boundaries.capacity() * core::mem::size_of::<GroupBoundary>()
     }
 
     fn advance_host_epoch(&mut self) {
@@ -897,7 +894,10 @@ impl<G> Drop for SaveJournal<G> {
         crate::measurement::record_save_journal_census(crate::measurement::SaveJournalCensus {
             entries: u64::try_from(self.retained_len()).unwrap_or(u64::MAX),
             capacity: u64::try_from(
-                self.group_mutation_capacity()
+                self.active_sequence
+                    .entries
+                    .capacity()
+                    .saturating_add(self.active_sequence.boundaries.capacity())
                     .saturating_add(self.checkpoint_undo.capacity()),
             )
             .unwrap_or(u64::MAX),
@@ -905,9 +905,15 @@ impl<G> Drop for SaveJournal<G> {
             entry_size: u64::try_from(core::mem::size_of::<JournalEntry<G>>()).unwrap_or(u64::MAX),
             mutation_size: u64::try_from(core::mem::size_of::<Mutation<G>>()).unwrap_or(u64::MAX),
             group_frame_size: u64::try_from(core::mem::size_of::<GroupFrame>()).unwrap_or(u64::MAX),
-            group_entries: u64::try_from(self.group_mutation_len()).unwrap_or(u64::MAX),
-            group_capacity: u64::try_from(self.group_mutation_capacity()).unwrap_or(u64::MAX),
-            group_entry_size: u64::try_from(core::mem::size_of::<Mutation<G>>())
+            boundary_entries: u64::try_from(self.active_sequence.boundaries.len())
+                .unwrap_or(u64::MAX),
+            boundary_capacity: u64::try_from(self.active_sequence.boundaries.capacity())
+                .unwrap_or(u64::MAX),
+            boundary_size: u64::try_from(core::mem::size_of::<GroupBoundary>()).unwrap_or(u64::MAX),
+            group_entries: u64::try_from(self.active_sequence.entries.len()).unwrap_or(u64::MAX),
+            group_capacity: u64::try_from(self.active_sequence.entries.capacity())
+                .unwrap_or(u64::MAX),
+            group_entry_size: u64::try_from(core::mem::size_of::<JournalEntry<G>>())
                 .unwrap_or(u64::MAX),
             checkpoint_entries: u64::try_from(self.checkpoint_entries).unwrap_or(u64::MAX),
             checkpoint_capacity: u64::try_from(self.checkpoint_undo.capacity()).unwrap_or(u64::MAX),

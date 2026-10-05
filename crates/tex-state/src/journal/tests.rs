@@ -19,7 +19,7 @@ fn enter_group(journal: &mut SaveJournal<TestGeneration>, lineage: u64) -> Group
     let frame = GroupFrame::for_journal_test(
         GroupKind::Simple,
         lineage,
-        u32::try_from(journal.group_frames().len()).expect("test depth fits u32") + 2,
+        u32::try_from(journal.len()).expect("test save length fits u32"),
         save_stack_words_before,
         last_save_push_words_before,
     );
@@ -28,11 +28,11 @@ fn enter_group(journal: &mut SaveJournal<TestGeneration>, lineage: u64) -> Group
 }
 
 fn record_saved_count(journal: &mut SaveJournal<TestGeneration>, cell: u16, before: i32) {
-    let level = journal
-        .group_frames()
-        .last()
-        .expect("saved mutation has an active group")
-        .level();
+    assert!(
+        !journal.group_frames().is_empty(),
+        "saved mutation has an active group"
+    );
+    let level = journal.current_level();
     journal.record_assignment(
         StateCell::Count(cell),
         StateWord::Integer(before),
@@ -404,4 +404,37 @@ fn save_maxima_follow_actual_pushes_and_survive_unsave_and_restore() {
     journal.record_group_exit(next);
     assert_eq!(journal.max_save_stack_words(false), classic);
     assert_eq!(journal.max_save_stack_words(true), etex);
+}
+
+#[test]
+fn empty_groups_retain_only_boundaries_and_reject_nonquiescent_capture() {
+    let mut journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
+    let checkpoint = journal.checkpoint_cursor(0).expect("quiescent checkpoint");
+    for lineage in 1..=1_024 {
+        enter_group(&mut journal, lineage);
+    }
+    assert_eq!(journal.current_level(), 1_025);
+    assert_eq!(journal.group_frames().len(), 1_024);
+    assert_eq!(journal.group_frames()[512].lineage(), 513);
+    assert_eq!(
+        journal.active_sequence.entries.capacity(),
+        0,
+        "empty groups demand no saved-value storage"
+    );
+    assert_eq!(
+        journal.checkpoint_cursor(1_024),
+        Err(StateError::CheckpointIneligible)
+    );
+    assert_exact_capacity_accounting(&journal);
+
+    while let Some(frame) = journal.group_frames().last().copied() {
+        journal.begin_unsave();
+        journal.record_group_exit(frame);
+    }
+    assert!(journal.validate_cursor(checkpoint));
+    assert_eq!(journal.current_level(), 1);
+    assert_eq!(journal.save_stack_projection(), (0, 0));
+    assert_eq!(journal.retained_len(), 0);
+    assert_exact_capacity_accounting(&journal);
 }

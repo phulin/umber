@@ -127,6 +127,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   no duplicate scan depth, macro argument payload, or publication capability.
 - `src/input/arguments.rs`, `src/input/arguments/tests.rs`: final macro
   `ArgumentArena`, with one reusable vector per simultaneous invocation. Up to four immutable definition words write directly to the final pool without acquiring a source owner; larger spans retain their actual source. Scalar capture queries the source row only for an actual retained span and advances local visible length directly.
+  Scalar matchers write directly to this arena while borrowing the actual input row; the per-word input-stack forwarding method is deleted.
   Each region holds at most nine final ranges; call-local `MatchedArguments` transfers only its owner coordinate, and `ArgumentCursor`
   holds brace/group facts and the unpublished delimiter suffix. Publication
   transfers the region to the macro body without copying words or ranges; no

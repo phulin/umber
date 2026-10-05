@@ -1,5 +1,5 @@
-//! The one contiguous TeX save stack. Boundaries carry only scalar metadata;
-//! actual before-values and aftergroup words live inline in this same stack.
+//! The native group stack: compact actual boundaries and one chronological
+//! sequence of demanded before-values, aftergroup words and sparse markers.
 
 use super::Mutation;
 use crate::GroupFrame;
@@ -29,13 +29,11 @@ impl SaveIndex {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GroupBoundary {
     pub(super) frame: GroupFrame,
-    pub(super) previous: Option<SaveIndex>,
     pub(super) sparse_marker: Option<SaveIndex>,
 }
 
 pub(crate) enum JournalEntry<G> {
     Mutation(Mutation<G>),
-    GroupEnter(GroupBoundary),
     Box {
         saved: DurableMutation,
         sparse_link: Option<SaveIndex>,
@@ -67,8 +65,7 @@ impl<G> JournalEntry<G> {
 pub(super) struct GroupSaveStack<G> {
     pub(super) entries: Vec<JournalEntry<G>>,
     pub(super) roots: crate::definition_arena::DefinitionRoots,
-    pub(super) top: Option<usize>,
-    pub(super) depth: usize,
+    pub(super) boundaries: Vec<GroupBoundary>,
     pub(super) unsaving: bool,
 }
 
@@ -77,15 +74,14 @@ impl<G> GroupSaveStack<G> {
         Self {
             entries: Vec::new(),
             roots,
-            top: None,
-            depth: 0,
+            boundaries: Vec::new(),
             unsaving: false,
         }
     }
 }
 impl<G> GroupSaveStack<G> {
     pub(super) fn is_empty(&self) -> bool {
-        self.depth == 0
+        self.boundaries.is_empty()
     }
     pub(super) fn append(&mut self, entry: JournalEntry<G>) {
         if let JournalEntry::Mutation(saved) = &entry {
@@ -102,18 +98,6 @@ impl<G> GroupSaveStack<G> {
     }
     pub(super) fn entry(&self, index: usize) -> Option<&JournalEntry<G>> {
         self.entries.get(index)
-    }
-    pub(super) fn boundary(&self, index: usize) -> &GroupBoundary {
-        match &self.entries[index] {
-            JournalEntry::GroupEnter(boundary) => boundary,
-            _ => unreachable!("group boundary exists"),
-        }
-    }
-    pub(super) fn boundary_mut(&mut self, index: usize) -> &mut GroupBoundary {
-        match &mut self.entries[index] {
-            JournalEntry::GroupEnter(boundary) => boundary,
-            _ => unreachable!("group boundary exists"),
-        }
     }
     pub(super) fn sparse_head(&self, index: usize) -> Option<usize> {
         match &self.entries[index] {
@@ -132,7 +116,7 @@ impl<G> GroupSaveStack<G> {
     }
 }
 
-/// Borrowed diagnostic view of native boundaries; no second group topology.
+/// Borrowed diagnostic view of the actual compact boundary stack.
 #[derive(Clone, Copy)]
 pub struct GroupFrames<'a, G> {
     stack: &'a GroupSaveStack<G>,
@@ -140,23 +124,18 @@ pub struct GroupFrames<'a, G> {
 impl<'a, G> GroupFrames<'a, G> {
     #[must_use]
     pub fn len(&self) -> usize {
-        self.stack.depth
+        self.stack.boundaries.len()
     }
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.stack.depth == 0
+        self.stack.boundaries.is_empty()
     }
     #[must_use]
     pub fn last(&self) -> Option<&'a GroupFrame> {
-        self.stack
-            .top
-            .map(|index| &self.stack.boundary(index).frame)
+        self.stack.boundaries.last().map(|boundary| &boundary.frame)
     }
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = &'a GroupFrame> + use<'a, G> {
-        self.stack.entries.iter().filter_map(|entry| match entry {
-            JournalEntry::GroupEnter(boundary) => Some(&boundary.frame),
-            _ => None,
-        })
+        self.stack.boundaries.iter().map(|boundary| &boundary.frame)
     }
     #[must_use]
     pub fn to_vec(&self) -> Vec<GroupFrame> {
@@ -166,35 +145,29 @@ impl<'a, G> GroupFrames<'a, G> {
 impl<G> core::ops::Index<usize> for GroupFrames<'_, G> {
     type Output = GroupFrame;
     fn index(&self, index: usize) -> &GroupFrame {
-        self.iter().nth(index).expect("group frame exists")
+        &self.stack.boundaries[index].frame
     }
 }
-pub struct GroupFramesIter<'a, G> {
-    entries: core::slice::Iter<'a, JournalEntry<G>>,
+pub struct GroupFramesIter<'a> {
+    boundaries: core::slice::Iter<'a, GroupBoundary>,
 }
-impl<'a, G> Iterator for GroupFramesIter<'a, G> {
+impl<'a> Iterator for GroupFramesIter<'a> {
     type Item = &'a GroupFrame;
     fn next(&mut self) -> Option<Self::Item> {
-        self.entries.find_map(|entry| match entry {
-            JournalEntry::GroupEnter(boundary) => Some(&boundary.frame),
-            _ => None,
-        })
+        self.boundaries.next().map(|boundary| &boundary.frame)
     }
 }
-impl<G> DoubleEndedIterator for GroupFramesIter<'_, G> {
+impl DoubleEndedIterator for GroupFramesIter<'_> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.entries.by_ref().rev().find_map(|entry| match entry {
-            JournalEntry::GroupEnter(boundary) => Some(&boundary.frame),
-            _ => None,
-        })
+        self.boundaries.next_back().map(|boundary| &boundary.frame)
     }
 }
 impl<'a, G> IntoIterator for GroupFrames<'a, G> {
     type Item = &'a GroupFrame;
-    type IntoIter = GroupFramesIter<'a, G>;
+    type IntoIter = GroupFramesIter<'a>;
     fn into_iter(self) -> Self::IntoIter {
         GroupFramesIter {
-            entries: self.stack.entries.iter(),
+            boundaries: self.stack.boundaries.iter(),
         }
     }
 }

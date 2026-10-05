@@ -228,16 +228,24 @@ impl Drop for HotCoreProfilingReport {
         );
         let journal = tex_state::measurement::save_journal_census();
         eprintln!(
-            "SAVE_JOURNAL_CENSUS entries={} capacity={} peak_entries={} entry_size={} mutation_size={} group_frame_size={} semantic_live_bytes={} spare_capacity_bytes={} group_entries={} group_capacity={} group_entry_size={} checkpoint_entries={} checkpoint_capacity={} checkpoint_entry_size={} mutations={} mutation_words={:?} group_enters={} group_exits={} append_calls={} growths={} bytes_moved_by_growth={} maximum_group_depth={} entries_at_maximum_group_depth={}",
+            "SAVE_JOURNAL_CENSUS entries={} capacity={} peak_entries={} entry_size={} mutation_size={} group_frame_size={} boundary_entries={} boundary_capacity={} boundary_size={} semantic_live_bytes={} spare_capacity_bytes={} group_entries={} group_capacity={} group_entry_size={} checkpoint_entries={} checkpoint_capacity={} checkpoint_entry_size={} mutations={} mutation_words={:?} group_enters={} group_exits={} append_calls={} growths={} bytes_moved_by_growth={} maximum_group_depth={} entries_at_maximum_group_depth={}",
             journal.entries,
             journal.capacity,
             journal.peak_entries,
             journal.entry_size,
             journal.mutation_size,
             journal.group_frame_size,
+            journal.boundary_entries,
+            journal.boundary_capacity,
+            journal.boundary_size,
             journal
                 .group_entries
                 .saturating_mul(journal.group_entry_size)
+                .saturating_add(
+                    journal
+                        .boundary_entries
+                        .saturating_mul(journal.boundary_size)
+                )
                 .saturating_add(
                     journal
                         .checkpoint_entries
@@ -247,6 +255,12 @@ impl Drop for HotCoreProfilingReport {
                 .group_capacity
                 .saturating_sub(journal.group_entries)
                 .saturating_mul(journal.group_entry_size)
+                .saturating_add(
+                    journal
+                        .boundary_capacity
+                        .saturating_sub(journal.boundary_entries)
+                        .saturating_mul(journal.boundary_size)
+                )
                 .saturating_add(
                     journal
                         .checkpoint_capacity

@@ -1111,3 +1111,36 @@ not repeat the report and character flush already performed at entry.
 Native word delivery has no exceptional command record. Its continuation
 therefore has no observation check; only a genuinely supplied exceptional
 record can invoke the episode's observer and stop at its observation boundary.
+
+## Compact group boundaries and demanded save records
+
+The native group stack stores its actual boundaries in a compact vector. Each
+boundary contains its diagnostic frame, the start of its saved-record suffix,
+and an optional lazy sparse marker. The vector length is the group depth; its
+last element is the current boundary. There is no predecessor link, separate
+depth cache, per-frame level copy, or boundary variant in the saved-value enum.
+The current assignment level is the boundary count plus the root level, lowered
+once during synchronous unsave. Group-frame queries
+borrow these actual boundaries directly rather than filtering saved records.
+
+Saved scalar/box values, aftergroup words, and lazy sparse markers retain their
+one chronological record sequence. Opening an empty group writes only its
+compact boundary. Closing it pops that boundary without creating, examining,
+or draining a saved-value slot. A nonempty close consumes the exact suffix,
+including the existing e-TeX sparse-chain order at its marker. Definition
+preimages retain their counted roots until their actual restoration consumer
+finishes. TeX save-word and high-water accounting includes the logical boundary
+word even though boundaries and before-values have different Rust storage.
+
+This changes the representation of the sole native group stack, not checkpoint
+eligibility or rollback semantics. Full checkpoints retain the independent
+first-touch undo lane and all aggregate owners at their existing quiescent
+level-zero boundaries. Restore and candidate rejection discard both actual
+group storage sequences together; there is no parallel group topology or
+compatibility representation. Profiling and retained-byte accounting include
+the physical capacities of both sequences.
+
+Scalar argument matching lends the actual current input row directly to the
+argument arena when it writes a word. The per-word input-stack forwarding
+method is deleted. The final argument owner and its source-retention threshold
+are unchanged.

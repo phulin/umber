@@ -1000,7 +1000,7 @@ impl BoxFixture {
             .dense_state
             .closing_group(crate::GroupKind::Simple)
             .expect("closing group");
-        assert_eq!(frame.level(), level);
+        assert_eq!(self.dense_state.current_level(), level);
         let mut cursor = self.dense_state.journal().len();
         let mut sparse = None;
         self.dense_state.journal_mut().begin_unsave();

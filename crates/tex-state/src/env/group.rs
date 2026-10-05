@@ -27,8 +27,7 @@ pub struct GroupFrame {
     kind: GroupKind,
     entered_line: u32,
     lineage: u64,
-    pub(super) journal_start: u32,
-    pub(super) level: u32,
+    pub(crate) journal_start: u32,
     /// State-owned TeX82 save words immediately before this boundary.
     ///
     /// The matching `GroupExit` uses these two scalars to restore the
@@ -44,7 +43,6 @@ impl GroupFrame {
         entered_line: u32,
         lineage: u64,
         journal_start: u32,
-        level: u32,
         save_stack_words_before: usize,
         last_save_push_words_before: u8,
     ) -> Self {
@@ -53,7 +51,6 @@ impl GroupFrame {
             entered_line,
             lineage,
             journal_start,
-            level,
             save_stack_words_before,
             last_save_push_words_before,
         }
@@ -63,7 +60,7 @@ impl GroupFrame {
     pub(crate) const fn for_journal_test(
         kind: GroupKind,
         lineage: u64,
-        level: u32,
+        journal_start: u32,
         save_stack_words_before: usize,
         last_save_push_words_before: u8,
     ) -> Self {
@@ -71,8 +68,7 @@ impl GroupFrame {
             kind,
             1,
             lineage,
-            0,
-            level,
+            journal_start,
             save_stack_words_before,
             last_save_push_words_before,
         )
@@ -91,10 +87,6 @@ impl GroupFrame {
     #[must_use]
     pub const fn lineage(self) -> u64 {
         self.lineage
-    }
-
-    pub(crate) const fn level(self) -> u32 {
-        self.level
     }
 }
 

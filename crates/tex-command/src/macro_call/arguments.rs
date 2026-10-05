@@ -89,11 +89,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         flags,
                         Some(tokens),
                     )?;
-                    processor
-                        .command
-                        .input
-                        .levels
-                        .append_macro_argument_word(tokens, word, false)
+                    let input = &mut processor.command.input.levels;
+                    input
+                        .arguments
+                        .append_from_input(tokens, word, input.current.as_ref(), false)
                         .map_err(|_| CommandError::input_invariant())?;
                     Ok(std::ops::ControlFlow::Break(true))
                 })?
@@ -196,11 +195,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             }
                             return Ok(std::ops::ControlFlow::Break(true));
                         }
-                        processor
-                            .command
-                            .input
-                            .levels
-                            .append_macro_argument_word(tokens, word, true)
+                        let input = &mut processor.command.input.levels;
+                        input
+                            .arguments
+                            .append_from_input(tokens, word, input.current.as_ref(), true)
                             .map_err(|_| CommandError::input_invariant())?;
                         return Ok(std::ops::ControlFlow::Break(false));
                     }
@@ -246,11 +244,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             // The current spelling is the final word of the retained
                             // suffix. It is unpublished until the next mismatch or
                             // until the complete delimiter truncates the holdback.
-                            processor
-                                .command
-                                .input
-                                .levels
-                                .append_macro_argument_word(tokens, word, true)
+                            let input = &mut processor.command.input.levels;
+                            input
+                                .arguments
+                                .append_from_input(tokens, word, input.current.as_ref(), true)
                                 .map_err(|_| CommandError::input_invariant())?;
                             return Ok(std::ops::ControlFlow::Break(false));
                         }
@@ -273,11 +270,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         flags,
                         Some(tokens),
                     )?;
-                    processor
-                        .command
-                        .input
-                        .levels
-                        .append_macro_argument_word(tokens, word, false)
+                    let input = &mut processor.command.input.levels;
+                    input
+                        .arguments
+                        .append_from_input(tokens, word, input.current.as_ref(), false)
                         .map_err(|_| CommandError::input_invariant())?;
                     Ok(std::ops::ControlFlow::Break(false))
                 })?

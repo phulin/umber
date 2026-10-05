@@ -317,6 +317,9 @@ pub struct SaveJournalCensus {
     pub entry_size: u64,
     pub mutation_size: u64,
     pub group_frame_size: u64,
+    pub boundary_entries: u64,
+    pub boundary_capacity: u64,
+    pub boundary_size: u64,
     pub group_entries: u64,
     pub group_capacity: u64,
     pub group_entry_size: u64,
@@ -619,6 +622,9 @@ static SAVE_JOURNAL_PEAK_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_ENTRY_SIZE: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_MUTATION_SIZE: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_GROUP_FRAME_SIZE: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_BOUNDARY_SIZE: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_BOUNDARY_CAPACITY: AtomicU64 = AtomicU64::new(0);
+static SAVE_JOURNAL_BOUNDARY_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_GROUP_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_GROUP_CAPACITY: AtomicU64 = AtomicU64::new(0);
 static SAVE_JOURNAL_GROUP_ENTRY_SIZE: AtomicU64 = AtomicU64::new(0);
@@ -975,6 +981,9 @@ pub(crate) fn record_save_journal_census(census: SaveJournalCensus) {
     SAVE_JOURNAL_ENTRY_SIZE.fetch_max(census.entry_size, Ordering::Relaxed);
     SAVE_JOURNAL_MUTATION_SIZE.fetch_max(census.mutation_size, Ordering::Relaxed);
     SAVE_JOURNAL_GROUP_FRAME_SIZE.fetch_max(census.group_frame_size, Ordering::Relaxed);
+    SAVE_JOURNAL_BOUNDARY_SIZE.fetch_max(census.boundary_size, Ordering::Relaxed);
+    SAVE_JOURNAL_BOUNDARY_CAPACITY.fetch_max(census.boundary_capacity, Ordering::Relaxed);
+    SAVE_JOURNAL_BOUNDARY_ENTRIES.fetch_max(census.boundary_entries, Ordering::Relaxed);
     SAVE_JOURNAL_GROUP_ENTRIES.fetch_max(census.group_entries, Ordering::Relaxed);
     SAVE_JOURNAL_GROUP_CAPACITY.fetch_max(census.group_capacity, Ordering::Relaxed);
     SAVE_JOURNAL_GROUP_ENTRY_SIZE.fetch_max(census.group_entry_size, Ordering::Relaxed);
@@ -1007,6 +1016,9 @@ pub fn save_journal_census() -> SaveJournalCensus {
         entry_size: SAVE_JOURNAL_ENTRY_SIZE.load(Ordering::Relaxed),
         mutation_size: SAVE_JOURNAL_MUTATION_SIZE.load(Ordering::Relaxed),
         group_frame_size: SAVE_JOURNAL_GROUP_FRAME_SIZE.load(Ordering::Relaxed),
+        boundary_size: SAVE_JOURNAL_BOUNDARY_SIZE.load(Ordering::Relaxed),
+        boundary_capacity: SAVE_JOURNAL_BOUNDARY_CAPACITY.load(Ordering::Relaxed),
+        boundary_entries: SAVE_JOURNAL_BOUNDARY_ENTRIES.load(Ordering::Relaxed),
         group_entries: SAVE_JOURNAL_GROUP_ENTRIES.load(Ordering::Relaxed),
         group_capacity: SAVE_JOURNAL_GROUP_CAPACITY.load(Ordering::Relaxed),
         group_entry_size: SAVE_JOURNAL_GROUP_ENTRY_SIZE.load(Ordering::Relaxed),

@@ -288,7 +288,7 @@ Definition-owned parameter programs expose literal delimiter views only for none
   capacity-change accounting for constant-time budget reads, synchronous unsave observation with its actual popped preimage owner, and
   prefix-independent accepted/current suffix settlement. Host stamps never
   enter group or checkpoint preimages.
-- `src/journal/groups.rs`: One contiguous native TeX save stack containing scalar boundaries, actual scalar/box before-values, aftergroup words, and lazy sparse marker/links. Borrowed group-frame views read these boundaries without another group topology. Definition preimages are actual counted roots; boundaries contain no definition frontier.
+- `src/journal/groups.rs`: The sole native group stack has compact actual boundaries and one chronological sequence of saved scalar/box values, aftergroup words, and lazy sparse markers/links. Group-frame views borrow the boundary vector directly; its length and last element replace predecessor links and a depth cache. Empty scopes allocate no saved-value slots. Definition preimages are actual counted roots; boundaries contain no definition frontier.
 - `src/journal/checkpoints.rs`: Plain cold owning dense undo tails, unique
   branch-valid checkpoint cuts, repeated restoration, accepted/candidate
   settlement, prefix release and final-root disarm. Dense undo owns no node

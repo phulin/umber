@@ -1724,7 +1724,7 @@ impl<G> DenseState<G> {
     ) -> Result<(), StateError> {
         let depth = u32::try_from(self.journal().group_frames().len())
             .map_err(|_| StateError::GroupDepthExhausted)?;
-        let level = depth
+        depth
             .checked_add(2)
             .ok_or(StateError::GroupDepthExhausted)?;
         let lineage = self.next_group_lineage;
@@ -1732,7 +1732,7 @@ impl<G> DenseState<G> {
             .checked_add(1)
             .ok_or(StateError::GroupLineageExhausted)?;
         let journal_start =
-            u32::try_from(self.journal().len() + 1).map_err(|_| StateError::GroupDepthExhausted)?;
+            u32::try_from(self.journal().len()).map_err(|_| StateError::GroupDepthExhausted)?;
         let (save_stack_words_before, last_save_push_words_before) =
             self.journal().save_stack_projection();
         let frame = GroupFrame::new(
@@ -1740,7 +1740,6 @@ impl<G> DenseState<G> {
             entered_line,
             lineage,
             journal_start,
-            level,
             save_stack_words_before,
             last_save_push_words_before,
         );

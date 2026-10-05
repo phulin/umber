@@ -760,13 +760,13 @@ fn ordered_journal_carries_each_exact_prior_word_and_only_the_tex_save() {
         .assign_count(0, 5, AssignmentScope::Local)
         .expect("second local");
 
-    let JournalEntry::Mutation(first) = state.journal().entry(1) else {
+    let JournalEntry::Mutation(first) = state.journal().entry(0) else {
         panic!("expected first local mutation");
     };
     assert_eq!(first.before, super::StateWord::Integer(3));
     assert_eq!(
         state.journal().len(),
-        2,
+        1,
         "only the real TeX save is retained"
     );
 }

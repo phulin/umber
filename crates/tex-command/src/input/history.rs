@@ -657,16 +657,6 @@ impl<G> InputStack<G> {
         self.words[row.frame.start() as usize..row.frame.absolute_limit()].reverse();
     }
 
-    pub(crate) fn append_macro_argument_word(
-        &mut self,
-        writer: &mut super::ArgumentCursor,
-        word: tex_state::token::TracedTokenWord,
-        delimiter: bool,
-    ) -> Result<u32, crate::execution_scratch::ScratchError> {
-        self.arguments
-            .append_from_input(writer, word, self.current.as_ref(), delimiter)
-    }
-
     /// The innermost macro activation's argument words and replacement.
     #[cfg(test)]
     pub(crate) fn innermost_macro_activation(
