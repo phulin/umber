@@ -94,7 +94,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let mut completed = false;
             while !self.is_observed() && self.consume_csname_run(&mut name)? {}
             self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                |processor, spelling, meaning, control_sequence, exceptional| {
+                |processor, spelling, meaning, _code, control_sequence, exceptional| {
                     if let Some(word) = meaning.scalar_word() {
                         if word == END_CS_NAME_WORD {
                             completed = true;

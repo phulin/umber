@@ -89,8 +89,7 @@ not allocate a vector merely to publish one already-complete node.
   each interpreter invocation. Ordinary driver entry has no command slot;
   diagnostic preflight dispatches only its genuinely already-fetched record. Every selected terminal enters this native switch, including alignment
   recovery and endv. There is no selected-command fallback.
-  Terminal dispatch reads a scalar key without an optional wrapper or fallback
-  font selector. Entry inspects the actual host facts directly; it lends
+  Terminal dispatch receives the actual scalar key from expansion without an optional wrapper or fallback font selector. Native main-control, character, accent and alignment continuations use that key directly; codes.rs contains only compile-time selectors. Diagnostic preflight derives its key from the genuinely already-fetched command. Entry inspects the actual host facts directly; it lends
   mutable execution owners only when pending characters require a real flush.
   Fetch-role queries borrow actual host facts directly. Relax continuation
   reads the live World effect position and recoverable diagnostic demand

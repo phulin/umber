@@ -931,6 +931,6 @@ at the actual print and advance its existing `shown_mode` owner there (TeX82
 §299/§367, with §1370 no-mode during deferred writes). There is no owned prefix
 mailbox, trace-printed flag or tracing preparation before a fetch.
 
-- `src/processor/terminal.rs`: native word consumer contract and concrete full-processor callback typing. Restricted admission borrows actual spelling and meaning; literal admission is a static consumer capability. It retains the existing reader span, while full processor access and input transitions invalidate invocation-local readiness.
+- `src/processor/terminal.rs`: native word consumer contract and concrete full-processor callback typing. Restricted admission borrows actual spelling and meaning; literal admission is a static consumer capability. It retains the existing reader span, while full processor access and input transitions invalidate invocation-local readiness. Full native delivery shares its one scalar selector between expansion classification and terminal consumption; consumers do not reclassify the same terminal meaning. Exceptional delivery derives the selector after its demanded semantic adjustment.
 
 - `src/processor/expand/tests/resident_terminals.rs`: exact native no-op fuel and budget cuts, full-access exclusion within a span, and actual frame retirement interruptions.

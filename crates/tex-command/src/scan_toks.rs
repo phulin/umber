@@ -1090,7 +1090,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_left_brace(&mut self) -> Result<Option<OriginId>, CommandError> {
         let mut opening = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _, exceptional| {
+            |processor, spelling, meaning, _code, _, exceptional| {
                 let character = meaning
                     .scalar_word()
                     .and_then(Meaning::runtime_word_character);
@@ -1467,7 +1467,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut operand_read = false;
         let mut value = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, control_sequence, exceptional| {
+            |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 operand_read = true;
                 value = processor.scan_the_internal_value(
                     spelling,

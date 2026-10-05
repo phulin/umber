@@ -32,27 +32,24 @@ pub(super) fn no_boundary<G>(
             G,
             _,
         >(
-            |processor, spelling, meaning, symbol, exceptional| {
-                if let Some(word) = meaning.scalar_word() {
-                    let code = Meaning::runtime_word_control_code(word);
-                    if code == codes::PRIMITIVE_NO_BOUNDARY {
-                        trace::command(processor, code, meaning, symbol);
-                        return Ok(ControlFlow::Continue(()));
-                    }
-                    if matches!(
-                        code,
-                        codes::CHAR_LETTER
-                            | codes::CHAR_OTHER
-                            | codes::CHAR_GIVEN
-                            | codes::PRIMITIVE_CHAR
-                    ) {
-                        processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                            execution
-                                .modes
-                                .current_list_mutation()
-                                .set_no_boundary(true)
-                        });
-                    }
+            |processor, spelling, meaning, code, symbol, exceptional| {
+                if code == codes::PRIMITIVE_NO_BOUNDARY {
+                    trace::command(processor, code, meaning, symbol);
+                    return Ok(ControlFlow::Continue(()));
+                }
+                if matches!(
+                    code,
+                    codes::CHAR_LETTER
+                        | codes::CHAR_OTHER
+                        | codes::CHAR_GIVEN
+                        | codes::PRIMITIVE_CHAR
+                ) {
+                    processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                        execution
+                            .modes
+                            .current_list_mutation()
+                            .set_no_boundary(true)
+                    });
                 }
                 completion = Some(dispatch::execute(
                     processor,
@@ -61,7 +58,7 @@ pub(super) fn no_boundary<G>(
                     symbol,
                     exceptional,
                     receipts,
-                    codes::of(meaning),
+                    code,
                 ));
                 Ok(ControlFlow::Break(()))
             },
@@ -83,16 +80,13 @@ pub(super) fn ignore_spaces<G>(
             G,
             _,
         >(
-            |processor, spelling, meaning, symbol, exceptional| {
-                if let Some(word) = meaning.scalar_word() {
-                    let code = Meaning::runtime_word_control_code(word);
-                    if code == codes::CHAR_SPACE {
-                        return Ok(ControlFlow::Continue(()));
-                    }
-                    if code == codes::PRIMITIVE_IGNORE_SPACES {
-                        trace::command(processor, code, meaning, symbol);
-                        return Ok(ControlFlow::Continue(()));
-                    }
+            |processor, spelling, meaning, code, symbol, exceptional| {
+                if code == codes::CHAR_SPACE {
+                    return Ok(ControlFlow::Continue(()));
+                }
+                if code == codes::PRIMITIVE_IGNORE_SPACES {
+                    trace::command(processor, code, meaning, symbol);
+                    return Ok(ControlFlow::Continue(()));
                 }
                 completion = Some(dispatch::execute(
                     processor,
@@ -101,7 +95,7 @@ pub(super) fn ignore_spaces<G>(
                     symbol,
                     exceptional,
                     receipts,
-                    codes::of(meaning),
+                    code,
                 ));
                 Ok(ControlFlow::Break(()))
             },

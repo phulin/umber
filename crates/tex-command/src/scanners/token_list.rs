@@ -29,7 +29,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.scan_optional_equals()?;
         let mut value = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _, exceptional| {
+            |processor, spelling, meaning, _code, _, exceptional| {
                 let meaning = meaning
                     .scalar_word()
                     .map_or(Meaning::Undefined, Meaning::from_runtime_word);

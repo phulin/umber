@@ -63,44 +63,12 @@ impl IntegerOperand {
         }
         ControlFlow::Continue(false)
     }
-}
-
-impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
-    crate::NativeWordConsumer<CommandProcessor<'state, 'host, G, Facts>, G> for IntegerOperand
-{
-    const RESIDENT_TERMINALS: bool = true;
-    const RESIDENT_LITERALS: bool = true;
-
-    #[inline(always)]
-    fn resident_ready(&self) -> bool {
-        self.ready
-    }
-
-    #[inline(always)]
-    fn input_boundary(&mut self) {
-        self.ready = false;
-    }
-
-    #[inline(always)]
-    fn resident_terminal(
-        &mut self,
-        spelling: TracedTokenWord,
-        meaning: &tex_state::meaning::MeaningWord<G>,
-    ) -> ControlFlow<(), bool> {
-        let result = self.accept(native_character(meaning), spelling.origin());
-        if matches!(result, ControlFlow::Continue(false)) {
-            self.ready = false;
-        }
-        result
-    }
-
-    // Full entry owns diagnostic capture and nested internal scans. Keep its
-    // recovery temporaries out of the reader's recursive expansion frame;
-    // ordinary resident syntax still inlines through `accept` above.
+    // Recovery temporaries live only in this actual scanner call. The inline
+    // native terminal seam discards its unused selector before this boundary.
     #[inline(never)]
-    fn consume(
+    fn consume_full<G, Facts: crate::CommandHostFacts<G>>(
         &mut self,
-        processor: &mut CommandProcessor<'state, 'host, G, Facts>,
+        processor: &mut CommandProcessor<'_, '_, G, Facts>,
         spelling: TracedTokenWord,
         meaning: &tex_state::meaning::MeaningWord<G>,
         control_sequence: Option<Symbol>,
@@ -153,6 +121,49 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
             processor.integer_terminator_character = character;
         }
         Ok(ControlFlow::Break(()))
+    }
+}
+
+impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
+    crate::NativeWordConsumer<CommandProcessor<'state, 'host, G, Facts>, G> for IntegerOperand
+{
+    const RESIDENT_TERMINALS: bool = true;
+    const RESIDENT_LITERALS: bool = true;
+
+    #[inline(always)]
+    fn resident_ready(&self) -> bool {
+        self.ready
+    }
+
+    #[inline(always)]
+    fn input_boundary(&mut self) {
+        self.ready = false;
+    }
+
+    #[inline(always)]
+    fn resident_terminal(
+        &mut self,
+        spelling: TracedTokenWord,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+    ) -> ControlFlow<(), bool> {
+        let result = self.accept(native_character(meaning), spelling.origin());
+        if matches!(result, ControlFlow::Continue(false)) {
+            self.ready = false;
+        }
+        result
+    }
+
+    #[inline(always)]
+    fn consume(
+        &mut self,
+        processor: &mut CommandProcessor<'state, 'host, G, Facts>,
+        spelling: TracedTokenWord,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+        _code: u64,
+        control_sequence: Option<Symbol>,
+        exceptional: Option<&CurrentCommand<G>>,
+    ) -> Result<ControlFlow<()>, CommandError> {
+        self.consume_full(processor, spelling, meaning, control_sequence, exceptional)
     }
 }
 
@@ -270,7 +281,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // could split the quantity from its operand.
         let mut scanned = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, control_sequence, exceptional| {
+            |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 match native_character(meaning) {
                     Some((' ' | '+', _)) => {}
                     Some(('-', _)) => negative = !negative,
@@ -367,7 +378,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // instead would drop its stretch and shrink.
         let mut scanned = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, control_sequence, exceptional| {
+            |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 match native_character(meaning) {
                     Some((' ' | '+', _)) => {}
                     Some(('-', _)) => negative = !negative,

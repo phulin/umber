@@ -98,7 +98,7 @@ impl<G> MainControl<G> {
                 command.control_sequence(),
                 Some(&command),
                 receipts,
-                codes::of(command.native_meaning()),
+                command.native_meaning().control_code(),
             )
         })
     }

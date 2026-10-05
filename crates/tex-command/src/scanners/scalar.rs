@@ -319,7 +319,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_optional_equals(&mut self) -> Result<bool, CommandError> {
         let mut equals = false;
         let result = self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _control_sequence, exceptional| {
+            |processor, spelling, meaning, _code, _control_sequence, exceptional| {
                 match native_character(meaning) {
                     Some((' ', Catcode::Space)) => Ok(std::ops::ControlFlow::Continue(())),
                     // §405 compares the actual other-category '=' token.
@@ -389,7 +389,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             Ok(())
         } else {
             self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                |processor, spelling, meaning, control_sequence, exceptional| {
+                |processor, spelling, meaning, _code, control_sequence, exceptional| {
                     let letter = keyword.as_bytes()[matched.len()];
                     let character = native_character(meaning);
                     if control_sequence.is_none()
@@ -781,7 +781,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<ScannedScalar<InternalValue>, CommandError> {
         let mut scanned = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, control_sequence, exceptional| {
+            |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 let value = match processor.scan_the_internal_value(
                     spelling,
                     meaning,
@@ -908,7 +908,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut fraction_len = 0;
         if decimal {
             self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                |processor, spelling, meaning, _control_sequence, exceptional| {
+                |processor, spelling, meaning, _code, _control_sequence, exceptional| {
                     match native_character(meaning) {
                         Some((ch, Catcode::Other)) if ch.is_ascii_digit() => {
                             if fraction_len < fraction.len() {
@@ -944,7 +944,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // same candidate through unrelated physical-unit keywords.
             let mut matched = false;
             self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                |_, _, meaning, _, _| {
+                |_, _, meaning, _code, _, _| {
                     matched = matches!(native_character(meaning), Some(('f', _)));
                     Ok(std::ops::ControlFlow::Break(()))
                 },
@@ -1164,7 +1164,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn probe_dimension_unit(&mut self, mu: bool) -> Result<Option<Scaled>, CommandError> {
         let mut unit = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, control_sequence, exceptional| {
+            |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 if matches!(native_character(meaning), Some((_, Catcode::Space))) {
                     return Ok(std::ops::ControlFlow::Continue(()));
                 }
@@ -1213,7 +1213,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// `get_x_token; if cur_cmd<>spacer then back_input`.
     fn scan_optional_space(&mut self) -> Result<(), CommandError> {
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _, exceptional| {
+            |processor, spelling, meaning, _code, _, exceptional| {
                 if !matches!(native_character(meaning), Some((_, Catcode::Space))) {
                     processor.back_consumed_word(spelling, exceptional)?;
                 }
@@ -1241,7 +1241,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         for expected in ['i', 'l'] {
             let mut matched = false;
             self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                |_, _, meaning, _, _| {
+                |_, _, meaning, _code, _, _| {
                     matched = native_character(meaning)
                         .is_some_and(|(ch, _)| ch.eq_ignore_ascii_case(&expected));
                     Ok(std::ops::ControlFlow::Break(()))

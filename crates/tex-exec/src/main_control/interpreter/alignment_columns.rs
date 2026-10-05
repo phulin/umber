@@ -225,12 +225,9 @@ pub(super) fn close_display<G>(
             G,
             _,
         >(
-            |processor, spelling, meaning, symbol, exceptional| {
-                if let Some(word) = meaning.scalar_word() {
-                    let code = Meaning::runtime_word_control_code(word);
-                    if matches!(code, codes::RELAX | codes::CHAR_SPACE) {
-                        return Ok(ControlFlow::Continue(()));
-                    }
+            |processor, spelling, meaning, code, symbol, exceptional| {
+                if matches!(code, codes::RELAX | codes::CHAR_SPACE) {
+                    return Ok(ControlFlow::Continue(()));
                 }
                 let assignment = meaning.is_font()
                     || meaning.scalar_word().is_some_and(|word| {
@@ -249,7 +246,7 @@ pub(super) fn close_display<G>(
                         symbol,
                         exceptional,
                         receipts,
-                        codes::of(meaning),
+                        code,
                     );
                     processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
                         execution.set_box_forbidden_depth -= 1

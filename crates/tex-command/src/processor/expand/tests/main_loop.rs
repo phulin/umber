@@ -112,7 +112,7 @@ fn main_source_suffix_yields_lexical_boundaries_to_the_native_reader() {
                         _,
                         _,
                     >(
-                        |_, spelling, meaning, _, exceptional| {
+                        |_, spelling, meaning, _code, _, exceptional| {
                             assert!(exceptional.is_none());
                             tail = Some((spelling.semantic_token(), meaning.character()));
                             Ok(ControlFlow::Break(()))
@@ -260,7 +260,7 @@ fn native_macro_body_charges_each_word_once() {
                     _,
                     _,
                 >(
-                    |_, spelling, _, _, exceptional| {
+                    |_, spelling, _, _code, _, exceptional| {
                         assert!(exceptional.is_none());
                         delivered.push(spelling);
                         Ok(if delivered.len() == 4 {
@@ -370,7 +370,7 @@ fn native_macro_argument_charges_each_word_once() {
                     _,
                     _,
                 >(
-                    |_, spelling, _, _, exceptional| {
+                    |_, spelling, _, _code, _, exceptional| {
                         assert!(exceptional.is_none());
                         delivered.push(spelling);
                         Ok(if delivered.len() == 3 {
@@ -440,7 +440,7 @@ fn native_lookahead_restore_keeps_fuel_monotonic() {
                         _,
                         _,
                     >(
-                        |_, spelling, _, _, exceptional| {
+                        |_, spelling, _, _code, _, exceptional| {
                             assert!(exceptional.is_none());
                             delivered.push(spelling);
                             Ok(if delivered.len() == 2 {
@@ -618,7 +618,7 @@ fn execution_character_boundaries_expand_without_constructing_commands() {
                         _,
                         _,
                     >(
-                        |_, spelling, _, _, exceptional| {
+                        |_, spelling, _, _code, _, exceptional| {
                             assert!(exceptional.is_none(), "source={source}");
                             match spelling.semantic_token() {
                                 Token::Char {

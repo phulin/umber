@@ -65,7 +65,7 @@ fn scan_base<G>(
             G,
             _,
         >(
-            |processor, spelling, meaning, symbol, exceptional| {
+            |processor, spelling, meaning, code, symbol, exceptional| {
                 let value = static_meaning(meaning.resolve());
                 match value {
                     Meaning::Relax
@@ -111,7 +111,7 @@ fn scan_base<G>(
                             symbol,
                             exceptional,
                             receipts,
-                            codes::of(meaning),
+                            code,
                         );
                         processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
                             execution.set_box_forbidden_depth -= 1;

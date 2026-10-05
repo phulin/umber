@@ -15,7 +15,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut primary = None;
         let mut grouped = false;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _, exceptional| {
+            |processor, spelling, meaning, _code, _, exceptional| {
                 let character = meaning
                     .scalar_word()
                     .and_then(Meaning::runtime_word_character);
@@ -35,7 +35,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut character_count = 0;
         let mut quoted = false;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _, exceptional| {
+            |processor, spelling, meaning, _code, _, exceptional| {
                 let character = meaning
                     .scalar_word()
                     .and_then(Meaning::runtime_word_character);

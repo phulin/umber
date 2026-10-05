@@ -1,11 +1,6 @@
 //! Compile-time keys over the native packed meaning encoding.
 use super::*;
 
-#[inline(always)]
-pub(super) fn of<G>(meaning: &tex_state::meaning::MeaningWord<G>) -> u64 {
-    meaning.control_code()
-}
-
 pub(super) const CHAR_BEGIN_GROUP: u64 =
     Meaning::runtime_word_control_code(Meaning::char_token_word('\0', Catcode::BeginGroup));
 pub(super) const PRIMITIVE_BEGIN_GROUP: u64 = Meaning::runtime_word_control_code(

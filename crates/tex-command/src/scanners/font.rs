@@ -24,7 +24,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
         let mut font = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _, exceptional| {
+            |processor, spelling, meaning, _code, _, exceptional| {
                 if let Some(font_id) = meaning.font_id() {
                     font = Some(font_id);
                     return Ok(std::ops::ControlFlow::Break(()));

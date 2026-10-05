@@ -53,10 +53,11 @@ where
         processor: &mut CommandProcessor<'state, 'host, G, Facts>,
         spelling: TracedTokenWord,
         meaning: &MeaningWord<G>,
+        code: u64,
         control_sequence: Option<Symbol>,
     ) -> Result<ControlFlow<()>, CommandError> {
         self.consume
-            .consume(processor, spelling, meaning, control_sequence, None)
+            .consume(processor, spelling, meaning, code, control_sequence, None)
     }
 
     fn terminal(
@@ -80,6 +81,7 @@ where
             processor,
             command.spelling(),
             command.native_meaning(),
+            command.native_meaning().control_code(),
             command.control_sequence(),
             Some(command),
         )
@@ -251,7 +253,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             origin,
         );
         let (meaning, control_sequence) = self.resolve_token_word(spelling.token_word());
-        let action = classify_native_command(spelling.token_word(), &meaning);
+        let action = classify_native_command(spelling.token_word(), &meaning, meaning.is_macro()).0;
         if self.is_observed()
             || self.command.delivery_mode.requires_persistent_settlement()
             || matches!(
@@ -266,7 +268,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 control_sequence,
             );
         }
-        if action == ExpandedCommandAction::Return {
+        if matches!(action, ExpandedCommandAction::Return) {
             #[cfg(feature = "profiling")]
             self.record_expanded_delivery();
             return self.back_input_token(spelling);
@@ -274,6 +276,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut consume = |processor: &mut Self,
                            spelling: TracedTokenWord,
                            _: &MeaningWord<G>,
+                           _: u64,
                            _: Option<Symbol>,
                            exceptional: Option<&CurrentCommand<G>>| {
             processor.back_consumed_word(spelling, exceptional)?;

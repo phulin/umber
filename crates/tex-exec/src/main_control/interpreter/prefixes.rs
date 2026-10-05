@@ -18,7 +18,7 @@ pub(super) fn scan<G>(
             G,
             _,
         >(
-            |processor, spelling, meaning, control_sequence, exceptional| {
+            |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 let code = meaning.control_code();
                 match code {
                     codes::RELAX | codes::CHAR_SPACE => return Ok(ControlFlow::Continue(())),

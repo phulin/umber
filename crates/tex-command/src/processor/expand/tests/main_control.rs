@@ -270,6 +270,7 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                                 |_: &mut crate::CommandProcessor<'_, '_, _, _>,
                                  spelling: tex_state::token::TracedTokenWord,
                                  meaning: &MeaningWord<_>,
+                                 _: u64,
                                  _: Option<tex_state::interner::Symbol>,
                                  _: Option<&crate::CurrentCommand<_>>| {
                                     assert!(spelling.semantic_token().is_frozen_endv());
@@ -568,7 +569,7 @@ fn native_main_control_continues_across_macro_bodies_without_command_records() {
                     _,
                     _,
                 >(
-                    |_, spelling, meaning, _, exceptional| {
+                    |_, spelling, meaning, _code, _, exceptional| {
                         assert!(exceptional.is_none());
                         if meaning.scalar_word() == Some(Meaning::RELAX_WORD) {
                             consumed += 1;

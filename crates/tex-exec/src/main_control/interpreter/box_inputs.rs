@@ -51,7 +51,7 @@ pub(super) fn scan<G>(
             G,
             _,
         >(
-            |processor, spelling, meaning, _, exceptional| {
+            |processor, spelling, meaning, _code, _, exceptional| {
                 let code = meaning.control_code();
                 if matches!(code, codes::RELAX | codes::CHAR_SPACE) {
                     return Ok(ControlFlow::Continue(()));

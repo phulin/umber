@@ -303,7 +303,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let mut parenthesis = false;
                     let probe =
                         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                            |processor, spelling, meaning, _, exceptional| {
+                            |processor, spelling, meaning, _code, _, exceptional| {
                                 let character = meaning
                                     .scalar_word()
                                     .and_then(Meaning::runtime_word_character);
@@ -436,7 +436,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<ExpressionOperator, CommandError> {
         let mut operator = ExpressionOperator::None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _, exceptional| {
+            |processor, spelling, meaning, _code, _, exceptional| {
                 let character = meaning
                     .scalar_word()
                     .and_then(Meaning::runtime_word_character);

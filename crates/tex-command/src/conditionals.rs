@@ -1061,7 +1061,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn scan_if_relation(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
         let mut relation = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, control_sequence, exceptional| {
+            |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 let character = meaning
                     .scalar_word()
                     .and_then(Meaning::runtime_word_character);

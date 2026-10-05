@@ -44,6 +44,7 @@ impl<G> crate::NativeWordConsumer<crate::CommandProcessor<'_, '_, G>, G> for Rel
         _: &mut crate::CommandProcessor<'_, '_, G>,
         _: TracedTokenWord,
         meaning: &MeaningWord<G>,
+        code: u64,
         _: Option<tex_state::interner::Symbol>,
         exceptional: Option<&crate::CurrentCommand<G>>,
     ) -> Result<ControlFlow<()>, crate::CommandError> {
@@ -52,6 +53,7 @@ impl<G> crate::NativeWordConsumer<crate::CommandProcessor<'_, '_, G>, G> for Rel
             meaning.control_code(),
             Meaning::runtime_word_control_code(Meaning::Relax.encode())
         );
+        assert_eq!(code, meaning.control_code());
         self.full += 1;
         self.completed += 1;
         self.ready = true;
@@ -196,4 +198,118 @@ fn resident_frame_retirement_interrupts_the_clean_continuation() {
         drop(processor);
         assert_eq!(fuel.burned(), 8);
     });
+}
+
+#[test]
+fn terminal_selectors_follow_expansion_and_live_redefinition() {
+    for observed in [false, true] {
+        crate::test_harness::with_universe(|universe| {
+            let mutable = universe.intern("mutable").expect("mutable symbol");
+            universe
+                .assign_meaning(
+                    mutable,
+                    MeaningWord::from_static(Meaning::Relax),
+                    AssignmentScope::Global,
+                )
+                .expect("initial meaning");
+            let letter = Meaning::CharToken {
+                ch: 'Q',
+                cat: Catcode::Letter,
+            };
+            let replacement = Token::Char {
+                ch: 'Q',
+                cat: Catcode::Letter,
+            };
+            let definition = universe
+                .allocate_definition(&[], &[TokenWord::pack(replacement)])
+                .expect("definition");
+            let name = universe.intern("macro").expect("macro symbol");
+            universe
+                .assign_meaning(
+                    name,
+                    MeaningWord::macro_definition(MeaningFlags::EMPTY, definition.reference()),
+                    AssignmentScope::Global,
+                )
+                .expect("macro meaning");
+            let count_meaning =
+                Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count);
+            let count = install_static(universe, "count", count_meaning);
+            let end_name_meaning = Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName);
+            let end_name = install_static(universe, "endcsname", end_name_meaning);
+            let mut command = CommandState::default();
+            crate::test_harness::push(
+                &mut command,
+                [
+                    Token::Cs(name.symbol()),
+                    Token::Cs(mutable.symbol()),
+                    Token::Cs(mutable.symbol()),
+                    count,
+                    end_name,
+                ],
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(6).expect("exact fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut observer = RecordingObserver::default();
+            let mut context = universe.command_context().expect("context");
+            let processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut processor = if observed {
+                processor.with_observer(&mut observer)
+            } else {
+                processor
+            };
+            let expected = [
+                letter,
+                Meaning::Relax,
+                Meaning::CharGiven('A'),
+                count_meaning,
+                end_name_meaning,
+            ];
+            let mut delivered = 0;
+            processor
+                .consume_main_control(&mut crate::terminal_consumer::<
+                    crate::CommandProcessor<'_, '_, _>,
+                    _,
+                    _,
+                >(
+                    |processor, _, meaning, code, _, exceptional| {
+                        assert_eq!(
+                            meaning.resolve(),
+                            tex_state::meaning::ResolvedMeaning::Static(expected[delivered])
+                        );
+                        assert_eq!(
+                            code,
+                            Meaning::runtime_word_control_code(expected[delivered].encode())
+                        );
+                        assert_eq!(exceptional.is_some(), observed);
+                        if delivered == 1 {
+                            processor
+                                .state
+                                .assign_meaning(
+                                    mutable.symbol(),
+                                    MeaningWord::from_static(Meaning::CharGiven('A')),
+                                    AssignmentScope::Global,
+                                )
+                                .expect("redefine next terminal");
+                        }
+                        delivered += 1;
+                        Ok(if delivered == expected.len() {
+                            ControlFlow::Break(())
+                        } else {
+                            ControlFlow::Continue(())
+                        })
+                    },
+                ))
+                .expect("native terminal delivery");
+            assert_eq!(delivered, expected.len());
+            drop(processor);
+            assert_eq!(fuel.burned(), 6);
+        });
+    }
 }

@@ -21,7 +21,7 @@ pub(super) fn finish_leader<G>(
             G,
             _,
         >(
-            |processor, spelling, meaning, _, exceptional| {
+            |processor, spelling, meaning, _code, _, exceptional| {
                 let code = meaning.control_code();
                 if matches!(code, codes::CHAR_SPACE | codes::RELAX) {
                     return Ok(ControlFlow::Continue(()));

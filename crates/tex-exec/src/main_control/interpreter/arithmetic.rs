@@ -57,7 +57,7 @@ pub(super) fn execute_arithmetic<'state, 'host, G>(
             G,
             _,
         >(
-            |processor, _, meaning, control_sequence, _| {
+            |processor, _, meaning, _code, control_sequence, _| {
                 completed = Some((|| {
                     let target = match meaning.resolve() {
                         ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(

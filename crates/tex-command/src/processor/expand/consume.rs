@@ -137,13 +137,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         None => processor.resolve_token_word(word),
                     };
                     processor.record_consumed_word(kind, word.requires_meaning_lookup());
+                    let macro_parts = meaning.macro_parts();
                     let mode = processor.command.delivery_mode;
                     let native = !OBSERVED
                         && !suppress
                         && !mode.alignment_active()
                         && (!mode.scanner_active() || !meaning.is_outer());
                     if native
-                        && let Some((flags, definition)) = meaning.macro_parts()
+                        && let Some((flags, definition)) = macro_parts
                         && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
                     {
                         let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
@@ -163,7 +164,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                     let native_action;
                     if native {
-                        native_action = classify_native_command(word, &meaning);
+                        let (action, code) =
+                            classify_native_command(word, &meaning, macro_parts.is_some());
+                        native_action = action;
                         if matches!(site, ReadSite::Source(_))
                             && let Some(location) = processor.pending_diagnostic_location.take()
                         {
@@ -202,9 +205,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                         }
                         let protected = STOP_PROTECTED
-                            && meaning
-                                .macro_flags()
-                                .is_some_and(|flags| flags.contains(MeaningFlags::PROTECTED));
+                            && macro_parts
+                                .is_some_and(|(flags, _)| flags.contains(MeaningFlags::PROTECTED));
                         if Consumer::NATIVE_TERMINAL
                             && (protected || matches!(native_action, ExpandedCommandAction::Return))
                         {
@@ -218,6 +220,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 processor,
                                 tex_state::token::TracedTokenWord::from_parts(word, origin),
                                 &meaning,
+                                code,
                                 control_sequence,
                             )?;
                             expanded = false;

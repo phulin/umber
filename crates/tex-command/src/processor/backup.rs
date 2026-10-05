@@ -71,7 +71,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_display_end_math_shift(&mut self) -> Result<bool, CommandError> {
         let mut shift = false;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _, exceptional| {
+            |processor, spelling, meaning, _code, _, exceptional| {
                 shift = meaning
                     .scalar_word()
                     .and_then(Meaning::runtime_word_character)

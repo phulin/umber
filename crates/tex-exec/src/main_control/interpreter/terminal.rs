@@ -51,13 +51,13 @@ impl<'state, 'host, G> tex_command::NativeWordConsumer<Processor<'state, 'host, 
         processor: &mut Processor<'state, 'host, G>,
         spelling: TracedTokenWord,
         meaning: &tex_state::meaning::MeaningWord<G>,
+        code: u64,
         control_sequence: Option<Symbol>,
         exceptional: Option<&tex_command::CurrentCommand<G>>,
     ) -> Result<ControlFlow<()>, tex_command::CommandError> {
         // Native delivery never lends an observation record.
         // Fold that actual ownership fact into its continuation.
         let observing = exceptional.is_some() && self.observing;
-        let code = codes::of(meaning);
         let traced = match dispatch::enter(processor, spelling, meaning, control_sequence, code) {
             Ok(traced) => traced,
             Err(error) => {

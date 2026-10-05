@@ -807,3 +807,59 @@ duplicate control measured 4,731. The dense 64-no-op workload fell from 98.5 to
 93.5 cycles per command (about 5%), with a duplicate control at 100.5. These
 are workload measurements, not a numeric acceptance gate or an estimate of
 whole-document speed.
+
+## One terminal classification
+
+Native full delivery classifies expansion and terminal delivery together from
+that word's live meaning. Its terminal arm derives the actual scalar selector
+once; the synchronous terminal consumer receives that scalar beside the actual
+meaning. Main control uses it for entry and its mode/command switch instead of
+deriving another selector after crossing that boundary. Expansion and terminal
+selection share the same local tag tests; primitives that actually expand never
+derive an unrelated terminal selector. The inlined classifier returns its two
+demanded scalar facts directly into the reader's locals. The existing expansion
+action retains its small payload-free return arm; no selector is stored in an
+action, command or checkpoint. There is no new command record, meaning cache or
+compatibility consumer signature. Consumers that need only spelling or the
+actual value ignore the scalar, allowing their static reader specialization to
+discard it.
+
+Macro activation retains the already-extracted actual macro parts through its
+flags and expansion decision, and returns before deriving an unrelated terminal
+selector. Reserved scalar words with macro-like opcodes still remain actual
+scalar meanings; expansion uses the real macro-parts predicate, not a projected
+opcode as evidence of a definition identity. Scanner outerness, suppression,
+observation and alignment interception remain semantic demands: exceptional
+delivery may change meaning, so its terminal selector is derived from the
+resulting actual command rather than an earlier classification. Restricted
+resident admission keeps its direct no-op or literal grammar predicate; it does
+not introduce general classification into the clean span.
+
+A selector must not enlarge the expansion action carried by suspended reader
+calls. The existing small-stack, 1,024-level conditional test checks this
+call-stack property; no deeper stack or smaller nesting fixture substitutes for
+preserving it.
+
+The integer consumer's inline native entry discards the unused terminal key
+before calling its actual outlined scanner body. Thus integer recovery keeps
+its small recursive-reader stack without paying for an unused selector or an
+extra scanner argument. No static runtime-capability flag or second numeric
+grammar is needed.
+
+Ordinary release instruction measurements over 10,000 and 100,000 iterations
+reduced the empty loop from 8,328 to 8,267 instructions. Marginal two-no-op macro
+work fell from 704 to 696, the 64-no-op span from 2,982 to 2,914, count assignment
+from 2,478 to 2,457, and advance from 2,755 to 2,736. Parameterized macro marginal costs
+remained unchanged at the reported precision; all 15 whole-loop workloads used
+fewer instructions. These
+are small incremental reductions after retained-span delivery, not evidence of
+a large whole-document improvement.
+
+Five rotated cycle runs on CPU 6 measured the dense no-op workload at a median
+90.0 cycles per command, versus 93.0 for the previous build and 92.7 for a
+duplicate control (about 3% lower). Short two-no-op macro cycles were 4,520
+versus 4,494, with the duplicate control at 4,738: this variation does not
+establish a short-workload cycle improvement. The reader's native main-control
+stack reservation shrank from 680 to 632 bytes in ordinary x86-64 release code.
+Machine code contains the outlined integer scanner body but no separate native
+integer consumer entry; its unused selector is erased before the call.

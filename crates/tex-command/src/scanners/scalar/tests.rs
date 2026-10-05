@@ -749,7 +749,7 @@ fn internal_expansion_and_font_selection_consume_native_operands() {
                 _,
                 _,
             >(
-                |processor, spelling, meaning, _, exceptional| {
+                |processor, spelling, meaning, _code, _, exceptional| {
                     if let Some((ch, _)) = super::native_character(meaning) {
                         text.push(ch);
                         Ok(std::ops::ControlFlow::Continue(()))

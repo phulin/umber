@@ -82,6 +82,7 @@ fn nested_readers(
             let mut consume = |_: &mut crate::CommandProcessor<'_, '_, _>,
                                spelling: tex_state::token::TracedTokenWord,
                                _: &tex_state::meaning::MeaningWord<_>,
+                               _: u64,
                                _,
                                _: Option<&crate::CurrentCommand<_>>| {
                 let Token::Char { ch, .. } = spelling.semantic_token() else {
@@ -406,7 +407,7 @@ fn native_main_lookahead_preserves_mixed_expansion_and_observed_fuel_cuts() {
                     _,
                     _,
                 >(
-                    |_, spelling, _, _, _| {
+                    |_, spelling, _, _code, _, _| {
                         output.push(spelling.semantic_token());
                         Ok(std::ops::ControlFlow::Continue(()))
                     },
@@ -534,6 +535,7 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
                     |_: &mut crate::CommandProcessor<'_, '_, _>,
                      spelling: tex_state::token::TracedTokenWord,
                      _: &tex_state::meaning::MeaningWord<_>,
+                     _: u64,
                      _,
                      record: Option<&crate::CurrentCommand<_>>| {
                         assert_eq!(spelling.semantic_token(), letter);

@@ -377,63 +377,68 @@ fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
                 CommandProcessor<'_, '_, _, &mut ExecutionState<_>>,
                 _,
                 _,
-            >(|processor, word, _, _, exceptional| {
-                assert!(
-                    exceptional.is_none(),
-                    "ordinary execution needs no command record"
-                );
-                let Token::Char { ch, .. } = word.semantic_token() else {
-                    panic!("expected the selected native character");
-                };
-                consumed.push(ch);
-                processor.with_execution_owners(
-                    |context,
-                     _state,
-                     effects,
-                     fuel,
-                     _observer,
-                     execution,
-                     _capabilities,
-                     _provider,
-                     _declined| match ch {
-                        'H' => {
-                            execution.main_loop_active = true;
-                            execution.boxes.recovery_simple_group_pending = true;
-                            execution
-                                .modes
-                                .push(Mode::RestrictedHorizontal)
-                                .expect("enter mode");
-                        }
-                        'T' => {
-                            assert!(execution.main_loop_active);
-                            assert!(execution.boxes.recovery_simple_group_pending);
-                            execution.main_loop_active = false;
-                            execution.boxes.recovery_simple_group_pending = false;
-                            assert_eq!(execution.modes.current_mode(), Mode::RestrictedHorizontal);
-                            execution.modes.pop().expect("leave mode");
-                        }
-                        'K' => {
-                            semantic::execute_kern(
-                                context,
-                                &mut execution.modes,
-                                effects,
-                                fuel,
-                                Scaled::from_raw(Scaled::UNITY),
-                            )
-                            .expect("source-free kern semantic in the native reader");
-                        }
-                        'V' | 'Y' | 'Q' => {
-                            assert_eq!(execution.modes.current_mode(), Mode::Vertical)
-                        }
-                        _ => panic!("conditional expansion consumed the wrong mode: {ch}"),
-                    },
-                );
-                Ok(if ch == 'Q' {
-                    std::ops::ControlFlow::Break(())
-                } else {
-                    std::ops::ControlFlow::Continue(())
-                })
-            }))
+            >(
+                |processor, word, _, _code, _, exceptional| {
+                    assert!(
+                        exceptional.is_none(),
+                        "ordinary execution needs no command record"
+                    );
+                    let Token::Char { ch, .. } = word.semantic_token() else {
+                        panic!("expected the selected native character");
+                    };
+                    consumed.push(ch);
+                    processor.with_execution_owners(
+                        |context,
+                         _state,
+                         effects,
+                         fuel,
+                         _observer,
+                         execution,
+                         _capabilities,
+                         _provider,
+                         _declined| match ch {
+                            'H' => {
+                                execution.main_loop_active = true;
+                                execution.boxes.recovery_simple_group_pending = true;
+                                execution
+                                    .modes
+                                    .push(Mode::RestrictedHorizontal)
+                                    .expect("enter mode");
+                            }
+                            'T' => {
+                                assert!(execution.main_loop_active);
+                                assert!(execution.boxes.recovery_simple_group_pending);
+                                execution.main_loop_active = false;
+                                execution.boxes.recovery_simple_group_pending = false;
+                                assert_eq!(
+                                    execution.modes.current_mode(),
+                                    Mode::RestrictedHorizontal
+                                );
+                                execution.modes.pop().expect("leave mode");
+                            }
+                            'K' => {
+                                semantic::execute_kern(
+                                    context,
+                                    &mut execution.modes,
+                                    effects,
+                                    fuel,
+                                    Scaled::from_raw(Scaled::UNITY),
+                                )
+                                .expect("source-free kern semantic in the native reader");
+                            }
+                            'V' | 'Y' | 'Q' => {
+                                assert_eq!(execution.modes.current_mode(), Mode::Vertical)
+                            }
+                            _ => panic!("conditional expansion consumed the wrong mode: {ch}"),
+                        },
+                    );
+                    Ok(if ch == 'Q' {
+                        std::ops::ControlFlow::Break(())
+                    } else {
+                        std::ops::ControlFlow::Continue(())
+                    })
+                },
+            ))
             .expect("native main-control consumption");
         assert_eq!(result, tex_command::DeliveryStatus::Command);
         assert_eq!(consumed, "HTVKYQ");

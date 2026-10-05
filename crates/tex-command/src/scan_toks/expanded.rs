@@ -24,6 +24,7 @@ impl<G, Facts: crate::CommandHostFacts<G>>
         processor: &mut CommandProcessor<'_, '_, G, Facts>,
         spelling: TracedTokenWord,
         _meaning: &tex_state::meaning::MeaningWord<G>,
+        _code: u64,
         _control_sequence: Option<Symbol>,
     ) -> Result<ControlFlow<()>, CommandError> {
         // Protected macros are retained as spelling; suppression affects only

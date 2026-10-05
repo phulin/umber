@@ -38,6 +38,7 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G> {
         _processor: &mut Processor,
         _spelling: TracedTokenWord,
         _meaning: &tex_state::meaning::MeaningWord<G>,
+        _code: u64,
         _control_sequence: Option<tex_state::interner::Symbol>,
     ) -> Result<std::ops::ControlFlow<()>, CommandError> {
         unreachable!("this consumer requests a delivery record")
@@ -158,27 +159,42 @@ fn expanded_classifications() -> u64 {
 
 #[inline(always)]
 fn classify_hot_command<G>(command: &CurrentCommand<G>) -> ExpandedCommandAction {
-    classify_native_command(command.spelling_word(), command.native_meaning())
+    classify_native_command(
+        command.spelling_word(),
+        command.native_meaning(),
+        command.native_meaning().is_macro(),
+    )
+    .0
 }
 
 #[inline(always)]
 fn classify_native_command<G>(
     spelling: TokenWord,
     meaning: &tex_state::meaning::MeaningWord<G>,
-) -> ExpandedCommandAction {
+    is_macro: bool,
+) -> (ExpandedCommandAction, u64) {
     #[cfg(test)]
     EXPANDED_CLASSIFICATIONS.with(|counter| counter.set(counter.get().saturating_add(1)));
-    if meaning.is_macro() {
-        return ExpandedCommandAction::Expand(ExpansionDispatch::Macro);
+    if is_macro {
+        return (
+            ExpandedCommandAction::Expand(ExpansionDispatch::Macro),
+            meaning.control_code(),
+        );
     }
     match meaning.expandable_primitive() {
-        Some(ExpandablePrimitive::EndTemplate) => ExpandedCommandAction::EndTemplate,
-        Some(ExpandablePrimitive::EndCsName) => ExpandedCommandAction::Return,
-        Some(primitive) => ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)),
-        None if meaning.is_undefined() && spelling.out_parameter_slot().is_none() => {
-            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
+        Some(ExpandablePrimitive::EndTemplate) => (ExpandedCommandAction::EndTemplate, 0),
+        Some(ExpandablePrimitive::EndCsName) => {
+            (ExpandedCommandAction::Return, meaning.control_code())
         }
-        _ => ExpandedCommandAction::Return,
+        Some(primitive) => (
+            ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)),
+            0,
+        ),
+        None if meaning.is_undefined() && spelling.out_parameter_slot().is_none() => (
+            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined),
+            0,
+        ),
+        _ => (ExpandedCommandAction::Return, meaning.control_code()),
     }
 }
 

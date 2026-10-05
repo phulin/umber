@@ -18,6 +18,7 @@ pub trait NativeWordConsumer<Processor, G> {
         processor: &mut Processor,
         spelling: TracedTokenWord,
         meaning: &MeaningWord<G>,
+        code: u64,
         control_sequence: Option<Symbol>,
         exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<ControlFlow<()>, CommandError>;
@@ -45,6 +46,7 @@ where
         &mut Processor,
         TracedTokenWord,
         &MeaningWord<G>,
+        u64,
         Option<Symbol>,
         Option<&CurrentCommand<G>>,
     ) -> Result<ControlFlow<()>, CommandError>,
@@ -55,10 +57,18 @@ where
         processor: &mut Processor,
         spelling: TracedTokenWord,
         meaning: &MeaningWord<G>,
+        code: u64,
         control_sequence: Option<Symbol>,
         exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<ControlFlow<()>, CommandError> {
-        self(processor, spelling, meaning, control_sequence, exceptional)
+        self(
+            processor,
+            spelling,
+            meaning,
+            code,
+            control_sequence,
+            exceptional,
+        )
     }
 }
 
@@ -71,6 +81,7 @@ where
         &mut Processor,
         TracedTokenWord,
         &MeaningWord<G>,
+        u64,
         Option<Symbol>,
         Option<&CurrentCommand<G>>,
     ) -> Result<ControlFlow<()>, CommandError>,

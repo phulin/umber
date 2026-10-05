@@ -17,6 +17,7 @@ impl<G, Facts: crate::CommandHostFacts<G>>
         processor: &mut CommandProcessor<'_, '_, G, Facts>,
         spelling: tex_state::token::TracedTokenWord,
         _meaning: &tex_state::meaning::MeaningWord<G>,
+        _code: u64,
         _control_sequence: Option<tex_state::interner::Symbol>,
     ) -> Result<ControlFlow<()>, CommandError> {
         processor.back_input_token(spelling)?;
