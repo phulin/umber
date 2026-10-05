@@ -152,6 +152,102 @@ fn integer_resident_radices_overflow_and_backup_preserve_tex_semantics() {
 }
 
 #[test]
+fn integer_digits_continue_through_expansion_at_every_fuel_cut() {
+    // TeX82 §§440/444 expand the next word without restarting the number.
+    struct Observer;
+    impl crate::CommandObserver for Observer {
+        fn committed(&mut self, _: crate::CommandObservation) {}
+    }
+    for observed in [false, true] {
+        for limit in 1..=8 {
+            crate::test_harness::with_universe(|universe| {
+                let definition = universe
+                    .allocate_definition(
+                        &[],
+                        &"34 "
+                            .chars()
+                            .map(|ch| tex_state::token::TokenWord::pack(other(ch)))
+                            .collect::<Vec<_>>(),
+                    )
+                    .expect("numeric replacement");
+                let name = universe.intern("digits").expect("macro name");
+                universe
+                    .assign_meaning(
+                        name,
+                        tex_state::meaning::MeaningWord::macro_definition(
+                            tex_state::meaning::MeaningFlags::EMPTY,
+                            definition.reference(),
+                        ),
+                        tex_state::AssignmentScope::Global,
+                    )
+                    .expect("numeric macro");
+                let mut command = CommandState::default();
+                crate::test_harness::push(
+                    &mut command,
+                    [
+                        other('-'),
+                        other('1'),
+                        other('2'),
+                        Token::Cs(name.symbol()),
+                        other('X'),
+                    ],
+                );
+                let mut capabilities = CommandHostCapabilities::default();
+                let mut fuel = crate::CommandFuelLedger::new(limit).expect("bounded fuel");
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut observer = Observer;
+                let mut context = universe.command_context().expect("context");
+                let processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut effects,
+                );
+                let mut processor = if observed {
+                    processor.with_observer(&mut observer)
+                } else {
+                    processor
+                };
+                let result = processor.scan_integer();
+                if limit < 7 {
+                    assert!(result.is_err(), "a cut before the spacer stops the scan");
+                } else {
+                    assert_eq!(result.expect("expanded integer").value, -1234);
+                }
+                assert_eq!(
+                    processor
+                        .command
+                        .input
+                        .levels
+                        .current
+                        .as_ref()
+                        .expect("live input")
+                        .frame
+                        .position(),
+                    if limit <= 3 {
+                        limit as u32
+                    } else {
+                        (limit - 4).min(3) as u32
+                    },
+                    "only charged words advance, including the first word after expansion",
+                );
+                if limit == 8 {
+                    assert_eq!(
+                        crate::test_harness::expect_expanded_command(&mut processor)
+                            .spelling()
+                            .semantic_token(),
+                        other('X'),
+                    );
+                }
+                drop(processor);
+                assert_eq!(fuel.burned(), limit.min(7) + u64::from(limit == 8));
+            });
+        }
+    }
+}
+
+#[test]
 fn integer_resident_span_releases_at_actual_frame_retirement() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();

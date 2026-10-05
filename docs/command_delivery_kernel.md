@@ -733,6 +733,12 @@ a declined word hands that actual meaning to full delivery. Active characters
 and engine sentinels take full delivery, so no symbol or command record is
 needed in the restricted handoff.
 
+The meaning loan borrows the table's actual word slice for the span. Each word
+still indexes its live row, but does not reproject the bank's pointer and length.
+The simultaneous group loan excludes assignments and saved-value restoration;
+full delivery releases both loans before either can change a meaning. There is
+no copied meaning table, retained lookup result or checkpoint-owned slice.
+
 The reader charges on entry, then charges the next word immediately when an
 admission continues. Cold transitions carry that charge unchanged. A budget
 stop charges no following word, and a fuel failure leaves the next word unread.
@@ -803,26 +809,13 @@ meanings directly. No-op consumers compile this literal work out. Accepted liter
 account their actual brace category once. Declined words transfer that same
 meaning into full delivery; active characters and engine sentinels keep their
 canonical full resolution. Actual spelling is borrowed by restricted consumers
-for provenance, with no delivered command or input owner. Expansion and input
-transitions invalidate readiness; the next full terminal refreshes it before
-subsequent words retain their span. Pure initial numeric syntax needs no full
-processor entry and can be admitted immediately. Declined expandable words
+for provenance, with no delivered command or input owner. Numeric syntax depends
+only on its current grammar and the delivered word, so expansion and input
+transitions require no readiness flag or refresh. The reader's delivery regime
+still excludes observation, alignment and suppressed expansion from restricted
+admission. Initial numeric syntax needs no full processor entry. Declined expandable words
 do not claim the operand's provenance. Fuel charging and physical retirement stay
 with the one existing reader.
-
-An ordinary release comparison over 10,000 and 100,000 iterations reduced the
-empty macro/conditional/advance loop from 9,446 to 8,328 instructions per
-iteration (about 12%). Its additional advance operation fell from 3,050 to
-2,755 instructions. The 64-no-op span fell from 3,052 to 2,982 marginal
-instructions; the two-no-op macro fell from 718 to 704. Very short numeric
-operands still pay the outlined scanner boundary: an additional count assignment
-grew about 3% in marginal instructions, while its whole-loop workload fell about
-9%. Five rotated cycle runs on CPU 6 reduced the short two-no-op macro
-workload from a median 4,667 to 4,358 cycles per iteration (about 7%); a
-duplicate control measured 4,731. The dense 64-no-op workload fell from 98.5 to
-93.5 cycles per command (about 5%), with a duplicate control at 100.5. These
-are workload measurements, not a numeric acceptance gate or an estimate of
-whole-document speed.
 
 ## Resident small scalar syntax
 

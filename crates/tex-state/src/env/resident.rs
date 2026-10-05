@@ -4,7 +4,7 @@ use super::*;
 /// Immutable live meaning rows, borrowed while assignments and restoration
 /// are excluded by the simultaneous restricted group loan.
 pub struct CommandMeaningRows<'a, G> {
-    bank: &'a MeaningBank<MeaningWord<G>>,
+    rows: &'a [MeaningWord<G>],
 }
 
 impl<G> CommandMeaningRows<'_, G> {
@@ -13,8 +13,8 @@ impl<G> CommandMeaningRows<'_, G> {
     pub fn get(&self, symbol: Symbol) -> &MeaningWord<G> {
         #[cfg(any(test, feature = "profiling"))]
         crate::meaning::record_dense_meaning_row_access();
-        self.bank
-            .get_ref(symbol.raw())
+        self.rows
+            .get(symbol.raw() as usize)
             .expect("command symbols are admitted")
     }
 }
@@ -72,7 +72,7 @@ impl<G> DenseState<G> {
     ) -> (CommandMeaningRows<'a, G>, ResidentGroups<'a, G>) {
         (
             CommandMeaningRows {
-                bank: &self.meanings,
+                rows: self.meanings.word_rows(),
             },
             ResidentGroups {
                 parameters: &self.integer_parameters,

@@ -14,7 +14,6 @@ struct IntegerOperand {
     have_digits: bool,
     overflowed: bool,
     scanned: Option<ScannedScalar<i32>>,
-    ready: bool,
 }
 
 impl IntegerOperand {
@@ -81,7 +80,6 @@ impl IntegerOperand {
         match self.accept(character, spelling.origin()) {
             ControlFlow::Break(()) => return Ok(ControlFlow::Break(())),
             ControlFlow::Continue(true) => {
-                self.ready = true;
                 return Ok(ControlFlow::Continue(()));
             }
             ControlFlow::Continue(false) => {}
@@ -106,7 +104,6 @@ impl IntegerOperand {
                 processor.capture_consumed_site(spelling, meaning, control_sequence, exceptional);
             processor.number_too_big_error(Some(site))?;
             self.overflowed = true;
-            self.ready = true;
             return Ok(ControlFlow::Continue(()));
         }
         if !self.have_digits {
@@ -133,12 +130,7 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
 
     #[inline(always)]
     fn resident_ready(&self) -> bool {
-        self.ready
-    }
-
-    #[inline(always)]
-    fn input_boundary(&mut self) {
-        self.ready = false;
+        true
     }
 
     #[inline(always)]
@@ -150,11 +142,7 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
         spelling: TracedTokenWord,
         meaning: &tex_state::meaning::MeaningWord<G>,
     ) -> ControlFlow<(), bool> {
-        let result = self.accept(native_character(meaning), spelling.origin());
-        if matches!(result, ControlFlow::Continue(false)) {
-            self.ready = false;
-        }
-        result
+        self.accept(native_character(meaning), spelling.origin())
     }
 
     #[inline(always)]
@@ -173,12 +161,7 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn scan_integer_operand(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
-        // Ordinary initial syntax demands no full processor entry. Expansion
-        // invalidates readiness before its first resulting terminal word.
-        let mut integer = IntegerOperand {
-            ready: true,
-            ..IntegerOperand::default()
-        };
+        let mut integer = IntegerOperand::default();
         self.consume_expanded_words(&mut integer)?;
         if let Some(scanned) = integer.scanned {
             return Ok(scanned);
