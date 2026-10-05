@@ -526,6 +526,8 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   `backup.rs` also owns native unsave: cross-file warning, saved-value
   observation, actual aftergroup input and leave tracing through the restored
   parameter. It returns completion or failure without a group-frame packet.
+  Cross-file group warnings check their live parameter and ancestry inline;
+  group labels and warning context render only in the demanded cold printer.
 - `src/processor/alignment_interception.rs`: alignment-aware delivery entry,
   typed delimiter/v-template handoff, and active-cell input proofs over the
   canonical alignment state; it never reclassifies input in the executor.

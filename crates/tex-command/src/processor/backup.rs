@@ -299,7 +299,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             )
         };
         if let Some((kind, entered_line)) = boundary {
-            self.warn_cross_file_group_close(level, kind.group_text(), entered_line);
+            self.warn_cross_file_group_close(level, kind, entered_line);
         }
         let etex = self.profile().capabilities().supports_etex();
         let command = &mut *self.command;

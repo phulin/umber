@@ -73,10 +73,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     /// e-TeX 2.6 [23.328]'s `group_warning`, emitted immediately before an
     /// `unsave` closes a group that was already open when this file began.
+    #[inline(always)]
     pub(crate) fn warn_cross_file_group_close(
         &mut self,
         group_depth: usize,
-        kind: &str,
+        kind: tex_state::GroupKind,
         entered_line: u32,
     ) {
         let tracing_nesting = self.state.int_param(IntParam::TRACING_NESTING);
@@ -89,10 +90,22 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         if group_depth > open_depths.group_lineages.len() {
             return;
         }
+        self.print_cross_file_group_close(group_depth, kind, entered_line, tracing_nesting);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn print_cross_file_group_close(
+        &mut self,
+        group_depth: usize,
+        kind: tex_state::GroupKind,
+        entered_line: u32,
+        tracing_nesting: i32,
+    ) {
         {
             let mut printer = self.state.printer();
             printer.print_nl("Warning: end of ");
-            printer.print(kind);
+            printer.print(kind.group_text());
             printer.print(" (level ");
             printer.print_int(i32::try_from(group_depth).unwrap_or(i32::MAX));
             printer.print_char(')');
