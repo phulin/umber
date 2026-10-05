@@ -656,7 +656,6 @@ checkpoint-log capacities only when queried, with fixed scalar work and no
 entry traversal. It stores no duplicate capacity-byte caches and performs no
 refresh bookkeeping on append, unsave or checkpoint transitions.
 
-- `src/env/resident.rs`: the actual immutable meaning-word slice and the disjoint actual journal/lineage/dependency loan for input-preserving groups. The slice indexes live rows without reprojecting the bank on each word. These views retain no state and cannot assign or restore banks.
 - `src/command_context/groups.rs`: native group entry, inspection, empty close against the actual boundary/saved suffix, aftergroup
   and synchronous unsave on the actual admitted context. Empty scopes close
   their boundary directly; cursor and sparse-chain state exist only in the

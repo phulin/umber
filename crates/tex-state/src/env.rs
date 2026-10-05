@@ -5,14 +5,12 @@ pub mod banks;
 pub(crate) mod durable_boxes;
 #[path = "env/meaning_bank.rs"]
 mod meaning_bank;
-mod resident;
 mod restoration;
 pub(crate) use durable_boxes::{
     AcceptedDurableBoxTail, DurableBoxCursor, DurableBoxState, DurableFormState,
     OutputCarrierTarget,
 };
 pub use durable_boxes::{DurableNodeMetadata, UniqueBoxRegisterTake};
-pub use resident::{CommandMeaningRows, ResidentGroups};
 mod font_runtime;
 #[path = "env/group.rs"]
 pub(crate) mod group;

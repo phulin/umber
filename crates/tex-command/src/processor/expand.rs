@@ -48,11 +48,15 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G, Facts> {
         false
     }
 
+    #[allow(clippy::too_many_arguments)] // Disjoint input-preserving execution owners and spelling.
     fn resident_terminal(
         &mut self,
-        _context: &mut tex_state::ResidentGroups<'_, G>,
+        _context: &mut tex_state::CommandContext<'_, G>,
+        _fuel: &mut crate::CommandFuel,
+        _effects: &mut tex_state::diagnostic::DiagnosticEffects,
         _facts: &mut Facts,
         _entered_line: u32,
+        _macro_origin: Option<tex_state::token::OriginId>,
         _spelling: TracedTokenWord,
         _meaning: &tex_state::meaning::MeaningWord<G>,
     ) -> std::ops::ControlFlow<(), bool> {
@@ -311,9 +315,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.create_source_control_sequences,
             &mut (),
             false,
+            false,
             &|_, _, _| false,
             &mut |_| {},
-            &mut |_, _, _, _, _, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(Err(())),
+            &mut |_, _, _, _, _, _, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(Err(())),
             &mut |_, processor, word, origin, suppress, site, kind, _| {
                 processor
                     .finish_delivered_word::<OBSERVED>(
@@ -367,16 +372,18 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         create_control_sequences: bool,
         consumer: &mut Consumer,
         outline_suffix: bool,
+        glyph_origins: bool,
         retain: &impl Fn(&Consumer, bool, super::delivery_mode::DeliveryMode) -> bool,
         interrupt: &mut impl FnMut(&mut Consumer),
         admit: &mut impl FnMut(
             &mut Consumer,
-            &tex_state::CommandMeaningRows<'_, G>,
-            &mut tex_state::ResidentGroups<'_, G>,
+            &mut tex_state::CommandContext<'_, G>,
             &mut crate::fuel::CommandFuel,
+            &mut tex_state::diagnostic::DiagnosticEffects,
             &mut super::alignment::AlignmentDeliveryState<G>,
             &mut Facts,
             u32,
+            Option<OriginId>,
             TokenWord,
             OriginId,
             bool,
@@ -402,17 +409,18 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let resident = self.consume_resident_input(
                     consumer,
                     outline_suffix,
+                    glyph_origins,
                     retain,
                     &mut {
                         #[inline(always)]
                         |consumer,
-                         meanings,
                          state,
                          fuel,
-                         _,
+                         effects,
                          alignment,
                          facts,
                          entered_line,
+                         macro_origin,
                          word,
                          origin,
                          suppress,
@@ -420,12 +428,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                          mode| {
                             let result = admit(
                                 consumer,
-                                meanings,
                                 state,
                                 fuel,
+                                effects,
                                 alignment,
                                 facts,
                                 entered_line,
+                                macro_origin,
                                 word,
                                 origin,
                                 suppress,

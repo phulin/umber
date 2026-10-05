@@ -43,11 +43,15 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
     }
 
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)] // Disjoint input-preserving execution owners and spelling.
     fn resident_terminal(
         &mut self,
-        _context: &mut tex_state::ResidentGroups<'_, G>,
+        _context: &mut tex_state::CommandContext<'_, G>,
+        _fuel: &mut crate::CommandFuel,
+        _effects: &mut tex_state::diagnostic::DiagnosticEffects,
         _facts: &mut Facts,
         _entered_line: u32,
+        _macro_origin: Option<tex_state::token::OriginId>,
         _spelling: TracedTokenWord,
         meaning: &MeaningWord<G>,
     ) -> ControlFlow<(), bool> {
@@ -119,11 +123,15 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
     }
 
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)] // Disjoint input-preserving execution owners and spelling.
     fn resident_terminal(
         &mut self,
-        _context: &mut tex_state::ResidentGroups<'_, G>,
+        _context: &mut tex_state::CommandContext<'_, G>,
+        _fuel: &mut crate::CommandFuel,
+        _effects: &mut tex_state::diagnostic::DiagnosticEffects,
         _facts: &mut Facts,
         _entered_line: u32,
+        _macro_origin: Option<tex_state::token::OriginId>,
         spelling: TracedTokenWord,
         meaning: &MeaningWord<G>,
     ) -> ControlFlow<(), bool> {

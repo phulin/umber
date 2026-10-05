@@ -77,9 +77,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.create_source_control_sequences,
             &mut (),
             false,
+            false,
             &|_, suppress, mode| !OBSERVED && !suppress && !mode.requires_persistent_settlement(),
             &mut |_| {},
-            &mut |_, meanings, _, fuel, alignment, _, _, word, _, _, kind, _mode| {
+            &mut |_, state, fuel, _, alignment, _, _, _, word, _, _, kind, _mode| {
                 let literal = word.literal_catcode();
                 let stop = if literal.is_some_and(|cat| cat != Catcode::Active) {
                     None
@@ -87,7 +88,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let Some(symbol) = word.control_sequence() else {
                         return ControlFlow::Continue(Err(()));
                     };
-                    let meaning = *meanings.get(symbol);
+                    let meaning = *state.compact_control_sequence_meaning_word(symbol);
                     if meaning.is_outer() {
                         return ControlFlow::Continue(Err(()));
                     }

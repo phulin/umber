@@ -59,7 +59,7 @@ fn public_named_restore_replays_the_same_output_prefix_repeatedly() {
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
-            br"\count0=1 A\par\shipout\vbox{\hrule}\count0=2\end",
+            br"\font\f=cmr10 \f\count0=1 A\par\def\letters#1{ab#1cd}\toks0={ef}\shipout\hbox{\letters{gh}\the\toks0}\count0=2\end",
         );
         let mut output = OutputLedger::new();
         let mut sink = FirstParagraph { root: None };
@@ -125,7 +125,7 @@ fn resource_replay_discards_interrupted_groups_builders_effects_and_pages() {
             br"\count0=1 \def\marker{\global\advance\count2 by1\message{AFTERGROUP}} A\par
             \immediate\openout1=result \immediate\write1{once}\immediate\closeout1
             \shipout\vbox{\hrule}\begingroup\count0=9\aftergroup\marker
-            \setbox2=\hbox{B\input child}\endgroup\end",
+            \def\letters#1{AB#1CD\input child}\setbox2=\hbox{\letters{EF}}\endgroup\end",
         );
         let mut output = OutputLedger::new();
         let mut sink = FirstParagraph { root: None };

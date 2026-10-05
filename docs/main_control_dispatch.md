@@ -644,3 +644,10 @@ Each input level owns one packed frame and one InputStorage union. That union di
 The frame supplies common identity, cursor, bounds, source context and retirement facts. SourceSlot owns the actual variable source state and accepts the real frame when advancing or committing its cursor. Native reading selects the storage once; it does not classify a source/resident wrapper before selecting the backing. Macro bodies retain their actual immutable definition owner and final argument region until semantic retirement.
 
 Source and token retirement retain their existing chronology, bounds, peak usage and replay-completion owners. Full checkpoints copy the common frame, actual source slot or durable/traced words; active macro bodies and argument regions remain excluded. Diagnostics render the actual row and source slot, and native source context remains a direct top-frame projection. The change adds no per-word counter, cached source owner, separate input cursor or successful cleanup stage.
+
+Stored and macro input retain the sole reader's actual span through raw horizontal
+character execution. The consumer borrows the existing command context, fuel,
+diagnostic effects and execution owner, so glyph append uses the canonical
+font/node implementation. The input span and invocation-origin loan end before
+expansion, substitution, exhaustion or any command requiring processor access.
+There is no restricted meaning/group facade or parallel character reader.

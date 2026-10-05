@@ -103,7 +103,11 @@ Observed expanded consumption selects an outlined entry in `processor/expand/con
 
 Resident physical selection reuses `InputWords`, projects its first word through one common admission block and keeps a typed suffix over the actual cursor. It creates no input owner, cached storage tag or additional span structure.
 
-Restricted resident consumers borrow the actual immutable meaning-word slice and the disjoint actual group bookkeeping plus statically typed host facts; the file-line scalar comes from the current input header. The slice loan excludes assignment and restoration until full delivery releases it. No extra processor or input owner is created.
+Resident consumers borrow the existing CommandContext, fuel, diagnostic effects and
+host facts while the sole reader keeps its actual input slice and cursor. These
+loans exclude input mutation, expansion and substitution; those boundaries release
+the span before full processor access. No restricted meaning/group facade or
+additional processor/input owner is created.
 
 Resident input completes directly into its consumer or leaves the authoritative
 row/cursor at a real source, exhaustion or parameter boundary. There is no

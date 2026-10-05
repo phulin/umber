@@ -57,25 +57,34 @@ pub(super) fn run<G>(
 
             let mut completion = None;
             let observing = processor.is_observed();
-            let mut consume = terminal::InterpreterTerminals {
-                remaining_operations,
-                completed,
-                observation_receipts,
-                completion: &mut completion,
-                observing,
-                lookahead,
-                initial_effect_pos,
-                resident_clean: false,
-            };
             let status = if lookahead {
-                processor.consume_main_loop_lookahead(&mut consume)
+                terminal::read::<_, true>(
+                    processor,
+                    remaining_operations,
+                    &mut completed,
+                    observation_receipts,
+                    &mut completion,
+                    initial_effect_pos,
+                    observing,
+                )
             } else {
-                processor.consume_main_control(&mut consume)
+                terminal::read::<_, false>(
+                    processor,
+                    remaining_operations,
+                    &mut completed,
+                    observation_receipts,
+                    &mut completion,
+                    initial_effect_pos,
+                    observing,
+                )
             };
-            completed = consume.completed;
             let status = status.map_err(command_error)?;
             if let Some(completion) = completion {
-                return completion;
+                return completion.map_err(|error| {
+                    processor.with_execution_owners(|context, command, _, _, _, _, _, _, _| {
+                        error.freeze_diagnostic_origin(context, command.diagnostic_input_context(8))
+                    })
+                });
             }
             if observing && status == tex_command::DeliveryStatus::Command {
                 return Ok(MainControlStep::Continue);

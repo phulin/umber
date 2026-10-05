@@ -751,11 +751,12 @@ a declined word hands that actual meaning to full delivery. Active characters
 and engine sentinels take full delivery, so no symbol or command record is
 needed in the restricted handoff.
 
-The meaning loan borrows the table's actual word slice for the span. Each word
-still indexes its live row, but does not reproject the bank's pointer and length.
-The simultaneous group loan excludes assignments and saved-value restoration;
-full delivery releases both loans before either can change a meaning. There is
-no copied meaning table, retained lookup result or checkpoint-owned slice.
+The reader lends the existing mutable command context alongside its borrowed
+input span. These owners are physically disjoint. A control sequence's actual
+meaning is copied once from its live row before the input-preserving consumer
+mutates state; a declined word retains that resolved meaning for full delivery.
+There is no special meaning-table or group-state view, copied bank, persistent
+lookup result, or checkpoint-owned slice.
 
 The reader charges on entry, then charges the next word immediately when an
 admission continues. Cold transitions carry that charge unchanged. A budget
@@ -967,3 +968,37 @@ This is operation-budget ownership at the consumer boundary, not a second
 counter or a post-command stage. The existing exhaustive scalar-word tests
 validate the no-op tag predicate: reserved raw scalar escapes cannot contain a
 relax opcode, so no raw-coordinate fallback is needed for that predicate.
+
+## Execution within retained stored input
+
+The sole reader borrows the current frame, its actual packed or traced slice,
+and cursor across input-preserving execution. It separately lends the existing
+`CommandContext`, operation fuel, diagnostic effects, and execution owner.
+These owners are disjoint from the command-owned input stack. There is no need
+for a special immutable meaning-slice facade or restricted group-state facade.
+Each control sequence resolves its live meaning once before execution; a
+declined word keeps that meaning through full delivery.
+
+The resident consumer may append ordinary horizontal glyphs, execute clean
+no-ops, and open or close eligible empty groups. Expansion, parameter
+substitution, input exhaustion, tracing, pending reports, restoring groups,
+math-active characters, paragraph entry, and actual host demands release the
+span before obtaining full processor access. Horizontal glyphs use the existing
+character implementation and node/font owners. Their macro invocation origin
+is selected once from the live input stack for the borrowed span. No font,
+meaning, origin, or input cursor is cached in checkpoint state.
+
+TeX82's raw horizontal lookahead still precedes expansion. An accepted glyph
+keeps that fetch role; a noncharacter declines before mutation and enters the
+existing expanded interpretation. Fuel and the operation budget stop at the
+exact consumed word. Character errors capture the spelling origin immediately;
+after the actual span borrow ends, the driver freezes diagnostic evidence from
+the still-live input stack. Host/resource replay continues to unwind all loans
+and restart from the existing full checkpoint.
+
+The driver selects expanded fetching or raw horizontal lookahead once at reader
+entry. The terminal consumer's type fixes that role for its invocation; it stores
+no lookahead flag and performs no per-word role test. Only raw horizontal
+lookahead requests the macro-origin loan used by resident glyphs. Scanners,
+skipping and clean no-op entries do not traverse macro ancestry for an unused
+origin. Both entries use the same canonical reader and semantic implementations.

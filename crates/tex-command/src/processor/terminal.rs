@@ -7,7 +7,7 @@ use tex_state::meaning::MeaningWord;
 use tex_state::token::TracedTokenWord;
 
 /// A terminal consumer may execute input-preserving words while the actual
-/// resident span remains borrowed, with disjoint actual group bookkeeping and host loans.
+/// resident span remains borrowed, with the actual command context, fuel, diagnostic effects and host loans.
 /// Full processor access ends that borrow.
 /// Readiness belongs to this invocation, never to command/checkpoint state.
 pub trait NativeWordConsumer<Processor, G, Facts> {
@@ -28,11 +28,15 @@ pub trait NativeWordConsumer<Processor, G, Facts> {
         false
     }
 
+    #[allow(clippy::too_many_arguments)] // Disjoint input-preserving execution owners and spelling.
     fn resident_terminal(
         &mut self,
-        _context: &mut tex_state::ResidentGroups<'_, G>,
+        _context: &mut tex_state::CommandContext<'_, G>,
+        _fuel: &mut crate::CommandFuel,
+        _effects: &mut tex_state::diagnostic::DiagnosticEffects,
         _facts: &mut Facts,
         _entered_line: u32,
+        _macro_origin: Option<tex_state::token::OriginId>,
         _spelling: TracedTokenWord,
         _meaning: &MeaningWord<G>,
     ) -> ControlFlow<(), bool> {

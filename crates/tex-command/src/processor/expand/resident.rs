@@ -98,16 +98,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         consumer: &mut Consumer,
         outline_suffix: bool,
+        glyph_origins: bool,
         retain: &impl Fn(&Consumer, bool, crate::processor::delivery_mode::DeliveryMode) -> bool,
         admit: &mut impl FnMut(
             &mut Consumer,
-            &tex_state::CommandMeaningRows<'_, G>,
-            &mut tex_state::ResidentGroups<'_, G>,
+            &mut tex_state::CommandContext<'_, G>,
             &mut crate::fuel::CommandFuel,
             &mut tex_state::diagnostic::DiagnosticEffects,
             &mut crate::processor::alignment::AlignmentDeliveryState<G>,
             &mut Facts,
             u32,
+            Option<OriginId>,
             TokenWord,
             OriginId,
             bool,
@@ -125,6 +126,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             Admission,
         ) -> Result<R, CommandError>,
     ) -> Result<Option<R>, CommandError> {
+        let macro_origin = if glyph_origins {
+            self.active_macro_origin()
+        } else {
+            None
+        };
         let levels = &mut self.command.roots.input.levels;
         let Some(row) = levels.current.as_mut() else {
             return Ok(None);
@@ -176,16 +182,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
             let entered_line =
                 u32::try_from(self.command.roots.input.retained_file_line_number).unwrap_or(0);
-            let (meanings, mut groups) = self.state.resident_groups();
             match admit(
                 consumer,
-                &meanings,
-                &mut groups,
+                self.state,
                 self.fuel,
                 self.diagnostic_effects,
                 &mut self.command.roots.alignment,
                 &mut self.host.facts,
                 entered_line,
+                macro_origin,
                 word,
                 origin,
                 suppress,
@@ -207,13 +212,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 |consumer: &mut Consumer, fuel: &mut crate::fuel::CommandFuel, word, origin| {
                     admit(
                         consumer,
-                        &meanings,
-                        &mut groups,
+                        self.state,
                         fuel,
                         self.diagnostic_effects,
                         &mut self.command.roots.alignment,
                         &mut self.host.facts,
                         entered_line,
+                        macro_origin,
                         word,
                         origin,
                         suppress,

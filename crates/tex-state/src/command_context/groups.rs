@@ -94,18 +94,17 @@ impl<'a, G> CommandContext<'a, G> {
         Ok(frame)
     }
 
-    /// Lends live meaning rows and the actual disjoint group bookkeeping.
-    /// Releasing these views permits assignments, restoration and full access.
+    /// Declines before touching a saved record; real unsave uses full delivery.
     #[inline(always)]
-    pub fn resident_groups(
-        &mut self,
-    ) -> (
-        crate::CommandMeaningRows<'_, G>,
-        crate::ResidentGroups<'_, G>,
-    ) {
-        self.admitted
-            .state()
-            .resident_groups(&mut self.resident.dependencies)
+    pub fn end_empty_group(&mut self, kind: crate::GroupKind) -> bool {
+        let Some(frame) = self.admitted.state_ref().group_frames().last().copied() else {
+            return false;
+        };
+        if frame.kind() != kind || self.admitted.state_ref().group_has_saved_records(frame) {
+            return false;
+        }
+        self.pop_group_boundary(frame);
+        true
     }
 
     #[inline(always)]

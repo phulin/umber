@@ -98,6 +98,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.create_source_control_sequences,
             terminal,
             Consumer::OUTLINE_RESIDENT_SUFFIX,
+            role == ExpandedReaderRole::MainLoopLookahead,
             &|terminal, suppress, mode| {
                 Consumer::RESIDENT_TERMINALS
                     && !OBSERVED
@@ -109,24 +110,31 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut {
                 #[inline(always)]
                 |terminal,
-                 meanings,
                  state,
                  fuel,
+                 effects,
                  alignment,
                  facts,
                  entered_line,
+                 macro_origin,
                  word,
                  origin,
                  _,
                  kind,
                  _mode| {
+                    let resolved = word
+                        .control_sequence()
+                        .map(|symbol| *state.compact_control_sequence_meaning_word(symbol));
                     let mut admit = {
                         #[inline(always)]
                         |meaning: &MeaningWord<G>| {
                             let admitted = terminal.resident_terminal(
                                 state,
+                                fuel,
+                                effects,
                                 facts,
                                 entered_line,
+                                macro_origin,
                                 tex_state::token::TracedTokenWord::from_parts(word, origin),
                                 meaning,
                             );
@@ -151,10 +159,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             }
                         }
                     };
-                    if let Some(symbol) = word.control_sequence() {
-                        // Borrow the actual row through input-preserving group execution.
-                        // Only a declined word copies its meaning into full delivery.
-                        return admit(meanings.get(symbol));
+                    if let Some(meaning) = resolved {
+                        return admit(&meaning);
                     }
                     if Consumer::RESIDENT_LITERALS
                         && let (Some(cat), Some(ch)) = (word.literal_catcode(), word.literal_char())

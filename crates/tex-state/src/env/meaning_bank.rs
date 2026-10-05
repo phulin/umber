@@ -91,12 +91,6 @@ impl<T: Clone> MeaningBank<T> {
             .ok_or(BankError::IndexOutOfBounds)
     }
 
-    /// Lends the actual word rows while mutation and restoration are excluded.
-    #[inline(always)]
-    pub(crate) fn word_rows(&self) -> &[T] {
-        &self.values
-    }
-
     /// Reads a complete row for cold mutation/journal coordination.
     #[inline]
     pub(crate) fn row(&self, index: u32) -> Result<(T, u32, u64), BankError> {

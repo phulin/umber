@@ -1,20 +1,50 @@
 //! Main control's actual synchronous terminal consumer and operation count.
 use super::*;
 
-pub(super) struct InterpreterTerminals<'a> {
-    pub(super) remaining_operations: usize,
-    pub(super) completed: usize,
-    pub(super) observation_receipts: &'a mut Option<Vec<MutationRecord>>,
-    pub(super) completion: &'a mut Option<Result<MainControlStep, ExecError>>,
-    pub(super) observing: bool,
-    pub(super) lookahead: bool,
-    pub(super) initial_effect_pos: tex_state::EffectPos,
-    pub(super) resident_clean: bool,
+struct InterpreterTerminals<'a, const LOOKAHEAD: bool> {
+    remaining_operations: usize,
+    completed: usize,
+    observation_receipts: &'a mut Option<Vec<MutationRecord>>,
+    completion: &'a mut Option<Result<MainControlStep, ExecError>>,
+    observing: bool,
+    etex_extended: bool,
+    initial_effect_pos: tex_state::EffectPos,
+    resident_clean: bool,
 }
 
-impl<'state, 'host, G>
+/// Select TeX's fetch label once; the sole reader consumes the existing budget.
+#[inline(always)]
+pub(super) fn read<G, const LOOKAHEAD: bool>(
+    processor: &mut Processor<'_, '_, G>,
+    remaining_operations: usize,
+    completed: &mut usize,
+    observation_receipts: &mut Option<Vec<MutationRecord>>,
+    completion: &mut Option<Result<MainControlStep, ExecError>>,
+    initial_effect_pos: tex_state::EffectPos,
+    observing: bool,
+) -> Result<tex_command::DeliveryStatus, tex_command::CommandError> {
+    let mut consume = InterpreterTerminals::<LOOKAHEAD> {
+        remaining_operations,
+        completed: *completed,
+        observation_receipts,
+        completion,
+        observing,
+        etex_extended: processor.profile() == CommandProfile::ETEX26,
+        initial_effect_pos,
+        resident_clean: LOOKAHEAD && !observing && !processor.has_pending_reports(),
+    };
+    let result = if LOOKAHEAD {
+        processor.consume_main_loop_lookahead(&mut consume)
+    } else {
+        processor.consume_main_control(&mut consume)
+    };
+    *completed = consume.completed;
+    result
+}
+
+impl<'state, 'host, G, const LOOKAHEAD: bool>
     tex_command::NativeWordConsumer<Processor<'state, 'host, G>, G, &'state mut ExecutionState<G>>
-    for InterpreterTerminals<'_>
+    for InterpreterTerminals<'_, LOOKAHEAD>
 {
     const RESIDENT_TERMINALS: bool = true;
     const RESIDENT_LITERALS: bool = true;
@@ -25,14 +55,59 @@ impl<'state, 'host, G>
     }
 
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)] // Disjoint input-preserving execution owners and spelling.
     fn resident_terminal(
         &mut self,
-        context: &mut tex_state::ResidentGroups<'_, G>,
+        context: &mut tex_state::CommandContext<'_, G>,
+        fuel: &mut tex_command::CommandFuel,
+        effects: &mut tex_state::diagnostic::DiagnosticEffects,
         execution: &mut &'state mut ExecutionState<G>,
         entered_line: u32,
-        _spelling: TracedTokenWord,
+        macro_origin: Option<tex_state::token::OriginId>,
+        spelling: TracedTokenWord,
         meaning: &tex_state::meaning::MeaningWord<G>,
     ) -> ControlFlow<(), bool> {
+        if LOOKAHEAD {
+            let code = meaning.control_code();
+            if !matches!(
+                code,
+                codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN
+            ) {
+                self.resident_clean = false;
+                return ControlFlow::Continue(false);
+            }
+            let word = meaning.scalar_word().expect("selected scalar character");
+            let ch = if code == codes::CHAR_GIVEN {
+                char::from_u32(Meaning::runtime_word_operand(word) as u32)
+                    .expect("admitted character definition")
+            } else {
+                Meaning::runtime_word_character(word)
+                    .expect("admitted literal character")
+                    .0
+            };
+            if let Err(error) = characters::append_native_character(
+                context,
+                effects,
+                fuel,
+                execution,
+                ch,
+                macro_origin.unwrap_or(spelling.origin()),
+                self.etex_extended,
+            ) {
+                *self.completion = Some(Err(error.capture_command_origin(spelling.origin())));
+                return ControlFlow::Break(());
+            }
+            self.completed += 1;
+            if context.effect_pos() != self.initial_effect_pos || effects.has_first_recoverable() {
+                *self.completion = Some(Ok(MainControlStep::Continue));
+                return ControlFlow::Break(());
+            }
+            return if execution.main_loop_active && self.completed < self.remaining_operations {
+                ControlFlow::Continue(true)
+            } else {
+                ControlFlow::Break(())
+            };
+        }
         if !meaning.is_relax() {
             const BEGIN: u64 =
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginGroup).encode();
@@ -93,7 +168,7 @@ impl<'state, 'host, G>
                 *self.completion = Some(Ok(MainControlStep::Continue));
                 return Ok(ControlFlow::Break(()));
             }
-            if !observing && !self.lookahead && self.completed < self.remaining_operations {
+            if !observing && !LOOKAHEAD && self.completed < self.remaining_operations {
                 self.resident_clean = !traced;
                 return Ok(ControlFlow::Continue(()));
             }
@@ -164,19 +239,16 @@ impl<'state, 'host, G>
                 return Ok(ControlFlow::Break(()));
             }
         }
-        if !observing
-            && next_lookahead == self.lookahead
-            && self.completed < self.remaining_operations
-        {
-            self.resident_clean = !next_lookahead
-                && !processor.has_pending_reports()
-                && processor.int_param(IntParam::TRACING_COMMANDS) <= 0
-                && processor
-                    .host_facts()
-                    .modes
-                    .current_list()
-                    .pending_hchars()
-                    .is_none();
+        if !observing && next_lookahead == LOOKAHEAD && self.completed < self.remaining_operations {
+            self.resident_clean = !processor.has_pending_reports()
+                && (next_lookahead
+                    || (processor.int_param(IntParam::TRACING_COMMANDS) <= 0
+                        && processor
+                            .host_facts()
+                            .modes
+                            .current_list()
+                            .pending_hchars()
+                            .is_none()));
             return Ok(ControlFlow::Continue(()));
         }
         Ok(ControlFlow::Break(()))
@@ -188,7 +260,7 @@ impl<'state, 'host, G>
 /// tracing, math/recovery semantics, actual restores and aftergroup insertion.
 #[inline(never)]
 fn resident_group<G>(
-    context: &mut tex_state::ResidentGroups<'_, G>,
+    context: &mut tex_state::CommandContext<'_, G>,
     execution: &mut ExecutionState<G>,
     entered_line: u32,
     kind: GroupKind,

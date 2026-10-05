@@ -55,9 +55,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             true,
             &mut (),
             false,
+            false,
             &|_, _, _| false,
             &mut |_| {},
-            &mut |_, _, _, _, _, _, _, _, _, _, _, _| ControlFlow::Continue(Err(())),
+            &mut |_, _, _, _, _, _, _, _, _, _, _, _, _| ControlFlow::Continue(Err(())),
             &mut |_, processor, word, origin, suppress, site, kind, _| {
                 let literal = word.literal_catcode();
                 let mut meaning = None;
@@ -213,9 +214,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 true,
                 &mut (),
                 false,
+                false,
                 &|_, _, _| false,
                 &mut |_| {},
-                &mut |_, _, _, _, _, _, _, _, _, _, _, _| ControlFlow::Continue(Err(())),
+                &mut |_, _, _, _, _, _, _, _, _, _, _, _, _| ControlFlow::Continue(Err(())),
                 &mut |_, processor, word, origin, suppress, site, kind, _| {
                     let literal = word.literal_catcode();
                     // Literal spelling already supplies all collection facts. Active

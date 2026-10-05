@@ -20,11 +20,15 @@ impl<G>
         self.ready
     }
 
+    #[allow(clippy::too_many_arguments)] // Disjoint input-preserving execution owners and spelling.
     fn resident_terminal(
         &mut self,
-        _: &mut tex_state::ResidentGroups<'_, G>,
+        _: &mut tex_state::CommandContext<'_, G>,
+        _fuel: &mut crate::CommandFuel,
+        _effects: &mut tex_state::diagnostic::DiagnosticEffects,
         _: &mut crate::InitialCommandHostFacts,
         _: u32,
+        _macro_origin: Option<tex_state::token::OriginId>,
         _: TracedTokenWord,
         meaning: &MeaningWord<G>,
     ) -> ControlFlow<(), bool> {

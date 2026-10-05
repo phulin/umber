@@ -419,3 +419,15 @@ run through `scripts/check-tools.sh profiling-arena-tests`. Routine tests
 retain shape, stable-address, stale-root and checkpoint/replay assertions.
 
 - `src/main_control/interpreter/terminal.rs`: the actual synchronous interpreter consumer, owned operation-budget scalar and clean no-op/group admission. It owns no input or execution state and retains no meaning cache; input transitions and full terminal entry invalidate the local no-op fact.
+
+Resident horizontal characters execute the canonical glyph append with the existing
+CommandContext, fuel, diagnostic effects and execution owner while the sole command
+reader keeps its stored-input span. Raw horizontal lookahead retains its TeX fetch
+role and suppresses character command tracing. Noncharacters release the span before
+expanded interpretation. Errors freeze their diagnostic input context only after
+the reader loan ends; resource replay retains the existing full-checkpoint unwind.
+
+The native terminal consumer fixes its TeX fetch role with a const parameter at
+reader entry. It stores no duplicate lookahead flag, and clean no-op loops contain
+no glyph-role branch. Raw horizontal lookahead alone requests the span's macro
+invocation origin; other reader roles omit that unused ancestry scan.

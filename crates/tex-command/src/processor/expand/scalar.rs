@@ -29,16 +29,28 @@ where
     }
 
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)] // Disjoint input-preserving execution owners and spelling.
     fn resident_terminal(
         &mut self,
-        context: &mut tex_state::ResidentGroups<'_, G>,
+        context: &mut tex_state::CommandContext<'_, G>,
+        fuel: &mut crate::CommandFuel,
+        effects: &mut tex_state::diagnostic::DiagnosticEffects,
         facts: &mut Facts,
         entered_line: u32,
+        macro_origin: Option<tex_state::token::OriginId>,
         spelling: TracedTokenWord,
         meaning: &MeaningWord<G>,
     ) -> ControlFlow<(), bool> {
-        self.consume
-            .resident_terminal(context, facts, entered_line, spelling, meaning)
+        self.consume.resident_terminal(
+            context,
+            fuel,
+            effects,
+            facts,
+            entered_line,
+            macro_origin,
+            spelling,
+            meaning,
+        )
     }
 
     #[inline(always)]

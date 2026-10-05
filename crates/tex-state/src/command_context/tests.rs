@@ -195,12 +195,7 @@ fn empty_close_declines_mismatch_saved_values_and_aftergroup_without_mutation() 
     use crate::{GroupKind, GroupUnsaveEvent};
     with_test_universe(|universe| {
         let mut context = universe.command_context().expect("context");
-        assert!(
-            !context
-                .resident_groups()
-                .1
-                .end_empty_group(GroupKind::Simple)
-        );
+        assert!(!context.end_empty_group(GroupKind::Simple));
         context.begin_group(GroupKind::Simple, 7).expect("outer");
         context
             .assign_count(0, 17, AssignmentScope::Local)
@@ -208,29 +203,14 @@ fn empty_close_declines_mismatch_saved_values_and_aftergroup_without_mutation() 
         context
             .begin_group(GroupKind::SemiSimple, 8)
             .expect("empty inner");
-        assert!(
-            !context
-                .resident_groups()
-                .1
-                .end_empty_group(GroupKind::Simple)
-        );
+        assert!(!context.end_empty_group(GroupKind::Simple));
         assert_eq!(context.execution_group_depth(), 2);
-        assert!(
-            context
-                .resident_groups()
-                .1
-                .end_empty_group(GroupKind::SemiSimple)
-        );
+        assert!(context.end_empty_group(GroupKind::SemiSimple));
         assert_eq!(
             context.current_group_values(),
             (1, GroupKind::Simple.etex_code())
         );
-        assert!(
-            !context
-                .resident_groups()
-                .1
-                .end_empty_group(GroupKind::Simple)
-        );
+        assert!(!context.end_empty_group(GroupKind::Simple));
         assert_eq!(context.count(0).expect("live value"), 17);
         context.end_group(GroupKind::Simple).expect("restore outer");
         assert_eq!(context.count(0).expect("restored value"), 0);
@@ -246,12 +226,7 @@ fn empty_close_declines_mismatch_saved_values_and_aftergroup_without_mutation() 
             .begin_group(GroupKind::Simple, 9)
             .expect("aftergroup scope");
         context.save_aftergroup(after).expect("save word");
-        assert!(
-            !context
-                .resident_groups()
-                .1
-                .end_empty_group(GroupKind::Simple)
-        );
+        assert!(!context.end_empty_group(GroupKind::Simple));
         let mut delivered = Vec::new();
         context
             .end_group_observed(GroupKind::Simple, |_, event| match event {
