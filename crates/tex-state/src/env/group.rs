@@ -35,7 +35,7 @@ pub struct GroupFrame {
     /// incremental diagnostic projection without retaining or copying any
     /// saved value outside the ordered journal.
     pub(crate) save_stack_words_before: usize,
-    pub(crate) latest_save_push_before: Option<(u32, usize)>,
+    pub(crate) last_save_push_words_before: u8,
 }
 
 impl GroupFrame {
@@ -46,7 +46,7 @@ impl GroupFrame {
         journal_start: u32,
         level: u32,
         save_stack_words_before: usize,
-        latest_save_push_before: Option<(u32, usize)>,
+        last_save_push_words_before: u8,
     ) -> Self {
         Self {
             kind,
@@ -55,7 +55,7 @@ impl GroupFrame {
             journal_start,
             level,
             save_stack_words_before,
-            latest_save_push_before,
+            last_save_push_words_before,
         }
     }
 
@@ -65,7 +65,7 @@ impl GroupFrame {
         lineage: u64,
         level: u32,
         save_stack_words_before: usize,
-        latest_save_push_before: Option<(u32, usize)>,
+        last_save_push_words_before: u8,
     ) -> Self {
         Self::new(
             kind,
@@ -74,7 +74,7 @@ impl GroupFrame {
             0,
             level,
             save_stack_words_before,
-            latest_save_push_before,
+            last_save_push_words_before,
         )
     }
 

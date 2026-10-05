@@ -102,12 +102,25 @@ creating argument undo history.
 
 ## The real TeX save stack
 
-A group pushes one scalar boundary containing prior level, kind, source line,
-stack/annex positions, and required diagnostic projections. Empty groups touch
+A group pushes one scalar boundary containing level, kind, source line,
+lineage, journal start, and required diagnostic projections. Empty groups touch
 no definition store, box group owner, fifteen-owner operation snapshot, or
 checkpoint log. Warm empty push/pop allocates nothing. Typed builder groups
 still own their actual box, math, alignment, insertion, or output state; this
 does not require captures for an ordinary empty group.
+
+The save-word projection keeps its actual total and the word count of the last
+checked push. That count is zero before any push, one for a boundary,
+aftergroup word, sparse marker or zero-level restore, and two for an old-value
+or box restore. It fits directly in `u8`; no optional position/count pair is
+needed. A boundary retains the prior total and prior last-push count for
+unsave. Box-spec words remain with their actual box push/pop bookkeeping.
+
+Chronology belongs to the contiguous native stack. Its length is its sole
+position; journals, checkpoint cursors and accepted tails retain no duplicate
+save-position counter. Native append still checks the real `u32` save-index
+bound. Named checkpoint validation requires the empty save projection alongside
+the existing root depth, full owner identity and retained checkpoint cut.
 
 Tagged stack records cover local restores, `\aftergroup` tokens, typed builder
 payloads, and e-TeX sparse restoration. A sparse save lazily creates its

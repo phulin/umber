@@ -1699,10 +1699,10 @@ impl<G> DenseState<G> {
     /// TeX's checked save depth immediately before its most recent push.
     #[must_use]
     pub(crate) fn checked_save_stack_words(&self, source_lines: bool) -> usize {
-        let (words, latest) = self.journal().save_stack_projection();
+        let (words, last_push_words) = self.journal().save_stack_projection();
         words
             .saturating_add(if source_lines { self.group_depth() } else { 0 })
-            .saturating_sub(latest.map_or(0, |(_, words)| words))
+            .saturating_sub(usize::from(last_push_words))
     }
 
     pub(crate) fn max_save_stack_words(&self, source_lines: bool) -> usize {
@@ -1733,7 +1733,7 @@ impl<G> DenseState<G> {
             .ok_or(StateError::GroupLineageExhausted)?;
         let journal_start =
             u32::try_from(self.journal().len() + 1).map_err(|_| StateError::GroupDepthExhausted)?;
-        let (save_stack_words_before, latest_save_push_before) =
+        let (save_stack_words_before, last_save_push_words_before) =
             self.journal().save_stack_projection();
         let frame = GroupFrame::new(
             kind,
@@ -1742,7 +1742,7 @@ impl<G> DenseState<G> {
             journal_start,
             level,
             save_stack_words_before,
-            latest_save_push_before,
+            last_save_push_words_before,
         );
         self.journal_mut().record_group_enter(frame);
         Ok(())

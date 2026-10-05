@@ -15,13 +15,13 @@ fn assert_exact_capacity_accounting(journal: &SaveJournal<TestGeneration>) {
 }
 
 fn enter_group(journal: &mut SaveJournal<TestGeneration>, lineage: u64) -> GroupFrame {
-    let (save_stack_words_before, latest_save_push_before) = journal.save_stack_projection();
+    let (save_stack_words_before, last_save_push_words_before) = journal.save_stack_projection();
     let frame = GroupFrame::for_journal_test(
         GroupKind::Simple,
         lineage,
         u32::try_from(journal.group_frames().len()).expect("test depth fits u32") + 2,
         save_stack_words_before,
-        latest_save_push_before,
+        last_save_push_words_before,
     );
     journal.record_group_enter(frame);
     frame
@@ -124,6 +124,26 @@ fn cursor_from_another_state_is_rejected_even_with_the_same_brand() {
     let second =
         SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
     assert!(!second.validate_cursor(first.checkpoint_cursor(0).expect("root checkpoint")));
+}
+
+#[test]
+fn interrupted_group_projection_cannot_masquerade_as_a_root_checkpoint() {
+    use super::JournalCursor;
+
+    let mut journal =
+        SaveJournal::<TestGeneration>::new(crate::definition_arena::DefinitionRoots::default());
+    let root = journal.checkpoint_cursor(0).expect("root checkpoint");
+    let group = enter_group(&mut journal, 1);
+    record_saved_count(&mut journal, 7, 29);
+    assert!(journal.validate_cursor_after_replay(root));
+
+    let nonroot = JournalCursor {
+        save_stack: journal.save_stack,
+        ..root
+    };
+    assert!(!journal.validate_cursor_after_replay(nonroot));
+    journal.record_group_exit(group);
+    assert!(journal.validate_cursor(root));
 }
 
 #[test]

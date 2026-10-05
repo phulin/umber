@@ -28,10 +28,6 @@ pub struct JournalCursor<G> {
     checkpoint_entries: u32,
     group_depth: u32,
     save_stack: SaveStackProjection,
-    /// The active save-sequence cursor at capture.  This is kept separately
-    /// from the checkpoint-lane mark because the two lanes have independent
-    /// storage and rollback lifetimes.
-    save_position: u32,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -58,7 +54,6 @@ impl<G> PartialEq for JournalCursor<G> {
             && self.checkpoint_entries == other.checkpoint_entries
             && self.group_depth == other.group_depth
             && self.save_stack == other.save_stack
-            && self.save_position == other.save_position
     }
 }
 
@@ -78,15 +73,7 @@ impl<G> JournalCursor<G> {
             checkpoint_entries,
             group_depth,
             save_stack,
-            save_position: 0,
             _brand: PhantomData,
-        }
-    }
-
-    const fn with_save_position(self, save_position: u32) -> Self {
-        Self {
-            save_position,
-            ..self
         }
     }
 
@@ -152,44 +139,42 @@ pub(crate) struct CheckpointDelta<G> {
 pub(crate) struct AcceptedJournalTail<G> {
     prior_checkpoint_entries: usize,
     save_stack: SaveStackProjection,
-    save_position: u32,
     _brand: PhantomData<fn() -> G>,
 }
 
 /// Allocation-free projection of the state-owned part of TeX's save stack.
 ///
-/// Command-owned `\aftergroup` words and executor-owned box-spec words are
-/// merged by main control. `latest_push` orders state pushes against the
-/// command owner's journal-relative aftergroup position so §§1334/273 can
-/// report the depth immediately before the newest checked push.
+/// The native stack includes `\aftergroup` words. The last checked push adds
+/// one or two words; zero means no push. Box-spec words remain executor-owned.
+/// §§1334/273 report the depth immediately before that checked push.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct SaveStackProjection {
     words: usize,
-    latest_push: Option<(u32, usize)>,
+    last_push_words: u8,
 }
 
 impl SaveStackProjection {
-    fn push<G>(&mut self, entry: &JournalEntry<G>, position: u32) {
+    fn push<G>(&mut self, entry: &JournalEntry<G>) {
         match entry {
             JournalEntry::Mutation(mutation) => {
                 let words = canonical_restore_words(mutation);
-                self.words = self.words.saturating_add(words);
-                self.latest_push = Some((position, words));
+                self.words = self.words.saturating_add(usize::from(words));
+                self.last_push_words = words;
             }
             JournalEntry::GroupEnter(boundary) => {
                 let frame = boundary.frame;
                 debug_assert_eq!(self.words, frame.save_stack_words_before);
-                debug_assert_eq!(self.latest_push, frame.latest_save_push_before);
+                debug_assert_eq!(self.last_push_words, frame.last_save_push_words_before);
                 self.words = self.words.saturating_add(1);
-                self.latest_push = Some((position, 1));
+                self.last_push_words = 1;
             }
             JournalEntry::Box { .. } => {
                 self.words += 2;
-                self.latest_push = Some((position, 2));
+                self.last_push_words = 2;
             }
             JournalEntry::AfterGroup(_) | JournalEntry::SparseMarker { .. } => {
                 self.words += 1;
-                self.latest_push = Some((position, 1));
+                self.last_push_words = 1;
             }
             JournalEntry::Vacant => {}
         }
@@ -206,7 +191,6 @@ pub(crate) struct SaveJournal<G> {
     checkpoint_entries: usize,
     host_epoch: u64,
     save_stack: SaveStackProjection,
-    save_position: u32,
     box_spec_words: usize,
     max_save_words: [usize; 2],
     #[cfg(test)]
@@ -262,7 +246,6 @@ impl<G> SaveJournal<G> {
             // makes its first subsequent write capture one alternate.
             host_epoch: 0,
             save_stack: SaveStackProjection::default(),
-            save_position: 0,
             box_spec_words: 0,
             max_save_words: [0; 2],
             #[cfg(test)]
@@ -309,8 +292,7 @@ impl<G> SaveJournal<G> {
             u32::try_from(self.checkpoint_entries).expect("checkpoint journal exceeds u32 entries"),
             group_depth,
             self.save_stack,
-        )
-        .with_save_position(self.save_position);
+        );
         self.host_epoch = next_serial;
 
         Ok(cursor)
@@ -444,10 +426,12 @@ impl<G> SaveJournal<G> {
             self.active_sequence
                 .set_sparse_head(marker, Some(self.active_sequence.entries.len()));
         }
-        let position = u32::try_from(self.active_sequence.entries.len() + 1)
-            .expect("group save stack fits u32");
+        assert!(
+            self.active_sequence.entries.len() < u32::MAX as usize,
+            "group save stack fits u32"
+        );
         if !sparse {
-            self.save_stack.push(&entry, position);
+            self.save_stack.push(&entry);
             let depth = self.active_sequence.depth
                 + usize::from(matches!(entry, JournalEntry::GroupEnter(_)));
             self.record_save_words_peak(depth);
@@ -462,7 +446,6 @@ impl<G> SaveJournal<G> {
             );
         }
         self.active_sequence.append(entry);
-        self.save_position = position;
     }
 
     #[cfg(test)]
@@ -485,10 +468,8 @@ impl<G> SaveJournal<G> {
         self.active_sequence.unsaving = false;
         self.save_stack = SaveStackProjection {
             words: frame.save_stack_words_before,
-            latest_push: frame.latest_save_push_before,
+            last_push_words: frame.last_save_push_words_before,
         };
-        self.save_position =
-            u32::try_from(self.active_sequence.entries.len()).expect("group save stack fits u32");
     }
 
     pub(crate) fn record_box_save(&mut self, saved: crate::env::durable_boxes::DurableMutation) {
@@ -549,10 +530,10 @@ impl<G> SaveJournal<G> {
         )
     }
 
-    /// State-owned live words and the journal-relative newest checked push.
+    /// Native live words and the word count of the last checked push.
     #[must_use]
-    pub(crate) const fn save_stack_projection(&self) -> (usize, Option<(u32, usize)>) {
-        (self.save_stack.words, self.save_stack.latest_push)
+    pub(crate) const fn save_stack_projection(&self) -> (usize, u8) {
+        (self.save_stack.words, self.save_stack.last_push_words)
     }
 
     fn record_save_words_peak(&mut self, depth: usize) {
@@ -560,7 +541,7 @@ impl<G> SaveJournal<G> {
             .save_stack
             .words
             .saturating_add(self.box_spec_words)
-            .saturating_sub(self.save_stack.latest_push.map_or(0, |(_, words)| words));
+            .saturating_sub(usize::from(self.save_stack.last_push_words));
         self.max_save_words[0] = self.max_save_words[0].max(words);
         self.max_save_words[1] = self.max_save_words[1].max(words.saturating_add(depth));
     }
@@ -694,11 +675,9 @@ impl<G> SaveJournal<G> {
         let tail = AcceptedJournalTail {
             prior_checkpoint_entries,
             save_stack: self.save_stack,
-            save_position: self.save_position,
             _brand: PhantomData,
         };
         self.save_stack = SaveStackProjection::default();
-        self.save_position = 0;
         self.host_epoch = candidate_serial;
 
         Ok(tail)
@@ -713,7 +692,6 @@ impl<G> SaveJournal<G> {
         self.box_spec_words = 0;
         self.active_sequence.unsaving = false;
         self.save_stack = tail.save_stack;
-        self.save_position = tail.save_position;
         self.checkpoint_entries = tail.prior_checkpoint_entries;
         self.checkpoint_undo.reject();
 
@@ -744,7 +722,6 @@ impl<G> SaveJournal<G> {
         self.checkpoint_entries = cursor.checkpoint_entries() as usize;
         self.advance_host_epoch();
         self.save_stack = cursor.save_stack;
-        self.save_position = cursor.save_position;
     }
 
     #[cfg(test)]
@@ -806,7 +783,7 @@ impl<G> SaveJournal<G> {
             && cursor.checkpoint_entries() as usize <= self.checkpoint_entries
             && self.checkpoint_undo.validates(cursor.checkpoint)
             && cursor.group_depth() == 0
-            && cursor.save_position == 0
+            && cursor.save_stack == SaveStackProjection::default()
     }
 
     pub(crate) fn restore_group_cursor(&mut self, cursor: JournalCursor<G>) {
@@ -821,7 +798,6 @@ impl<G> SaveJournal<G> {
         self.box_spec_words = 0;
         self.active_sequence.unsaving = false;
         self.save_stack = cursor.save_stack;
-        self.save_position = cursor.save_position;
     }
 
     pub(crate) fn group_save_len(&self) -> usize {
@@ -954,7 +930,7 @@ impl<G> Drop for SaveJournal<G> {
     }
 }
 
-fn canonical_restore_words<G>(mutation: &Mutation<G>) -> usize {
+fn canonical_restore_words<G>(mutation: &Mutation<G>) -> u8 {
     // TeX82 §§275--276 uses one word for `restore_zero` and two for
     // `restore_old_value`. Undefined meanings are physically level zero.
     // Section 240 gives null token-list parameters the same level-zero

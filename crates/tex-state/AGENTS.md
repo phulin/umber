@@ -277,7 +277,11 @@ Definition-owned parameter programs expose literal delimiter views only for none
   traversal coordinates and token/node source handles, scalar suffix marks,
   warmed direct-row construction, and compile/runtime escape controls.
 - `src/journal.rs`: Native save-push maxima (classic and e-TeX) and box-spec
-  words, independent of nonrefundable host statistics. Separate compact TeX group saves, indexed host-epoch
+  words use the live total and actual last checked push's `u8` word count.
+  Journals, checkpoint cursors and accepted tails retain no duplicate save
+  position; native append still enforces the full `u32` save-index bound, and
+  root cursor validation checks the empty save projection.
+  Nonrefundable host statistics remain independent. Separate compact TeX group saves, indexed host-epoch
   first-touch and owning named-checkpoint deltas holding one
   reversible alternate per written cell, fixed save-stack projections, exact
   capacity-change accounting for constant-time budget reads, synchronous unsave observation with its actual popped preimage owner, and
