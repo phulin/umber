@@ -2,120 +2,185 @@
 
 use super::*;
 
+use std::ops::ControlFlow;
+
+/// The actual integer grammar and value, shared by full and resident entry.
+#[derive(Default)]
+struct IntegerOperand {
+    negative: bool,
+    provenance: OriginId,
+    radix: u8,
+    value: i32,
+    have_digits: bool,
+    overflowed: bool,
+    scanned: Option<ScannedScalar<i32>>,
+    ready: bool,
+}
+
+impl IntegerOperand {
+    #[inline(always)]
+    fn accept(
+        &mut self,
+        character: Option<(char, Catcode)>,
+        origin: OriginId,
+    ) -> ControlFlow<(), bool> {
+        if self.radix == 0 {
+            match character {
+                Some((' ' | '+', _)) => {}
+                Some(('-', _)) => self.negative = !self.negative,
+                Some((ch @ '0'..='9', Catcode::Other)) => {
+                    self.radix = DECIMAL_RADIX;
+                    self.value = i32::from(ch as u8 - b'0');
+                    self.have_digits = true;
+                }
+                Some(('\'', Catcode::Other)) => self.radix = 8,
+                Some(('"', Catcode::Other)) => self.radix = 16,
+                _ => return ControlFlow::Continue(false),
+            }
+            if self.provenance == OriginId::UNKNOWN {
+                self.provenance = origin;
+            }
+            return ControlFlow::Continue(true);
+        }
+        if let Some(digit) = radix_digit(character)
+            && digit < self.radix
+        {
+            if !self.overflowed {
+                let Some(next) = self
+                    .value
+                    .checked_mul(i32::from(self.radix))
+                    .and_then(|value| value.checked_add(i32::from(digit)))
+                else {
+                    return ControlFlow::Continue(false);
+                };
+                self.value = next;
+            }
+            self.have_digits = true;
+            return ControlFlow::Continue(true);
+        }
+        if self.have_digits && matches!(character, Some((_, Catcode::Space))) {
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(false)
+    }
+}
+
+impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
+    crate::NativeWordConsumer<CommandProcessor<'state, 'host, G, Facts>, G> for IntegerOperand
+{
+    const RESIDENT_TERMINALS: bool = true;
+    const RESIDENT_LITERALS: bool = true;
+
+    #[inline(always)]
+    fn resident_ready(&self) -> bool {
+        self.ready
+    }
+
+    #[inline(always)]
+    fn input_boundary(&mut self) {
+        self.ready = false;
+    }
+
+    #[inline(always)]
+    fn resident_terminal(
+        &mut self,
+        spelling: TracedTokenWord,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+    ) -> ControlFlow<(), bool> {
+        let result = self.accept(native_character(meaning), spelling.origin());
+        if matches!(result, ControlFlow::Continue(false)) {
+            self.ready = false;
+        }
+        result
+    }
+
+    // Full entry owns diagnostic capture and nested internal scans. Keep its
+    // recovery temporaries out of the reader's recursive expansion frame;
+    // ordinary resident syntax still inlines through `accept` above.
+    #[inline(never)]
+    fn consume(
+        &mut self,
+        processor: &mut CommandProcessor<'state, 'host, G, Facts>,
+        spelling: TracedTokenWord,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+        control_sequence: Option<Symbol>,
+        exceptional: Option<&CurrentCommand<G>>,
+    ) -> Result<ControlFlow<()>, CommandError> {
+        if self.radix == 0 && self.provenance == OriginId::UNKNOWN {
+            self.provenance = spelling.origin();
+        }
+        let character = native_character(meaning);
+        match self.accept(character, spelling.origin()) {
+            ControlFlow::Break(()) => return Ok(ControlFlow::Break(())),
+            ControlFlow::Continue(true) => {
+                self.ready = true;
+                return Ok(ControlFlow::Continue(()));
+            }
+            ControlFlow::Continue(false) => {}
+        }
+        if self.radix == 0 {
+            self.scanned = Some(processor.scan_integer_internal_or_alphabetic(
+                spelling,
+                meaning,
+                control_sequence,
+                exceptional,
+                self.negative,
+                self.provenance,
+            )?);
+            return Ok(ControlFlow::Break(()));
+        }
+        if radix_digit(character).is_some_and(|digit| digit < self.radix) {
+            // Ordinary admission declines the first overflowing digit. §445's
+            // report needs full processor access at this actual boundary.
+            self.value = i32::MAX;
+            self.have_digits = true;
+            let site =
+                processor.capture_consumed_site(spelling, meaning, control_sequence, exceptional);
+            processor.number_too_big_error(Some(site))?;
+            self.overflowed = true;
+            self.ready = true;
+            return Ok(ControlFlow::Continue(()));
+        }
+        if !self.have_digits {
+            // §446 restores even a spacer before reporting a missing number.
+            let site =
+                processor.capture_consumed_site(spelling, meaning, control_sequence, exceptional);
+            processor.back_consumed_word(spelling, exceptional)?;
+            processor.missing_number_error_at(Some(site))?;
+            self.scanned = Some(processor.inserted_zero_integer(self.provenance));
+        } else if !matches!(character, Some((_, Catcode::Space))) {
+            processor.back_consumed_word(spelling, exceptional)?;
+            processor.integer_terminator_character = character;
+        }
+        Ok(ControlFlow::Break(()))
+    }
+}
+
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn scan_integer_operand(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
-        let mut negative = false;
-        let mut provenance = OriginId::UNKNOWN;
-        let mut radix = 0;
-        let mut value = 0_i32;
-        let mut vacuous = true;
-        let mut overflowed = false;
-        let mut missing_site = None;
-        let mut scanned = None;
-        self.consume_expanded_words(&mut |processor,
-                                          spelling,
-                                          meaning,
-                                          control_sequence,
-                                          exceptional| {
-            let character = native_character(meaning);
-            if radix == 0 {
-                if provenance == OriginId::UNKNOWN {
-                    provenance = spelling.origin();
-                }
-                match character {
-                    Some((' ' | '+', _)) => return Ok(std::ops::ControlFlow::Continue(())),
-                    Some(('-', _)) => {
-                        negative = !negative;
-                        return Ok(std::ops::ControlFlow::Continue(()));
-                    }
-                    Some((ch @ '0'..='9', Catcode::Other)) => {
-                        radix = DECIMAL_RADIX;
-                        value = i32::from(ch as u8 - b'0');
-                        vacuous = false;
-                        return Ok(std::ops::ControlFlow::Continue(()));
-                    }
-                    Some(('\'', Catcode::Other)) => {
-                        radix = 8;
-                        return Ok(std::ops::ControlFlow::Continue(()));
-                    }
-                    Some(('"', Catcode::Other)) => {
-                        radix = 16;
-                        return Ok(std::ops::ControlFlow::Continue(()));
-                    }
-                    _ => {
-                        scanned = Some(processor.scan_integer_internal_or_alphabetic(
-                            spelling,
-                            meaning,
-                            control_sequence,
-                            exceptional,
-                            negative,
-                            provenance,
-                        )?);
-                        return Ok(std::ops::ControlFlow::Break(()));
-                    }
-                }
-            }
-            match radix_digit(character) {
-                Some(digit) if digit < radix => {
-                    vacuous = false;
-                    let next = value
-                        .checked_mul(i32::from(radix))
-                        .and_then(|value| value.checked_add(i32::from(digit)));
-                    match next {
-                        Some(next) => value = next,
-                        None => {
-                            value = i32::MAX;
-                            // TeX82 §445 reports at the first overflowing
-                            // digit; subsequent digits only consume input.
-                            if !overflowed {
-                                let site = processor.capture_consumed_site(
-                                    spelling,
-                                    meaning,
-                                    control_sequence,
-                                    exceptional,
-                                );
-                                processor.number_too_big_error(Some(site))?;
-                                overflowed = true;
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    if vacuous {
-                        // §446's back_error restores even a spacer before reporting.
-                        missing_site = Some(processor.capture_consumed_site(
-                            spelling,
-                            meaning,
-                            control_sequence,
-                            exceptional,
-                        ));
-                        processor.back_consumed_word(spelling, exceptional)?;
-                    } else if !matches!(character, Some((_, Catcode::Space))) {
-                        processor.back_consumed_word(spelling, exceptional)?;
-                        processor.integer_terminator_character = character;
-                    }
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-            }
-            Ok(std::ops::ControlFlow::Continue(()))
-        })?;
-        if let Some(scanned) = scanned {
+        // Ordinary initial syntax demands no full processor entry. Expansion
+        // invalidates readiness before its first resulting terminal word.
+        let mut integer = IntegerOperand {
+            ready: true,
+            ..IntegerOperand::default()
+        };
+        self.consume_expanded_words(&mut integer)?;
+        if let Some(scanned) = integer.scanned {
             return Ok(scanned);
         }
-        if radix == 0 {
-            // No substantive operand was delivered before EOF.
+        if integer.radix == 0 {
             return Ok(ScannedScalar {
                 value: 0,
                 provenance: ScalarProvenance {
-                    primary: provenance,
+                    primary: integer.provenance,
                 },
             });
         }
-        if vacuous {
-            self.missing_number_error_at(missing_site)?;
-            return Ok(self.inserted_zero_integer(provenance));
+        if !integer.have_digits {
+            self.missing_number_error_at(None)?;
+            return Ok(self.inserted_zero_integer(integer.provenance));
         }
-        Ok(self.finish_integer(value, negative, provenance))
+        Ok(self.finish_integer(integer.value, integer.negative, integer.provenance))
     }
 
     /// TeX82 §440's `scan_int` body, from the token its
@@ -204,29 +269,27 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // character code), so it must see the token before any `back_input`
         // could split the quantity from its operand.
         let mut scanned = None;
-        self.consume_expanded_words(&mut |processor,
-                                          spelling,
-                                          meaning,
-                                          control_sequence,
-                                          exceptional| {
-            match native_character(meaning) {
-                Some((' ' | '+', _)) => {}
-                Some(('-', _)) => negative = !negative,
-                _ => {
-                    scanned = Some(processor.scan_dimension_after_first(
-                        spelling,
-                        meaning,
-                        control_sequence,
-                        exceptional,
-                        negative,
-                        allow_infinite,
-                        mu,
-                    )?);
-                    return Ok(std::ops::ControlFlow::Break(()));
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, control_sequence, exceptional| {
+                match native_character(meaning) {
+                    Some((' ' | '+', _)) => {}
+                    Some(('-', _)) => negative = !negative,
+                    _ => {
+                        scanned = Some(processor.scan_dimension_after_first(
+                            spelling,
+                            meaning,
+                            control_sequence,
+                            exceptional,
+                            negative,
+                            allow_infinite,
+                            mu,
+                        )?);
+                        return Ok(std::ops::ControlFlow::Break(()));
+                    }
                 }
-            }
-            Ok(std::ops::ControlFlow::Continue(()))
-        })?;
+                Ok(std::ops::ControlFlow::Continue(()))
+            },
+        ))?;
         match scanned {
             Some(scanned) => Ok(scanned),
             None => self.finish_dimension(Scaled::from_raw(0), Order::Normal, negative, false),
@@ -303,28 +366,26 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // signed internal glue through the width-only dimension scanner
         // instead would drop its stretch and shrink.
         let mut scanned = None;
-        self.consume_expanded_words(&mut |processor,
-                                          spelling,
-                                          meaning,
-                                          control_sequence,
-                                          exceptional| {
-            match native_character(meaning) {
-                Some((' ' | '+', _)) => {}
-                Some(('-', _)) => negative = !negative,
-                _ => {
-                    scanned = Some(processor.scan_glue_after_first(
-                        spelling,
-                        meaning,
-                        control_sequence,
-                        exceptional,
-                        mu,
-                        negative,
-                    )?);
-                    return Ok(std::ops::ControlFlow::Break(()));
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, control_sequence, exceptional| {
+                match native_character(meaning) {
+                    Some((' ' | '+', _)) => {}
+                    Some(('-', _)) => negative = !negative,
+                    _ => {
+                        scanned = Some(processor.scan_glue_after_first(
+                            spelling,
+                            meaning,
+                            control_sequence,
+                            exceptional,
+                            mu,
+                            negative,
+                        )?);
+                        return Ok(std::ops::ControlFlow::Break(()));
+                    }
                 }
-            }
-            Ok(std::ops::ControlFlow::Continue(()))
-        })?;
+                Ok(std::ops::ControlFlow::Continue(()))
+            },
+        ))?;
         match scanned {
             Some(scanned) => Ok(scanned),
             None => self.scan_glue_width(mu, negative),

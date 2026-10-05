@@ -14,55 +14,59 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn scan_file_name_words(&mut self) -> Result<ScannedFileName, CommandError> {
         let mut primary = None;
         let mut grouped = false;
-        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let character = meaning
-                .scalar_word()
-                .and_then(Meaning::runtime_word_character);
-            if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
-                return Ok(std::ops::ControlFlow::Continue(()));
-            }
-            primary = Some(spelling.origin());
-            grouped = character.is_some_and(|(_, cat)| cat == Catcode::BeginGroup);
-            // Web2C tex.ch [29.526] replays the first token before selecting
-            // the braced/unbraced filename path. This is a real input handoff.
-            processor.back_consumed_word(spelling, exceptional)?;
-            Ok(std::ops::ControlFlow::Break(()))
-        })?;
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, _, exceptional| {
+                let character = meaning
+                    .scalar_word()
+                    .and_then(Meaning::runtime_word_character);
+                if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
+                    return Ok(std::ops::ControlFlow::Continue(()));
+                }
+                primary = Some(spelling.origin());
+                grouped = character.is_some_and(|(_, cat)| cat == Catcode::BeginGroup);
+                // Web2C tex.ch [29.526] replays the first token before selecting
+                // the braced/unbraced filename path. This is a real input handoff.
+                processor.back_consumed_word(spelling, exceptional)?;
+                Ok(std::ops::ControlFlow::Break(()))
+            },
+        ))?;
         let primary = primary.ok_or_else(CommandError::input_invariant)?;
         let mut components = FileNameComponents::default();
         let mut character_count = 0;
         let mut quoted = false;
-        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let character = meaning
-                .scalar_word()
-                .and_then(Meaning::runtime_word_character);
-            match character {
-                Some((_, Catcode::BeginGroup)) if grouped => {}
-                Some(('"', _)) => quoted = !quoted,
-                Some((_, Catcode::EndGroup)) if grouped && !quoted => {
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-                Some((_, Catcode::Space)) if !grouped && !quoted => {
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-                Some((ch, _)) => {
-                    character_count += 1;
-                    if character_count > FILE_NAME_POOL_CAPACITY {
-                        return Err(CommandError::fatal(crate::FatalError::overflow(
-                            "pool size",
-                            FILE_NAME_POOL_CAPACITY as i32,
-                        )));
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, _, exceptional| {
+                let character = meaning
+                    .scalar_word()
+                    .and_then(Meaning::runtime_word_character);
+                match character {
+                    Some((_, Catcode::BeginGroup)) if grouped => {}
+                    Some(('"', _)) => quoted = !quoted,
+                    Some((_, Catcode::EndGroup)) if grouped && !quoted => {
+                        return Ok(std::ops::ControlFlow::Break(()));
                     }
-                    components.push_character(ch);
+                    Some((_, Catcode::Space)) if !grouped && !quoted => {
+                        return Ok(std::ops::ControlFlow::Break(()));
+                    }
+                    Some((ch, _)) => {
+                        character_count += 1;
+                        if character_count > FILE_NAME_POOL_CAPACITY {
+                            return Err(CommandError::fatal(crate::FatalError::overflow(
+                                "pool size",
+                                FILE_NAME_POOL_CAPACITY as i32,
+                            )));
+                        }
+                        components.push_character(ch);
+                    }
+                    _ if !grouped => {
+                        processor.back_consumed_word(spelling, exceptional)?;
+                        return Ok(std::ops::ControlFlow::Break(()));
+                    }
+                    _ => return Err(CommandError::input_invariant()),
                 }
-                _ if !grouped => {
-                    processor.back_consumed_word(spelling, exceptional)?;
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-                _ => return Err(CommandError::input_invariant()),
-            }
-            Ok(std::ops::ControlFlow::Continue(()))
-        })?;
+                Ok(std::ops::ControlFlow::Continue(()))
+            },
+        ))?;
         // Web2C tex.ch [29.517] publishes each nonempty component separately.
         for component in [&components.area, &components.name, &components.extension] {
             if !component.is_empty() {

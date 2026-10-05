@@ -6,6 +6,58 @@ use crate::{CommandError, CommandProcessor};
 use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
 
+/// The borrowed suffix has no full processor callback. Its iterator and
+/// admission temporaries leave the native stack before recursive expansion.
+#[inline(always)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn consume_suffix<Word: Copy, Consumer, R, Admission, const PARAMETERS: bool>(
+    words: &[Word],
+    frame: &mut tex_state::packed_input::InputFrame,
+    consumer: &mut Consumer,
+    fuel: &mut crate::fuel::CommandFuel,
+    project: impl Fn(Word) -> (TokenWord, OriginId),
+    admit: &mut impl FnMut(
+        &mut Consumer,
+        &mut crate::fuel::CommandFuel,
+        TokenWord,
+        OriginId,
+    ) -> ControlFlow<R, Result<(), Admission>>,
+) -> Result<Option<ControlFlow<R, (TokenWord, OriginId, Admission)>>, CommandError> {
+    for &packed in words {
+        let (word, origin) = project(packed);
+        if PARAMETERS && word.out_parameter_slot().is_some() {
+            return Ok(None);
+        }
+        frame.advance_resident();
+        match admit(consumer, fuel, word, origin) {
+            ControlFlow::Continue(Ok(())) => fuel.charge()?,
+            ControlFlow::Continue(Err(admission)) => {
+                return Ok(Some(ControlFlow::Continue((word, origin, admission))));
+            }
+            ControlFlow::Break(result) => return Ok(Some(ControlFlow::Break(result))),
+        }
+    }
+    Ok(None)
+}
+
+#[inline(never)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn consume_suffix_outlined<Word: Copy, Consumer, R, Admission, const PARAMETERS: bool>(
+    words: &[Word],
+    frame: &mut tex_state::packed_input::InputFrame,
+    consumer: &mut Consumer,
+    fuel: &mut crate::fuel::CommandFuel,
+    project: impl Fn(Word) -> (TokenWord, OriginId),
+    admit: &mut impl FnMut(
+        &mut Consumer,
+        &mut crate::fuel::CommandFuel,
+        TokenWord,
+        OriginId,
+    ) -> ControlFlow<R, Result<(), Admission>>,
+) -> Result<Option<ControlFlow<R, (TokenWord, OriginId, Admission)>>, CommandError> {
+    consume_suffix::<_, _, _, _, PARAMETERS>(words, frame, consumer, fuel, project, admit)
+}
+
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Settles a drained frame or a replacement parameter after a bulk scan.
     pub(crate) fn settle_resident_run_boundary(&mut self) -> Result<bool, CommandError> {
@@ -45,6 +97,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn consume_resident_input<R, Consumer, Admission: Default>(
         &mut self,
         consumer: &mut Consumer,
+        outline_suffix: bool,
         retain: &impl Fn(&Consumer, bool, crate::processor::delivery_mode::DeliveryMode) -> bool,
         admit: &mut impl FnMut(
             &mut Consumer,
@@ -136,22 +189,38 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let words = words
                         .get(position + 1..limit)
                         .ok_or_else(CommandError::input_invariant)?;
-                    for &packed in words {
-                        let (word, origin) = $project(packed);
-                        if $parameters && word.out_parameter_slot().is_some() {
-                            // Substitution owns this still-unread parameter.
-                            return Ok(None);
-                        }
-                        frame.advance_resident();
-                        match admit_word!(word, origin) {
-                            ControlFlow::Continue(Ok(())) => self.fuel.charge()?,
-                            ControlFlow::Continue(Err(admission)) => {
-                                break 'span (word, origin, admission);
-                            }
-                            ControlFlow::Break(result) => return Ok(Some(result)),
-                        }
+                    let admit = &mut |consumer: &mut Consumer,
+                                      fuel: &mut crate::fuel::CommandFuel,
+                                      word,
+                                      origin| {
+                        admit(
+                            consumer,
+                            self.state,
+                            fuel,
+                            self.diagnostic_effects,
+                            &mut self.command.roots.alignment,
+                            &mut self.host.facts,
+                            word,
+                            origin,
+                            suppress,
+                            kind,
+                            self.command.delivery_mode,
+                        )
+                    };
+                    let result = if outline_suffix {
+                        consume_suffix_outlined::<_, _, _, _, $parameters>(
+                            words, frame, consumer, self.fuel, $project, admit,
+                        )
+                    } else {
+                        consume_suffix::<_, _, _, _, $parameters>(
+                            words, frame, consumer, self.fuel, $project, admit,
+                        )
+                    }?;
+                    match result {
+                        Some(ControlFlow::Continue(boundary)) => break 'span boundary,
+                        Some(ControlFlow::Break(result)) => return Ok(Some(result)),
+                        None => return Ok(None),
                     }
-                    return Ok(None);
                 }
             };
         }

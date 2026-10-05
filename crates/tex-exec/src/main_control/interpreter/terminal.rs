@@ -25,6 +25,7 @@ impl<'state, 'host, G> tex_command::NativeWordConsumer<Processor<'state, 'host, 
     #[inline(always)]
     fn resident_terminal(
         &mut self,
+        _spelling: TracedTokenWord,
         meaning: &tex_state::meaning::MeaningWord<G>,
     ) -> ControlFlow<(), bool> {
         if !meaning.is_relax() {

@@ -476,9 +476,11 @@ transfers allocate neither a command payload nor a construction interval.
 
 The canonical reader retains its actual physical suffix iterator and packed
 frame across admitted input-preserving terminals. Its one synchronous consumer
-holds the invocation-local operation count and clean no-op fact; it holds no
-input backing, definition owner, meaning cache or checkpoint state. A live
-meaning lookup precedes every admission. Full processor access, expansion,
+holds its actual invocation-local operation count or numeric syntax/value,
+plus readiness; it holds no input backing, definition owner, meaning cache or
+checkpoint state. Control sequences resolve live before admission. Statically
+requested nonactive literal admission projects its actual character meaning
+and preserves its spelling origin. Full processor access, expansion,
 substitution, exhaustion and source transitions release the span and invalidate
 that fact. Reporting, tracing, character flushing and observation still use
 their actual full delivery/entry boundaries. Fuel charges precede each frame

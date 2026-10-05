@@ -318,8 +318,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
     pub fn scan_optional_equals(&mut self) -> Result<bool, CommandError> {
         let mut equals = false;
-        let result = self.consume_expanded_words(
-            &mut |processor, spelling, meaning, _control_sequence, exceptional| {
+        let result = self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, _control_sequence, exceptional| {
                 match native_character(meaning) {
                     Some((' ', Catcode::Space)) => Ok(std::ops::ControlFlow::Continue(())),
                     // §405 compares the actual other-category '=' token.
@@ -333,7 +333,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                 }
             },
-        );
+        ));
         result.map_err(|error| self.finish_scalar_error(error))?;
         Ok(equals)
     }
@@ -388,8 +388,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let result = if keyword.is_empty() {
             Ok(())
         } else {
-            self.consume_expanded_words(
-                &mut |processor, spelling, meaning, control_sequence, exceptional| {
+            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+                |processor, spelling, meaning, control_sequence, exceptional| {
                     let letter = keyword.as_bytes()[matched.len()];
                     let character = native_character(meaning);
                     if control_sequence.is_none()
@@ -410,7 +410,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                     Ok(std::ops::ControlFlow::Continue(()))
                 },
-            )
+            ))
         };
         if let Err(error) = result {
             return Err(self.finish_scalar_error(error));
@@ -780,48 +780,47 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
     ) -> Result<ScannedScalar<InternalValue>, CommandError> {
         let mut scanned = None;
-        self.consume_expanded_words(&mut |processor,
-                                          spelling,
-                                          meaning,
-                                          control_sequence,
-                                          exceptional| {
-            let value = match processor.scan_the_internal_value(
-                spelling,
-                meaning,
-                control_sequence,
-                exceptional,
-            )? {
-                Some(value) => value,
-                None => {
-                    let rendered =
-                        meaning_text(processor.state, meaning.resolve(), control_sequence);
-                    let context = processor.command.output_open_context(processor.state);
-                    let site = processor.capture_consumed_site(
-                        spelling,
-                        meaning,
-                        control_sequence,
-                        exceptional,
-                    );
-                    let site = Some(processor.complete_diagnostic_site(site));
-                    let mut report = processor
-                        .state
-                        .print_err(&format!("You can't use `{rendered}' after \\the"));
-                    report
-                        .help(&["I'm forgetting what you said and using zero instead."])
-                        .context(context);
-                    let outcome = report.error_with_effects_at(processor.diagnostic_effects, site);
-                    processor.finish_error_outcome(outcome)?;
-                    InternalValue::Integer(0)
-                }
-            };
-            scanned = Some(ScannedScalar {
-                value,
-                provenance: ScalarProvenance {
-                    primary: spelling.origin(),
-                },
-            });
-            Ok(std::ops::ControlFlow::Break(()))
-        })?;
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, control_sequence, exceptional| {
+                let value = match processor.scan_the_internal_value(
+                    spelling,
+                    meaning,
+                    control_sequence,
+                    exceptional,
+                )? {
+                    Some(value) => value,
+                    None => {
+                        let rendered =
+                            meaning_text(processor.state, meaning.resolve(), control_sequence);
+                        let context = processor.command.output_open_context(processor.state);
+                        let site = processor.capture_consumed_site(
+                            spelling,
+                            meaning,
+                            control_sequence,
+                            exceptional,
+                        );
+                        let site = Some(processor.complete_diagnostic_site(site));
+                        let mut report = processor
+                            .state
+                            .print_err(&format!("You can't use `{rendered}' after \\the"));
+                        report
+                            .help(&["I'm forgetting what you said and using zero instead."])
+                            .context(context);
+                        let outcome =
+                            report.error_with_effects_at(processor.diagnostic_effects, site);
+                        processor.finish_error_outcome(outcome)?;
+                        InternalValue::Integer(0)
+                    }
+                };
+                scanned = Some(ScannedScalar {
+                    value,
+                    provenance: ScalarProvenance {
+                        primary: spelling.origin(),
+                    },
+                });
+                Ok(std::ops::ControlFlow::Break(()))
+            },
+        ))?;
         scanned.ok_or_else(CommandError::input_invariant)
     }
 
@@ -908,8 +907,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut fraction = [0_u8; 17];
         let mut fraction_len = 0;
         if decimal {
-            self.consume_expanded_words(
-                &mut |processor, spelling, meaning, _control_sequence, exceptional| {
+            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+                |processor, spelling, meaning, _control_sequence, exceptional| {
                     match native_character(meaning) {
                         Some((ch, Catcode::Other)) if ch.is_ascii_digit() => {
                             if fraction_len < fraction.len() {
@@ -931,7 +930,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                     Ok(std::ops::ControlFlow::Continue(()))
                 },
-            )?;
+            ))?;
         }
         let (unit, magnification) = if allow_infinite
             && !decimal
@@ -944,10 +943,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // Replay it once, then finish the `fil` suffix without routing the
             // same candidate through unrelated physical-unit keywords.
             let mut matched = false;
-            self.consume_expanded_words(&mut |_, _, meaning, _, _| {
-                matched = matches!(native_character(meaning), Some(('f', _)));
-                Ok(std::ops::ControlFlow::Break(()))
-            })?;
+            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+                |_, _, meaning, _, _| {
+                    matched = matches!(native_character(meaning), Some(('f', _)));
+                    Ok(std::ops::ControlFlow::Break(()))
+                },
+            ))?;
             if !matched {
                 return Err(CommandError::input_invariant());
             }
@@ -1162,61 +1163,63 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// retires that exhausted backup before installing the new one.
     fn probe_dimension_unit(&mut self, mu: bool) -> Result<Option<Scaled>, CommandError> {
         let mut unit = None;
-        self.consume_expanded_words(&mut |processor,
-                                          spelling,
-                                          meaning,
-                                          control_sequence,
-                                          exceptional| {
-            if matches!(native_character(meaning), Some((_, Catcode::Space))) {
-                return Ok(std::ops::ControlFlow::Continue(()));
-            }
-            // §455 probes at the requested numeric level. Only a range miss
-            // backs up the operand; leading spaces have already been consumed.
-            let level = if mu {
-                InternalLevel::MuGlue
-            } else {
-                InternalLevel::Dimension
-            };
-            unit = match processor.scan_something_internal(
-                spelling,
-                meaning,
-                control_sequence,
-                exceptional,
-                level,
-                false,
-            )? {
-                InternalScan::Value(value) => {
-                    if mu && !matches!(value, InternalValue::MuGlue(_)) {
-                        processor.mu_error()?;
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, control_sequence, exceptional| {
+                if matches!(native_character(meaning), Some((_, Catcode::Space))) {
+                    return Ok(std::ops::ControlFlow::Continue(()));
+                }
+                // §455 probes at the requested numeric level. Only a range miss
+                // backs up the operand; leading spaces have already been consumed.
+                let level = if mu {
+                    InternalLevel::MuGlue
+                } else {
+                    InternalLevel::Dimension
+                };
+                unit = match processor.scan_something_internal(
+                    spelling,
+                    meaning,
+                    control_sequence,
+                    exceptional,
+                    level,
+                    false,
+                )? {
+                    InternalScan::Value(value) => {
+                        if mu && !matches!(value, InternalValue::MuGlue(_)) {
+                            processor.mu_error()?;
+                        }
+                        Some(match value {
+                            InternalValue::Integer(value) => Scaled::from_raw(value),
+                            InternalValue::Dimension(value) => value,
+                            InternalValue::Glue(value) | InternalValue::MuGlue(value) => {
+                                value.width
+                            }
+                            InternalValue::Font(_) | InternalValue::Tokens { .. } => unreachable!(
+                                "TeX82 §416 recovers nonnumeric internal values before §455"
+                            ),
+                        })
                     }
-                    Some(match value {
-                        InternalValue::Integer(value) => Scaled::from_raw(value),
-                        InternalValue::Dimension(value) => value,
-                        InternalValue::Glue(value) | InternalValue::MuGlue(value) => value.width,
-                        InternalValue::Font(_) | InternalValue::Tokens { .. } => unreachable!(
-                            "TeX82 §416 recovers nonnumeric internal values before §455"
-                        ),
-                    })
-                }
-                InternalScan::NotInternal => {
-                    processor.back_consumed_word(spelling, exceptional)?;
-                    None
-                }
-            };
-            Ok(std::ops::ControlFlow::Break(()))
-        })?;
+                    InternalScan::NotInternal => {
+                        processor.back_consumed_word(spelling, exceptional)?;
+                        None
+                    }
+                };
+                Ok(std::ops::ControlFlow::Break(()))
+            },
+        ))?;
         Ok(unit)
     }
 
     /// TeX82 §443's `⟨Scan an optional space⟩`:
     /// `get_x_token; if cur_cmd<>spacer then back_input`.
     fn scan_optional_space(&mut self) -> Result<(), CommandError> {
-        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            if !matches!(native_character(meaning), Some((_, Catcode::Space))) {
-                processor.back_consumed_word(spelling, exceptional)?;
-            }
-            Ok(std::ops::ControlFlow::Break(()))
-        })
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, _, exceptional| {
+                if !matches!(native_character(meaning), Some((_, Catcode::Space))) {
+                    processor.back_consumed_word(spelling, exceptional)?;
+                }
+                Ok(std::ops::ControlFlow::Break(()))
+            },
+        ))
     }
 
     fn scan_infinite_unit(&mut self, mut order: Order) -> Result<DimensionUnit, CommandError> {
@@ -1237,11 +1240,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn scan_infinite_unit_from_fil(&mut self) -> Result<DimensionUnit, CommandError> {
         for expected in ['i', 'l'] {
             let mut matched = false;
-            self.consume_expanded_words(&mut |_, _, meaning, _, _| {
-                matched = native_character(meaning)
-                    .is_some_and(|(ch, _)| ch.eq_ignore_ascii_case(&expected));
-                Ok(std::ops::ControlFlow::Break(()))
-            })?;
+            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+                |_, _, meaning, _, _| {
+                    matched = native_character(meaning)
+                        .is_some_and(|(ch, _)| ch.eq_ignore_ascii_case(&expected));
+                    Ok(std::ops::ControlFlow::Break(()))
+                },
+            ))?;
             if !matched {
                 return Err(CommandError::input_invariant());
             }

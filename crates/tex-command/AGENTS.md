@@ -136,7 +136,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   lifetimes. Every Result exit releases an unfinished capture, and body
   retirement returns the region. Named captures exclude the allocator pool;
   restore clears abandoned owners and retains reusable engine capacity.
-- `src/scanners/scalar/numeric.rs`: native integer, dimension and glue entry consumes leading signs and substantive meaning directly in the shared reader; internal probes and canonical backups have one implementation, and number conversions share this scanner. No leading-command handoff or conversion-specific digit reader remains.
+- `src/scanners/scalar/numeric.rs`: the actual integer syntax consumer shares its sign/radix/accumulator arm between full delivery and restricted resident admission. Ordinary digits retain the reader span; overflow, internal quantities and backed-up terminators demand full access. Dimension and glue entry consumes leading signs and substantive meaning directly in the same reader. Internal probes, canonical backups and number conversions share this scanner; no leading-command handoff or conversion-specific digit reader remains.
 - `src/scanner_kernel.rs`: stack-local synchronous scanner cursor shared by
   macro arguments and `scan_toks`. It keeps brace and first-token facts beside
   the caller-owned output sink and settles each accepted word inside plain
@@ -251,6 +251,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   storage selection, calling the selected scalar consumer at a boundary. Raw delivery
   uses the same reader with single-word or continuing admission. Directly borrows the exposed semantic
   input frame and advances its existing physical reader. Input frames own
+  cursor state directly. Recursive scanners isolate the borrowed suffix call
+  from full interpretation; main control inlines the identical traversal.
+  Both release its borrow before expansion or execution. Input frames own
   reader state across nesting and rollback; delivery has no parallel cached
   storage tag or reader invalidation protocol. Source-token delivery enters
   the normal source reader; only refill, exhaustion, and recovery use cold
@@ -928,6 +931,6 @@ at the actual print and advance its existing `shown_mode` owner there (TeX82
 §299/§367, with §1370 no-mode during deferred writes). There is no owned prefix
 mailbox, trace-printed flag or tracing preparation before a fetch.
 
-- `src/processor/terminal.rs`: native word consumer contract and concrete full-processor callback typing. Restricted terminal admission retains the existing reader span; full processor access and input transitions invalidate invocation-local readiness.
+- `src/processor/terminal.rs`: native word consumer contract and concrete full-processor callback typing. Restricted admission borrows actual spelling and meaning; literal admission is a static consumer capability. It retains the existing reader span, while full processor access and input transitions invalidate invocation-local readiness.
 
 - `src/processor/expand/tests/resident_terminals.rs`: exact native no-op fuel and budget cuts, full-access exclusion within a span, and actual frame retirement interruptions.

@@ -24,6 +24,174 @@ fn letter(ch: char) -> Token {
 }
 
 #[test]
+fn integer_resident_fuel_cuts_leave_the_next_word_unread() {
+    // A scanner fragment: seven sign/digit words plus its consumed spacer.
+    for limit in 1..=9 {
+        crate::test_harness::with_universe(|universe| {
+            let mut command = CommandState::default();
+            crate::test_harness::push(&mut command, "-123456 X".chars().map(other));
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(limit).expect("bounded fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let result = processor.scan_integer();
+            if limit < 8 {
+                assert!(result.is_err(), "fuel must stop before the spacer");
+            } else {
+                assert_eq!(result.expect("complete integer").value, -123456);
+            }
+            assert_eq!(
+                processor
+                    .command
+                    .roots
+                    .input
+                    .levels
+                    .current
+                    .as_ref()
+                    .expect("actual input frame")
+                    .frame
+                    .position(),
+                limit.min(8) as u32,
+                "a failed charge must not advance the authoritative cursor",
+            );
+            drop(processor);
+            assert_eq!(fuel.burned(), limit.min(8));
+        });
+    }
+}
+
+#[test]
+fn integer_resident_radices_overflow_and_backup_preserve_tex_semantics() {
+    // TeX82 §§444–446: only the first overflowing digit reports; vacuous
+    // radix constants back their offender, including a spacer.
+    for (input, expected, next, diagnostic) in [
+        ("--'76543210 X", 16434824, 'X', None),
+        ("\"ABCDEF X", 11259375, 'X', None),
+        (
+            "21474836479999999999 X",
+            i32::MAX,
+            'X',
+            Some("Number too big"),
+        ),
+        ("-21474836489999 X", -i32::MAX, 'X', Some("Number too big")),
+        ("\" X", 0, ' ', Some("Missing number")),
+        ("12345X", 12345, 'X', None),
+    ] {
+        crate::test_harness::with_universe(|universe| {
+            let mut command = CommandState::default();
+            crate::test_harness::push(
+                &mut command,
+                input.chars().map(|ch| {
+                    if ch.is_ascii_uppercase() {
+                        letter(ch)
+                    } else {
+                        other(ch)
+                    }
+                }),
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            assert_eq!(
+                processor.scan_integer().expect("integer recovery").value,
+                expected,
+                "{input}"
+            );
+            let delivered = crate::test_harness::expect_expanded_command(&mut processor);
+            assert_eq!(
+                delivered.spelling().semantic_token(),
+                if next == ' ' {
+                    other(next)
+                } else {
+                    letter(next)
+                },
+                "{input}"
+            );
+            drop(processor);
+            drop(context);
+            let rendered: String = universe
+                .world()
+                .effect_records()
+                .iter()
+                .filter_map(|effect| match effect {
+                    tex_state::EffectRecord::StreamWrite {
+                        sink:
+                            tex_state::world::PrintSink::Terminal
+                            | tex_state::world::PrintSink::TerminalAndLog,
+                        text,
+                    } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                universe.world().error_channel().error_count(),
+                i32::from(diagnostic.is_some())
+            );
+            if let Some(message) = diagnostic {
+                assert_eq!(rendered.matches(message).count(), 1, "{input}: {rendered}");
+            } else {
+                assert!(rendered.is_empty(), "{input}: {rendered}");
+            }
+        });
+    }
+}
+
+#[test]
+fn integer_resident_span_releases_at_actual_frame_retirement() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, "456 X".chars().map(other));
+        crate::test_harness::push(&mut command, "-123".chars().map(other));
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(8).expect("exact fuel");
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        assert_eq!(
+            processor.scan_integer().expect("continued integer").value,
+            -123456
+        );
+        assert_eq!(processor.command.roots.input.levels.len(), 1);
+        assert_eq!(
+            processor
+                .command
+                .roots
+                .input
+                .levels
+                .current
+                .as_ref()
+                .expect("parent input frame")
+                .frame
+                .position(),
+            4
+        );
+        drop(processor);
+        assert_eq!(fuel.burned(), 8);
+    });
+}
+
+#[test]
 fn integer_scanner_preserves_signs_and_backs_up_the_nonspace_terminator() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
@@ -576,15 +744,21 @@ fn internal_expansion_and_font_selection_consume_native_operands() {
         let before = crate::command::command_ownership_counters();
         let mut text = String::new();
         processor
-            .consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-                if let Some((ch, _)) = super::native_character(meaning) {
-                    text.push(ch);
-                    Ok(std::ops::ControlFlow::Continue(()))
-                } else {
-                    processor.back_consumed_word(spelling, exceptional)?;
-                    Ok(std::ops::ControlFlow::Break(()))
-                }
-            })
+            .consume_expanded_words(&mut crate::terminal_consumer::<
+                crate::CommandProcessor<'_, '_, _>,
+                _,
+                _,
+            >(
+                |processor, spelling, meaning, _, exceptional| {
+                    if let Some((ch, _)) = super::native_character(meaning) {
+                        text.push(ch);
+                        Ok(std::ops::ControlFlow::Continue(()))
+                    } else {
+                        processor.back_consumed_word(spelling, exceptional)?;
+                        Ok(std::ops::ControlFlow::Break(()))
+                    }
+                },
+            ))
             .expect("internal conversion");
         assert_eq!(text, "42");
         assert_eq!(

@@ -23,56 +23,58 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// its normal delivery and takes `null_font`.
     pub fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
         let mut font = None;
-        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            if let Some(font_id) = meaning.font_id() {
-                font = Some(font_id);
-                return Ok(std::ops::ControlFlow::Break(()));
-            }
-            let meaning = meaning
-                .scalar_word()
-                .map_or(Meaning::Undefined, Meaning::from_runtime_word);
-            font = Some(match meaning {
-                Meaning::CharToken {
-                    cat: tex_state::token::Catcode::Space,
-                    ..
-                } => {
-                    return Ok(std::ops::ControlFlow::Continue(()));
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, _, exceptional| {
+                if let Some(font_id) = meaning.font_id() {
+                    font = Some(font_id);
+                    return Ok(std::ops::ControlFlow::Break(()));
                 }
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
-                    processor.state.current_font()
-                }
-                Meaning::UnexpandablePrimitive(primitive)
-                    if MathFamilySize::of_primitive(primitive).is_some() =>
-                {
-                    let size =
-                        MathFamilySize::of_primitive(primitive).expect("guard proves def_family");
-                    let family = processor
-                        .scan_restricted_integer(crate::RestrictedIntegerClass::FourBit)?
-                        .value as u8;
-                    processor.state.math_family_font(size.into(), family)
-                }
-                _ => {
-                    // TeX82 §577 reports before §327's back_error restores
-                    // the rejected spelling and §82 renders the input context.
-                    let deferred = {
-                        let mut report = processor.state.print_err("Missing font identifier");
-                        report.help(&[
-                            "I was looking for a control sequence whose",
-                            "current meaning has been defined by \\font.",
-                        ]);
-                        report.defer()
-                    };
-                    processor.back_consumed_word(spelling, exceptional)?;
-                    let context = processor.command.output_open_context(processor.state);
-                    let mut report = processor.state.resume_error_report(deferred);
-                    report.context(context);
-                    let outcome = report.error();
-                    processor.finish_error_outcome(outcome)?;
-                    tex_state::font::NULL_FONT
-                }
-            });
-            Ok(std::ops::ControlFlow::Break(()))
-        })?;
+                let meaning = meaning
+                    .scalar_word()
+                    .map_or(Meaning::Undefined, Meaning::from_runtime_word);
+                font = Some(match meaning {
+                    Meaning::CharToken {
+                        cat: tex_state::token::Catcode::Space,
+                        ..
+                    } => {
+                        return Ok(std::ops::ControlFlow::Continue(()));
+                    }
+                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
+                        processor.state.current_font()
+                    }
+                    Meaning::UnexpandablePrimitive(primitive)
+                        if MathFamilySize::of_primitive(primitive).is_some() =>
+                    {
+                        let size = MathFamilySize::of_primitive(primitive)
+                            .expect("guard proves def_family");
+                        let family = processor
+                            .scan_restricted_integer(crate::RestrictedIntegerClass::FourBit)?
+                            .value as u8;
+                        processor.state.math_family_font(size.into(), family)
+                    }
+                    _ => {
+                        // TeX82 §577 reports before §327's back_error restores
+                        // the rejected spelling and §82 renders the input context.
+                        let deferred = {
+                            let mut report = processor.state.print_err("Missing font identifier");
+                            report.help(&[
+                                "I was looking for a control sequence whose",
+                                "current meaning has been defined by \\font.",
+                            ]);
+                            report.defer()
+                        };
+                        processor.back_consumed_word(spelling, exceptional)?;
+                        let context = processor.command.output_open_context(processor.state);
+                        let mut report = processor.state.resume_error_report(deferred);
+                        report.context(context);
+                        let outcome = report.error();
+                        processor.finish_error_outcome(outcome)?;
+                        tex_state::font::NULL_FONT
+                    }
+                });
+                Ok(std::ops::ControlFlow::Break(()))
+            },
+        ))?;
         font.ok_or_else(CommandError::input_invariant)
     }
 }

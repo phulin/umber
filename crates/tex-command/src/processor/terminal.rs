@@ -11,6 +11,7 @@ use tex_state::token::TracedTokenWord;
 /// Readiness belongs to this invocation, never to command/checkpoint state.
 pub trait NativeWordConsumer<Processor, G> {
     const RESIDENT_TERMINALS: bool = false;
+    const RESIDENT_LITERALS: bool = false;
 
     fn consume(
         &mut self,
@@ -25,7 +26,11 @@ pub trait NativeWordConsumer<Processor, G> {
         false
     }
 
-    fn resident_terminal(&mut self, _meaning: &MeaningWord<G>) -> ControlFlow<(), bool> {
+    fn resident_terminal(
+        &mut self,
+        _spelling: TracedTokenWord,
+        _meaning: &MeaningWord<G>,
+    ) -> ControlFlow<(), bool> {
         ControlFlow::Continue(false)
     }
 

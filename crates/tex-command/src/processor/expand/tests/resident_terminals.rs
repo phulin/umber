@@ -17,7 +17,11 @@ impl<G> crate::NativeWordConsumer<crate::CommandProcessor<'_, '_, G>, G> for Rel
         self.ready
     }
 
-    fn resident_terminal(&mut self, meaning: &MeaningWord<G>) -> ControlFlow<(), bool> {
+    fn resident_terminal(
+        &mut self,
+        _: TracedTokenWord,
+        meaning: &MeaningWord<G>,
+    ) -> ControlFlow<(), bool> {
         if meaning.control_code() != Meaning::runtime_word_control_code(Meaning::Relax.encode()) {
             self.ready = false;
             return ControlFlow::Continue(false);

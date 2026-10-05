@@ -1060,41 +1060,39 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(never)]
     fn scan_if_relation(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
         let mut relation = None;
-        self.consume_expanded_words(&mut |processor,
-                                          spelling,
-                                          meaning,
-                                          control_sequence,
-                                          exceptional| {
-            let character = meaning
-                .scalar_word()
-                .and_then(Meaning::runtime_word_character);
-            relation = Some(match character {
-                Some(('<', _)) => IfRelation::Less,
-                Some(('=', _)) => IfRelation::Equal,
-                Some(('>', _)) => IfRelation::Greater,
-                _ => {
-                    let site = processor.capture_consumed_site(
-                        spelling,
-                        meaning,
-                        control_sequence,
-                        exceptional,
-                    );
-                    let name = crate::processor::expand_render::print_esc_text(
-                        processor.state,
-                        conditional,
-                    );
-                    processor.back_consumed_word(spelling, exceptional)?;
-                    processor.report_backed_error(
-                        site,
-                        MISSING_RELATION_DIAGNOSTIC,
-                        format!("Missing = inserted for {name}"),
-                        &["I was expecting to see `<', `=', or `>'. Didn't."],
-                    )?;
-                    IfRelation::Equal
-                }
-            });
-            Ok(std::ops::ControlFlow::Break(()))
-        })?;
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, control_sequence, exceptional| {
+                let character = meaning
+                    .scalar_word()
+                    .and_then(Meaning::runtime_word_character);
+                relation = Some(match character {
+                    Some(('<', _)) => IfRelation::Less,
+                    Some(('=', _)) => IfRelation::Equal,
+                    Some(('>', _)) => IfRelation::Greater,
+                    _ => {
+                        let site = processor.capture_consumed_site(
+                            spelling,
+                            meaning,
+                            control_sequence,
+                            exceptional,
+                        );
+                        let name = crate::processor::expand_render::print_esc_text(
+                            processor.state,
+                            conditional,
+                        );
+                        processor.back_consumed_word(spelling, exceptional)?;
+                        processor.report_backed_error(
+                            site,
+                            MISSING_RELATION_DIAGNOSTIC,
+                            format!("Missing = inserted for {name}"),
+                            &["I was expecting to see `<', `=', or `>'. Didn't."],
+                        )?;
+                        IfRelation::Equal
+                    }
+                });
+                Ok(std::ops::ControlFlow::Break(()))
+            },
+        ))?;
         relation.ok_or_else(CommandError::input_invariant)
     }
 

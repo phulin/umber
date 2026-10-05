@@ -13,67 +13,69 @@ pub(super) fn scan<G>(
 ) -> Result<MainControlStep, ExecError> {
     let mut completion = None;
     processor
-        .consume_expanded_words(&mut |processor,
-                                      spelling,
-                                      meaning,
-                                      control_sequence,
-                                      exceptional| {
-            let code = meaning.control_code();
-            match code {
-                codes::RELAX | codes::CHAR_SPACE => return Ok(ControlFlow::Continue(())),
-                codes::PRIMITIVE_GLOBAL => prefixes |= GLOBAL,
-                codes::PRIMITIVE_LONG => prefixes |= MeaningFlags::LONG.bits(),
-                codes::PRIMITIVE_OUTER => prefixes |= MeaningFlags::OUTER.bits(),
-                codes::PRIMITIVE_PROTECTED => prefixes |= MeaningFlags::PROTECTED.bits(),
-                _ => {
-                    let static_value = static_meaning(meaning.resolve());
-                    if !tex_command::exceeds_max_non_prefixed_command(static_value) {
-                        completion = Some(discard_prefixes(
+        .consume_expanded_words(&mut tex_command::terminal_consumer::<
+            Processor<'_, '_, G>,
+            G,
+            _,
+        >(
+            |processor, spelling, meaning, control_sequence, exceptional| {
+                let code = meaning.control_code();
+                match code {
+                    codes::RELAX | codes::CHAR_SPACE => return Ok(ControlFlow::Continue(())),
+                    codes::PRIMITIVE_GLOBAL => prefixes |= GLOBAL,
+                    codes::PRIMITIVE_LONG => prefixes |= MeaningFlags::LONG.bits(),
+                    codes::PRIMITIVE_OUTER => prefixes |= MeaningFlags::OUTER.bits(),
+                    codes::PRIMITIVE_PROTECTED => prefixes |= MeaningFlags::PROTECTED.bits(),
+                    _ => {
+                        let static_value = static_meaning(meaning.resolve());
+                        if !tex_command::exceeds_max_non_prefixed_command(static_value) {
+                            completion = Some(discard_prefixes(
+                                processor,
+                                spelling,
+                                meaning,
+                                control_sequence,
+                                exceptional,
+                                true,
+                            ));
+                            return Ok(ControlFlow::Break(()));
+                        }
+                        let definition = matches!(
+                            code,
+                            codes::PRIMITIVE_DEF
+                                | codes::PRIMITIVE_EDEF
+                                | codes::PRIMITIVE_GDEF
+                                | codes::PRIMITIVE_XDEF
+                        );
+                        if prefixes & !GLOBAL != 0 && !definition {
+                            if let Err(error) = discard_prefixes(
+                                processor,
+                                spelling,
+                                meaning,
+                                control_sequence,
+                                exceptional,
+                                false,
+                            ) {
+                                completion = Some(Err(error));
+                                return Ok(ControlFlow::Break(()));
+                            }
+                            prefixes &= GLOBAL;
+                        }
+                        completion = Some(dispatch::reswitch(
                             processor,
                             spelling,
                             meaning,
                             control_sequence,
                             exceptional,
-                            true,
+                            receipts,
+                            prefixes,
+                            code,
                         ));
                         return Ok(ControlFlow::Break(()));
                     }
-                    let definition = matches!(
-                        code,
-                        codes::PRIMITIVE_DEF
-                            | codes::PRIMITIVE_EDEF
-                            | codes::PRIMITIVE_GDEF
-                            | codes::PRIMITIVE_XDEF
-                    );
-                    if prefixes & !GLOBAL != 0 && !definition {
-                        if let Err(error) = discard_prefixes(
-                            processor,
-                            spelling,
-                            meaning,
-                            control_sequence,
-                            exceptional,
-                            false,
-                        ) {
-                            completion = Some(Err(error));
-                            return Ok(ControlFlow::Break(()));
-                        }
-                        prefixes &= GLOBAL;
-                    }
-                    completion = Some(dispatch::reswitch(
-                        processor,
-                        spelling,
-                        meaning,
-                        control_sequence,
-                        exceptional,
-                        receipts,
-                        prefixes,
-                        code,
-                    ));
-                    return Ok(ControlFlow::Break(()));
                 }
-            }
-            Ok(ControlFlow::Continue(()))
-        })
+                Ok(ControlFlow::Continue(()))
+            },
+        ))
         .map_err(command_error)?;
     completion.ok_or(ExecError::MissingToken {
         context: "prefixed assignment",

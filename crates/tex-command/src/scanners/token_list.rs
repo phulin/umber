@@ -28,144 +28,146 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     > {
         self.scan_optional_equals()?;
         let mut value = None;
-        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let meaning = meaning
-                .scalar_word()
-                .map_or(Meaning::Undefined, Meaning::from_runtime_word);
-            let collected = match meaning {
-                Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                }
-                | Meaning::Relax => {
-                    return Ok(std::ops::ControlFlow::Continue(()));
-                }
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, _, exceptional| {
+                let meaning = meaning
+                    .scalar_word()
+                    .map_or(Meaning::Undefined, Meaning::from_runtime_word);
+                let collected = match meaning {
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    }
+                    | Meaning::Relax => {
+                        return Ok(std::ops::ControlFlow::Continue(()));
+                    }
 
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
-                    let index = processor.scan_profile_register_index()?;
-                    let source = processor
-                        .state
-                        .token_register(index)
-                        .expect("scanner produced an admitted token-register index")
-                        .clone();
-                    value = Some((None, source));
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-                Meaning::ToksRegister(index) => {
-                    let source = processor
-                        .state
-                        .token_register(index)
-                        .expect("meaning contains an admitted token-register index")
-                        .clone();
-                    value = Some((None, source));
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-                Meaning::TokParam(index) => {
-                    let source = processor
-                        .state
-                        .token_parameter(TokParam::new(index))
-                        .expect("meaning contains an admitted token-parameter index");
-                    value = Some((None, source));
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-                Meaning::CharToken {
-                    cat: Catcode::BeginGroup,
-                    ..
-                } => {
-                    // TeX82 has already delivered the required opening brace to
-                    // choose the non-internal branch. Back it up once, then let
-                    // `scan_toks` install absorbing status before it redelivers
-                    // that exact token. Re-scanning it through `scan_left_brace`
-                    // would add a second raw delivery before that transition.
-                    let primary = spelling.origin();
-                    processor.back_consumed_word(spelling, exceptional)?;
-                    processor
-                        .scan_toks(ScanToksMode::GeneralAfterOpening {
-                            expanded: false,
-                            primary,
-                            owner: Some(owner),
-                        })?
-                        .replacement_text
-                }
-                _ => {
-                    processor.back_consumed_word(spelling, exceptional)?;
-                    processor
-                        .scan_toks(ScanToksMode::GeneralFor {
-                            expanded: false,
-                            owner,
-                        })?
-                        .replacement_text
-                }
-            };
-            if processor
-                .command
-                .attempt
-                .token_words(&collected)
-                .map_err(crate::scan_toks::attempt_command_error)?
-                .is_empty()
-            {
-                processor
+                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
+                        let index = processor.scan_profile_register_index()?;
+                        let source = processor
+                            .state
+                            .token_register(index)
+                            .expect("scanner produced an admitted token-register index")
+                            .clone();
+                        value = Some((None, source));
+                        return Ok(std::ops::ControlFlow::Break(()));
+                    }
+                    Meaning::ToksRegister(index) => {
+                        let source = processor
+                            .state
+                            .token_register(index)
+                            .expect("meaning contains an admitted token-register index")
+                            .clone();
+                        value = Some((None, source));
+                        return Ok(std::ops::ControlFlow::Break(()));
+                    }
+                    Meaning::TokParam(index) => {
+                        let source = processor
+                            .state
+                            .token_parameter(TokParam::new(index))
+                            .expect("meaning contains an admitted token-parameter index");
+                        value = Some((None, source));
+                        return Ok(std::ops::ControlFlow::Break(()));
+                    }
+                    Meaning::CharToken {
+                        cat: Catcode::BeginGroup,
+                        ..
+                    } => {
+                        // TeX82 has already delivered the required opening brace to
+                        // choose the non-internal branch. Back it up once, then let
+                        // `scan_toks` install absorbing status before it redelivers
+                        // that exact token. Re-scanning it through `scan_left_brace`
+                        // would add a second raw delivery before that transition.
+                        let primary = spelling.origin();
+                        processor.back_consumed_word(spelling, exceptional)?;
+                        processor
+                            .scan_toks(ScanToksMode::GeneralAfterOpening {
+                                expanded: false,
+                                primary,
+                                owner: Some(owner),
+                            })?
+                            .replacement_text
+                    }
+                    _ => {
+                        processor.back_consumed_word(spelling, exceptional)?;
+                        processor
+                            .scan_toks(ScanToksMode::GeneralFor {
+                                expanded: false,
+                                owner,
+                            })?
+                            .replacement_text
+                    }
+                };
+                if processor
                     .command
                     .attempt
-                    .discard_token_list(collected)
-                    .map_err(crate::scan_toks::attempt_command_error)?;
-                value = Some((None, None));
-                return Ok(std::ops::ControlFlow::Break(()));
-            }
-            if !enclose_collected {
-                value = Some((Some(collected), None));
-                return Ok(std::ops::ControlFlow::Break(()));
-            }
-            let writer = processor
-                .command
-                .attempt
-                .allocate_token_buffer()
-                .map_err(crate::scan_toks::attempt_command_error)?;
-            processor
-                .command
-                .attempt
-                .push_buffer_token(
-                    &writer,
-                    TracedTokenWord::pack(
-                        Token::Char {
-                            ch: '{',
-                            cat: Catcode::BeginGroup,
-                        },
-                        OriginId::UNKNOWN,
-                    ),
-                )
-                .map_err(crate::scan_toks::attempt_command_error)?;
-            processor
-                .command
-                .attempt
-                .consume_token_list_into_buffer(collected, &writer)
-                .map_err(crate::scan_toks::attempt_command_error)?;
-            processor
-                .command
-                .attempt
-                .push_buffer_token(
-                    &writer,
-                    TracedTokenWord::pack(
-                        Token::Char {
-                            ch: '}',
-                            cat: Catcode::EndGroup,
-                        },
-                        OriginId::UNKNOWN,
-                    ),
-                )
-                .map_err(crate::scan_toks::attempt_command_error)?;
-            value = Some((
-                Some(
+                    .token_words(&collected)
+                    .map_err(crate::scan_toks::attempt_command_error)?
+                    .is_empty()
+                {
                     processor
                         .command
                         .attempt
-                        .finish_token_buffer(writer)
-                        .map_err(crate::scan_toks::attempt_command_error)?,
-                ),
-                None,
-            ));
-            Ok(std::ops::ControlFlow::Break(()))
-        })?;
+                        .discard_token_list(collected)
+                        .map_err(crate::scan_toks::attempt_command_error)?;
+                    value = Some((None, None));
+                    return Ok(std::ops::ControlFlow::Break(()));
+                }
+                if !enclose_collected {
+                    value = Some((Some(collected), None));
+                    return Ok(std::ops::ControlFlow::Break(()));
+                }
+                let writer = processor
+                    .command
+                    .attempt
+                    .allocate_token_buffer()
+                    .map_err(crate::scan_toks::attempt_command_error)?;
+                processor
+                    .command
+                    .attempt
+                    .push_buffer_token(
+                        &writer,
+                        TracedTokenWord::pack(
+                            Token::Char {
+                                ch: '{',
+                                cat: Catcode::BeginGroup,
+                            },
+                            OriginId::UNKNOWN,
+                        ),
+                    )
+                    .map_err(crate::scan_toks::attempt_command_error)?;
+                processor
+                    .command
+                    .attempt
+                    .consume_token_list_into_buffer(collected, &writer)
+                    .map_err(crate::scan_toks::attempt_command_error)?;
+                processor
+                    .command
+                    .attempt
+                    .push_buffer_token(
+                        &writer,
+                        TracedTokenWord::pack(
+                            Token::Char {
+                                ch: '}',
+                                cat: Catcode::EndGroup,
+                            },
+                            OriginId::UNKNOWN,
+                        ),
+                    )
+                    .map_err(crate::scan_toks::attempt_command_error)?;
+                value = Some((
+                    Some(
+                        processor
+                            .command
+                            .attempt
+                            .finish_token_buffer(writer)
+                            .map_err(crate::scan_toks::attempt_command_error)?,
+                    ),
+                    None,
+                ));
+                Ok(std::ops::ControlFlow::Break(()))
+            },
+        ))?;
         value.ok_or_else(CommandError::input_invariant)
     }
 }

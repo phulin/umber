@@ -20,6 +20,8 @@ where
 {
     const NATIVE_TERMINAL: bool = true;
     const RESIDENT_TERMINALS: bool = Consume::RESIDENT_TERMINALS;
+    const RESIDENT_LITERALS: bool = Consume::RESIDENT_LITERALS;
+    const OUTLINE_RESIDENT_SUFFIX: bool = !MAIN_CONTROL;
 
     #[inline(always)]
     fn resident_ready(&self) -> bool {
@@ -27,8 +29,12 @@ where
     }
 
     #[inline(always)]
-    fn resident_terminal(&mut self, meaning: &MeaningWord<G>) -> ControlFlow<(), bool> {
-        self.consume.resident_terminal(meaning)
+    fn resident_terminal(
+        &mut self,
+        spelling: TracedTokenWord,
+        meaning: &MeaningWord<G>,
+    ) -> ControlFlow<(), bool> {
+        self.consume.resident_terminal(spelling, meaning)
     }
 
     #[inline(always)]
@@ -83,13 +89,7 @@ where
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn consume_expanded_words(
         &mut self,
-        consume: &mut impl FnMut(
-            &mut Self,
-            TracedTokenWord,
-            &MeaningWord<G>,
-            Option<Symbol>,
-            Option<&CurrentCommand<G>>,
-        ) -> Result<ControlFlow<()>, CommandError>,
+        consume: &mut impl NativeWordConsumer<Self, G>,
     ) -> Result<(), CommandError> {
         let mut destination = None;
         loop {

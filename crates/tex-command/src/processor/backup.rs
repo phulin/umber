@@ -70,16 +70,18 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// accompanying ``Display math should end with $$`` diagnostic.
     pub fn scan_display_end_math_shift(&mut self) -> Result<bool, CommandError> {
         let mut shift = false;
-        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            shift = meaning
-                .scalar_word()
-                .and_then(Meaning::runtime_word_character)
-                .is_some_and(|(_, cat)| cat == Catcode::MathShift);
-            if !shift {
-                processor.back_consumed_word(spelling, exceptional)?;
-            }
-            Ok(std::ops::ControlFlow::Break(()))
-        })?;
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, _, exceptional| {
+                shift = meaning
+                    .scalar_word()
+                    .and_then(Meaning::runtime_word_character)
+                    .is_some_and(|(_, cat)| cat == Catcode::MathShift);
+                if !shift {
+                    processor.back_consumed_word(spelling, exceptional)?;
+                }
+                Ok(std::ops::ControlFlow::Break(()))
+            },
+        ))?;
         Ok(shift)
     }
     /// TeX82 §323's `back_list`: `begin_token_list(p,backed_up)`.

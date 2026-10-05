@@ -752,3 +752,58 @@ more expensive: a single no-op rose from 180 to 212 marginal instructions,
 and the two-no-op macro workload rose about 1% in whole-loop instructions.
 The retained span removes repeated work within its admitted prefix; its
 initial admission and full-delivery boundary remain optimization targets.
+
+## Resident numeric syntax
+
+The integer scanner owns its actual sign, radix, accumulator and diagnostic
+facts in one synchronous consumer. Its ordinary syntax arm accepts signs,
+radix prefixes and non-overflowing digits using native character meaning and
+the actual spelling origin. It may consume the terminating space when a
+nonvacuous value is complete. Overflow reporting, missing operands, internal
+quantities, alphabetic constants and backed-up terminators require full
+processor access after the reader releases its span. The ordinary syntax arm
+is shared by full entry and restricted admission, rather than duplicated in a
+second numeric parser.
+
+A vacuous radix constant captures its diagnostic site, backs the offending
+word and reports at that full-access boundary. It retains only the resulting
+inserted zero, rather than storing a diagnostic site for immediate consumption
+after reading stops. Full numeric entry stays out of line so its recovery
+temporaries do not enlarge the recursive reader frame.
+
+Recursive scanners traverse the selected suffix in a small borrowed reader
+call with no full processor callback. On a declined word it returns the existing spelling,
+origin and resolved-meaning boundary scalars. Its iterator and admission
+temporaries leave the native stack before full interpretation can recursively
+expand an operand. The first word still uses the direct shared-reader entry;
+no second cursor, input owner or checkpoint state is introduced. Main control
+inlines the same suffix traversal, avoiding a call at short no-op entries.
+The existing scanner consumer requests this call boundary statically; no
+runtime reader-role choice is made at span entry.
+
+The shared restricted reader resolves ordinary control sequences live and,
+for consumers that statically request literals, projects nonactive character
+meanings directly. No-op consumers compile this literal work out. Accepted literals
+account their actual brace category once. Declined words transfer that same
+meaning into full delivery; active characters and engine sentinels keep their
+canonical full resolution. Actual spelling is borrowed by restricted consumers
+for provenance, with no delivered command or input owner. Expansion and input
+transitions invalidate readiness; the next full terminal refreshes it before
+subsequent words retain their span. Pure initial numeric syntax needs no full
+processor entry and can be admitted immediately. Declined expandable words
+do not claim the operand's provenance. Fuel charging and physical retirement stay
+with the one existing reader.
+
+An ordinary release comparison over 10,000 and 100,000 iterations reduced the
+empty macro/conditional/advance loop from 9,446 to 8,328 instructions per
+iteration (about 12%). Its additional advance operation fell from 3,050 to
+2,755 instructions. The 64-no-op span fell from 3,052 to 2,982 marginal
+instructions; the two-no-op macro fell from 718 to 704. Very short numeric
+operands still pay the outlined scanner boundary: an additional count assignment
+grew about 3% in marginal instructions, while its whole-loop workload fell about
+9%. Five rotated cycle runs on CPU 6 reduced the short two-no-op macro
+workload from a median 4,667 to 4,358 cycles per iteration (about 7%); a
+duplicate control measured 4,731. The dense 64-no-op workload fell from 98.5 to
+93.5 cycles per command (about 5%), with a duplicate control at 100.5. These
+are workload measurements, not a numeric acceptance gate or an estimate of
+whole-document speed.

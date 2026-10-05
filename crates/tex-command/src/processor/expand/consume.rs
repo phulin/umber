@@ -75,6 +75,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let status = self.consume_input::<_, _, _>(
             self.create_source_control_sequences,
             terminal,
+            Consumer::OUTLINE_RESIDENT_SUFFIX,
             &|terminal, suppress, mode| {
                 Consumer::RESIDENT_TERMINALS
                     && !OBSERVED
@@ -85,13 +86,25 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut |terminal| terminal.input_boundary(),
             &mut {
                 #[inline(always)]
-                |terminal, state, fuel, _, word, _, kind, _mode| {
-                    let Some(symbol) = word.control_sequence() else {
+                |terminal, state, fuel, alignment, word, origin, _, kind, _mode| {
+                    let meaning = if let Some(symbol) = word.control_sequence() {
+                        *state.compact_control_sequence_meaning_word(symbol)
+                    } else if Consumer::RESIDENT_LITERALS
+                        && let (Some(cat), Some(ch)) = (word.literal_catcode(), word.literal_char())
+                        && cat != tex_state::token::Catcode::Active
+                    {
+                        MeaningWord::scalar(Meaning::char_token_word(ch, cat))
+                    } else {
                         return ControlFlow::Continue(Err(None));
                     };
-                    let meaning = *state.compact_control_sequence_meaning_word(symbol);
-                    let admitted = terminal.resident_terminal(&meaning);
+                    let admitted = terminal.resident_terminal(
+                        tex_state::token::TracedTokenWord::from_parts(word, origin),
+                        &meaning,
+                    );
                     if !matches!(admitted, ControlFlow::Continue(false)) {
+                        if Consumer::RESIDENT_LITERALS {
+                            alignment.account_literal_catcode(word.literal_catcode());
+                        }
                         #[cfg(feature = "profiling")]
                         fuel.record_raw_delivery(
                             _mode.scanner_active(),
@@ -109,9 +122,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
             },
             &mut {
-                // This is the actual reading/interpretation back edge. Keeping
-                // its invocation in the reader avoids a per-token result call;
-                // recursive primitive expansion and matching stay outlined.
+                // Full interpretation starts after the span borrow ends.
                 #[inline(always)]
                 |terminal: &mut Consumer,
                  processor,

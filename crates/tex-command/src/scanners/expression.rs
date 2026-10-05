@@ -301,21 +301,22 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let factor = match phase {
                 ExpressionPhase::FactorLeading => {
                     let mut parenthesis = false;
-                    let probe = self.consume_expanded_words(
-                        &mut |processor, spelling, meaning, _, exceptional| {
-                            let character = meaning
-                                .scalar_word()
-                                .and_then(Meaning::runtime_word_character);
-                            if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
-                                return Ok(std::ops::ControlFlow::Continue(()));
-                            }
-                            parenthesis = character == Some(('(', Catcode::Other));
-                            if !parenthesis {
-                                processor.back_consumed_word(spelling, exceptional)?;
-                            }
-                            Ok(std::ops::ControlFlow::Break(()))
-                        },
-                    );
+                    let probe =
+                        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+                            |processor, spelling, meaning, _, exceptional| {
+                                let character = meaning
+                                    .scalar_word()
+                                    .and_then(Meaning::runtime_word_character);
+                                if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
+                                    return Ok(std::ops::ControlFlow::Continue(()));
+                                }
+                                parenthesis = character == Some(('(', Catcode::Other));
+                                if !parenthesis {
+                                    processor.back_consumed_word(spelling, exceptional)?;
+                                }
+                                Ok(std::ops::ControlFlow::Break(()))
+                            },
+                        ));
                     if let Err(error) = probe {
                         return Err(self.expression_scan_error(error, stack_mark));
                     }
@@ -434,32 +435,34 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         parenthesized: bool,
     ) -> Result<ExpressionOperator, CommandError> {
         let mut operator = ExpressionOperator::None;
-        self.consume_expanded_words(&mut |processor, spelling, meaning, _, exceptional| {
-            let character = meaning
-                .scalar_word()
-                .and_then(Meaning::runtime_word_character);
-            if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
-                return Ok(std::ops::ControlFlow::Continue(()));
-            }
-            operator = match character {
-                Some(('+', Catcode::Other)) => ExpressionOperator::Add,
-                Some(('-', Catcode::Other)) => ExpressionOperator::Subtract,
-                Some(('*', Catcode::Other)) => ExpressionOperator::Multiply,
-                Some(('/', Catcode::Other)) => ExpressionOperator::Divide,
-                _ => ExpressionOperator::None,
-            };
-            if matches!(operator, ExpressionOperator::None) {
-                if parenthesized {
-                    if character != Some((')', Catcode::Other)) {
-                        processor.back_consumed_word(spelling, exceptional)?;
-                        processor.missing_expression_parenthesis_error()?;
-                    }
-                } else if meaning.scalar_word() != Some(Meaning::RELAX_WORD) {
-                    processor.back_consumed_word(spelling, exceptional)?;
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
+            |processor, spelling, meaning, _, exceptional| {
+                let character = meaning
+                    .scalar_word()
+                    .and_then(Meaning::runtime_word_character);
+                if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
+                    return Ok(std::ops::ControlFlow::Continue(()));
                 }
-            }
-            Ok(std::ops::ControlFlow::Break(()))
-        })?;
+                operator = match character {
+                    Some(('+', Catcode::Other)) => ExpressionOperator::Add,
+                    Some(('-', Catcode::Other)) => ExpressionOperator::Subtract,
+                    Some(('*', Catcode::Other)) => ExpressionOperator::Multiply,
+                    Some(('/', Catcode::Other)) => ExpressionOperator::Divide,
+                    _ => ExpressionOperator::None,
+                };
+                if matches!(operator, ExpressionOperator::None) {
+                    if parenthesized {
+                        if character != Some((')', Catcode::Other)) {
+                            processor.back_consumed_word(spelling, exceptional)?;
+                            processor.missing_expression_parenthesis_error()?;
+                        }
+                    } else if meaning.scalar_word() != Some(Meaning::RELAX_WORD) {
+                        processor.back_consumed_word(spelling, exceptional)?;
+                    }
+                }
+                Ok(std::ops::ControlFlow::Break(()))
+            },
+        ))?;
         Ok(operator)
     }
 

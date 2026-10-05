@@ -29,6 +29,9 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G> {
     const RAW_TOKEN: bool = false;
     const NATIVE_TERMINAL: bool = false;
     const RESIDENT_TERMINALS: bool = false;
+    const RESIDENT_LITERALS: bool = false;
+    /// Recursive scanners keep suffix temporaries out of their reader frame.
+    const OUTLINE_RESIDENT_SUFFIX: bool = false;
 
     fn native_terminal(
         &mut self,
@@ -46,6 +49,7 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G> {
 
     fn resident_terminal(
         &mut self,
+        _spelling: TracedTokenWord,
         _meaning: &tex_state::meaning::MeaningWord<G>,
     ) -> std::ops::ControlFlow<(), bool> {
         std::ops::ControlFlow::Continue(false)
@@ -287,9 +291,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let status = self.consume_input::<_, _, _>(
             self.create_source_control_sequences,
             &mut (),
+            false,
             &|_, _, _| false,
             &mut |_| {},
-            &mut |_, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(Err(())),
+            &mut |_, _, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(Err(())),
             &mut |_, processor, word, origin, suppress, site, kind, _| {
                 processor
                     .finish_delivered_word::<OBSERVED>(
@@ -342,6 +347,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         create_control_sequences: bool,
         consumer: &mut Consumer,
+        outline_suffix: bool,
         retain: &impl Fn(&Consumer, bool, super::delivery_mode::DeliveryMode) -> bool,
         interrupt: &mut impl FnMut(&mut Consumer),
         admit: &mut impl FnMut(
@@ -350,6 +356,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut crate::fuel::CommandFuel,
             &mut super::alignment::AlignmentDeliveryState<G>,
             TokenWord,
+            OriginId,
             bool,
             crate::fuel::RawDeliveryKind,
             super::delivery_mode::DeliveryMode,
@@ -372,12 +379,25 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let consumed = loop {
                 let resident = self.consume_resident_input(
                     consumer,
+                    outline_suffix,
                     retain,
                     &mut {
                         #[inline(always)]
-                        |consumer, state, fuel, _, alignment, _, word, _, suppress, kind, mode| {
-                            let result =
-                                admit(consumer, state, fuel, alignment, word, suppress, kind, mode);
+                        |consumer,
+                         state,
+                         fuel,
+                         _,
+                         alignment,
+                         _,
+                         word,
+                         origin,
+                         suppress,
+                         kind,
+                         mode| {
+                            let result = admit(
+                                consumer, state, fuel, alignment, word, origin, suppress, kind,
+                                mode,
+                            );
                             result.map_break(std::ops::ControlFlow::Break)
                         }
                     },

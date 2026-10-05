@@ -76,9 +76,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.consume_input::<_, _, _>(
             self.create_source_control_sequences,
             &mut (),
+            false,
             &|_, suppress, mode| !OBSERVED && !suppress && !mode.requires_persistent_settlement(),
             &mut |_| {},
-            &mut |_, state, fuel, alignment, word, _, kind, _mode| {
+            &mut |_, state, fuel, alignment, word, _, _, kind, _mode| {
                 let literal = word.literal_catcode();
                 let stop = if literal.is_some_and(|cat| cat != Catcode::Active) {
                     None
