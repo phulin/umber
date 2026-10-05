@@ -11,6 +11,28 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord};
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
+    /// Observation uses the same reader, outside ordinary delivery's inline body.
+    #[inline(never)]
+    pub(super) fn consume_observed_expanded_words<
+        const PRESERVE_UNDEFINED: bool,
+        const STOP_PROTECTED: bool,
+    >(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        initial_action: Option<ExpandedCommandAction>,
+        role: ExpandedReaderRole,
+        terminal: &mut impl ExpandedReaderConsumer<Self, G, Facts>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        self.with_expanded_delivery(destination, |processor, destination| {
+            processor.expanded_delivery_loop::<true, PRESERVE_UNDEFINED, STOP_PROTECTED, _>(
+                destination,
+                initial_action,
+                role,
+                terminal,
+            )
+        })
+    }
+
     #[inline(always)]
     pub(super) fn resolve_token_word(
         &self,

@@ -99,6 +99,8 @@ synchronous callback to one shared scanner-call boundary, which enters the same
 reader without copying it for each scanner closure. Single-command delivery
 returns directly; no heap callback or second reader exists.
 
+Observed expanded consumption selects an outlined entry in `processor/expand/consume.rs` before recording reader depth. Ordinary inlined delivery contains only its unobserved specialization; both use the same kernel, one depth entry and the same error unwind.
+
 Resident physical selection reuses `InputWords`, projects its first word through one common admission block and keeps a typed suffix over the actual cursor. It creates no input owner, cached storage tag or additional span structure.
 
 Restricted resident consumers borrow the actual immutable meaning-word slice and the disjoint actual group bookkeeping plus statically typed host facts; the file-line scalar comes from the current input header. The slice loan excludes assignment and restoration until full delivery releases it. No extra processor or input owner is created.

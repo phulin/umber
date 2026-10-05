@@ -71,6 +71,13 @@ need no meaning lookup. Expanded delivery resolves each interpreted meaning
 once. A macro supplies only its name, origin, flags, and definition to activation
 and argument scanning; successful ordinary activation constructs no command.
 
+Observation enters the same kernel through an outlined call selected before
+the reader invocation records expansion depth. The ordinary consumer inlines
+only unobserved interpretation, keeping observation's record construction and
+recovery branches outside its hot body. The observed call owns the same single
+depth entry and error unwind; it adds no input reader, command product, callback
+owner or second checkpoint-quiescence transition.
+
 Plain resident runs admit and write each word in one traversal. Their sink
 borrows the final destination once, updates its grammar and appends the accepted
 word directly; there is no accepted-prefix rescan or subsequent span-copy pass.

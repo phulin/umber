@@ -593,22 +593,21 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         role: ExpandedReaderRole,
         terminal: &mut impl ExpandedReaderConsumer<Self, G, Facts>,
     ) -> Result<DeliveryStatus, CommandError> {
+        if self.is_observed() {
+            return self.consume_observed_expanded_words::<PRESERVE_UNDEFINED, STOP_PROTECTED>(
+                destination,
+                initial_action,
+                role,
+                terminal,
+            );
+        }
         self.with_expanded_delivery(destination, |processor, destination| {
-            if processor.is_observed() {
-                processor.expanded_delivery_loop::<true, PRESERVE_UNDEFINED, STOP_PROTECTED, _>(
-                    destination,
-                    initial_action,
-                    role,
-                    terminal,
-                )
-            } else {
-                processor.expanded_delivery_loop::<false, PRESERVE_UNDEFINED, STOP_PROTECTED, _>(
-                    destination,
-                    initial_action,
-                    role,
-                    terminal,
-                )
-            }
+            processor.expanded_delivery_loop::<false, PRESERVE_UNDEFINED, STOP_PROTECTED, _>(
+                destination,
+                initial_action,
+                role,
+                terminal,
+            )
         })
     }
 
