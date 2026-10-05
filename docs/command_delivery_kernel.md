@@ -703,6 +703,22 @@ only when a word returns to the switch.
 
 ## Resident terminal spans
 
+Physical selection lends one packed-word or traced-word slice from the actual
+input owner. The first word is projected into the reader's existing spelling
+and origin scalars, then follows one shared admission block. The borrowed span
+stays selected for the typed suffix traversal; source, macro-body, stored-list
+and argument ownership are not copied into a new input frame or cursor.
+Parameter substitution uses the existing raw-delivery kind: macro arguments
+remain raw, while replacement and stored input stop at an actual parameter
+word. The suffix selects that rule once at entry and keeps its statically typed
+word representation throughout the loop.
+
+This scoped physical view removes storage-specific copies of first-word
+interpretation. It adds no persistent storage tag, interpretation cache,
+owned token result or input-transition packet. Frame advancement, exact fuel
+charging, actual retirement and the release before full processor access stay
+with their current owners.
+
 Main control's continuing terminal consumer borrows the reader's actual span.
 It may admit an input-preserving terminal using the live meaning lookup while
 that borrow remains selected. The input frame remains the sole cursor: every

@@ -4,8 +4,20 @@ use core::hash::{Hash, Hasher};
 use core::num::NonZeroU32;
 use tex_state::token::TracedTokenWord;
 mod backing;
-mod words;
-pub(crate) use words::{ArgumentValue, ArgumentWords, MacroWords};
+use super::{InputWordIter, InputWords};
+
+/// A final pooled range, or a range in its invocation's retained-source lane.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ArgumentValue {
+    start: u32,
+    len: u32,
+}
+impl ArgumentValue {
+    #[inline(always)]
+    pub(crate) const fn len(&self) -> u32 {
+        self.len
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ArgumentRegionId(NonZeroU32);
@@ -350,11 +362,11 @@ impl<G> ArgumentArena<G> {
     pub(crate) fn match_words(
         &self,
         writer: &ArgumentCursor,
-    ) -> Result<MacroWords<'_>, ScratchError> {
+    ) -> Result<InputWordIter<'_>, ScratchError> {
         let (start, end) = writer.range()?;
         self.words(writer.region, self.pending_slot(writer.region))
             .slice(start as usize..end as usize)
-            .map(ArgumentWords::iter)
+            .map(InputWords::iter)
             .ok_or(ScratchError::InvalidCoordinate)
     }
     pub(crate) fn publish_argument(
@@ -404,10 +416,10 @@ impl<G> ArgumentArena<G> {
     pub(crate) fn delimiter_prefix_words<'a>(
         &'a self,
         writer: &ArgumentCursor,
-    ) -> Result<MacroWords<'a>, ScratchError> {
-        self.delimiter_prefix(writer).map(ArgumentWords::iter)
+    ) -> Result<InputWordIter<'a>, ScratchError> {
+        self.delimiter_prefix(writer).map(InputWords::iter)
     }
-    fn delimiter_prefix(&self, writer: &ArgumentCursor) -> Result<ArgumentWords<'_>, ScratchError> {
+    fn delimiter_prefix(&self, writer: &ArgumentCursor) -> Result<InputWords<'_>, ScratchError> {
         let start = writer.holdback_start as usize;
         self.words(writer.region, self.pending_slot(writer.region))
             .slice(start..start + writer.holdback_len as usize)

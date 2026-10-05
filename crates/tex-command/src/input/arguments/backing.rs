@@ -22,11 +22,11 @@ impl<G> RetainedSource<G> {
 }
 impl<G> ArgumentArena<G> {
     #[inline(always)]
-    pub(crate) fn words(&self, id: ArgumentRegionId, slot: u8) -> ArgumentWords<'_> {
+    pub(crate) fn words(&self, id: ArgumentRegionId, slot: u8) -> InputWords<'_> {
         let region = &self.regions[id.index()];
         let value = region.values[usize::from(slot)];
         if region.source_slots & (1 << slot) == 0 {
-            return ArgumentWords::Traced(
+            return InputWords::Traced(
                 &region.words[value.start as usize..(value.start + value.len) as usize],
             );
         }
@@ -35,9 +35,9 @@ impl<G> ArgumentArena<G> {
             .expect("retained argument source")
         {
             RetainedSource::Definition { body, start } => {
-                ArgumentWords::Definition(&body.replacement_from(*start)[..value.len as usize])
+                InputWords::Packed(&body.replacement_from(*start)[..value.len as usize])
             }
-            RetainedSource::Region { region, start } => ArgumentWords::Traced(
+            RetainedSource::Region { region, start } => InputWords::Traced(
                 &self.regions[region.index()].words[*start as usize..(*start + value.len) as usize],
             ),
         }

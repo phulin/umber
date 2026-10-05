@@ -11,13 +11,14 @@ mod lines;
 mod source;
 mod stack;
 mod tokenizer;
+mod words;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) use active::InputStack;
 pub(crate) use arguments::{
-    ArgumentArena, ArgumentCursor, ArgumentRegionId, ArgumentValue, ArgumentWords, MatchedArguments,
+    ArgumentArena, ArgumentCursor, ArgumentRegionId, ArgumentValue, MatchedArguments,
 };
 pub use history::BorrowedSourceCharacterRun;
 pub(crate) use history::{
@@ -41,6 +42,7 @@ pub(crate) use stack::{
     FileWarningBoundary, InputRetirement, InputRetirementAction, InputRetirementError,
     InputRetirementReason, ResidentBoundary,
 };
+pub(crate) use words::{InputWordIter, InputWords};
 
 pub use lines::{
     DiagnosticLocation, LineTerminator, PhysicalLine, SourceCharacter, SourceLocation,

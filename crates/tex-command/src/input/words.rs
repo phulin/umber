@@ -1,59 +1,47 @@
-//! Actual spelling retained by one final macro argument.
+//! Borrowed physical input words, with their actual spelling representation.
 use tex_state::token::{OriginId, TokenWord, TracedTokenWord};
 
-/// A final pooled range, or a range in its invocation's retained-source lane.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ArgumentValue {
-    pub(super) start: u32,
-    pub(super) len: u32,
-}
-impl ArgumentValue {
-    #[inline(always)]
-    pub(crate) const fn len(&self) -> u32 {
-        self.len
-    }
-}
-
 #[derive(Clone, Copy)]
-pub(crate) enum ArgumentWords<'a> {
+pub(crate) enum InputWords<'a> {
     Traced(&'a [TracedTokenWord]),
-    Definition(&'a [TokenWord]),
+    Packed(&'a [TokenWord]),
 }
-impl<'a> ArgumentWords<'a> {
+impl<'a> InputWords<'a> {
     #[inline(always)]
     pub(crate) fn get(self, index: usize) -> Option<TracedTokenWord> {
         match self {
             Self::Traced(words) => words.get(index).copied(),
-            Self::Definition(words) => words
+            Self::Packed(words) => words
                 .get(index)
                 .map(|&word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN)),
         }
     }
+    #[inline(always)]
     pub(crate) fn slice(self, range: core::ops::Range<usize>) -> Option<Self> {
         match self {
             Self::Traced(words) => words.get(range).map(Self::Traced),
-            Self::Definition(words) => words.get(range).map(Self::Definition),
+            Self::Packed(words) => words.get(range).map(Self::Packed),
         }
     }
-    pub(crate) fn iter(self) -> MacroWords<'a> {
+    pub(crate) fn iter(self) -> InputWordIter<'a> {
         match self {
-            Self::Traced(words) => MacroWords::Traced(words.iter().copied()),
-            Self::Definition(words) => MacroWords::Definition(words.iter().copied()),
+            Self::Traced(words) => InputWordIter::Traced(words.iter().copied()),
+            Self::Packed(words) => InputWordIter::Packed(words.iter().copied()),
         }
     }
 }
 
-pub(crate) enum MacroWords<'a> {
+pub(crate) enum InputWordIter<'a> {
     Traced(core::iter::Copied<core::slice::Iter<'a, TracedTokenWord>>),
-    Definition(core::iter::Copied<core::slice::Iter<'a, TokenWord>>),
+    Packed(core::iter::Copied<core::slice::Iter<'a, TokenWord>>),
 }
-impl Iterator for MacroWords<'_> {
+impl Iterator for InputWordIter<'_> {
     type Item = TracedTokenWord;
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Traced(words) => words.next(),
-            Self::Definition(words) => words
+            Self::Packed(words) => words
                 .next()
                 .map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN)),
         }
@@ -63,19 +51,19 @@ impl Iterator for MacroWords<'_> {
         (len, Some(len))
     }
 }
-impl ExactSizeIterator for MacroWords<'_> {
+impl ExactSizeIterator for InputWordIter<'_> {
     fn len(&self) -> usize {
         match self {
             Self::Traced(words) => words.len(),
-            Self::Definition(words) => words.len(),
+            Self::Packed(words) => words.len(),
         }
     }
 }
-impl DoubleEndedIterator for MacroWords<'_> {
+impl DoubleEndedIterator for InputWordIter<'_> {
     fn next_back(&mut self) -> Option<Self::Item> {
         match self {
             Self::Traced(words) => words.next_back(),
-            Self::Definition(words) => words
+            Self::Packed(words) => words
                 .next_back()
                 .map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN)),
         }

@@ -99,6 +99,8 @@ synchronous callback to one shared scanner-call boundary, which enters the same
 reader without copying it for each scanner closure. Single-command delivery
 returns directly; no heap callback or second reader exists.
 
+Resident physical selection reuses `InputWords`, projects its first word through one common admission block and keeps a typed suffix over the actual cursor. It creates no input owner, cached storage tag or additional span structure.
+
 Restricted resident consumers borrow immutable live meaning rows and the disjoint actual group bookkeeping plus statically typed host facts; the file-line scalar comes from the current input header. No extra processor or input owner is created.
 
 Resident input completes directly into its consumer or leaves the authoritative
@@ -819,7 +821,9 @@ Rules, all of them load-bearing (umber2-johp.141):
 
 Macro argument regions own compact per-parameter ranges in pooled traced
 spelling or a sparse lane of actual retained definition/region sources.
-`src/input/arguments/words.rs` owns those ranges and spelling views;
+`src/input/arguments.rs` owns those compact argument ranges;
+`src/input/words.rs` owns the shared borrowed packed/traced spelling views and
+their iterators for arguments, replacements and stored input;
 `backing.rs` owns source retention and actual fragmented-argument materialization.
 The same matcher writes both actual backings. Parameter rows use local offsets;
 source aliases flatten once at capture. Native release visits only sparse actual
