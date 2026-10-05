@@ -808,6 +808,33 @@ duplicate control measured 4,731. The dense 64-no-op workload fell from 98.5 to
 are workload measurements, not a numeric acceptance gate or an estimate of
 whole-document speed.
 
+## Resident small scalar syntax
+
+Optional-equals and keyword scans use the same retained reader as integers.
+Each synchronous consumer owns its actual grammar facts: whether an equals
+sign was consumed, or the keyword bytes and matched spelling prefix required
+by a failed probe. Its character admission arm is shared by full terminal
+delivery and restricted resident admission. Leading spaces and matching
+characters can advance the existing input cursor without returning through
+general expansion classification. A decline makes no grammar mutation; full
+delivery backs the offender after the input borrow ends.
+
+Keyword matching still requires literal spelling with no control sequence,
+compares the resolved character independently of its category, and discards
+only leading spacers. A character alias can supply a leading spacer, but cannot spell a keyword
+letter. A failed partial keyword
+backs the offender and then its retained prefix as two distinct canonical input
+levels. Prefix storage is the existing bounded inline spelling buffer; no new
+token list or scanner result is constructed. These token-only grammars need no
+readiness flag across expansion or input changes. The reader still owns every
+source/expansion transition, rejects restricted admission for observation,
+alignment or suppressed expansion, and handles recovery through full delivery.
+
+The restricted meaning-admission closure stays inline in each consumer's
+specialization. Recursive scanners keep their existing small outlined suffix
+call, but its per-token grammar runs inside that suffix; it must not call a
+second closure for each admitted token.
+
 ## One terminal classification
 
 Native full delivery classifies expansion and terminal delivery together from

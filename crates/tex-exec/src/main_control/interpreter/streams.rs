@@ -13,8 +13,7 @@ pub(super) fn immediate<G>(
             G,
             _,
         >(
-            |processor, spelling, meaning, _code, _, exceptional| {
-                let code = meaning.control_code();
+            |processor, spelling, _meaning, code, _, exceptional| {
                 if code == codes::CHAR_SPACE {
                     return Ok(ControlFlow::Continue(()));
                 }

@@ -18,8 +18,7 @@ pub(super) fn scan<G>(
             G,
             _,
         >(
-            |processor, spelling, meaning, _code, control_sequence, exceptional| {
-                let code = meaning.control_code();
+            |processor, spelling, meaning, code, control_sequence, exceptional| {
                 match code {
                     codes::RELAX | codes::CHAR_SPACE => return Ok(ControlFlow::Continue(())),
                     codes::PRIMITIVE_GLOBAL => prefixes |= GLOBAL,

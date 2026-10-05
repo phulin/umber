@@ -211,8 +211,8 @@ fn resume<G>(
                 G,
                 _,
             >(
-                |processor, spelling, meaning, _code, _, exceptional| {
-                    let space = meaning.control_code() == codes::CHAR_SPACE;
+                |processor, spelling, _meaning, code, _, exceptional| {
+                    let space = code == codes::CHAR_SPACE;
                     if !space {
                         processor.back_consumed_word(spelling, exceptional)?;
                     }

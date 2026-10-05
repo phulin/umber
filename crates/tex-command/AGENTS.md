@@ -140,6 +140,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   retirement returns the region. Named captures exclude the allocator pool;
   restore clears abandoned owners and retains reusable engine capacity.
 - `src/scanners/scalar/numeric.rs`: the actual integer syntax consumer shares its sign/radix/accumulator arm between full delivery and restricted resident admission. Ordinary digits retain the reader span; overflow, internal quantities and backed-up terminators demand full access. Dimension and glue entry consumes leading signs and substantive meaning directly in the same reader. Internal probes, canonical backups and number conversions share this scanner; no leading-command handoff or conversion-specific digit reader remains.
+- `src/scanners/scalar/syntax.rs`: optional-equals and keyword grammars use the same retained reader. Accepted spaces, equals signs and keyword letters share one grammar arm with full terminal delivery. Keyword spelling and its failed prefix remain exact; only mismatches require full processor backup. These token-only grammars need no readiness cache across expansion or input changes. Its `syntax/tests.rs` pins literal versus alias/active spelling, brace-category accounting, two-level failed-prefix backup, observed entry and every small-syntax fuel cut.
 - `src/scanner_kernel.rs`: stack-local synchronous scanner cursor shared by
   macro arguments and `scan_toks`. It keeps brace and first-token facts beside
   the caller-owned output sink and settles each accepted word inside plain

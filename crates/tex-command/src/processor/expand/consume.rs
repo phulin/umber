@@ -98,29 +98,34 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                  _,
                  kind,
                  _mode| {
-                    let mut admit = |meaning: &MeaningWord<G>| {
-                        let admitted = terminal.resident_terminal(
-                            state,
-                            facts,
-                            entered_line,
-                            tex_state::token::TracedTokenWord::from_parts(word, origin),
-                            meaning,
-                        );
-                        #[cfg(feature = "profiling")]
-                        if !matches!(admitted, ControlFlow::Continue(false)) {
-                            fuel.record_raw_delivery(
-                                _mode.scanner_active(),
-                                word.requires_meaning_lookup(),
-                                kind,
+                    let mut admit = {
+                        #[inline(always)]
+                        |meaning: &MeaningWord<G>| {
+                            let admitted = terminal.resident_terminal(
+                                state,
+                                facts,
+                                entered_line,
+                                tex_state::token::TracedTokenWord::from_parts(word, origin),
+                                meaning,
                             );
-                        }
-                        #[cfg(not(feature = "profiling"))]
-                        let _ = (&fuel, kind);
-                        match admitted {
-                            ControlFlow::Break(()) => ControlFlow::Break(DeliveryStatus::Command),
-                            ControlFlow::Continue(true) => ControlFlow::Continue(Ok(())),
-                            ControlFlow::Continue(false) => {
-                                ControlFlow::Continue(Err(Some(*meaning)))
+                            #[cfg(feature = "profiling")]
+                            if !matches!(admitted, ControlFlow::Continue(false)) {
+                                fuel.record_raw_delivery(
+                                    _mode.scanner_active(),
+                                    word.requires_meaning_lookup(),
+                                    kind,
+                                );
+                            }
+                            #[cfg(not(feature = "profiling"))]
+                            let _ = (&fuel, kind);
+                            match admitted {
+                                ControlFlow::Break(()) => {
+                                    ControlFlow::Break(DeliveryStatus::Command)
+                                }
+                                ControlFlow::Continue(true) => ControlFlow::Continue(Ok(())),
+                                ControlFlow::Continue(false) => {
+                                    ControlFlow::Continue(Err(Some(*meaning)))
+                                }
                             }
                         }
                     };

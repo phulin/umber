@@ -1,6 +1,7 @@
 //! Executor-facing canonical scalar scanners.
 
 mod numeric;
+mod syntax;
 
 use tex_state::env::banks::DimenParam;
 use tex_state::glue::{GlueSpec, Order};
@@ -30,12 +31,6 @@ const IMPROPER_AUXILIARY_HELP: &[&str] = &[
     "neither of these is meaningful inside \\write. So",
     "I'm forgetting what you said and using zero instead.",
 ];
-
-/// Inline capacity for TeX/e-TeX/pdfTeX's current keyword vocabulary.
-///
-/// The longest production keyword is 13 characters. Longer or non-ASCII
-/// spellings are rejected because they are outside the canonical vocabulary.
-const KEYWORD_PREFIX_INLINE_CAPACITY: usize = 13;
 
 fn observed_glue_value(value: &GlueSpec) -> ObservationValue {
     ObservationValue::Glue {
@@ -313,117 +308,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         result: Result<T, CommandError>,
     ) -> Result<T, CommandError> {
         result.map_err(|error| self.finish_scalar_error(error))
-    }
-
-    /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
-    pub fn scan_optional_equals(&mut self) -> Result<bool, CommandError> {
-        let mut equals = false;
-        let result = self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, _control_sequence, exceptional| {
-                match native_character(meaning) {
-                    Some((' ', Catcode::Space)) => Ok(std::ops::ControlFlow::Continue(())),
-                    // §405 compares the actual other-category '=' token.
-                    Some(('=', Catcode::Other)) => {
-                        equals = true;
-                        Ok(std::ops::ControlFlow::Break(()))
-                    }
-                    _ => {
-                        processor.back_consumed_word(spelling, exceptional)?;
-                        Ok(std::ops::ControlFlow::Break(()))
-                    }
-                }
-            },
-        ));
-        result.map_err(|error| self.finish_scalar_error(error))?;
-        Ok(equals)
-    }
-
-    /// TeX82 §407's `scan_keyword`, which tex.web writes as
-    ///
-    /// ```text
-    /// p:=backup_head; link(p):=null; k:=str_start[s];
-    /// while k<str_start[s+1] do
-    ///   begin get_x_token;
-    ///   if (cur_cs=0)and((cur_chr=so(str_pool[k]))or
-    ///                    (cur_chr=so(str_pool[k])-"a"+"A")) then
-    ///     begin store_new_token(cur_tok); incr(k);
-    ///     end
-    ///   else if (cur_cmd<>spacer)or(p<>backup_head) then
-    ///     begin back_input;
-    ///     if p<>backup_head then back_list(link(backup_head));
-    ///     scan_keyword:=false; return;
-    ///     end;
-    ///   end;
-    /// flush_list(link(backup_head)); scan_keyword:=true;
-    /// ```
-    ///
-    /// Three properties of that loop are load-bearing and none of them is a
-    /// special case.
-    ///
-    /// - The failed match restores the input as **two** levels, not one:
-    ///   §325's `back_input` for the offending token, then §323's `back_list`
-    ///   for the matched prefix pushed on top of it. Both pushes are
-    ///   observable, and only the first carries a recovery record.
-    /// - A spacer read while nothing has matched yet (`p=backup_head`) takes
-    ///   neither branch: it is consumed, discarded for good, and `k` does not
-    ///   advance. `scan_keyword` therefore skips leading spaces rather than
-    ///   restoring them, and a spacer *after* a partial match is an ordinary
-    ///   mismatch.
-    /// - `cur_cs=0` restricts a match to a character token. A control
-    ///   sequence `\let` to a character (or an active character) has the same
-    ///   `cur_cmd`/`cur_chr` and still cannot spell a keyword letter.
-    ///
-    /// The comparison itself is on `cur_chr` alone, so a keyword letter
-    /// matches under any category code, and `cur_chr-"a"+"A"` accepts the
-    /// uppercase form of tex.web's all-lowercase keywords.
-    #[inline(always)]
-    pub fn scan_keyword(&mut self, keyword: &str) -> Result<bool, CommandError> {
-        if !keyword.is_ascii() || keyword.len() > KEYWORD_PREFIX_INLINE_CAPACITY {
-            return Err(CommandError::input_invariant());
-        }
-        // `link(backup_head)`: only the prefix needed by a failed match.
-        let mut matched = smallvec::SmallVec::<
-            [crate::input::BackedUpToken; KEYWORD_PREFIX_INLINE_CAPACITY],
-        >::new();
-        let result = if keyword.is_empty() {
-            Ok(())
-        } else {
-            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                |processor, spelling, meaning, _code, control_sequence, exceptional| {
-                    let letter = keyword.as_bytes()[matched.len()];
-                    let character = native_character(meaning);
-                    if control_sequence.is_none()
-                        && matches!(
-                            character,
-                            Some((ch, _)) if ch.eq_ignore_ascii_case(&char::from(letter))
-                        )
-                    {
-                        matched.push(crate::input::BackedUpToken { spelling });
-                        if matched.len() == keyword.len() {
-                            return Ok(std::ops::ControlFlow::Break(()));
-                        }
-                    } else if matched.is_empty() && matches!(character, Some((_, Catcode::Space))) {
-                        // §407 drops leading spaces without advancing the prefix.
-                    } else {
-                        processor.back_consumed_word(spelling, exceptional)?;
-                        return Ok(std::ops::ControlFlow::Break(()));
-                    }
-                    Ok(std::ops::ControlFlow::Continue(()))
-                },
-            ))
-        };
-        if let Err(error) = result {
-            return Err(self.finish_scalar_error(error));
-        }
-        let matched_keyword = matched.len() == keyword.len();
-        if !matched_keyword && !matched.is_empty() {
-            // A mismatch backs the offender first, then the prefix as a
-            // separate level. At EOF only the actual prefix exists.
-            self.back_list(matched);
-        }
-        // `flush_list(link(backup_head))`: a complete match consumes its
-        // tokens outright.
-        Ok(matched_keyword)
     }
 
     /// Scans an integer or an internal integer quantity.
