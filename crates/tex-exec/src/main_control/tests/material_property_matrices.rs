@@ -642,6 +642,7 @@ fn vsplit_void_nonvbox_pruning_marks_and_packaging_matrix() {
         },
     );
 
+    #[cfg(feature = "profiling")]
     let construction_copies = with_run(
         br"\setbox0=\vbox{\hrule height3pt}\end",
         false,
@@ -655,6 +656,7 @@ fn vsplit_void_nonvbox_pruning_marks_and_packaging_matrix() {
             assert!(
                 matches!(register_shapes(complete, 1).as_deref(), Some([Shape::VBox { height, children, .. }]) if *height == 30 * Scaled::UNITY && matches!(children.as_slice(), [Shape::Rule(_, Some(h), _) ] if *h == 3 * Scaled::UNITY))
             );
+            #[cfg(feature = "profiling")]
             assert_eq!(
                 complete.page_material_counters().source_nodes_copied - construction_copies,
                 2,

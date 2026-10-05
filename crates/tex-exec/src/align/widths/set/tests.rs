@@ -395,6 +395,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             .nodes()
             .testing_node_address(2)
             .expect("trailing retained tabskip exists");
+        #[cfg(feature = "profiling")]
         let counters_before = stores.page_node_arena_counters();
         let set = set_alignment_nodes(
             AlignmentKind::HAlign,
@@ -417,16 +418,20 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             &diagnostic_context,
         )
         .expect("final traversal succeeds");
+        #[cfg(feature = "profiling")]
         let counters_after = stores.page_node_arena_counters();
+        #[cfg(feature = "profiling")]
         assert!(
             counters_after.new_semantic_nodes > counters_before.new_semantic_nodes,
             "the setting pass must publish genuinely new set rows/rules"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             counters_after.source_nodes_copied,
             counters_before.source_nodes_copied + 2,
             "only the two trailing fragments sharing retained-prefix blocks are copied"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             counters_after.partial_edge_nodes_copied,
             counters_before.partial_edge_nodes_copied + 2

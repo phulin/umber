@@ -3,6 +3,9 @@ name = "tex-incr"
 version.workspace = true
 edition.workspace = true
 
+[features]
+profiling = ["tex-exec/profiling"]
+
 [dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 serde.workspace = true

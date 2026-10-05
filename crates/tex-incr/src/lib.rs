@@ -566,6 +566,7 @@ impl RevisionTransaction<'_> {
     /// Profiling gates sample this before production settlement; it does not
     /// traverse page payload or create a detached projection.
     #[doc(hidden)]
+    #[cfg(feature = "profiling")]
     pub fn page_material_counters(
         &mut self,
     ) -> Result<tex_state::fork_arena::ForkArenaCounters, SessionError> {
@@ -576,6 +577,7 @@ impl RevisionTransaction<'_> {
 
     /// Demand-free PageBuilder publication and candidate settlement work.
     #[doc(hidden)]
+    #[cfg(feature = "profiling")]
     pub fn page_candidate_settlement_counters(
         &mut self,
     ) -> Result<tex_state::PageCandidateSettlementCounters, SessionError> {
@@ -586,6 +588,7 @@ impl RevisionTransaction<'_> {
 
     /// Demand-free page-region lifecycle counters on the candidate.
     #[doc(hidden)]
+    #[cfg(feature = "profiling")]
     pub fn page_region_counters(&mut self) -> Result<tex_state::PageRegionCounters, SessionError> {
         self.generation
             .with_admitted(ReadPageRegionCounters)
@@ -1189,8 +1192,10 @@ struct SettleCandidateRuntime {
     independent_job_start: bool,
 }
 
+#[cfg(feature = "profiling")]
 struct ReadPageMaterialCounters;
 
+#[cfg(feature = "profiling")]
 impl tex_exec::RetainedEngineOperation for ReadPageMaterialCounters {
     type Output = tex_state::fork_arena::ForkArenaCounters;
 
@@ -1202,8 +1207,10 @@ impl tex_exec::RetainedEngineOperation for ReadPageMaterialCounters {
     }
 }
 
+#[cfg(feature = "profiling")]
 struct ReadPageCandidateSettlementCounters;
 
+#[cfg(feature = "profiling")]
 impl tex_exec::RetainedEngineOperation for ReadPageCandidateSettlementCounters {
     type Output = tex_state::PageCandidateSettlementCounters;
 
@@ -1215,8 +1222,10 @@ impl tex_exec::RetainedEngineOperation for ReadPageCandidateSettlementCounters {
     }
 }
 
+#[cfg(feature = "profiling")]
 struct ReadPageRegionCounters;
 
+#[cfg(feature = "profiling")]
 impl tex_exec::RetainedEngineOperation for ReadPageRegionCounters {
     type Output = tex_state::PageRegionCounters;
 
@@ -3011,6 +3020,7 @@ impl<'store> Session<'store> {
     /// generation. This is intentionally a scalar lifecycle observation, not
     /// a page-list traversal or detached output request.
     #[doc(hidden)]
+    #[cfg(feature = "profiling")]
     pub fn page_material_counters(
         &mut self,
     ) -> Result<Option<tex_state::fork_arena::ForkArenaCounters>, SessionError> {
@@ -3027,6 +3037,7 @@ impl<'store> Session<'store> {
 
     /// Demand-free page-region lifecycle counters on the accepted generation.
     #[doc(hidden)]
+    #[cfg(feature = "profiling")]
     pub fn page_region_counters(
         &mut self,
     ) -> Result<Option<tex_state::PageRegionCounters>, SessionError> {
@@ -3044,6 +3055,7 @@ impl<'store> Session<'store> {
     /// Demand-free PageBuilder candidate-settlement work on the accepted
     /// production generation.
     #[doc(hidden)]
+    #[cfg(feature = "profiling")]
     pub fn page_candidate_settlement_counters(
         &mut self,
     ) -> Result<Option<tex_state::PageCandidateSettlementCounters>, SessionError> {

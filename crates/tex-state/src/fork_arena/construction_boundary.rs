@@ -81,7 +81,9 @@ impl<T, Lane> ForkArena<T, Lane> {
             self.unindex_chunk(pool, key);
             pool.payload
                 .release_lineage(key, self.owner, self.lineage)?;
-            self.counters.candidate_chunks_truncated += 1;
+            arena_work!({
+                self.counters.candidate_chunks_truncated += 1;
+            });
         }
         Ok(())
     }
@@ -241,15 +243,26 @@ impl<T, Lane> ForkArena<T, Lane> {
         let successor = ChunkSet {
             payload: accepted.payload.split_off(payload_start),
         };
-        let released = self.release_set(pool, accepted)?;
+        #[cfg(any(test, feature = "profiling"))]
+        let released;
+        {
+            #[cfg(any(test, feature = "profiling"))]
+            {
+                released = self.release_set(pool, accepted)?;
+            }
+            #[cfg(not(any(test, feature = "profiling")))]
+            self.release_set(pool, accepted)?;
+        }
         self.base_payload_chunks = 0;
         for (position, key) in successor.payload.iter_live_with_positions() {
             self.index_chunk(pool, key, position);
         }
-        self.counters.obsolete_chunks_pruned = self
-            .counters
-            .obsolete_chunks_pruned
-            .saturating_add(released as u64);
+        arena_work!({
+            self.counters.obsolete_chunks_pruned = self
+                .counters
+                .obsolete_chunks_pruned
+                .saturating_add(released as u64);
+        });
         self.ownership = ForkOwnership::Accepted(successor);
         Ok(())
     }

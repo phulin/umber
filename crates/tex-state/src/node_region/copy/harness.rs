@@ -251,6 +251,7 @@ impl ExplicitCopyHarness {
 
     /// Runs one exact copy; the caller must subsequently restore this harness.
     pub fn copy_once(&mut self) -> usize {
+        #[cfg(any(test, feature = "profiling"))]
         let before = self.destination.pub_arena.counters().source_nodes_copied;
         let copied = copy_region_root_into(
             &mut self.pool,
@@ -261,6 +262,7 @@ impl ExplicitCopyHarness {
         )
         .expect("profile copy");
         assert_eq!(copied.list.len(), self.root.list.len());
+        #[cfg(any(test, feature = "profiling"))]
         assert_eq!(
             self.destination.pub_arena.counters().source_nodes_copied - before,
             self.copied_nodes as u64

@@ -28,12 +28,14 @@ impl PageMaterialArena<'_> {
         if let Some(identity) = &mut identity {
             identity
                 .push_back(item_identity.expect("demand-enabled construction computes identity"));
-            self.region
-                .pub_arena
-                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
-                    hashed_values: 1,
-                    ..crate::fork_arena::SequenceSummaryWork::default()
-                });
+            arena_work!({
+                self.region.pub_arena.record_identity_work(
+                    crate::fork_arena::SequenceSummaryWork {
+                        hashed_values: 1,
+                        ..crate::fork_arena::SequenceSummaryWork::default()
+                    },
+                );
+            });
         }
         slot.span.list = PageListId::from_parts(slot.span.list.coordinate, identity);
         slot.move_enabled = move_enabled;
@@ -55,8 +57,10 @@ impl PageMaterialArena<'_> {
             if let Some(identity) = &mut builder.identity {
                 identity.push_back(item_identity);
             }
-            builder.identity_work.hashed_values =
-                builder.identity_work.hashed_values.saturating_add(1);
+            arena_work!({
+                builder.identity_work.hashed_values =
+                    builder.identity_work.hashed_values.saturating_add(1);
+            });
         }
         Ok(metadata)
     }

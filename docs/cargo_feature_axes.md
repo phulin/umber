@@ -53,7 +53,15 @@ crate. This was `profiling-stats`. The similar-looking `profiling-runner` is
 not part of this axis and is not an axis: it is `required-features` on the
 `gentle-profile` binary (see §3).
 
-Pass-throughs: `tex-command`, `tex-exec`, `umber`.
+Pass-throughs: `tex-command`, `tex-exec`, `tex-incr`, `umber`.
+
+Arena work-counter payloads and readers are also part of this axis. They are
+absent from ordinary engine owners. Crate-internal unit tests may compile the
+same observation data under `cfg(test)`; cross-crate counter checks use
+`profiling`. The `testing` feature remains API widening and does not enable
+runtime work counters. `scripts/check-tools.sh profiling-arena-tests` runs the
+state, executor and incremental work-count assertions. Semantic publication guards read actual ownership,
+never an optional work counter.
 
 The `umber run --profiling-stats` CLI flag keeps its name. It is a command
 line surface, not a feature, and renaming it would break invocations in

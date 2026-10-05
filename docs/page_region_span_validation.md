@@ -114,7 +114,7 @@ derive each identity from the same source visit and maintain summaries on their
 destination blocks before a generated suffix can extend the tail.
 Physical pages contain sixteen logical blocks, so many small lists share one
 bump allocation. The pool reports payload capacity and block metadata
-separately, while `unused_sealed_bytes` records exact tail slack.
+separately. No per-owner tail-slack counter is maintained.
 
 The compact-node production backing preserves this span API with flat
 exact-64-KiB block tables. Head, tail, predecessors,

@@ -709,6 +709,7 @@ fn rooted_candidate_consuming_transitions_preserve_all_mode_families_and_sibling
         );
         populate_nested_candidate(&mut accepted, context);
         let expected = accepted.summary();
+        #[cfg(feature = "profiling")]
         let counters_before_accept = context.page_material_counters();
         accepted = accepted.accept_checkpoint_candidate();
         assert_eq!(
@@ -716,6 +717,7 @@ fn rooted_candidate_consuming_transitions_preserve_all_mode_families_and_sibling
             expected,
             "accept preserves exact topology"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             context.page_material_counters(),
             counters_before_accept,
@@ -733,8 +735,10 @@ fn rooted_candidate_consuming_transitions_preserve_all_mode_families_and_sibling
 
         let mut rejected = ModeNest::fork_checkpoint(&checkpoint).expect("rejected fork");
         populate_nested_candidate(&mut rejected, context);
+        #[cfg(feature = "profiling")]
         let counters_before_reject = context.page_material_counters();
         rejected.reject_checkpoint_candidate();
+        #[cfg(feature = "profiling")]
         assert_eq!(
             context.page_material_counters(),
             counters_before_reject,
@@ -874,6 +878,7 @@ fn nested_mode_lifecycle_keeps_one_page_region_and_stable_source_addresses() {
         let address = context
             .page_node_address_for_test(nest.current_list().nodes.list(), 0)
             .expect("outer node address") as usize;
+        #[cfg(feature = "profiling")]
         let counters = context.page_material_counters();
 
         nest.push(Mode::Horizontal).expect("nested horizontal mode");
@@ -897,6 +902,7 @@ fn nested_mode_lifecycle_keeps_one_page_region_and_stable_source_addresses() {
                 .expect("unchanged outer address") as usize,
             address
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             context.page_material_counters().source_nodes_copied,
             counters.source_nodes_copied,

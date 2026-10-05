@@ -4755,6 +4755,7 @@ pub struct PdfUndoDistanceMeasurement {
 }
 
 #[cfg(all(feature = "profiling", feature = "testing"))]
+#[allow(clippy::disallowed_methods)] // Operational profiling timers never become TeX facts.
 fn measure_pdf_lifecycle_phase(
     lifecycle_work: u32,
     operation: impl FnOnce(),
@@ -4856,6 +4857,7 @@ pub fn profile_pdf_undo_distance(distance: usize) -> PdfUndoDistanceMeasurement 
 }
 
 #[cfg(all(feature = "profiling", feature = "testing"))]
+#[allow(clippy::disallowed_methods)] // Operational profiling timers never become TeX facts.
 pub fn profile_pdf_fork_family(
     family: PdfForkProfileFamily,
     rows: usize,

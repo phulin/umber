@@ -81,6 +81,7 @@ fn direct_tfm_failure_rolls_back_output_and_clears_reusable_work() {
 
         let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut fuel = tex_command::CommandFuelLedger::new(1).expect("bounded fuel");
+        #[cfg(feature = "profiling")]
         let before = stores.page_material_counters();
         let error = flush_pending_hchar_run_with_fuel(
             &mut nest,
@@ -94,12 +95,16 @@ fn direct_tfm_failure_rolls_back_output_and_clears_reusable_work() {
         assert!(matches!(error, crate::ExecError::Command(_)));
         assert!(nest.current_list().pending_hchars().is_some());
         assert!(nest.current_list().nodes(&stores).is_empty());
+        #[cfg(feature = "profiling")]
         let after = stores.page_material_counters();
+        #[cfg(feature = "profiling")]
         assert_eq!(after.new_semantic_nodes, before.new_semantic_nodes);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after.destination_values_constructed,
             before.destination_values_constructed
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(after.identity_nodes_hashed, before.identity_nodes_hashed);
 
         let mut retry_fuel = tex_command::CommandFuelLedger::default();

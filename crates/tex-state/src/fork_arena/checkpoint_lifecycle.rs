@@ -464,15 +464,28 @@ impl<T, Lane> ForkArena<T, Lane> {
             detached_prior,
             current,
         } = *forked;
-        let released = self.release_set(pool, current)?;
-        self.counters.candidate_chunks_truncated = self
-            .counters
-            .candidate_chunks_truncated
-            .saturating_add(released as u64);
-        self.counters.accepted_chunks_reattached = self
-            .counters
-            .accepted_chunks_reattached
-            .saturating_add(detached_prior.payload.len() as u64);
+        #[cfg(any(test, feature = "profiling"))]
+        let released;
+        {
+            #[cfg(any(test, feature = "profiling"))]
+            {
+                released = self.release_set(pool, current)?;
+            }
+            #[cfg(not(any(test, feature = "profiling")))]
+            self.release_set(pool, current)?;
+        }
+        arena_work!({
+            self.counters.candidate_chunks_truncated = self
+                .counters
+                .candidate_chunks_truncated
+                .saturating_add(released as u64);
+        });
+        arena_work!({
+            self.counters.accepted_chunks_reattached = self
+                .counters
+                .accepted_chunks_reattached
+                .saturating_add(detached_prior.payload.len() as u64);
+        });
         let payload_start = self.base_payload_chunks as usize + prefix.payload.len();
         for (offset, key) in detached_prior.payload.iter_live_with_positions() {
             self.index_chunk(pool, key, payload_start + offset);
@@ -507,11 +520,22 @@ impl<T, Lane> ForkArena<T, Lane> {
             detached_prior,
             current,
         } = *forked;
-        let pruned = self.release_set(pool, detached_prior)?;
-        self.counters.obsolete_chunks_pruned = self
-            .counters
-            .obsolete_chunks_pruned
-            .saturating_add(pruned as u64);
+        #[cfg(any(test, feature = "profiling"))]
+        let pruned;
+        {
+            #[cfg(any(test, feature = "profiling"))]
+            {
+                pruned = self.release_set(pool, detached_prior)?;
+            }
+            #[cfg(not(any(test, feature = "profiling")))]
+            self.release_set(pool, detached_prior)?;
+        }
+        arena_work!({
+            self.counters.obsolete_chunks_pruned = self
+                .counters
+                .obsolete_chunks_pruned
+                .saturating_add(pruned as u64);
+        });
         prefix.payload.append(current.payload);
         self.ownership = ForkOwnership::Accepted(prefix);
         Ok(())
@@ -557,10 +581,12 @@ impl<T, Lane> ForkArena<T, Lane> {
             payload: current.payload.split_off(payload_floor),
         };
         let count = self.release_set(pool, released)?;
-        self.counters.rootless_suffix_chunks_released = self
-            .counters
-            .rootless_suffix_chunks_released
-            .saturating_add(count as u64);
+        arena_work!({
+            self.counters.rootless_suffix_chunks_released = self
+                .counters
+                .rootless_suffix_chunks_released
+                .saturating_add(count as u64);
+        });
         Ok(count)
     }
 

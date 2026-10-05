@@ -14,11 +14,14 @@ fn automatic_output_box_remains_page_owned_until_shipout() {
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.world().committed_artifacts().len(), 1);
+        #[cfg(feature = "profiling")]
         let lifecycle = stores.page_region_counters();
+        #[cfg(feature = "profiling")]
         assert_eq!(
             lifecycle.page_to_durable_nodes_copied, 0,
             "automatic box 255 remains a page-region root"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             lifecycle.history_preservation_nodes_copied, 0,
             "output handoff and page succession preserve the same coordinates"
@@ -38,6 +41,7 @@ fn output_carrier_register_take_moves_page_owner_without_structural_copy() {
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.world().committed_artifacts().len(), 1);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0,
@@ -80,6 +84,7 @@ fn traced_same_register_output_take_observes_cleared_destination() {
             trace.contains("globally changing \\box255=void"),
             "{trace:?}"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0
@@ -106,6 +111,7 @@ fn output_carrier_with_live_mode_root_keeps_safe_copy_path() {
                 .box_register(0)
                 .is_some()
         );
+        #[cfg(feature = "profiling")]
         assert!(
             stores.page_region_counters().page_to_durable_nodes_copied > 0,
             "an active mode list bars complete-region ownership transfer"
@@ -125,8 +131,11 @@ fn output_routine_dimension_edit_keeps_box255_page_owned() {
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.world().committed_artifacts().len(), 1);
+        #[cfg(feature = "profiling")]
         let lifecycle = stores.page_region_counters();
+        #[cfg(feature = "profiling")]
         assert_eq!(lifecycle.page_to_durable_nodes_copied, 0);
+        #[cfg(feature = "profiling")]
         assert_eq!(lifecycle.history_preservation_nodes_copied, 0);
     });
 }

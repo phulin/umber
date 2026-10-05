@@ -2314,3 +2314,76 @@ fn failed_annex_construction_preserves_prefix_and_allows_same_builder_retry() {
     assert_eq!(resolved(&arena, list), expected);
     assert_eq!(list.semantic_identity(), Some(identity(&expected).raw()));
 }
+
+#[test]
+fn identity_admission_uses_actual_storage_and_is_idempotent_when_enabled() {
+    page_arena!(arena, pool, state, 32);
+    arena.enable_semantic_identity();
+    let root = arena
+        .publish_owned(penalties(&[7]))
+        .expect("identified node");
+    arena.enable_semantic_identity();
+    assert_eq!(root.sequence_identity(), Some(identity(&penalties(&[7]))));
+    assert_eq!(resolved(&arena, root), penalties(&[7]));
+}
+
+#[test]
+fn identity_admission_rejects_existing_unidentified_payload() {
+    page_arena!(arena, pool, state, 32);
+    let root = arena
+        .publish_owned(penalties(&[7]))
+        .expect("unidentified node");
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            arena.enable_semantic_identity();
+        }))
+        .is_err()
+    );
+    assert!(!arena.semantic_identity_enabled());
+    assert_eq!(resolved(&arena, root), penalties(&[7]));
+}
+
+#[test]
+fn identity_admission_rejects_an_open_builder_before_its_first_node() {
+    page_arena!(arena, pool, state, 32);
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut builder).expect("open builder");
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            arena.enable_semantic_identity();
+        }))
+        .is_err()
+    );
+    arena
+        .rollback_active_list(&mut builder)
+        .expect("release builder");
+    arena.enable_semantic_identity();
+    assert!(arena.semantic_identity_enabled());
+}
+
+#[test]
+fn identity_admission_rejects_payload_parked_behind_an_empty_candidate() {
+    page_arena!(arena, pool, state, 32);
+    let checkpoint = arena
+        .seal_boundary()
+        .and_then(|boundary| arena.checkpoint_mark(boundary))
+        .expect("empty retained checkpoint");
+    let prior = arena
+        .publish_owned(penalties(&[7]))
+        .expect("accepted suffix");
+    arena
+        .begin_checkpoint_candidate(checkpoint)
+        .expect("empty candidate");
+    assert_eq!(arena.len(), 0);
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            arena.enable_semantic_identity();
+        }))
+        .is_err()
+    );
+    let boundary = arena.seal_boundary().expect("candidate boundary");
+    arena
+        .reject_checkpoint_candidate(boundary)
+        .expect("restore accepted suffix");
+    assert_eq!(resolved(&arena, prior), penalties(&[7]));
+}

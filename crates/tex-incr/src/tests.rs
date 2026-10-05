@@ -1897,9 +1897,11 @@ fn non_job_start_page_owner_settles_insertions_marks_and_output_closure() {
         .expect("page-rich non-JobStart rejection candidate");
     drive_synchronous_candidate(&mut rejected, &mut DirectResourceHost)
         .expect("drive page-rich rejection candidate");
-    let mut rejected = incremental
+    let rejected = incremental
         .prepare_revision_candidate(rejected)
         .expect("prepare page-rich rejection");
+    #[cfg(feature = "profiling")]
+    let mut rejected = rejected;
     assert_eq!(
         rejected
             .reuse()
@@ -1908,19 +1910,24 @@ fn non_job_start_page_owner_settles_insertions_marks_and_output_closure() {
             .boundary,
         EngineBoundary::OuterParagraphEnd
     );
+    #[cfg(feature = "profiling")]
     let before_reject = rejected
         .page_candidate_settlement_counters()
         .expect("candidate settlement counters");
     rejected.reject();
+    #[cfg(feature = "profiling")]
     let after_reject = incremental
         .page_candidate_settlement_counters()
         .expect("accepted settlement counters")
         .expect("accepted generation");
+    #[cfg(feature = "profiling")]
     assert_eq!(
         after_reject.candidate_rejections,
         before_reject.candidate_rejections + 1
     );
+    #[cfg(feature = "profiling")]
     assert_eq!(after_reject.canonical_lane_records_scanned, 0);
+    #[cfg(feature = "profiling")]
     assert_eq!(after_reject.canonical_values_copied, 0);
 
     let mut accepted = incremental
@@ -1928,30 +1935,40 @@ fn non_job_start_page_owner_settles_insertions_marks_and_output_closure() {
         .expect("rejected sibling page mark remains seedable");
     drive_synchronous_candidate(&mut accepted, &mut DirectResourceHost)
         .expect("drive page-rich accepted candidate");
-    let mut accepted = incremental
+    let accepted = incremental
         .prepare_revision_candidate(accepted)
         .expect("prepare page-rich acceptance");
+    #[cfg(feature = "profiling")]
+    let mut accepted = accepted;
+    #[cfg(feature = "profiling")]
     let before_accept = accepted
         .page_candidate_settlement_counters()
         .expect("candidate settlement counters");
     let output = incremental
         .accept_revision(accepted)
         .expect("accept page-rich candidate");
+    #[cfg(feature = "profiling")]
     let after_accept = incremental
         .page_candidate_settlement_counters()
         .expect("accepted settlement counters")
         .expect("accepted generation");
+    #[cfg(feature = "profiling")]
     assert_eq!(
         after_accept.candidate_acceptances,
         before_accept.candidate_acceptances + 1
     );
+    #[cfg(feature = "profiling")]
     assert_eq!(after_accept.acceptance_payload_records_scanned, 0);
+    #[cfg(feature = "profiling")]
     assert_eq!(after_accept.canonical_lane_records_scanned, 0);
+    #[cfg(feature = "profiling")]
     assert_eq!(after_accept.canonical_values_copied, 0);
+    #[cfg(feature = "profiling")]
     let region_counters = incremental
         .page_region_counters()
         .expect("accepted page-region counters")
         .expect("accepted generation");
+    #[cfg(feature = "profiling")]
     assert!(
         region_counters.held_over_nodes_copied != 0
             || region_counters.held_over_envelopes_moved != 0,
@@ -2036,12 +2053,16 @@ fn non_job_start_page_owner_accepts_the_default_output_path() {
     let mut cold = session(RevisionId::new(2), &edited);
     let expected = cold.cold().expect("default-output cold comparison");
     assert_detached_output_eq(&output, &expected);
+    #[cfg(feature = "profiling")]
     let counters = incremental
         .page_candidate_settlement_counters()
         .expect("accepted settlement counters")
         .expect("accepted generation");
+    #[cfg(feature = "profiling")]
     assert_eq!(counters.acceptance_payload_records_scanned, 0);
+    #[cfg(feature = "profiling")]
     assert_eq!(counters.canonical_lane_records_scanned, 0);
+    #[cfg(feature = "profiling")]
     assert_eq!(counters.canonical_values_copied, 0);
 }
 

@@ -26,6 +26,7 @@ impl<'a> PageMaterialArena<'a> {
             &mut builder,
             span,
             0..span.len(),
+            #[cfg(any(test, feature = "profiling"))]
             true,
             true,
             remove_margin_kerns,
@@ -42,16 +43,18 @@ impl<'a> PageMaterialArena<'a> {
         builder: &mut PageMaterialActiveListBuilder,
         span: PageListSpan,
         selected: Range<usize>,
-        whole_source: bool,
+        #[cfg(any(test, feature = "profiling"))] whole_source: bool,
         preserve_consumed_boxes: bool,
         remove_margin_kerns: bool,
     ) -> Result<(), ForkArenaError> {
         if selected.start > selected.end || selected.end > span.len() {
             return Err(ForkArenaError::InvalidRange);
         }
-        self.region
-            .pub_arena
-            .begin_reencoded_active_list_copy(span.len(), selected.len());
+        arena_work!({
+            self.region
+                .pub_arena
+                .begin_reencoded_active_list_copy(span.len(), selected.len());
+        });
         let mut selected_identity = builder
             .identity
             .as_ref()
@@ -93,14 +96,18 @@ impl<'a> PageMaterialArena<'a> {
             return Err(ForkArenaError::InvalidRange);
         }
         if selected_identity.is_some() {
-            builder.identity_work.hashed_values = builder
-                .identity_work
-                .hashed_values
-                .saturating_add(copied as u64);
-            builder.identity_work.combined_summaries = builder
-                .identity_work
-                .combined_summaries
-                .saturating_add(u64::from(whole_source));
+            arena_work!({
+                builder.identity_work.hashed_values = builder
+                    .identity_work
+                    .hashed_values
+                    .saturating_add(copied as u64);
+            });
+            arena_work!({
+                builder.identity_work.combined_summaries = builder
+                    .identity_work
+                    .combined_summaries
+                    .saturating_add(u64::from(whole_source));
+            });
         }
         if let (Some(identity), Some(selected_identity)) =
             (&mut builder.identity, selected_identity)

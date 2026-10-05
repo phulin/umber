@@ -812,16 +812,20 @@ fn pdf_form_moves_its_register_box_with_every_option() {
             &mut create,
             br"\pdfxform attr{/Subtype /Form} resources{/ProcSet [/PDF]} 7",
         );
+        #[cfg(feature = "profiling")]
         let before_form = stores.page_region_counters();
         assert_eq!(
             create.advance(stores).expect("PDF form"),
             StepResult::Progress(MainControlStep::Continue)
         );
+        #[cfg(feature = "profiling")]
         let after_form = stores.page_region_counters();
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after_form.page_to_durable_nodes_copied, before_form.page_to_durable_nodes_copied,
             "a direct PDF form move does not copy page payload"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after_form.history_preservation_nodes_copied,
             before_form.history_preservation_nodes_copied,

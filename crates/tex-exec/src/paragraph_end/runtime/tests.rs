@@ -100,6 +100,7 @@ fn normalize_test_paragraph<G>(
     .expect("paragraph glue normalization succeeds")
 }
 
+#[cfg(feature = "profiling")]
 fn normalize_test_paragraph_indexed_reference<G>(
     stores: &mut CommandContext<'_, G>,
     source: tex_state::page_node_arena::PageListId,
@@ -170,6 +171,7 @@ fn normalize_test_paragraph_indexed_reference<G>(
     stores.finalize_page_active_list(&mut output)
 }
 
+#[cfg(feature = "profiling")]
 fn paragraph_normalization_perf_evidence(indexed_reference: bool) {
     const VALUES: usize = 4_096;
     const REPEATS: usize = 128;
@@ -206,12 +208,14 @@ fn paragraph_normalization_perf_evidence(indexed_reference: bool) {
 
 #[test]
 #[ignore = "focused perf-stat diagnostic"]
+#[cfg(feature = "profiling")]
 fn paragraph_normalization_direct_perf_evidence() {
     paragraph_normalization_perf_evidence(false);
 }
 
 #[test]
 #[ignore = "focused perf-stat diagnostic"]
+#[cfg(feature = "profiling")]
 fn paragraph_normalization_indexed_reference_perf_evidence() {
     paragraph_normalization_perf_evidence(true);
 }
@@ -229,6 +233,7 @@ fn production_post_line_retains_source_addresses_and_counts_no_copies() {
             Node::Penalty(303),
         ]);
         let source_addresses = node_addresses(&stores, source);
+        #[cfg(feature = "profiling")]
         let before = stores.page_material_counters();
         let line_params = test_line_break_params(1_000);
         let tape = ParagraphTape::analyze_arena_id(
@@ -258,8 +263,11 @@ fn production_post_line_retains_source_addresses_and_counts_no_copies() {
             "unchanged post-line material keeps its published payload addresses"
         );
         assert_eq!(node_addresses(&stores, source), source_addresses);
+        #[cfg(feature = "profiling")]
         let after = stores.page_material_counters();
+        #[cfg(feature = "profiling")]
         assert_eq!(after.source_nodes_copied, 0);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after.new_semantic_nodes - before.new_semantic_nodes,
             1,
@@ -487,6 +495,7 @@ fn paragraph_glue_normalization_walks_large_unchanged_lists_by_direct_chunks() {
             assert_eq!(reference_visits, values);
 
             let traversal_before = nodes.testing_traversal_counters();
+            #[cfg(feature = "profiling")]
             let counters_before = stores.page_material_counters();
             let _ = nodes;
             let output = normalize_test_paragraph(&mut stores, source);
@@ -497,6 +506,7 @@ fn paragraph_glue_normalization_walks_large_unchanged_lists_by_direct_chunks() {
                     .testing_traversal_counters(),
                 traversal_before,
             );
+            #[cfg(feature = "profiling")]
             let counters_after = stores.page_material_counters();
 
             assert_eq!(traversal.index_resolutions, 0);
@@ -505,10 +515,12 @@ fn paragraph_glue_normalization_walks_large_unchanged_lists_by_direct_chunks() {
                 traversal.forward_chunk_crossings,
                 reference.forward_chunk_crossings
             );
+            #[cfg(feature = "profiling")]
             assert_eq!(
                 counters_after.source_nodes_copied,
                 counters_before.source_nodes_copied
             );
+            #[cfg(feature = "profiling")]
             assert_eq!(
                 counters_after.new_semantic_nodes,
                 counters_before.new_semantic_nodes
@@ -540,16 +552,20 @@ fn paragraph_glue_normalization_preserves_an_appended_shared_prefix() {
         let prefix_addresses = node_addresses(&stores, prefix);
         let suffix = stores.publish_unique_page_nodes(vec![Node::Penalty(23)]);
         let source = stores.append_unique_page_nodes(prefix_span, suffix);
+        #[cfg(feature = "profiling")]
         let counters_before = stores.page_material_counters();
 
         let output = normalize_test_paragraph(&mut stores, source.list());
+        #[cfg(feature = "profiling")]
         let counters_after = stores.page_material_counters();
 
         assert_eq!(output, source.list());
+        #[cfg(feature = "profiling")]
         assert_eq!(
             counters_after.source_nodes_copied,
             counters_before.source_nodes_copied
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             counters_after.new_semantic_nodes,
             counters_before.new_semantic_nodes
@@ -589,6 +605,7 @@ fn paragraph_glue_normalization_retains_source_across_interleaved_output_appends
                 }
             })
             .collect::<Vec<_>>();
+        #[cfg(feature = "profiling")]
         let offending = source_nodes
             .iter()
             .filter(|node| matches!(node, Node::Glue { .. }))
@@ -601,6 +618,7 @@ fn paragraph_glue_normalization_retains_source_across_interleaved_output_appends
             .page_node_span(source_span)
             .expect("test paragraph span remains admitted")
             .testing_traversal_counters();
+        #[cfg(feature = "profiling")]
         let counters_before = stores.page_material_counters();
 
         let output = normalize_test_paragraph(&mut stores, source);
@@ -611,6 +629,7 @@ fn paragraph_glue_normalization_retains_source_across_interleaved_output_appends
                 .testing_traversal_counters(),
             traversal_before,
         );
+        #[cfg(feature = "profiling")]
         let counters_after = stores.page_material_counters();
         let normalized = stores
             .page_node_list(output)
@@ -625,10 +644,12 @@ fn paragraph_glue_normalization_retains_source_across_interleaved_output_appends
             traversal.index_resolutions, 0,
             "direct shared copying adds no indexed source work"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             counters_after.new_semantic_nodes - counters_before.new_semantic_nodes,
             offending as u64
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             counters_after.source_nodes_copied - counters_before.source_nodes_copied,
             (VALUES - offending) as u64,
@@ -672,6 +693,7 @@ fn warmed_large_unchanged_paragraph_normalization_allocates_and_copies_nothing()
         let context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
         let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        #[cfg(feature = "profiling")]
         let counters_before = stores.page_material_counters();
         let output = {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
@@ -686,15 +708,18 @@ fn warmed_large_unchanged_paragraph_normalization_allocates_and_copies_nothing()
             .expect("measured paragraph glue normalization succeeds")
         };
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        #[cfg(feature = "profiling")]
         let counters_after = stores.page_material_counters();
 
         assert_eq!(output.len(), source.len());
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             counters_after.source_nodes_copied,
             counters_before.source_nodes_copied
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             counters_after.new_semantic_nodes,
             counters_before.new_semantic_nodes

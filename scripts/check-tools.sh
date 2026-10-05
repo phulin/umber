@@ -30,8 +30,8 @@ done
 OPTIONAL_CHECK_ARGS="${selected_args[*]}" optional_check_begin check-tools.sh \
   arxiv-corpus arxiv-census texlive-parity-tools oracle-contract \
   parity-harness fixturegen texlive-wasm-publish \
-  profiling-command-tests profiling-cli copy-attribution clippy-reference-tools \
-  clippy-profiling-runner clippy-dvi-tools
+  profiling-command-tests profiling-arena-tests profiling-cli copy-attribution clippy-reference-tools \
+  clippy-profiling-runner clippy-profiling-arena clippy-dvi-tools
 
 optional_check_step_requiring "python3 tar gzip" arxiv-corpus \
   scripts/test-arxiv-corpus.sh
@@ -86,6 +86,11 @@ profiling_command_tests() {
 optional_check_step_requiring "cargo python3" profiling-command-tests \
   profiling_command_tests
 
+# Keep work-count assertions separate from ordinary semantic/ownership tests.
+optional_check_step_requiring "cargo" profiling-arena-tests \
+  cargo test -q --tests -p tex-state -p tex-exec -p tex-incr \
+    --features tex-incr/profiling
+
 # Build the user-facing binary in its real profiling profile and prove that
 # the feature-only flag publishes a non-empty command census.
 profiling_cli() {
@@ -108,6 +113,9 @@ optional_check_step_requiring "cargo" clippy-reference-tools tools_clippy \
 optional_check_step_requiring "cargo" clippy-profiling-runner tools_clippy \
   -p umber --bin gentle-profile \
   --features profiling-runner,profiling -- -D warnings
+optional_check_step_requiring "cargo" clippy-profiling-arena tools_clippy \
+  -p tex-state -p tex-exec -p tex-incr --all-targets \
+  --features tex-incr/profiling -- -D warnings
 optional_check_step_requiring "cargo" clippy-dvi-tools tools_clippy \
   -p tex-out --bin texout-dvitype --features dvi-tools -- -D warnings
 

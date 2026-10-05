@@ -178,6 +178,7 @@ fn destructive_unbox_transfers_nested_structural_children() {
             br"\setbox0=\hbox{\hbox{\kern1pt}}\setbox1=\vbox{\vbox{\kern2pt}}",
         );
         run_to_end(&mut control, stores);
+        #[cfg(feature = "profiling")]
         let before = stores.page_region_counters();
 
         let mut control = MainControl::tex82_initex(stores);
@@ -186,13 +187,16 @@ fn destructive_unbox_transfers_nested_structural_children() {
             br"\setbox2=\hbox{\unhbox0}\setbox3=\vbox{\unvbox1}",
         );
         run_to_end(&mut control, stores);
+        #[cfg(feature = "profiling")]
         let after = stores.page_region_counters();
 
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after.tex_copy_nodes_copied - before.tex_copy_nodes_copied,
             0,
             "destructive unboxing leaves only the group-history copies"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after.history_preservation_nodes_copied - before.history_preservation_nodes_copied,
             0,
@@ -212,8 +216,11 @@ fn destructive_unbox_moves_unique_closure_without_recursive_copy() {
         register_source(&mut control, br"\setbox0=\vbox{\vbox{\kern1pt}}\unvbox0");
         run_to_end(&mut control, stores);
 
+        #[cfg(feature = "profiling")]
         let counters = stores.page_region_counters();
+        #[cfg(feature = "profiling")]
         assert_eq!(counters.tex_copy_nodes_copied, 0);
+        #[cfg(feature = "profiling")]
         assert_eq!(counters.history_preservation_nodes_copied, 0);
         assert!(stores.box_register(0).is_none());
     });
@@ -229,8 +236,11 @@ fn destructive_box_and_unbox_in_open_groups_keep_unique_closures() {
         );
         run_to_end(&mut control, stores);
 
+        #[cfg(feature = "profiling")]
         let counters = stores.page_region_counters();
+        #[cfg(feature = "profiling")]
         assert_eq!(counters.tex_copy_nodes_copied, 0);
+        #[cfg(feature = "profiling")]
         assert_eq!(counters.history_preservation_nodes_copied, 0);
         assert!(stores.box_register(0).is_none());
         assert!(stores.box_register(1).is_none());

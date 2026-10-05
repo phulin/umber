@@ -84,6 +84,7 @@ PASSES = (
 UNCOVERED_ENABLED_FEATURES = {
     "tex-command/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
     "tex-exec/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
+    "tex-incr/profiling": "profiling-only counter readers; enabled by scripts/check-tools.sh through `umber`",
     "tex-state/shadow": "verification-only mirror; enabled by scripts/check-tools.sh through `umber`",
     "tex-state/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
     "tex-out/dvi-tools": "opt-in tool binary; linted by scripts/check-tools.sh",

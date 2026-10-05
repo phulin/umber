@@ -82,6 +82,20 @@ proof through sealing; sealing must not repeat owner, tail, and boundary
 admission. The same sealing operation serves checked public boundaries and
 already-preflighted paired transitions. No retained proof cache is needed.
 
+Arena work counters are observation data, not ownership. Ordinary builds carry
+no `ForkArenaCounters` payload and perform no work-counter updates. Unit tests
+and the existing `profiling` axis retain the counters; profiling readers and
+counter assertions require that axis when crossing crate boundaries. There are
+no zero-return readers or compatibility shims in ordinary builds. Counter-only
+checks run in the explicit profiling tier, while semantic and ownership checks
+continue to run in the routine native tier.
+
+Enabling node identities checks the actual arena envelopes: no accepted,
+candidate-prefix, detached-prior, or current payload may remain, and no builder
+may be open. An already selected identity demand remains selected. This is a
+cold ownership check, not a publication-count proxy or another flag updated by
+every node. Foreign and stale identities retain their existing validation.
+
 The move-only closure-build mark is the construction authority. Transfer callers
 must first consume their live mode and operation roots and check retained page
 roots. A receipt copied from that same mark cannot prove root consumption and
@@ -1230,7 +1244,7 @@ The existing arena counters remain authoritative:
 - `new_semantic_nodes`;
 - `source_nodes_copied`;
 - `identity_nodes_hashed` and `identity_summaries_combined`;
-- `chunks_sealed` and `unused_sealed_bytes`;
+- `chunks_sealed`;
 - `chunks_promoted`;
 - `candidate_chunks_truncated`;
 - `accepted_chunks_reattached`; and

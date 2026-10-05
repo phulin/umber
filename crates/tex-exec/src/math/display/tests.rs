@@ -138,6 +138,7 @@ fn directed_display_retains_left_prototype_edge_and_copies_only_right_edge() {
             .nodes()
             .testing_node_address(1)
             .expect("right skip exists");
+        #[cfg(feature = "profiling")]
         let before = stores.page_node_arena_counters();
 
         let reused = package_directed_display_line(
@@ -153,9 +154,13 @@ fn directed_display_retains_left_prototype_edge_and_copies_only_right_edge() {
             1,
         );
 
+        #[cfg(feature = "profiling")]
         let after = stores.page_node_arena_counters();
+        #[cfg(feature = "profiling")]
         assert!(after.new_semantic_nodes > before.new_semantic_nodes);
+        #[cfg(feature = "profiling")]
         assert_eq!(after.source_nodes_copied, before.source_nodes_copied + 1);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after.partial_edge_nodes_copied,
             before.partial_edge_nodes_copied + 1

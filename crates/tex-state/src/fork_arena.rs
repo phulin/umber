@@ -1115,6 +1115,7 @@ impl<T> ChunkStorage<T> {
         self.slots_per_chunk
     }
 
+    #[cfg(test)]
     const fn resident_slot_bytes(&self) -> usize {
         match self.layout {
             ChunkStorageLayout::OptionalSlots => std::mem::size_of::<Option<T>>(),
@@ -1871,13 +1872,11 @@ impl<T> ChunkStorage<T> {
         Ok(self.validate(key, arena)?.sealed)
     }
 
-    fn seal(&mut self, key: LogicalChunkId, arena: u32) -> Result<usize, ForkArenaError> {
-        let capacity = self.slots_per_chunk;
+    fn seal(&mut self, key: LogicalChunkId, arena: u32) -> Result<(), ForkArenaError> {
         let meta = self.validate_mut(key, arena)?;
         meta.sealed = true;
-        let unused = capacity.saturating_sub(meta.used as usize);
         self.compact_sealed_tail(key);
-        Ok(unused)
+        Ok(())
     }
 
     /// Seals a tail carried by an exclusive construction capability.
@@ -1886,16 +1885,13 @@ impl<T> ChunkStorage<T> {
     /// admission and the exclusive borrow prevents lifecycle mutation until
     /// consumption. Those facts are debug-audited here instead of becoming a
     /// second fallible publication pass.
-    fn seal_constructed_tail(&mut self, key: LogicalChunkId, arena: u32, lineage: u32) -> usize {
-        let capacity = self.slots_per_chunk;
+    fn seal_constructed_tail(&mut self, key: LogicalChunkId, arena: u32, lineage: u32) {
         let meta = &mut self.chunks[key.ordinal as usize];
         debug_assert!(meta.live && meta.generation == key.incarnation);
         debug_assert_eq!(meta.arena, arena);
         debug_assert!(meta.lineages.iter().any(|entry| entry.id == lineage));
         meta.sealed = true;
-        let unused = capacity.saturating_sub(meta.used as usize);
         self.compact_sealed_tail(key);
-        unused
     }
 
     fn truncate(
@@ -2844,7 +2840,6 @@ pub struct ForkArenaCounters {
     pub identity_nodes_hashed: u64,
     pub identity_summaries_combined: u64,
     pub chunks_sealed: u64,
-    pub unused_sealed_bytes: u64,
     pub chunks_promoted: u64,
     pub candidate_chunks_truncated: u64,
     pub accepted_chunks_reattached: u64,
@@ -2855,9 +2850,18 @@ pub struct ForkArenaCounters {
 
 /// Exact work performed while recovering an identity from stored summaries.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg(any(test, feature = "profiling"))]
 pub(crate) struct SequenceSummaryWork {
     pub hashed_values: u64,
     pub combined_summaries: u64,
+}
+
+/// The actual computed identity; measured work exists only in observed builds.
+#[derive(Default)]
+pub(crate) struct SequenceSummary {
+    pub identity: SemanticSequenceIdentity,
+    #[cfg(any(test, feature = "profiling"))]
+    pub work: SequenceSummaryWork,
 }
 
 /// Storage/lifecycle failures detected before mutating ownership.
@@ -2959,6 +2963,7 @@ pub struct ForkArena<T, Lane> {
     ownership: ForkOwnership,
     base_payload_chunks: u32,
     active_builder: bool,
+    #[cfg(any(test, feature = "profiling"))]
     counters: ForkArenaCounters,
     _types: PhantomData<(T, Lane)>,
 }
@@ -3001,6 +3006,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
             active_builder: false,
+            #[cfg(any(test, feature = "profiling"))]
             counters: ForkArenaCounters::default(),
             _types: PhantomData,
         }
@@ -3016,12 +3022,14 @@ impl<T, Lane> ForkArena<T, Lane> {
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
             active_builder: false,
+            #[cfg(any(test, feature = "profiling"))]
             counters: ForkArenaCounters::default(),
             _types: PhantomData,
         }
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub const fn counters(&self) -> ForkArenaCounters {
         self.counters
     }
@@ -3031,29 +3039,56 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.owner
     }
 
+    /// Identity demand begins only while every actual retained envelope is empty.
+    /// In particular, an empty candidate cannot hide its detached prior payload.
+    pub(crate) fn can_enable_identity(&self) -> bool {
+        if self.active_builder || self.base_payload_chunks != 0 {
+            return false;
+        }
+        match &self.ownership {
+            ForkOwnership::Accepted(chunks) => chunks.payload.len() == 0,
+            ForkOwnership::Forked(forked) => {
+                forked.prefix.payload.len() == 0
+                    && forked.detached_prior.payload.len() == 0
+                    && forked.current.payload.len() == 0
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn record_source_nodes_copied(&mut self, count: usize) {
-        self.counters.source_nodes_copied = self
-            .counters
-            .source_nodes_copied
-            .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+        arena_work!({
+            self.counters.source_nodes_copied = self
+                .counters
+                .source_nodes_copied
+                .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+        });
     }
 
+    #[cfg(any(test, feature = "profiling"))]
     fn record_partial_edge_nodes_copied(&mut self, count: usize) {
-        self.counters.partial_edge_nodes_copied = self
-            .counters
-            .partial_edge_nodes_copied
-            .saturating_add(count as u64);
+        arena_work!({
+            self.counters.partial_edge_nodes_copied = self
+                .counters
+                .partial_edge_nodes_copied
+                .saturating_add(count as u64);
+        });
     }
 
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn record_identity_work(&mut self, work: SequenceSummaryWork) {
-        self.counters.identity_nodes_hashed = self
-            .counters
-            .identity_nodes_hashed
-            .saturating_add(work.hashed_values);
-        self.counters.identity_summaries_combined = self
-            .counters
-            .identity_summaries_combined
-            .saturating_add(work.combined_summaries);
+        arena_work!({
+            self.counters.identity_nodes_hashed = self
+                .counters
+                .identity_nodes_hashed
+                .saturating_add(work.hashed_values);
+        });
+        arena_work!({
+            self.counters.identity_summaries_combined = self
+                .counters
+                .identity_summaries_combined
+                .saturating_add(work.combined_summaries);
+        });
     }
 
     fn bind_pool(&mut self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
@@ -3194,11 +3229,15 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .share_with_lineage(key, self.owner, self.lineage, lineage, position)
                 .expect("shared payload lineage was completely preflighted");
         }
+        #[cfg(any(test, feature = "profiling"))]
         let count = shared.payload.len() as u64;
-        self.counters.sealed_prefix_chunks_shared = self
-            .counters
-            .sealed_prefix_chunks_shared
-            .saturating_add(count);
+        arena_work!({
+            self.counters.sealed_prefix_chunks_shared = self
+                .counters
+                .sealed_prefix_chunks_shared
+                .saturating_add(count);
+        });
+        #[cfg(any(test, feature = "profiling"))]
         let counters = self.counters;
         let shared = Self {
             owner: self.owner,
@@ -3207,6 +3246,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             ownership: ForkOwnership::Accepted(shared),
             base_payload_chunks: 0,
             active_builder: false,
+            #[cfg(any(test, feature = "profiling"))]
             counters,
             _types: PhantomData,
         };
@@ -3502,8 +3542,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             .payload
             .allocate_list_block(self.owner, self.lineage, previous)?;
         self.current_chunks_mut().payload.push(key);
-        self.counters.direct_blocks_allocated =
-            self.counters.direct_blocks_allocated.saturating_add(1);
+        arena_work!({
+            self.counters.direct_blocks_allocated =
+                self.counters.direct_blocks_allocated.saturating_add(1);
+        });
         let position = self.live_payload_len() - 1;
         self.index_chunk(pool, key, position);
         Ok(key)
@@ -3532,9 +3574,13 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .ok_or(ForkArenaError::CapacityOverflow)?;
         }
         if became_full {
-            self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+            arena_work!({
+                self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+            });
         }
-        self.counters.new_semantic_nodes += 1;
+        arena_work!({
+            self.counters.new_semantic_nodes += 1;
+        });
         Ok(())
     }
 
@@ -3561,9 +3607,13 @@ impl<T, Lane> ForkArena<T, Lane> {
             root.len += 1;
         }
         if became_full {
-            self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+            arena_work!({
+                self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+            });
         }
-        self.counters.new_semantic_nodes += 1;
+        arena_work!({
+            self.counters.new_semantic_nodes += 1;
+        });
     }
 
     /// Publishes the scalar root and counters for one already-initialized
@@ -3591,9 +3641,13 @@ impl<T, Lane> ForkArena<T, Lane> {
             root.len += count;
         }
         if became_full {
-            self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+            arena_work!({
+                self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+            });
         }
-        self.counters.new_semantic_nodes += u64::from(count);
+        arena_work!({
+            self.counters.new_semantic_nodes += u64::from(count);
+        });
     }
 
     /// Clones one same-arena source cell directly into its final packed slot.
@@ -3636,9 +3690,14 @@ impl<T, Lane> ForkArena<T, Lane> {
             became_full,
             pool.payload.logical_space(),
         )?;
-        self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
-        self.counters.resident_payload_clones =
-            self.counters.resident_payload_clones.saturating_add(1);
+        arena_work!({
+            self.counters.whole_payload_copies =
+                self.counters.whole_payload_copies.saturating_add(1);
+        });
+        arena_work!({
+            self.counters.resident_payload_clones =
+                self.counters.resident_payload_clones.saturating_add(1);
+        });
         Ok(())
     }
 
@@ -3681,9 +3740,14 @@ impl<T, Lane> ForkArena<T, Lane> {
             became_full,
             pool.payload.logical_space(),
         )?;
-        self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
-        self.counters.resident_payload_clones =
-            self.counters.resident_payload_clones.saturating_add(1);
+        arena_work!({
+            self.counters.whole_payload_copies =
+                self.counters.whole_payload_copies.saturating_add(1);
+        });
+        arena_work!({
+            self.counters.resident_payload_clones =
+                self.counters.resident_payload_clones.saturating_add(1);
+        });
 
         let item_identity = {
             let value = pool
@@ -3904,7 +3968,9 @@ impl<T, Lane> ForkArena<T, Lane> {
                 self.unindex_chunk(pool, key);
                 pool.payload
                     .release_lineage(key, self.owner, self.lineage)?;
-                self.counters.candidate_chunks_truncated += 1;
+                arena_work!({
+                    self.counters.candidate_chunks_truncated += 1;
+                });
             }
         }
         if chunks != base {
@@ -4165,12 +4231,10 @@ impl<T, Lane> ForkArena<T, Lane> {
                 if !pool.payload.is_sealed(key, self.owner)?
                     && pool.payload.chunk_capacity().saturating_sub(used) < needed
                 {
-                    let unused = pool.payload.seal(key, self.owner)?;
-                    self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
-                    self.counters.unused_sealed_bytes = self
-                        .counters
-                        .unused_sealed_bytes
-                        .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
+                    pool.payload.seal(key, self.owner)?;
+                    arena_work!({
+                        self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+                    });
                 }
             }
             Ok::<(), ForkArenaError>(())
@@ -4230,12 +4294,10 @@ impl<T, Lane> ForkArena<T, Lane> {
                 next_item += 1;
             }
             if count == 0 {
-                let unused = pool.payload.seal(key, self.owner)?;
-                self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
-                self.counters.unused_sealed_bytes = self
-                    .counters
-                    .unused_sealed_bytes
-                    .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
+                pool.payload.seal(key, self.owner)?;
+                arena_work!({
+                    self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+                });
                 continue;
             }
             let position = self
@@ -4350,7 +4412,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         T: RegionValue<Lane>,
     {
         let dependency_floor = self.region_value_dependency_floor(pool, &value)?;
-        self.counters.whole_payload_moves = self.counters.whole_payload_moves.saturating_add(1);
+        arena_work!({
+            self.counters.whole_payload_moves = self.counters.whole_payload_moves.saturating_add(1);
+        });
         let mut root = self.active_list_open_mut(builder)?.root;
         self.append_payload_value_with_dependency(
             pool,
@@ -4514,14 +4578,19 @@ impl<T, Lane> ForkArena<T, Lane> {
             let restored = self.restore_operation(pool, operation);
             self.active_builder = was_active;
             restored.expect("failed destination construction restores its exact suffix");
-            self.counters.new_semantic_nodes = self.counters.new_semantic_nodes.saturating_sub(1);
+            arena_work!({
+                self.counters.new_semantic_nodes =
+                    self.counters.new_semantic_nodes.saturating_sub(1);
+            });
         }
         if completed.is_ok() {
             *destination = root;
-            self.counters.destination_values_constructed = self
-                .counters
-                .destination_values_constructed
-                .saturating_add(1);
+            arena_work!({
+                self.counters.destination_values_constructed = self
+                    .counters
+                    .destination_values_constructed
+                    .saturating_add(1);
+            });
         }
         completed
     }
@@ -4658,13 +4727,16 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok((floor != usize::MAX).then_some(floor))
     }
 
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn begin_reencoded_active_list_copy(
         &mut self,
         source_len: usize,
         selected_len: usize,
     ) {
         if selected_len != source_len {
-            self.record_partial_edge_nodes_copied(selected_len);
+            arena_work!({
+                self.record_partial_edge_nodes_copied(selected_len);
+            });
         }
     }
 
@@ -4796,19 +4868,27 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool.payload.logical_space(),
         );
         self.active_list_open_mut(builder)?.root = root;
-        self.counters.whole_payload_copies = self
-            .counters
-            .whole_payload_copies
-            .saturating_add(count as u64);
-        self.counters.resident_payload_clones = self
-            .counters
-            .resident_payload_clones
-            .saturating_add(count as u64);
-        self.counters.new_semantic_nodes = self
-            .counters
-            .new_semantic_nodes
-            .saturating_sub(count as u64);
-        self.record_source_nodes_copied(count);
+        arena_work!({
+            self.counters.whole_payload_copies = self
+                .counters
+                .whole_payload_copies
+                .saturating_add(count as u64);
+        });
+        arena_work!({
+            self.counters.resident_payload_clones = self
+                .counters
+                .resident_payload_clones
+                .saturating_add(count as u64);
+        });
+        arena_work!({
+            self.counters.new_semantic_nodes = self
+                .counters
+                .new_semantic_nodes
+                .saturating_sub(count as u64);
+        });
+        arena_work!({
+            self.record_source_nodes_copied(count);
+        });
         Ok(count)
     }
 
@@ -5058,7 +5138,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
         let selected_root = self.slice_direct_root(pool, list, selected)?;
         if selected_root.len() != list.len() {
-            self.record_partial_edge_nodes_copied(selected_root.len());
+            arena_work!({
+                self.record_partial_edge_nodes_copied(selected_root.len());
+            });
         }
         let root = self.active_list_open_mut(builder)?.root;
         let root = self.copy_shared_then_splice(pool, root, selected_root)?;
@@ -5073,7 +5155,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         list: ArenaListId<Lane>,
         selected: Range<usize>,
         mut item_identity: impl FnMut(&T) -> u64,
-    ) -> Result<(SemanticSequenceIdentity, SequenceSummaryWork), ForkArenaError>
+    ) -> Result<SequenceSummary, ForkArenaError>
     where
         T: Clone + RegionValue<Lane>,
     {
@@ -5083,22 +5165,21 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Err(ForkArenaError::InvalidRange);
         }
         if selected.is_empty() {
-            return Ok((
-                SemanticSequenceIdentity::empty(),
-                SequenceSummaryWork::default(),
-            ));
+            return Ok(SequenceSummary::default());
         }
         let selected_root = self.slice_direct_root(pool, list, selected)?;
         if selected_root.len() != list.len() {
-            self.record_partial_edge_nodes_copied(selected_root.len());
+            arena_work!({
+                self.record_partial_edge_nodes_copied(selected_root.len());
+            });
         }
         let root = self.active_list_open_mut(builder)?.root;
-        let (root, summary, work) =
+        let (root, summary) =
             self.copy_shared_then_splice_with_identity(pool, root, selected_root, &mut |value| {
                 Some(item_identity(value))
             })?;
         self.active_list_open_mut(builder)?.root = root;
-        Ok((summary, work))
+        Ok(summary)
     }
 
     /// Finalizes the active list's direct packed-chunk root.
@@ -5243,18 +5324,14 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &ChunkPool<T>,
         root: ArenaListId<Lane>,
         item_identity: &mut impl FnMut(&T) -> u64,
-    ) -> Result<(SemanticSequenceIdentity, SequenceSummaryWork), ForkArenaError> {
+    ) -> Result<SequenceSummary, ForkArenaError> {
         self.validate_list(pool, root)?;
         if root.is_empty() {
-            return Ok((
-                SemanticSequenceIdentity::empty(),
-                SequenceSummaryWork::default(),
-            ));
+            return Ok(SequenceSummary::default());
         }
         let mut key = root.tail.raw;
         let mut end = root.tail.offset;
-        let mut summary = SemanticSequenceIdentity::empty();
-        let mut work = SequenceSummaryWork::default();
+        let mut summary = SequenceSummary::default();
         loop {
             let used = pool.payload.used(key, self.owner)?;
             let start = if key == root.head.raw {
@@ -5264,7 +5341,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             };
             let part = if start == 0 && end == used {
                 if let Some(part) = pool.payload.sequence_summary(key, self.owner)? {
-                    work.combined_summaries = work.combined_summaries.saturating_add(1);
+                    arena_work!({
+                        summary.work.combined_summaries =
+                            summary.work.combined_summaries.saturating_add(1);
+                    });
                     part
                 } else {
                     let mut part = SemanticSequenceIdentity::empty();
@@ -5274,7 +5354,10 @@ impl<T, Lane> ForkArena<T, Lane> {
                             .get(key, self.owner, offset)
                             .ok_or(ForkArenaError::InvalidRange)?;
                         part.push_back(item_identity(value));
-                        work.hashed_values = work.hashed_values.saturating_add(1);
+                        arena_work!({
+                            summary.work.hashed_values =
+                                summary.work.hashed_values.saturating_add(1);
+                        });
                     }
                     part
                 }
@@ -5286,11 +5369,13 @@ impl<T, Lane> ForkArena<T, Lane> {
                         .get(key, self.owner, offset)
                         .ok_or(ForkArenaError::InvalidRange)?;
                     part.push_back(item_identity(value));
-                    work.hashed_values = work.hashed_values.saturating_add(1);
+                    arena_work!({
+                        summary.work.hashed_values = summary.work.hashed_values.saturating_add(1);
+                    });
                 }
                 part
             };
-            summary = part.concat(summary);
+            summary.identity = part.concat(summary.identity);
             if key == root.head.raw {
                 break;
             }
@@ -5301,7 +5386,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             key = previous.0;
             end = previous.1;
         }
-        Ok((summary, work))
+        Ok(summary)
     }
 
     /// Splices a whole uniquely owned right chain in O(1).
@@ -5373,7 +5458,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: Clone + RegionValue<Lane>,
     {
-        let (root, _, _) =
+        let (root, _) =
             self.copy_shared_then_splice_with_identity(pool, left, right, &mut |_| None)?;
         Ok(root)
     }
@@ -5384,21 +5469,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         left: ArenaListId<Lane>,
         right: ArenaListId<Lane>,
         item_identity: &mut impl FnMut(&T) -> Option<u64>,
-    ) -> Result<
-        (
-            ArenaListId<Lane>,
-            SemanticSequenceIdentity,
-            SequenceSummaryWork,
-        ),
-        ForkArenaError,
-    >
+    ) -> Result<(ArenaListId<Lane>, SequenceSummary), ForkArenaError>
     where
         T: Clone + RegionValue<Lane>,
     {
         self.validate_list(pool, right)?;
         let mut copy = ArenaListId::empty();
-        let mut summary = SemanticSequenceIdentity::empty();
-        let mut work = SequenceSummaryWork::default();
+        let mut summary = SequenceSummary::default();
         let mut identity_mode = None;
         if !right.is_empty() {
             self.copy_shared_chunk_prefix(
@@ -5408,18 +5485,21 @@ impl<T, Lane> ForkArena<T, Lane> {
                 right.tail.offset,
                 &mut copy,
                 &mut summary,
-                &mut work,
                 &mut identity_mode,
                 item_identity,
             )?;
         }
-        self.counters.new_semantic_nodes = self
-            .counters
-            .new_semantic_nodes
-            .saturating_sub(right.len as u64);
-        self.record_source_nodes_copied(right.len());
+        arena_work!({
+            self.counters.new_semantic_nodes = self
+                .counters
+                .new_semantic_nodes
+                .saturating_sub(right.len as u64);
+        });
+        arena_work!({
+            self.record_source_nodes_copied(right.len());
+        });
         let root = self.splice_unique_direct_root(pool, left, UniqueArenaList { root: copy })?;
-        Ok((root, summary, work))
+        Ok((root, summary))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5430,8 +5510,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         key: LogicalChunkId,
         end: u32,
         copy: &mut ArenaListId<Lane>,
-        summary: &mut SemanticSequenceIdentity,
-        work: &mut SequenceSummaryWork,
+        summary: &mut SequenceSummary,
         identity_mode: &mut Option<bool>,
         item_identity: &mut impl FnMut(&T) -> Option<u64>,
     ) -> Result<(), ForkArenaError>
@@ -5452,7 +5531,6 @@ impl<T, Lane> ForkArena<T, Lane> {
                 previous.1,
                 copy,
                 summary,
-                work,
                 identity_mode,
                 item_identity,
             )?;
@@ -5475,8 +5553,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             }
             self.append_payload_clone_from_coordinate(pool, copy, key, offset, identity)?;
             if let Some(identity) = identity {
-                summary.push_back(identity);
-                work.hashed_values = work.hashed_values.saturating_add(1);
+                summary.identity.push_back(identity);
+                arena_work!({
+                    summary.work.hashed_values = summary.work.hashed_values.saturating_add(1);
+                });
             }
         }
         Ok(())
@@ -5502,12 +5582,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         if metadata.sealed || metadata.used == 0 {
             return Ok(());
         }
-        let unused = pool.payload.seal(key, self.owner)?;
-        self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
-        self.counters.unused_sealed_bytes = self.counters.unused_sealed_bytes.saturating_add(
-            u64::try_from(unused.saturating_mul(pool.payload.resident_slot_bytes()))
-                .unwrap_or(u64::MAX),
-        );
+        pool.payload.seal(key, self.owner)?;
+        arena_work!({
+            self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+        });
         Ok(())
     }
 
@@ -5523,14 +5601,11 @@ impl<T, Lane> ForkArena<T, Lane> {
         if meta.sealed {
             return;
         }
-        let unused = pool
-            .payload
+        pool.payload
             .seal_constructed_tail(key, self.owner, self.lineage);
-        self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
-        self.counters.unused_sealed_bytes = self.counters.unused_sealed_bytes.saturating_add(
-            u64::try_from(unused.saturating_mul(pool.payload.resident_slot_bytes()))
-                .unwrap_or(u64::MAX),
-        );
+        arena_work!({
+            self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+        });
     }
 
     pub fn seal_boundary(
@@ -5549,25 +5624,15 @@ impl<T, Lane> ForkArena<T, Lane> {
         debug_assert!(u32::try_from(self.live_payload_len()).is_ok());
         self.pool_owner = Some(pool.owner);
         let payload_tail = self.live_key_at(self.live_payload_len().saturating_sub(1));
-        let mut sealed = 0_u64;
-        let mut unused_bytes = 0_u64;
+        if let Some(key) = payload_tail
+            && !pool.payload.chunks[key.ordinal as usize].sealed
         {
-            if let Some(key) = payload_tail
-                && !pool.payload.chunks[key.ordinal as usize].sealed
-            {
-                let unused = pool
-                    .payload
-                    .seal_constructed_tail(key, self.owner, self.lineage);
-                sealed += 1;
-                unused_bytes = unused_bytes
-                    .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
-            }
+            pool.payload
+                .seal_constructed_tail(key, self.owner, self.lineage);
+            arena_work!({
+                self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+            });
         }
-        self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(sealed);
-        self.counters.unused_sealed_bytes = self
-            .counters
-            .unused_sealed_bytes
-            .saturating_add(unused_bytes);
         SealedBoundary {
             arena: self.owner,
             payload_chunks: self.live_payload_len() as u32,
@@ -5609,18 +5674,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         list: ArenaListId<Lane>,
         selected: Range<usize>,
         mut item_identity: impl FnMut(&T) -> u64,
-    ) -> Result<
-        (
-            ArenaListId<Lane>,
-            SemanticSequenceIdentity,
-            SequenceSummaryWork,
-        ),
-        ForkArenaError,
-    > {
+    ) -> Result<(ArenaListId<Lane>, SequenceSummary), ForkArenaError> {
         let selected_root = self.slice_direct_root(pool, list, selected)?;
-        let (summary, work) =
-            self.summarize_direct_root(pool, selected_root, &mut item_identity)?;
-        Ok((selected_root, summary, work))
+        let summary = self.summarize_direct_root(pool, selected_root, &mut item_identity)?;
+        Ok((selected_root, summary))
     }
 
     pub(crate) fn slice_validated_list_summarized(
@@ -5629,19 +5686,11 @@ impl<T, Lane> ForkArena<T, Lane> {
         list: ArenaListId<Lane>,
         selected: Range<usize>,
         mut item_identity: impl FnMut(&T) -> u64,
-    ) -> Result<
-        (
-            ArenaListId<Lane>,
-            SemanticSequenceIdentity,
-            SequenceSummaryWork,
-        ),
-        ForkArenaError,
-    > {
+    ) -> Result<(ArenaListId<Lane>, SequenceSummary), ForkArenaError> {
         self.validate_list(pool, list)?;
         let selected_root = self.slice_direct_root(pool, list, selected)?;
-        let (summary, work) =
-            self.summarize_direct_root(pool, selected_root, &mut item_identity)?;
-        Ok((selected_root, summary, work))
+        let summary = self.summarize_direct_root(pool, selected_root, &mut item_identity)?;
+        Ok((selected_root, summary))
     }
 
     pub fn list<'a>(

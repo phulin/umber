@@ -3,7 +3,10 @@
 #[cfg(test)]
 mod state_hash;
 
-use crate::fork_arena::{CheckpointMark, ChunkPool, ForkArena, ForkArenaCounters, ForkArenaError};
+#[cfg(any(test, feature = "profiling"))]
+use crate::fork_arena::ForkArenaCounters;
+
+use crate::fork_arena::{CheckpointMark, ChunkPool, ForkArena, ForkArenaError};
 use crate::glue::GlueSpec;
 use crate::node::{GlueSpecOrigin, Node, NodeTokenKey};
 use crate::node_region::{NodeCheckpointMark, NodePool, NodeRegionId, PageClosureBuildMark};
@@ -999,6 +1002,7 @@ pub struct PageRegion {
     builder: PageBuilderState,
     checkpoints: Vec<PageRegionCheckpoint>,
     next_boundary: u64,
+    #[cfg(any(test, feature = "profiling"))]
     counters: PageRegionCounters,
 }
 
@@ -1017,6 +1021,7 @@ pub(crate) struct PageRegionHistory {
     pool: NodePool,
     regions: Vec<PageRegion>,
     pending_successor: Option<PreparedPageRegionSuccessor>,
+    #[cfg(any(test, feature = "profiling"))]
     candidate_counters: PageCandidateSettlementCounters,
 }
 
@@ -1077,6 +1082,7 @@ impl Default for PageRegionHistory {
             pool,
             regions: vec![current],
             pending_successor: None,
+            #[cfg(any(test, feature = "profiling"))]
             candidate_counters: PageCandidateSettlementCounters::default(),
         }
     }
@@ -1194,10 +1200,12 @@ impl PageRegionHistory {
             .last_mut()
             .expect("page history always has a current region");
         let key = current.seal_checkpoint(&mut self.pool)?;
-        self.candidate_counters.checkpoint_captures = self
-            .candidate_counters
-            .checkpoint_captures
-            .saturating_add(1);
+        arena_work!({
+            self.candidate_counters.checkpoint_captures = self
+                .candidate_counters
+                .checkpoint_captures
+                .saturating_add(1);
+        });
         Ok(key)
     }
 
@@ -1229,10 +1237,13 @@ impl PageRegionHistory {
         self.regions[region_index]
             .builder_mut()
             .commit_transaction(builder_mark);
-        self.regions[region_index].counters.checkpoint_rows_released = self.regions[region_index]
-            .counters
-            .checkpoint_rows_released
-            .saturating_add(1);
+        arena_work!({
+            self.regions[region_index].counters.checkpoint_rows_released = self.regions
+                [region_index]
+                .counters
+                .checkpoint_rows_released
+                .saturating_add(1);
+        });
 
         let mut regions_retired = 0;
         let current = self.regions.len().saturating_sub(1);
@@ -1240,11 +1251,13 @@ impl PageRegionHistory {
             let region = self.regions.remove(region_index);
             region.retire(&mut self.pool)?;
             regions_retired = 1;
-            self.current_mut().counters.page_regions_dropped = self
-                .current()
-                .counters
-                .page_regions_dropped
-                .saturating_add(1);
+            arena_work!({
+                self.current_mut().counters.page_regions_dropped = self
+                    .current()
+                    .counters
+                    .page_regions_dropped
+                    .saturating_add(1);
+            });
         } else if region_index == current
             && self.regions[region_index].checkpoints.is_empty()
             && !self.regions[region_index]
@@ -1315,32 +1328,41 @@ impl PageRegionHistory {
             .iter()
             .position(|region| region.validates_checkpoint(&self.pool, key))
             .ok_or(ForkArenaError::InvalidCheckpoint)?;
+        #[cfg(any(test, feature = "profiling"))]
         let before = self.regions[selected]
             .builder
             .candidate_settlement_counters();
         let later_regions = self.regions.split_off(selected.saturating_add(1));
         let selected_region = self.current().id();
-        self.current_mut().counters.later_page_regions_detached = self
-            .current()
-            .counters
-            .later_page_regions_detached
-            .saturating_add(later_regions.len() as u64);
+        arena_work!({
+            self.current_mut().counters.later_page_regions_detached = self
+                .current()
+                .counters
+                .later_page_regions_detached
+                .saturating_add(later_regions.len() as u64);
+        });
         let selected = self
             .regions
             .last_mut()
             .expect("page history always has a current region")
             .begin_checkpoint_candidate(&mut self.pool, key)?;
+        #[cfg(any(test, feature = "profiling"))]
         let after = self.current().builder.candidate_settlement_counters();
-        self.candidate_counters.candidate_selections = self
-            .candidate_counters
-            .candidate_selections
-            .saturating_add(after.candidate_selections - before.candidate_selections);
-        self.candidate_counters.selected_journal_records_rewound = self
-            .candidate_counters
-            .selected_journal_records_rewound
-            .saturating_add(
-                after.selected_journal_records_rewound - before.selected_journal_records_rewound,
-            );
+        arena_work!({
+            self.candidate_counters.candidate_selections = self
+                .candidate_counters
+                .candidate_selections
+                .saturating_add(after.candidate_selections - before.candidate_selections);
+        });
+        arena_work!({
+            self.candidate_counters.selected_journal_records_rewound = self
+                .candidate_counters
+                .selected_journal_records_rewound
+                .saturating_add(
+                    after.selected_journal_records_rewound
+                        - before.selected_journal_records_rewound,
+                );
+        });
         Ok(AcceptedPageRegionHistoryTail {
             selected,
             later_regions,
@@ -1358,6 +1380,7 @@ impl PageRegionHistory {
             .position(|region| region.id() == tail.selected_region)
             .ok_or(ForkArenaError::InvalidRegion)?;
         self.regions.truncate(selected.saturating_add(1));
+        #[cfg(any(test, feature = "profiling"))]
         let before = self
             .regions
             .last()
@@ -1368,35 +1391,45 @@ impl PageRegionHistory {
             .last_mut()
             .expect("page history always has a current region")
             .reject_checkpoint_candidate(&mut self.pool, tail.selected)?;
+        #[cfg(any(test, feature = "profiling"))]
         let after = self
             .regions
             .last()
             .expect("selected page region remains current")
             .builder
             .candidate_settlement_counters();
-        self.candidate_counters.candidate_rejections = self
-            .candidate_counters
-            .candidate_rejections
-            .saturating_add(after.candidate_rejections - before.candidate_rejections);
-        self.candidate_counters.rejected_candidate_records_rewound = self
-            .candidate_counters
-            .rejected_candidate_records_rewound
-            .saturating_add(
-                after.rejected_candidate_records_rewound
-                    - before.rejected_candidate_records_rewound,
-            );
-        self.candidate_counters.rejected_prior_records_redone = self
-            .candidate_counters
-            .rejected_prior_records_redone
-            .saturating_add(
-                after.rejected_prior_records_redone - before.rejected_prior_records_redone,
-            );
-        self.candidate_counters.candidate_journal_chunks_released = self
-            .candidate_counters
-            .candidate_journal_chunks_released
-            .saturating_add(
-                after.candidate_journal_chunks_released - before.candidate_journal_chunks_released,
-            );
+        arena_work!({
+            self.candidate_counters.candidate_rejections = self
+                .candidate_counters
+                .candidate_rejections
+                .saturating_add(after.candidate_rejections - before.candidate_rejections);
+        });
+        arena_work!({
+            self.candidate_counters.rejected_candidate_records_rewound = self
+                .candidate_counters
+                .rejected_candidate_records_rewound
+                .saturating_add(
+                    after.rejected_candidate_records_rewound
+                        - before.rejected_candidate_records_rewound,
+                );
+        });
+        arena_work!({
+            self.candidate_counters.rejected_prior_records_redone = self
+                .candidate_counters
+                .rejected_prior_records_redone
+                .saturating_add(
+                    after.rejected_prior_records_redone - before.rejected_prior_records_redone,
+                );
+        });
+        arena_work!({
+            self.candidate_counters.candidate_journal_chunks_released = self
+                .candidate_counters
+                .candidate_journal_chunks_released
+                .saturating_add(
+                    after.candidate_journal_chunks_released
+                        - before.candidate_journal_chunks_released,
+                );
+        });
         self.regions.append(&mut tail.later_regions);
         Ok(())
     }
@@ -1410,19 +1443,25 @@ impl PageRegionHistory {
             .iter_mut()
             .find(|region| region.id() == tail.selected_region)
             .ok_or(ForkArenaError::InvalidRegion)?;
+        #[cfg(any(test, feature = "profiling"))]
         let before = selected.builder.candidate_settlement_counters();
         selected.accept_checkpoint_candidate(&mut self.pool, tail.selected)?;
+        #[cfg(any(test, feature = "profiling"))]
         let after = selected.builder.candidate_settlement_counters();
-        self.candidate_counters.candidate_acceptances = self
-            .candidate_counters
-            .candidate_acceptances
-            .saturating_add(after.candidate_acceptances - before.candidate_acceptances);
-        self.candidate_counters.prior_journal_chunks_released = self
-            .candidate_counters
-            .prior_journal_chunks_released
-            .saturating_add(
-                after.prior_journal_chunks_released - before.prior_journal_chunks_released,
-            );
+        arena_work!({
+            self.candidate_counters.candidate_acceptances = self
+                .candidate_counters
+                .candidate_acceptances
+                .saturating_add(after.candidate_acceptances - before.candidate_acceptances);
+        });
+        arena_work!({
+            self.candidate_counters.prior_journal_chunks_released = self
+                .candidate_counters
+                .prior_journal_chunks_released
+                .saturating_add(
+                    after.prior_journal_chunks_released - before.prior_journal_chunks_released,
+                );
+        });
         for region in tail.later_regions.drain(..) {
             region
                 .retire(&mut self.pool)
@@ -1547,6 +1586,7 @@ impl PageRegionHistory {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) const fn candidate_settlement_counters(&self) -> PageCandidateSettlementCounters {
         self.candidate_counters
     }
@@ -1659,6 +1699,7 @@ impl PageRegion {
             builder: PageBuilderState::default(),
             checkpoints: Vec::with_capacity(64),
             next_boundary: 1,
+            #[cfg(any(test, feature = "profiling"))]
             counters: PageRegionCounters {
                 page_regions_started: 1,
                 ..PageRegionCounters::default()
@@ -1814,7 +1855,9 @@ impl PageRegion {
             .begin_checkpoint_candidate(checkpoint.nodes)
             .expect("complete page-region preflight makes arena fork infallible");
         let later_rows = self.checkpoints.split_off(selected.saturating_add(1));
-        self.counters.page_region_forks = self.counters.page_region_forks.saturating_add(1);
+        arena_work!({
+            self.counters.page_region_forks = self.counters.page_region_forks.saturating_add(1);
+        });
         Ok(AcceptedPageRegionTail {
             builder,
             selected_boundary: key.boundary,
@@ -1876,6 +1919,7 @@ impl PageRegion {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub fn counters(&self) -> PageRegionCounters {
         let durable = self.nodes.durable_transition_counters();
         PageRegionCounters {
@@ -1893,6 +1937,7 @@ impl PageRegion {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) const fn material_counters(&self) -> crate::fork_arena::ForkArenaCounters {
         self.nodes.counters()
     }
@@ -1919,20 +1964,24 @@ impl PageRegion {
         held_over: PageListId,
     ) -> Result<PreparedPageRegionSuccessor, ForkArenaError> {
         if !PageMaterialView::new(pool, &self.nodes).contains(held_over) {
-            self.counters.cross_region_node_reference_rejections = self
-                .counters
-                .cross_region_node_reference_rejections
-                .saturating_add(1);
+            arena_work!({
+                self.counters.cross_region_node_reference_rejections = self
+                    .counters
+                    .cross_region_node_reference_rejections
+                    .saturating_add(1);
+            });
             return Err(ForkArenaError::InvalidRegion);
         }
         let mut current = PageRegion::new(pool);
-        current
-            .nodes
-            .inherit_durable_transition_counters_from(&self.nodes);
+        arena_work!({
+            current
+                .nodes
+                .inherit_durable_transition_counters_from(&self.nodes);
+        });
         if PageMaterialView::new(pool, &self.nodes).semantic_identity_enabled() {
             PageMaterialArena::new(pool, &mut current.nodes).enable_semantic_identity();
         }
-        let (held_over, copied) = match PageMaterialRegion::copy_closure_between(
+        let held_over = match PageMaterialRegion::copy_closure_between(
             pool,
             &mut current.nodes,
             &self.nodes,
@@ -1946,13 +1995,19 @@ impl PageRegion {
                 return Err(error);
             }
         };
-        current.counters = self.counters;
-        current.counters.page_regions_started =
-            current.counters.page_regions_started.saturating_add(1);
-        current.counters.held_over_nodes_copied = current
-            .counters
-            .held_over_nodes_copied
-            .saturating_add(copied as u64);
+        arena_work!({
+            current.counters = self.counters;
+        });
+        arena_work!({
+            current.counters.page_regions_started =
+                current.counters.page_regions_started.saturating_add(1);
+        });
+        arena_work!({
+            current.counters.held_over_nodes_copied = current
+                .counters
+                .held_over_nodes_copied
+                .saturating_add(current.nodes.counters().source_nodes_copied);
+        });
         if !held_over.is_empty() {
             let mut nodes = PageMaterialArena::new(pool, &mut current.nodes);
             current
@@ -1985,10 +2040,12 @@ impl PageRegion {
             roots.output_box,
         ] {
             if !PageMaterialView::new(pool, &self.nodes).contains(root.list()) {
-                self.counters.cross_region_node_reference_rejections = self
-                    .counters
-                    .cross_region_node_reference_rejections
-                    .saturating_add(1);
+                arena_work!({
+                    self.counters.cross_region_node_reference_rejections = self
+                        .counters
+                        .cross_region_node_reference_rejections
+                        .saturating_add(1);
+                });
                 return Err(ForkArenaError::InvalidRegion);
             }
         }
@@ -2037,9 +2094,11 @@ impl PageRegion {
         }
 
         let mut current = PageRegion::new(pool);
-        current
-            .nodes
-            .inherit_durable_transition_counters_from(&self.nodes);
+        arena_work!({
+            current
+                .nodes
+                .inherit_durable_transition_counters_from(&self.nodes);
+        });
         if PageMaterialView::new(pool, &self.nodes).semantic_identity_enabled() {
             PageMaterialArena::new(pool, &mut current.nodes).enable_semantic_identity();
         }
@@ -2059,7 +2118,7 @@ impl PageRegion {
                     build,
                     roots.contribution.list(),
                 ) {
-                    Ok((contribution, scanned)) => {
+                    Ok(contribution) => {
                         let contribution = PageMaterialArena::new(pool, &mut current.nodes)
                             .admit_span(contribution)?;
                         let roots = PagePayloadRoots {
@@ -2070,15 +2129,17 @@ impl PageRegion {
                             output_box: PageListSpan::empty(),
                         };
                         current.builder = self.builder.successor_with_roots(roots);
-                        current.counters = self.counters;
-                        current.counters.page_regions_started =
-                            current.counters.page_regions_started.saturating_add(1);
-                        current.counters.held_over_envelopes_moved =
-                            current.counters.held_over_envelopes_moved.saturating_add(1);
-                        current.counters.node_closure_scan_nodes = current
-                            .counters
-                            .node_closure_scan_nodes
-                            .saturating_add(scanned);
+                        arena_work!({
+                            current.counters = self.counters;
+                        });
+                        arena_work!({
+                            current.counters.page_regions_started =
+                                current.counters.page_regions_started.saturating_add(1);
+                        });
+                        arena_work!({
+                            current.counters.held_over_envelopes_moved =
+                                current.counters.held_over_envelopes_moved.saturating_add(1);
+                        });
                         return Ok(PreparedPageRegionSuccessor {
                             current: Some(current),
                             held_over: None,
@@ -2127,30 +2188,22 @@ impl PageRegion {
             let spans = {
                 let arena = PageMaterialArena::new(pool, &mut current.nodes);
                 (
-                    arena.admit_span(contribution.0)?,
-                    arena.admit_span(current_page.0)?,
-                    arena.admit_span(page_discards.0)?,
-                    arena.admit_span(split_discards.0)?,
-                    arena.admit_span(output_box.0)?,
+                    arena.admit_span(contribution)?,
+                    arena.admit_span(current_page)?,
+                    arena.admit_span(page_discards)?,
+                    arena.admit_span(split_discards)?,
+                    arena.admit_span(output_box)?,
                 )
             };
-            Ok::<_, ForkArenaError>((
-                PagePayloadRoots {
-                    contribution: spans.0,
-                    current_page: spans.1,
-                    page_discards: spans.2,
-                    split_discards: spans.3,
-                    output_box: spans.4,
-                },
-                contribution
-                    .1
-                    .saturating_add(current_page.1)
-                    .saturating_add(page_discards.1)
-                    .saturating_add(split_discards.1)
-                    .saturating_add(output_box.1),
-            ))
+            Ok::<_, ForkArenaError>(PagePayloadRoots {
+                contribution: spans.0,
+                current_page: spans.1,
+                page_discards: spans.2,
+                split_discards: spans.3,
+                output_box: spans.4,
+            })
         })();
-        let (roots, copied) = match copied {
+        let roots = match copied {
             Ok(copied) => copied,
             Err(error) => {
                 if let Some(build) = fallback_build {
@@ -2170,13 +2223,19 @@ impl PageRegion {
                 .expect("copied fallback releases its old successor suffix");
         }
         current.builder = self.builder.successor_with_roots(roots);
-        current.counters = self.counters;
-        current.counters.page_regions_started =
-            current.counters.page_regions_started.saturating_add(1);
-        current.counters.held_over_nodes_copied = current
-            .counters
-            .held_over_nodes_copied
-            .saturating_add(copied as u64);
+        arena_work!({
+            current.counters = self.counters;
+        });
+        arena_work!({
+            current.counters.page_regions_started =
+                current.counters.page_regions_started.saturating_add(1);
+        });
+        arena_work!({
+            current.counters.held_over_nodes_copied = current
+                .counters
+                .held_over_nodes_copied
+                .saturating_add(current.nodes.counters().source_nodes_copied);
+        });
         Ok(PreparedPageRegionSuccessor {
             current: Some(current),
             held_over: None,
@@ -2203,12 +2262,20 @@ impl PageRegion {
                 .adopt_unique_successor(pool, build, root_lists)
                 .expect("prepared unique successor remains adoptable");
             let builder = self.builder.successor_with_roots(roots);
+            #[cfg(any(test, feature = "profiling"))]
             let mut counters = self.counters;
-            counters.page_regions_started = counters.page_regions_started.saturating_add(1);
-            counters.page_regions_dropped = counters.page_regions_dropped.saturating_add(1);
+            arena_work!({
+                counters.page_regions_started = counters.page_regions_started.saturating_add(1);
+            });
+            arena_work!({
+                counters.page_regions_dropped = counters.page_regions_dropped.saturating_add(1);
+            });
+            #[cfg(any(test, feature = "profiling"))]
             if root_lists.iter().any(|root| !root.is_empty()) {
-                counters.held_over_envelopes_moved =
-                    counters.held_over_envelopes_moved.saturating_add(1);
+                arena_work!({
+                    counters.held_over_envelopes_moved =
+                        counters.held_over_envelopes_moved.saturating_add(1);
+                });
             }
             return PageRegionSuccession {
                 current: PageRegion {
@@ -2216,6 +2283,7 @@ impl PageRegion {
                     builder,
                     checkpoints: Vec::with_capacity(64),
                     next_boundary: 1,
+                    #[cfg(any(test, feature = "profiling"))]
                     counters,
                 },
                 retained_prior: None,
@@ -2240,17 +2308,25 @@ impl PageRegion {
             )
             .expect("prepared retained prefix remains shareable");
             let builder = self.builder.successor_with_roots(roots);
+            #[cfg(any(test, feature = "profiling"))]
             let mut counters = self.counters;
-            counters.page_regions_started = counters.page_regions_started.saturating_add(1);
-            counters.page_regions_retained = counters.page_regions_retained.saturating_add(1);
-            self.counters.page_regions_retained =
-                self.counters.page_regions_retained.saturating_add(1);
+            arena_work!({
+                counters.page_regions_started = counters.page_regions_started.saturating_add(1);
+            });
+            arena_work!({
+                counters.page_regions_retained = counters.page_regions_retained.saturating_add(1);
+            });
+            arena_work!({
+                self.counters.page_regions_retained =
+                    self.counters.page_regions_retained.saturating_add(1);
+            });
             return PageRegionSuccession {
                 current: PageRegion {
                     nodes,
                     builder,
                     checkpoints: Vec::with_capacity(64),
                     next_boundary: 1,
+                    #[cfg(any(test, feature = "profiling"))]
                     counters,
                 },
                 retained_prior: Some(self),
@@ -2266,18 +2342,26 @@ impl PageRegion {
         else {
             unreachable!("unique adoption returned before materialized succession")
         };
-        let mut current = current.expect("materialized successor owns its next region");
+        let current = current.expect("materialized successor owns its next region");
+        #[cfg(any(test, feature = "profiling"))]
+        let mut current = current;
         let retained_prior = if self.checkpoints.is_empty() {
-            current.counters.page_regions_dropped =
-                current.counters.page_regions_dropped.saturating_add(1);
+            arena_work!({
+                current.counters.page_regions_dropped =
+                    current.counters.page_regions_dropped.saturating_add(1);
+            });
             self.retire(pool)
                 .expect("uncheckpointed prior page region is quiescent");
             None
         } else {
-            self.counters.page_regions_retained =
-                self.counters.page_regions_retained.saturating_add(1);
-            current.counters.page_regions_retained =
-                current.counters.page_regions_retained.saturating_add(1);
+            arena_work!({
+                self.counters.page_regions_retained =
+                    self.counters.page_regions_retained.saturating_add(1);
+            });
+            arena_work!({
+                current.counters.page_regions_retained =
+                    current.counters.page_regions_retained.saturating_add(1);
+            });
             Some(self)
         };
         PageRegionSuccession {
@@ -2340,8 +2424,10 @@ impl PageRegionSuccession {
                 .expect("validated retained prior remains present")
                 .retire(pool)
                 .expect("pruned prior page region is quiescent");
-            self.current.counters.page_regions_dropped =
-                self.current.counters.page_regions_dropped.saturating_add(1);
+            arena_work!({
+                self.current.counters.page_regions_dropped =
+                    self.current.counters.page_regions_dropped.saturating_add(1);
+            });
         }
         true
     }
@@ -3240,6 +3326,7 @@ impl PageBuilderState {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     fn candidate_settlement_counters(&self) -> PageCandidateSettlementCounters {
         let ForkArenaCounters {
             candidate_chunks_truncated,

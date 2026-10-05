@@ -32,7 +32,6 @@ struct FixedBatchPublisher<'a> {
 #[derive(Clone, Copy)]
 pub(super) struct CopiedList {
     pub(super) list: PageListId,
-    pub(super) count: usize,
     node_floor: usize,
     paired_floor: usize,
 }
@@ -40,7 +39,6 @@ pub(super) struct CopiedList {
 impl CopiedList {
     const EMPTY: Self = Self {
         list: PageListId::empty(),
-        count: 0,
         node_floor: usize::MAX,
         paired_floor: usize::MAX,
     };
@@ -80,6 +78,8 @@ pub(super) struct CopyContext<'a> {
     node_tail_sealed: bool,
     /// Frozen slots of box bodies borrowed instead of copied.
     shared: Vec<u32>,
+    #[cfg(any(test, feature = "profiling"))]
+    nodes_copied: usize,
 }
 
 impl FixedBatchPublisher<'_> {
@@ -228,12 +228,32 @@ impl<'a> CopyContext<'a> {
             semantic_identity_enabled,
             node_tail_sealed: false,
             shared: Vec::new(),
+            #[cfg(any(test, feature = "profiling"))]
+            nodes_copied: 0,
         }
     }
 
     /// Frozen registry slots whose box bodies this copy borrowed. The caller
     /// logs them in the destination once the copy is published.
-    pub(super) fn into_shared(self) -> Vec<u32> {
+    pub(super) fn into_shared(
+        self,
+        #[cfg(any(test, feature = "profiling"))] published: bool,
+    ) -> Vec<u32> {
+        arena_work!({
+            if published {
+                self.destination
+                    .record_source_nodes_copied(self.nodes_copied);
+                #[cfg(feature = "profiling")]
+                crate::measurement::record_region_copy(self.nodes_copied);
+                if self.semantic_identity_enabled {
+                    self.destination
+                        .record_identity_work(crate::fork_arena::SequenceSummaryWork {
+                            hashed_values: self.nodes_copied as u64,
+                            ..crate::fork_arena::SequenceSummaryWork::default()
+                        });
+                }
+            }
+        });
         self.shared
     }
 
@@ -252,6 +272,11 @@ impl<'a> CopyContext<'a> {
         };
         self.stack.push(list);
         let result = self.copy_nonempty_list(list, frame);
+        arena_work!({
+            if result.is_ok() {
+                self.nodes_copied = self.nodes_copied.saturating_add(list.len());
+            }
+        });
         self.stack.pop();
         self.records.truncate(frame.records);
         self.pending.truncate(frame.pending);
@@ -321,7 +346,6 @@ impl<'a> CopyContext<'a> {
             cursors.push(current);
         }
         let mut root = crate::fork_arena::ArenaListId::empty();
-        let mut count = list.len();
         let mut computed_identity = (self.semantic_identity_enabled
             && list.semantic_identity().is_none())
         .then(SemanticSequenceIdentity::empty);
@@ -337,7 +361,7 @@ impl<'a> CopyContext<'a> {
                     source.for_each(|record| self.records.push(*record));
                 }
             }
-            let floors = self.relocate_records(frame, &mut count)?;
+            let floors = self.relocate_records(frame)?;
             if self.pending.len() != frame.pending {
                 self.prepare_annex_publication()?;
             }
@@ -391,7 +415,6 @@ impl<'a> CopyContext<'a> {
         };
         Ok(CopiedList {
             list: PageListId::from_parts(root, identity),
-            count,
             node_floor: node_floor.unwrap_or(usize::MAX),
             paired_floor: paired_floor.unwrap_or(usize::MAX),
         })
@@ -404,8 +427,7 @@ impl<'a> CopyContext<'a> {
         list: PageListId,
         frame: Frame,
     ) -> Result<CopiedList, ForkArenaError> {
-        let mut count = list.len();
-        let floors = self.relocate_records(frame, &mut count)?;
+        let floors = self.relocate_records(frame)?;
         let mut paired_floor = floors.paired;
         if self.pending.len() != frame.pending {
             self.prepare_annex_publication()?;
@@ -439,7 +461,6 @@ impl<'a> CopyContext<'a> {
             .then(|| self.short_list_identity(list, frame));
         Ok(CopiedList {
             list: PageListId::from_parts(root, identity),
-            count,
             node_floor,
             paired_floor,
         })
@@ -461,11 +482,7 @@ impl<'a> CopyContext<'a> {
     /// Copies every child closure named by the frame's staged records and
     /// relocates them in place. Fixed bodies stay pending for the caller's
     /// publication once node positions are known.
-    fn relocate_records(
-        &mut self,
-        frame: Frame,
-        count: &mut usize,
-    ) -> Result<RelocatedFloors, ForkArenaError> {
+    fn relocate_records(&mut self, frame: Frame) -> Result<RelocatedFloors, ForkArenaError> {
         let mut floors = RelocatedFloors {
             node: usize::MAX,
             paired: usize::MAX,
@@ -481,12 +498,11 @@ impl<'a> CopyContext<'a> {
                     frame,
                     index,
                     record,
-                    count,
                     &mut floors,
                     &mut defer_fixed_publication,
                 )?;
             } else {
-                self.relocate_variable_record(frame.records + index, record, count, &mut floors)?;
+                self.relocate_variable_record(frame.records + index, record, &mut floors)?;
             }
         }
         Ok(floors)
@@ -497,7 +513,6 @@ impl<'a> CopyContext<'a> {
         frame: Frame,
         index: usize,
         record: RegionNode,
-        count: &mut usize,
         floors: &mut RelocatedFloors,
         defer_fixed_publication: &mut bool,
     ) -> Result<(), ForkArenaError> {
@@ -537,7 +552,7 @@ impl<'a> CopyContext<'a> {
             for &offset in fields.offsets() {
                 let start = body_start + usize::from(offset);
                 let copied = self.copy_list(self.fixed_child(start)?)?;
-                *count = count.saturating_add(copied.count);
+
                 floors.node = floors.node.min(copied.node_floor);
                 floors.paired = floors.paired.min(copied.paired_floor);
                 self.fixed_words[start..start + 10].copy_from_slice(&copied.list.words());
@@ -617,7 +632,6 @@ impl<'a> CopyContext<'a> {
         &mut self,
         slot: usize,
         record: RegionNode,
-        count: &mut usize,
         floors: &mut RelocatedFloors,
     ) -> Result<(), ForkArenaError> {
         let children = self.children.len();
@@ -629,7 +643,7 @@ impl<'a> CopyContext<'a> {
             .ok_or(ForkArenaError::InvalidRange)?;
         for child in children..self.children.len() {
             let copied = self.copy_list(self.children[child])?;
-            *count = count.saturating_add(copied.count);
+
             floors.node = floors.node.min(copied.node_floor);
             floors.paired = floors.paired.min(copied.paired_floor);
             self.children[child] = copied.list;

@@ -77,6 +77,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   `optional-check-runner.sh`. `check-tools.sh profiling-command-tests` compiles
   `tex-command`'s complete feature-only unit-test target and runs its focused
   current resident-source owner-validation fixture, while
+  `check-tools.sh profiling-arena-tests` runs the state, executor and incremental
+  profiling work assertions while routine tests retain semantic ownership checks;
+  `clippy-profiling-arena` lints those full feature-specific test targets.
   `check-tools.sh profiling-cli` builds and tests the feature-gated Umber CLI
   under the real optimized profiling profile;
   `check-tools.sh copy-attribution` compiles the profiling-only public-copy

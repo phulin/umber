@@ -159,6 +159,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// Returns allocation/copy accounting for the canonical page-material
     /// arena owned by this admitted execution episode.
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub fn page_material_counters(&self) -> crate::fork_arena::ForkArenaCounters {
         self.page_nodes.counters()
     }
@@ -511,6 +512,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// descriptors, so `source_nodes_copied` remains an independently visible
     /// zero while genuinely new semantic output advances its own counter.
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub fn page_node_arena_counters(&self) -> crate::fork_arena::ForkArenaCounters {
         self.page_nodes.counters()
     }

@@ -4,13 +4,16 @@
 //! boundary that pairs one canonical physical list coordinate with the
 //! optional demand-maintained identity used by state hashing.
 
+#[cfg(any(test, feature = "profiling"))]
+use crate::fork_arena::ForkArenaCounters;
+
 use core::hash::{Hash, Hasher};
 use core::num::NonZeroU64;
 use std::ops::Range;
 
 use crate::fork_arena::{
-    ActiveListBuilder, AdmittedListChunkCursor, ArenaListId, ArenaListView, ForkArenaCounters,
-    ForkArenaError, OperationMark, PageMaterialLane, UniqueArenaList,
+    ActiveListBuilder, AdmittedListChunkCursor, ArenaListId, ArenaListView, ForkArenaError,
+    OperationMark, PageMaterialLane, UniqueArenaList,
 };
 use crate::node::Node;
 use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
@@ -408,6 +411,7 @@ pub(crate) struct ConstructedNodeMetadata {
 pub struct PageMaterialActiveListBuilder {
     inner: ActiveListBuilder<PageMaterialNode, PageMaterialLane>,
     identity: Option<SemanticSequenceIdentity>,
+    #[cfg(any(test, feature = "profiling"))]
     identity_work: crate::fork_arena::SequenceSummaryWork,
     fresh_only: bool,
 }
@@ -423,6 +427,7 @@ impl PageMaterialActiveListBuilder {
         Self {
             inner: ActiveListBuilder::vacant(),
             identity: None,
+            #[cfg(any(test, feature = "profiling"))]
             identity_work: crate::fork_arena::SequenceSummaryWork {
                 hashed_values: 0,
                 combined_summaries: 0,
@@ -889,6 +894,7 @@ const _: () = assert!(core::mem::size_of::<PageListSpan>() <= 64);
 pub struct PageMaterialRegion {
     region: NodeRegion<PageRole>,
     semantic_identity_enabled: bool,
+    #[cfg(any(test, feature = "profiling"))]
     durable_transitions: DurableTransitionCounters,
 }
 
@@ -896,7 +902,7 @@ pub struct PageMaterialRegion {
 pub(crate) type DurableNodeClosure = OwnedNodeClosure<DurableRole>;
 
 type BuiltClosureMoveResult =
-    Result<(PageListId, u64), (ForkArenaError, Option<ClosureBuildMark<PageRole>>)>;
+    Result<PageListId, (ForkArenaError, Option<ClosureBuildMark<PageRole>>)>;
 
 /// Construction path for profiling a box whose child predates its build mark.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -932,6 +938,7 @@ pub enum BuiltBoxOrigin {
 
 /// Demand-free observations of explicit durable lifetime transitions.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg(any(test, feature = "profiling"))]
 pub(crate) struct DurableTransitionCounters {
     pub(crate) page_to_durable_nodes_copied: u64,
     pub(crate) interleaved_box_wrappers_built: u64,
@@ -946,6 +953,7 @@ pub struct PageMaterialArena<'a> {
     pool: &'a mut NodePool,
     region: &'a mut NodeRegion<PageRole>,
     semantic_identity_enabled: &'a mut bool,
+    #[cfg(any(test, feature = "profiling"))]
     durable_transitions: &'a mut DurableTransitionCounters,
     output_region_permit: Option<crate::page::PageOutputRegionPermit>,
     #[cfg(test)]
@@ -980,6 +988,7 @@ impl PageMaterialRegion {
         Self {
             region,
             semantic_identity_enabled: false,
+            #[cfg(any(test, feature = "profiling"))]
             durable_transitions: DurableTransitionCounters::default(),
         }
     }
@@ -996,14 +1005,17 @@ impl PageMaterialRegion {
         self.region.profiling_physical_ownership(pool)
     }
 
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) const fn durable_transition_counters(&self) -> DurableTransitionCounters {
         self.durable_transitions
     }
 
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) const fn counters(&self) -> ForkArenaCounters {
         self.region.pub_arena.counters()
     }
 
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) fn inherit_durable_transition_counters_from(&mut self, source: &Self) {
         self.durable_transitions = source.durable_transitions;
     }
@@ -1025,14 +1037,13 @@ impl PageMaterialRegion {
         destination: &mut Self,
         source: &Self,
         root: PageListId,
-    ) -> Result<(PageListId, usize), ForkArenaError> {
+    ) -> Result<PageListId, ForkArenaError> {
         if destination.region.id() == source.region.id()
             || destination.semantic_identity_enabled != source.semantic_identity_enabled
         {
             return Err(ForkArenaError::InvalidRegion);
         }
         let source_root = source.region.root(pool, root)?;
-        let before = destination.region.counters().source_nodes_copied;
         let copied = copy_region_root_into(
             pool,
             &source.region,
@@ -1040,12 +1051,7 @@ impl PageMaterialRegion {
             &mut destination.region,
             source.semantic_identity_enabled,
         )?;
-        let count = destination
-            .region
-            .counters()
-            .source_nodes_copied
-            .saturating_sub(before) as usize;
-        Ok((copied.page_list(), count))
+        Ok(copied.page_list())
     }
 
     pub(crate) fn can_share_sealed_prefix<const N: usize>(
@@ -1067,6 +1073,7 @@ impl PageMaterialRegion {
         Ok(Self {
             region,
             semantic_identity_enabled: source.semantic_identity_enabled,
+            #[cfg(any(test, feature = "profiling"))]
             durable_transitions: source.durable_transitions,
         })
     }
@@ -1090,7 +1097,7 @@ impl PageMaterialRegion {
         source
             .region
             .move_closure_suffix_into(pool, mark, source_root, &mut destination.region)
-            .map(|root| (root.page_list(), 0))
+            .map(|root| root.page_list())
             .map_err(|failure| {
                 let (error, mark) = failure.into_parts();
                 (error, Some(mark))
@@ -1147,6 +1154,7 @@ impl<'a> PageMaterialArena<'a> {
             pool,
             region: &mut state.region,
             semantic_identity_enabled: &mut state.semantic_identity_enabled,
+            #[cfg(any(test, feature = "profiling"))]
             durable_transitions: &mut state.durable_transitions,
             output_region_permit: None,
             #[cfg(test)]
@@ -1181,8 +1189,7 @@ impl<'a> PageMaterialArena<'a> {
 
     pub fn enable_semantic_identity(&mut self) {
         assert!(
-            self.region.pub_arena.counters().new_semantic_nodes == 0
-                || *self.semantic_identity_enabled,
+            *self.semantic_identity_enabled || self.region.pub_arena.can_enable_identity(),
             "semantic identity demand starts before page-node publication"
         );
         *self.semantic_identity_enabled = true;
@@ -1223,12 +1230,14 @@ impl<'a> PageMaterialArena<'a> {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub const fn semantic_hash_work(&self) -> u64 {
         self.region.pub_arena.counters().identity_nodes_hashed
     }
 
     /// Stored whole-range and whole-chunk summaries combined for identity.
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub const fn semantic_summary_work(&self) -> u64 {
         self.region.pub_arena.counters().identity_summaries_combined
     }
@@ -1239,6 +1248,7 @@ impl<'a> PageMaterialArena<'a> {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub const fn counters(&self) -> ForkArenaCounters {
         self.region.pub_arena.counters()
     }
@@ -1252,6 +1262,7 @@ impl<'a> PageMaterialArena<'a> {
 
     #[cfg(test)]
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) const fn durable_transition_counters(&self) -> DurableTransitionCounters {
         *self.durable_transitions
     }
@@ -1316,9 +1327,11 @@ impl<'a> PageMaterialArena<'a> {
             .iter()
             .map(|node| node.to_owned())
             .collect::<Vec<_>>();
-        self.region
-            .pub_arena
-            .record_source_nodes_copied(nodes.len());
+        arena_work!({
+            self.region
+                .pub_arena
+                .record_source_nodes_copied(nodes.len());
+        });
         self.publish_owned(nodes)
     }
 
@@ -1350,6 +1363,7 @@ impl<'a> PageMaterialArena<'a> {
                 return Err(error);
             }
         };
+        #[cfg(any(test, feature = "profiling"))]
         let copied_nodes = durable.counters().source_nodes_copied;
         let mut closure = durable
             .into_closure(self.pool, copied)
@@ -1361,14 +1375,18 @@ impl<'a> PageMaterialArena<'a> {
                 error
             })?;
         closure.profiling_mark_fresh_recursive_copy();
-        self.durable_transitions.page_to_durable_nodes_copied = self
-            .durable_transitions
-            .page_to_durable_nodes_copied
-            .saturating_add(copied_nodes);
-        self.durable_transitions.node_closure_scan_nodes = self
-            .durable_transitions
-            .node_closure_scan_nodes
-            .saturating_add(copied_nodes);
+        arena_work!({
+            self.durable_transitions.page_to_durable_nodes_copied = self
+                .durable_transitions
+                .page_to_durable_nodes_copied
+                .saturating_add(copied_nodes);
+        });
+        arena_work!({
+            self.durable_transitions.node_closure_scan_nodes = self
+                .durable_transitions
+                .node_closure_scan_nodes
+                .saturating_add(copied_nodes);
+        });
         Ok(closure)
     }
 
@@ -1412,6 +1430,7 @@ impl<'a> PageMaterialArena<'a> {
                 let shape = crate::measurement::box_fallback_census_enabled()
                     .then(|| self.profile_built_fallback_shape(root));
                 // The rejected move left the fresh destination untouched.
+                #[cfg(any(test, feature = "profiling"))]
                 let before = durable.counters().source_nodes_copied;
                 let copied = match structural_copy_fallback(
                     self.pool,
@@ -1431,6 +1450,7 @@ impl<'a> PageMaterialArena<'a> {
                     }
                 };
                 self.region.cancel_closure_build(self.pool, mark)?;
+                #[cfg(any(test, feature = "profiling"))]
                 let copied_nodes = durable
                     .counters()
                     .source_nodes_copied
@@ -1446,14 +1466,18 @@ impl<'a> PageMaterialArena<'a> {
                             error
                         })?;
                 owner.profiling_mark_fresh_recursive_copy();
-                self.durable_transitions.page_to_durable_nodes_copied = self
-                    .durable_transitions
-                    .page_to_durable_nodes_copied
-                    .saturating_add(copied_nodes);
-                self.durable_transitions.node_closure_scan_nodes = self
-                    .durable_transitions
-                    .node_closure_scan_nodes
-                    .saturating_add(copied_nodes);
+                arena_work!({
+                    self.durable_transitions.page_to_durable_nodes_copied = self
+                        .durable_transitions
+                        .page_to_durable_nodes_copied
+                        .saturating_add(copied_nodes);
+                });
+                arena_work!({
+                    self.durable_transitions.node_closure_scan_nodes = self
+                        .durable_transitions
+                        .node_closure_scan_nodes
+                        .saturating_add(copied_nodes);
+                });
                 #[cfg(feature = "profiling")]
                 if let Some(shape) = shape {
                     crate::measurement::record_box_fallback(_origin, shape, copied_nodes);
@@ -1495,10 +1519,12 @@ impl<'a> PageMaterialArena<'a> {
                     return Err(error);
                 }
             };
-            self.durable_transitions.interleaved_box_wrappers_built = self
-                .durable_transitions
-                .interleaved_box_wrappers_built
-                .saturating_add(1);
+            arena_work!({
+                self.durable_transitions.interleaved_box_wrappers_built = self
+                    .durable_transitions
+                    .interleaved_box_wrappers_built
+                    .saturating_add(1);
+            });
             let owner = durable
                 .into_closure(self.pool, durable_root)
                 .unwrap_or_else(|(error, _)| panic!("preflighted generated root: {error:?}"));
@@ -1612,10 +1638,12 @@ impl<'a> PageMaterialArena<'a> {
             }
         };
         if !whole_moved {
-            self.durable_transitions.interleaved_box_wrappers_built = self
-                .durable_transitions
-                .interleaved_box_wrappers_built
-                .saturating_add(1);
+            arena_work!({
+                self.durable_transitions.interleaved_box_wrappers_built = self
+                    .durable_transitions
+                    .interleaved_box_wrappers_built
+                    .saturating_add(1);
+            });
         }
         let owner = durable
             .into_closure(self.pool, durable_root)
@@ -1845,6 +1873,7 @@ impl<'a> PageMaterialArena<'a> {
 
         let source_root = self.region.root(self.pool, root)?;
         let mut durable = self.pool.start_region::<DurableRole>()?;
+        #[cfg(any(test, feature = "profiling"))]
         let before = durable.counters().source_nodes_copied;
         let copied = match structural_copy_fallback(
             self.pool,
@@ -1862,6 +1891,7 @@ impl<'a> PageMaterialArena<'a> {
                 return Err(error);
             }
         };
+        #[cfg(any(test, feature = "profiling"))]
         let copied_nodes = durable
             .counters()
             .source_nodes_copied
@@ -1876,14 +1906,18 @@ impl<'a> PageMaterialArena<'a> {
                 error
             })?;
         owner.profiling_mark_fresh_recursive_copy();
-        self.durable_transitions.page_to_durable_nodes_copied = self
-            .durable_transitions
-            .page_to_durable_nodes_copied
-            .saturating_add(copied_nodes);
-        self.durable_transitions.node_closure_scan_nodes = self
-            .durable_transitions
-            .node_closure_scan_nodes
-            .saturating_add(copied_nodes);
+        arena_work!({
+            self.durable_transitions.page_to_durable_nodes_copied = self
+                .durable_transitions
+                .page_to_durable_nodes_copied
+                .saturating_add(copied_nodes);
+        });
+        arena_work!({
+            self.durable_transitions.node_closure_scan_nodes = self
+                .durable_transitions
+                .node_closure_scan_nodes
+                .saturating_add(copied_nodes);
+        });
         Ok(owner)
     }
 
@@ -1922,6 +1956,7 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<PageListId, ForkArenaError> {
         #[cfg(feature = "profiling")]
         let marked = closure.profiling_is_fresh_recursive_copy();
+        #[cfg(any(test, feature = "profiling"))]
         let before = self.region.counters().source_nodes_copied;
         let root = copy_closure_into(
             self.pool,
@@ -1929,6 +1964,7 @@ impl<'a> PageMaterialArena<'a> {
             self.region,
             *self.semantic_identity_enabled,
         )?;
+        #[cfg(any(test, feature = "profiling"))]
         let copied = self
             .region
             .counters()
@@ -1940,14 +1976,18 @@ impl<'a> PageMaterialArena<'a> {
             marked,
             copied,
         );
-        self.durable_transitions.tex_copy_nodes_copied = self
-            .durable_transitions
-            .tex_copy_nodes_copied
-            .saturating_add(copied);
-        self.durable_transitions.node_closure_scan_nodes = self
-            .durable_transitions
-            .node_closure_scan_nodes
-            .saturating_add(copied);
+        arena_work!({
+            self.durable_transitions.tex_copy_nodes_copied = self
+                .durable_transitions
+                .tex_copy_nodes_copied
+                .saturating_add(copied);
+        });
+        arena_work!({
+            self.durable_transitions.node_closure_scan_nodes = self
+                .durable_transitions
+                .node_closure_scan_nodes
+                .saturating_add(copied);
+        });
         Ok(root.list())
     }
 
@@ -1957,6 +1997,7 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<PageListId, ForkArenaError> {
         #[cfg(feature = "profiling")]
         let marked = closure.profiling_is_fresh_recursive_copy();
+        #[cfg(any(test, feature = "profiling"))]
         let before = self.region.counters().source_nodes_copied;
         let root = copy_closure_into(
             self.pool,
@@ -1964,6 +2005,7 @@ impl<'a> PageMaterialArena<'a> {
             self.region,
             *self.semantic_identity_enabled,
         )?;
+        #[cfg(any(test, feature = "profiling"))]
         let copied = self
             .region
             .counters()
@@ -1975,14 +2017,18 @@ impl<'a> PageMaterialArena<'a> {
             marked,
             copied,
         );
-        self.durable_transitions.history_preservation_nodes_copied = self
-            .durable_transitions
-            .history_preservation_nodes_copied
-            .saturating_add(copied);
-        self.durable_transitions.node_closure_scan_nodes = self
-            .durable_transitions
-            .node_closure_scan_nodes
-            .saturating_add(copied);
+        arena_work!({
+            self.durable_transitions.history_preservation_nodes_copied = self
+                .durable_transitions
+                .history_preservation_nodes_copied
+                .saturating_add(copied);
+        });
+        arena_work!({
+            self.durable_transitions.node_closure_scan_nodes = self
+                .durable_transitions
+                .node_closure_scan_nodes
+                .saturating_add(copied);
+        });
         Ok(root.list())
     }
 
@@ -2010,6 +2056,7 @@ impl<'a> PageMaterialArena<'a> {
                 return Err(error);
             }
         };
+        #[cfg(any(test, feature = "profiling"))]
         let copied_nodes = destination.counters().source_nodes_copied;
         let mut closure =
             destination
@@ -2028,14 +2075,18 @@ impl<'a> PageMaterialArena<'a> {
             copied_nodes,
         );
         closure.profiling_mark_fresh_recursive_copy();
-        self.durable_transitions.history_preservation_nodes_copied = self
-            .durable_transitions
-            .history_preservation_nodes_copied
-            .saturating_add(copied_nodes);
-        self.durable_transitions.node_closure_scan_nodes = self
-            .durable_transitions
-            .node_closure_scan_nodes
-            .saturating_add(copied_nodes);
+        arena_work!({
+            self.durable_transitions.history_preservation_nodes_copied = self
+                .durable_transitions
+                .history_preservation_nodes_copied
+                .saturating_add(copied_nodes);
+        });
+        arena_work!({
+            self.durable_transitions.node_closure_scan_nodes = self
+                .durable_transitions
+                .node_closure_scan_nodes
+                .saturating_add(copied_nodes);
+        });
         Ok(closure)
     }
 
@@ -2153,7 +2204,9 @@ impl<'a> PageMaterialArena<'a> {
             .open_active_list(&self.pool.chunks, &mut builder.inner)?;
         self.region.active_annex_operation = Some(annex_operation);
         builder.identity = (*self.semantic_identity_enabled).then(SemanticSequenceIdentity::empty);
-        builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
+        arena_work!({
+            builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
+        });
         builder.fresh_only = true;
         Ok(())
     }
@@ -2181,7 +2234,15 @@ impl<'a> PageMaterialArena<'a> {
         builder: &mut PageMaterialActiveListBuilder,
         span: PageListSpan,
     ) -> Result<(), ForkArenaError> {
-        self.append_reencoded_span_range(builder, span, 0..span.len(), true, false, false)
+        self.append_reencoded_span_range(
+            builder,
+            span,
+            0..span.len(),
+            #[cfg(any(test, feature = "profiling"))]
+            true,
+            false,
+            false,
+        )
     }
 
     /// Moves one unpublished whole chain into the builder's private suffix.
@@ -2203,8 +2264,10 @@ impl<'a> PageMaterialArena<'a> {
         if let Some(identity) = &mut builder.identity {
             *identity = identity
                 .concat(appended_identity.expect("demand-enabled unique list carries identity"));
-            builder.identity_work.combined_summaries =
-                builder.identity_work.combined_summaries.saturating_add(1);
+            arena_work!({
+                builder.identity_work.combined_summaries =
+                    builder.identity_work.combined_summaries.saturating_add(1);
+            });
         }
         Ok(())
     }
@@ -2233,7 +2296,7 @@ impl<'a> PageMaterialArena<'a> {
         {
             let selected_identity = if *self.semantic_identity_enabled {
                 let annex = NodeAnnexView::new(&self.pool.annex_chunks, &self.region.annex_arena);
-                let (identity, work) = self
+                let summary = self
                     .region
                     .pub_arena
                     .append_validated_active_list_range_summarized(
@@ -2243,15 +2306,19 @@ impl<'a> PageMaterialArena<'a> {
                         selected,
                         |record| semantic_record_identity(record, annex),
                     )?;
-                builder.identity_work.hashed_values = builder
-                    .identity_work
-                    .hashed_values
-                    .saturating_add(work.hashed_values);
-                builder.identity_work.combined_summaries = builder
-                    .identity_work
-                    .combined_summaries
-                    .saturating_add(work.combined_summaries);
-                Some(identity)
+                arena_work!({
+                    builder.identity_work.hashed_values = builder
+                        .identity_work
+                        .hashed_values
+                        .saturating_add(summary.work.hashed_values);
+                });
+                arena_work!({
+                    builder.identity_work.combined_summaries = builder
+                        .identity_work
+                        .combined_summaries
+                        .saturating_add(summary.work.combined_summaries);
+                });
+                Some(summary.identity)
             } else {
                 self.region.pub_arena.append_validated_active_list_range(
                     &mut self.pool.chunks,
@@ -2268,7 +2335,15 @@ impl<'a> PageMaterialArena<'a> {
             }
             return Ok(());
         }
-        self.append_reencoded_span_range(builder, span, selected, false, false, false)
+        self.append_reencoded_span_range(
+            builder,
+            span,
+            selected,
+            #[cfg(any(test, feature = "profiling"))]
+            false,
+            false,
+            false,
+        )
     }
 
     pub fn finalize_active_list(
@@ -2287,10 +2362,14 @@ impl<'a> PageMaterialArena<'a> {
             .pub_arena
             .finish_active_list(&mut self.pool.chunks, &mut builder.inner);
         self.region.active_annex_operation = None;
-        self.region
-            .pub_arena
-            .record_identity_work(builder.identity_work);
-        builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
+        arena_work!({
+            self.region
+                .pub_arena
+                .record_identity_work(builder.identity_work);
+        });
+        arena_work!({
+            builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
+        });
         builder.fresh_only = true;
         Ok(UniquePageList {
             coordinate,
@@ -2331,7 +2410,9 @@ impl<'a> PageMaterialArena<'a> {
             .annex_arena
             .restore_operation(&mut self.pool.annex_chunks, annex_operation)?;
         builder.identity = None;
-        builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
+        arena_work!({
+            builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
+        });
         builder.fresh_only = true;
         Ok(())
     }
@@ -2354,12 +2435,14 @@ impl<'a> PageMaterialArena<'a> {
         };
         let coordinate = self.compose_reencoded_lists(lists.iter().copied())?;
         if identity.is_some() {
-            self.region
-                .pub_arena
-                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
-                    combined_summaries: lists.len() as u64,
-                    ..crate::fork_arena::SequenceSummaryWork::default()
-                });
+            arena_work!({
+                self.region.pub_arena.record_identity_work(
+                    crate::fork_arena::SequenceSummaryWork {
+                        combined_summaries: lists.len() as u64,
+                        ..crate::fork_arena::SequenceSummaryWork::default()
+                    },
+                );
+            });
         }
         Ok(PageListId::from_parts(coordinate, identity))
     }
@@ -2391,12 +2474,14 @@ impl<'a> PageMaterialArena<'a> {
             right_coordinate,
         )?;
         if identity.is_some() {
-            self.region
-                .pub_arena
-                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
-                    combined_summaries: 1,
-                    ..crate::fork_arena::SequenceSummaryWork::default()
-                });
+            arena_work!({
+                self.region.pub_arena.record_identity_work(
+                    crate::fork_arena::SequenceSummaryWork {
+                        combined_summaries: 1,
+                        ..crate::fork_arena::SequenceSummaryWork::default()
+                    },
+                );
+            });
         }
         Ok(PageListSpan {
             list: PageListId::from_parts(coordinate, identity),
@@ -2438,12 +2523,14 @@ impl<'a> PageMaterialArena<'a> {
         };
         let coordinate = self.compose_reencoded_lists(spans.iter().map(|span| span.list))?;
         if identity.is_some() {
-            self.region
-                .pub_arena
-                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
-                    combined_summaries: spans.len() as u64,
-                    ..crate::fork_arena::SequenceSummaryWork::default()
-                });
+            arena_work!({
+                self.region.pub_arena.record_identity_work(
+                    crate::fork_arena::SequenceSummaryWork {
+                        combined_summaries: spans.len() as u64,
+                        ..crate::fork_arena::SequenceSummaryWork::default()
+                    },
+                );
+            });
         }
         let list = PageListId::from_parts(coordinate, identity);
         self.admit_span(list)
@@ -2473,6 +2560,7 @@ impl<'a> PageMaterialArena<'a> {
                 &mut builder,
                 span,
                 0..span.len(),
+                #[cfg(any(test, feature = "profiling"))]
                 false,
                 false,
                 false,
@@ -2494,14 +2582,16 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<PageListId, ForkArenaError> {
         if *self.semantic_identity_enabled {
             let annex = NodeAnnexView::new(&self.pool.annex_chunks, &self.region.annex_arena);
-            let (coordinate, identity, work) = self.region.pub_arena.slice_list_summarized(
+            let (coordinate, summary) = self.region.pub_arena.slice_list_summarized(
                 &mut self.pool.chunks,
                 list.coordinate(),
                 selected,
                 |record| semantic_record_identity(record, annex),
             )?;
-            self.region.pub_arena.record_identity_work(work);
-            Ok(PageListId::from_parts(coordinate, Some(identity)))
+            arena_work!({
+                self.region.pub_arena.record_identity_work(summary.work);
+            });
+            Ok(PageListId::from_parts(coordinate, Some(summary.identity)))
         } else {
             let coordinate = self.region.pub_arena.slice_list(
                 &mut self.pool.chunks,
@@ -2519,15 +2609,16 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<PageListSpan, ForkArenaError> {
         let list = if *self.semantic_identity_enabled {
             let annex = NodeAnnexView::new(&self.pool.annex_chunks, &self.region.annex_arena);
-            let (coordinate, identity, work) =
-                self.region.pub_arena.slice_validated_list_summarized(
-                    &mut self.pool.chunks,
-                    span.list.coordinate(),
-                    selected,
-                    |record| semantic_record_identity(record, annex),
-                )?;
-            self.region.pub_arena.record_identity_work(work);
-            PageListId::from_parts(coordinate, Some(identity))
+            let (coordinate, summary) = self.region.pub_arena.slice_validated_list_summarized(
+                &mut self.pool.chunks,
+                span.list.coordinate(),
+                selected,
+                |record| semantic_record_identity(record, annex),
+            )?;
+            arena_work!({
+                self.region.pub_arena.record_identity_work(summary.work);
+            });
+            PageListId::from_parts(coordinate, Some(summary.identity))
         } else {
             let coordinate = self.region.pub_arena.slice_validated_list(
                 &mut self.pool.chunks,
@@ -2581,12 +2672,14 @@ impl<'a> PageMaterialArena<'a> {
             remaining.pop_front(item);
             let mut removed = SemanticSequenceIdentity::empty();
             removed.push_back(item);
-            self.region
-                .pub_arena
-                .record_identity_work(crate::fork_arena::SequenceSummaryWork {
-                    hashed_values: 1,
-                    combined_summaries: 0,
-                });
+            arena_work!({
+                self.region.pub_arena.record_identity_work(
+                    crate::fork_arena::SequenceSummaryWork {
+                        hashed_values: 1,
+                        combined_summaries: 0,
+                    },
+                );
+            });
             (Some(removed), Some(remaining))
         } else {
             (None, None)
@@ -3196,11 +3289,13 @@ impl<'a> PageMaterialView<'a> {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub const fn semantic_hash_work(&self) -> u64 {
         self.state.region.pub_arena.counters().identity_nodes_hashed
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub const fn semantic_summary_work(&self) -> u64 {
         self.state
             .region
@@ -3210,6 +3305,7 @@ impl<'a> PageMaterialView<'a> {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub const fn counters(&self) -> ForkArenaCounters {
         self.state.region.pub_arena.counters()
     }

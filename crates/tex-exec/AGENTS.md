@@ -413,3 +413,7 @@ owns demanded reporting, character-run exit and tracing. An ordinary relax
 then goes directly to continuation without constructing a successful
 MainControlStep result; other semantic arms return their actual step through
 the same native switch. No additional command eligibility front is introduced.
+
+Page-material and page-region work-count assertions require `profiling` and
+run through `scripts/check-tools.sh profiling-arena-tests`. Routine tests
+retain shape, stable-address, stale-root and checkpoint/replay assertions.

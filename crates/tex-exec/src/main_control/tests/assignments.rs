@@ -16,15 +16,19 @@ fn repeated_setbox_regions_preserve_durable_aliases_and_publish_pages() {
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.world().committed_artifacts().len(), 2);
+        #[cfg(feature = "profiling")]
         let lifecycle = stores.page_region_counters();
+        #[cfg(feature = "profiling")]
         assert_eq!(
             lifecycle.page_to_durable_nodes_copied, 0,
             "ordinary setbox construction transfers its closure"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             lifecycle.history_preservation_nodes_copied, 0,
             "a live command operation uses a rollbackable transfer loan"
         );
+        #[cfg(feature = "profiling")]
         assert!(
             lifecycle.tex_copy_nodes_copied > 0,
             "explicit TeX copy remains the one deep-copy seam"
@@ -55,6 +59,7 @@ fn lastbox_transfers_prior_constructed_child_without_copying_its_closure() {
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.world().committed_artifacts().len(), 2);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0,
@@ -92,6 +97,7 @@ fn lastbox_from_completed_paragraph_preserves_earlier_vertical_material() {
                 .any(|node| matches!(node, Node::Char { ch: 'A', .. })),
             "the consumed paragraph line retains its text: {moved:?}"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0,
@@ -140,6 +146,7 @@ fn lastbox_from_second_paragraph_line_keeps_first_line_and_avoids_fallback() {
                 .iter()
                 .any(|node| matches!(node, Node::Char { ch: 'B', .. }))
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0
@@ -279,6 +286,7 @@ fn durable_box_appended_then_taken_by_lastbox_gets_fresh_transfer_interval() {
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.world().committed_artifacts().len(), 2);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0
@@ -1031,7 +1039,7 @@ fn synchronous_assignment_mode_and_list_families_preserve_semantics_without_fram
 
         assert_eq!(stores.count(0).expect("count register"), 12);
         assert!(stores.copy_box_to_page(0).is_some());
-        assert_eq!(control.modes.current_mode(), Mode::Vertical);
+        assert_eq!(control.execution.modes.current_mode(), Mode::Vertical);
     });
 }
 #[test]
@@ -2731,10 +2739,12 @@ fn repeated_lastbox_removals_keep_older_wrapper_intervals_transferable() {
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.world().committed_artifacts().len(), 3);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().interleaved_box_wrappers_built,
             1
@@ -2753,10 +2763,12 @@ fn empty_interleaved_box_rebuilds_only_its_wrapper() {
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.world().committed_artifacts().len(), 3);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().interleaved_box_wrappers_built,
             1
@@ -2779,6 +2791,7 @@ fn internal_vertical_lastbox_with_pre_adjustment_transfers_unique_body() {
             "{}",
             terminal_text(stores)
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0,
@@ -2809,6 +2822,7 @@ fn internal_vertical_lastbox_without_migration_transfers_unique_body() {
         run_to_end(&mut control, stores);
 
         assert!(admitted!(stores, |context| context.box_register(1)).is_some());
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0
@@ -2828,6 +2842,7 @@ fn internal_vertical_lastbox_preserves_earlier_baseline_glue() {
         run_to_end(&mut control, stores);
 
         assert!(admitted!(stores, |context| context.box_register(1)).is_some());
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0
@@ -2852,6 +2867,7 @@ fn expanded_register_take_moves_nested_owner_without_page_copy() {
 
         assert!(stores.box_register(7).is_none());
         assert!(stores.box_register(8).is_some());
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0
@@ -2873,6 +2889,7 @@ fn shifted_lastbox_resets_shift_while_moving_unique_children() {
         );
         run_to_end(&mut control, stores);
 
+        #[cfg(feature = "profiling")]
         assert_eq!(
             stores.page_region_counters().page_to_durable_nodes_copied,
             0
@@ -2914,6 +2931,7 @@ fn unique_lastbox_from_box_register_copy_vsplit_and_unbox_avoids_second_copy() {
             br"\setbox1=\hbox{\hbox{\kern1pt}}\setbox0=\hbox{\unhcopy1\global\setbox2=\lastbox}\end",
         ),
     ];
+    #[cfg(feature = "profiling")]
     let mut copied = Vec::new();
     for (name, source) in cases {
         crate::test_harness::with_nonstop_plain_universe(|stores| {
@@ -2925,12 +2943,14 @@ fn unique_lastbox_from_box_register_copy_vsplit_and_unbox_avoids_second_copy() {
                 "{name}: {}",
                 terminal_text(stores)
             );
+            #[cfg(feature = "profiling")]
             copied.push((
                 name,
                 stores.page_region_counters().page_to_durable_nodes_copied,
             ));
         });
     }
+    #[cfg(feature = "profiling")]
     assert!(copied.iter().all(|(_, count)| *count == 0), "{copied:?}");
 }
 
@@ -2945,6 +2965,7 @@ fn lastbox_after_unboxing_keeps_sibling_children_in_their_respective_boxes() {
             register_source(&mut control, source.as_bytes());
             run_to_end(&mut control, stores);
 
+            #[cfg(feature = "profiling")]
             let copied = stores.page_region_counters().page_to_durable_nodes_copied;
             let first = box_child_nodes(stores, 0);
             let second = box_child_nodes(stores, 2);
@@ -2959,6 +2980,7 @@ fn lastbox_after_unboxing_keeps_sibling_children_in_their_respective_boxes() {
                 second.as_slice(),
                 [Node::Kern { amount, .. }] if amount.raw() == 131_072
             ));
+            #[cfg(feature = "profiling")]
             assert_eq!(
                 copied, 0,
                 "{name}: unique second box transfers without taking its sibling"
@@ -3012,6 +3034,7 @@ fn margin_filtered_unbox_keeps_siblings_and_moves_lastbox_body() {
                     .assign_page_box(1, Some(source), tex_state::AssignmentScope::Global)
                     .expect("source box register owns margin-bearing children");
             });
+            #[cfg(feature = "profiling")]
             let copied_before = stores.page_region_counters().page_to_durable_nodes_copied;
             let source =
                 format!("\\setbox0=\\hbox{{\\{primitive}1\\global\\setbox2=\\lastbox}}\\end");
@@ -3019,6 +3042,7 @@ fn margin_filtered_unbox_keeps_siblings_and_moves_lastbox_body() {
             register_source(&mut control, source.as_bytes());
             run_to_end(&mut control, stores);
 
+            #[cfg(feature = "profiling")]
             assert_eq!(
                 stores.page_region_counters().page_to_durable_nodes_copied - copied_before,
                 0,
@@ -3068,6 +3092,7 @@ fn same_level_self_copy_moves_the_register_closure() {
 
         assert_eq!(stores.count(1).expect("moved width"), 7 * 65536);
         assert_eq!(stores.world().committed_artifacts().len(), 1);
+        #[cfg(feature = "profiling")]
         assert_eq!(stores.page_region_counters().tex_copy_nodes_copied, 0);
     });
 }
@@ -3087,6 +3112,7 @@ fn inner_level_self_copy_preserves_the_saved_binding() {
 
         assert_eq!(stores.count(1).expect("inner width"), 9 * 65536);
         assert_eq!(stores.count(2).expect("restored width"), 3 * 65536);
+        #[cfg(feature = "profiling")]
         assert!(stores.page_region_counters().tex_copy_nodes_copied > 0);
     });
 }

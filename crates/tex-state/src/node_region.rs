@@ -5,15 +5,17 @@
 //! admits a top-level coordinate, and `NodeCursor` binds resolution to an
 //! actual borrow of that owner without reconstructing resident nodes.
 
+#[cfg(any(test, feature = "profiling"))]
+use crate::fork_arena::ForkArenaCounters;
+
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
     BatchMark, CheckpointMark, ChunkPool, ConsumedHeadEdgeLoan, ConsumedInlineFloorLoan, ForkArena,
-    ForkArenaCounters, ForkArenaError, NodePoolStorageClass, PageMaterialLane, PairedFloorRebase,
-    RegionValue, SealedBoundary, SequenceSummaryWork, SuffixFloorRebase, TransferredHoleIntervals,
-    TransferredIntervals,
+    ForkArenaError, NodePoolStorageClass, PageMaterialLane, PairedFloorRebase, RegionValue,
+    SealedBoundary, SuffixFloorRebase, TransferredHoleIntervals, TransferredIntervals,
 };
 
 #[cfg(feature = "profiling")]
@@ -946,6 +948,7 @@ impl<Role> NodeRegion<Role> {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) const fn counters(&self) -> ForkArenaCounters {
         self.pub_arena.counters()
     }
@@ -1784,7 +1787,7 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
     if root.region != source.id {
         return Err(ForkArenaError::InvalidRegion);
     }
-    let (list, count, shared) = copy_list_between(
+    let (list, shared) = copy_list_between(
         &mut pool.chunks,
         &mut pool.annex_chunks,
         source,
@@ -1792,7 +1795,7 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
         destination,
         semantic_identity_enabled,
     )?;
-    Ok(pool.finish_region_copy(destination, list, count, shared, semantic_identity_enabled))
+    Ok(pool.finish_region_copy(destination, list, shared))
 }
 
 /// Copies the top-level records of borrowed `list` out of its frozen owner.
@@ -1809,7 +1812,7 @@ pub(crate) fn copy_borrowed_list_into<Destination>(
     let slot = pool
         .frozen_slot_of(list)
         .ok_or(ForkArenaError::InvalidRegion)?;
-    let (list, count, shared) = {
+    let (list, shared) = {
         let NodePool {
             chunks,
             annex_chunks,
@@ -1831,7 +1834,7 @@ pub(crate) fn copy_borrowed_list_into<Destination>(
     let _ = slot;
     pool.frozen_counters.materialized_lists =
         pool.frozen_counters.materialized_lists.saturating_add(1);
-    Ok(pool.finish_region_copy(destination, list, count, shared, semantic_identity_enabled))
+    Ok(pool.finish_region_copy(destination, list, shared))
 }
 
 /// Runs one recursive copy, rolling the destination back on failure.
@@ -1842,7 +1845,7 @@ fn copy_list_between<Source, Destination>(
     list: PageListId,
     destination: &mut NodeRegion<Destination>,
     semantic_identity_enabled: bool,
-) -> Result<(PageListId, usize, Vec<u32>), ForkArenaError> {
+) -> Result<(PageListId, Vec<u32>), ForkArenaError> {
     let operation = destination.pub_arena.operation_mark(chunks);
     let annex_operation = destination.annex_arena.operation_mark(annex_chunks);
     let mut context = copy::CopyContext::new(
@@ -1853,9 +1856,12 @@ fn copy_list_between<Source, Destination>(
         semantic_identity_enabled,
     );
     let copied = context.copy_list(list);
-    let shared = context.into_shared();
+    let shared = context.into_shared(
+        #[cfg(any(test, feature = "profiling"))]
+        copied.is_ok(),
+    );
     match copied {
-        Ok(copied) => Ok((copied.list, copied.count, shared)),
+        Ok(copied) => Ok((copied.list, shared)),
         Err(error) => {
             destination
                 .pub_arena
@@ -1875,9 +1881,7 @@ impl NodePool {
         &mut self,
         destination: &mut NodeRegion<Destination>,
         list: PageListId,
-        count: usize,
         shared: Vec<u32>,
-        semantic_identity_enabled: bool,
     ) -> RegionRoot<Destination> {
         self.frozen_counters.shared_bodies = self
             .frozen_counters
@@ -1886,31 +1890,11 @@ impl NodePool {
         for slot in shared {
             self.log_borrow(destination, slot);
         }
-        finish_copied_root(destination, list, count, semantic_identity_enabled)
-    }
-}
-
-fn finish_copied_root<Destination>(
-    destination: &mut NodeRegion<Destination>,
-    list: PageListId,
-    count: usize,
-    semantic_identity_enabled: bool,
-) -> RegionRoot<Destination> {
-    destination.pub_arena.record_source_nodes_copied(count);
-    #[cfg(feature = "profiling")]
-    crate::measurement::record_region_copy(count);
-    if semantic_identity_enabled {
-        destination
-            .pub_arena
-            .record_identity_work(SequenceSummaryWork {
-                hashed_values: count as u64,
-                ..SequenceSummaryWork::default()
-            });
-    }
-    RegionRoot {
-        region: destination.id,
-        list,
-        _role: PhantomData,
+        RegionRoot {
+            region: destination.id,
+            list,
+            _role: PhantomData,
+        }
     }
 }
 

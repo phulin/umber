@@ -57,7 +57,7 @@ Definition-owned parameter programs expose literal delimiter views only for none
   Copy-small host artifact/effect boundaries can be
   captured from the same episode before semantic application without
   reconstructing the context. Page-material allocation/copy counters remain
-  observable through this boundary so retained-range zero-copy gates are not
+  observable in unit tests and profiling builds through this boundary so retained-range zero-copy gates are not
   inferred from a separate arena owner.
 - `src/command_context/stream_output.rs`: immediate write and openout notice
   publication on the actual World, with preceding diagnostics and canonical
@@ -686,3 +686,8 @@ records. Cold commit/retry/checkpoint sites derive the retained base from
 end minus record count. Rollback, candidate detach/rejection and retained
 forks install the corresponding real end. No extra dirty flag or cached
 length belongs to native command delivery.
+
+Arena, page-region and durable-transition work counters exist only under
+`cfg(test)` or `profiling`. Ordinary owners carry no counter field and execute
+no observation writes. `testing` widens test APIs without enabling these counters.
+Semantic identity admission checks the actual retained envelopes and active builder.

@@ -3419,6 +3419,7 @@ impl<G> Universe<G> {
 
     /// Demand-free ownership-transition counters for lifecycle gates.
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub fn page_region_counters(&self) -> crate::page::PageRegionCounters {
         self.page_region.current().counters()
     }
@@ -3438,12 +3439,14 @@ impl<G> Universe<G> {
 
     /// Demand-free page-material ownership counters for lifecycle gates.
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub fn page_material_counters(&self) -> crate::fork_arena::ForkArenaCounters {
         self.page_region.current().material_counters()
     }
 
     /// Demand-free PageBuilder publication and candidate-settlement work.
     #[must_use]
+    #[cfg(any(test, feature = "profiling"))]
     pub fn page_candidate_settlement_counters(
         &self,
     ) -> crate::page::PageCandidateSettlementCounters {

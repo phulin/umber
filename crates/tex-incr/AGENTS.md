@@ -15,7 +15,7 @@ long-lived editor-session strategy over executor-named checkpoints.
 
 ## File Map
 
-- `Cargo.toml`: incremental driver dependencies and workspace lint policy.
+- `Cargo.toml`: incremental driver dependencies, same-name profiling pass-through, and workspace lint policy.
 - `src/candidate_lease.rs` and `src/candidate_lease/tests.rs`: move-only,
   zero-allocation current-candidate lease over the session-owned exclusive
   slot and its repeated claim/release high-water control.
@@ -66,3 +66,7 @@ as well. Long-session semantic changes also run
 
 Typed resource failures retain the same boxed need/cause packet from command
 and executor through the session error. Do not unpack and rebox its fields.
+
+Page material, candidate and region counter readers require `profiling`.
+Routine tests retain semantic and owner-transition assertions; work-count
+assertions run through `scripts/check-tools.sh profiling-arena-tests`.

@@ -167,13 +167,18 @@ impl<T, Lane> ForkArena<T, Lane> {
             );
         }
         storage.admission_epoch = storage.admission_epoch.saturating_add(1);
+        #[cfg(any(test, feature = "profiling"))]
         let promoted = payload.len() as u64;
         destination.current_chunks_mut().payload.append(payload);
-        self.counters.chunks_promoted = self.counters.chunks_promoted.saturating_add(promoted);
-        destination.counters.chunks_promoted = destination
-            .counters
-            .chunks_promoted
-            .saturating_add(promoted);
+        arena_work!({
+            self.counters.chunks_promoted = self.counters.chunks_promoted.saturating_add(promoted);
+        });
+        arena_work!({
+            destination.counters.chunks_promoted = destination
+                .counters
+                .chunks_promoted
+                .saturating_add(promoted);
+        });
         destination_start
     }
 }

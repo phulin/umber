@@ -82,6 +82,7 @@ fn math_lowering_moves_whole_native_list_and_copies_only_trailing_wrapper_edge()
             .nodes()
             .testing_node_address(2)
             .expect("trailing marker exists");
+        #[cfg(feature = "profiling")]
         let before = stores.page_node_arena_counters();
 
         let lowered = finish_math_lists_owned(
@@ -92,13 +93,17 @@ fn math_lowering_moves_whole_native_list_and_copies_only_trailing_wrapper_edge()
             true,
         );
 
+        #[cfg(feature = "profiling")]
         let after = stores.page_node_arena_counters();
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after.new_semantic_nodes - before.new_semantic_nodes,
             2,
             "only the inline math boundary nodes are genuinely new"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(after.source_nodes_copied, before.source_nodes_copied + 1);
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after.partial_edge_nodes_copied,
             before.partial_edge_nodes_copied + 1,
@@ -221,6 +226,7 @@ fn math_lowering_appends_exactly_the_mu_rewrites() {
             display: false,
             content: math_content,
         })]);
+        #[cfg(feature = "profiling")]
         let before = stores.page_node_arena_counters();
 
         let lowered = finish_math_lists_owned(
@@ -231,12 +237,15 @@ fn math_lowering_appends_exactly_the_mu_rewrites() {
             true,
         );
 
+        #[cfg(feature = "profiling")]
         let after = stores.page_node_arena_counters();
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after.new_semantic_nodes - before.new_semantic_nodes,
             4,
             "two boundary nodes plus the two mu rewrites are appended"
         );
+        #[cfg(feature = "profiling")]
         assert_eq!(
             after.source_nodes_copied, before.source_nodes_copied,
             "rewrites are generated nodes, not source republishes"

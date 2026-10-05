@@ -165,15 +165,16 @@ impl<T, Lane> ForkArena<T, Lane> {
         let position = self.live_payload_len() - 1;
         self.index_chunk(pool, key, position);
         let len = values.len() as u32;
-        let unused = pool.payload.slots_per_chunk - values.len();
-        self.counters.direct_blocks_allocated =
-            self.counters.direct_blocks_allocated.saturating_add(1);
-        self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
-        self.counters.unused_sealed_bytes = self.counters.unused_sealed_bytes.saturating_add(
-            u64::try_from(unused.saturating_mul(pool.payload.resident_slot_bytes()))
-                .unwrap_or(u64::MAX),
-        );
-        self.counters.new_semantic_nodes += u64::from(len);
+        arena_work!({
+            self.counters.direct_blocks_allocated =
+                self.counters.direct_blocks_allocated.saturating_add(1);
+        });
+        arena_work!({
+            self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+        });
+        arena_work!({
+            self.counters.new_semantic_nodes += u64::from(len);
+        });
         Ok(ArenaListId::from_root(
             pool.payload.logical_space(),
             ChunkCursor::new(key, 0),

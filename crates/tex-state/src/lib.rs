@@ -49,6 +49,15 @@
 /// match.
 pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 31;
 
+// Observation-only work must not create payloads, evaluate arguments, or write
+// counters in the ordinary engine. Unit tests retain direct lifecycle evidence.
+macro_rules! arena_work {
+    ($work:block) => {{
+        #[cfg(any(test, feature = "profiling"))]
+        $work
+    }};
+}
+
 mod capacity;
 pub mod cell;
 mod checkpoint;

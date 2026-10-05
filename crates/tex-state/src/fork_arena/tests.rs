@@ -3710,7 +3710,7 @@ fn sequence_summaries_move_atomically_with_promoted_direct_chunks() {
         },
     );
     let promoted = super::rebrand_list(source, page.owner);
-    let (middle, summary, work) = page
+    let (middle, summary) = page
         .slice_list_summarized(&mut pool, promoted, 3..61, |value| value.wrapping_add(100))
         .expect("summarized promoted slice");
     let mut expected = crate::node_sequence::SemanticSequenceIdentity::empty();
@@ -3718,10 +3718,10 @@ fn sequence_summaries_move_atomically_with_promoted_direct_chunks() {
         expected.push_back(value.wrapping_add(100));
     }
 
-    assert_eq!(summary, expected);
+    assert_eq!(summary.identity, expected);
     assert_eq!(page.list(&pool, middle).expect("middle").len(), 58);
-    assert!(work.hashed_values <= (2 * CHUNK_VALUES) as u64);
-    assert!(work.combined_summaries > 0);
+    assert!(summary.work.hashed_values <= (2 * CHUNK_VALUES) as u64);
+    assert!(summary.work.combined_summaries > 0);
     assert_eq!(page.counters().source_nodes_copied, 0);
 }
 
