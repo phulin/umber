@@ -251,9 +251,45 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
+    #[inline(always)]
+    pub(super) fn advance_input_boundary<R>(
+        &mut self,
+        create_control_sequences: bool,
+        finish: &mut impl FnMut(
+            &mut Self,
+            TokenWord,
+            OriginId,
+            bool,
+            ReadSite,
+            crate::fuel::RawDeliveryKind,
+        ) -> Result<R, CommandError>,
+    ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
+        if self
+            .command
+            .roots
+            .input
+            .levels
+            .current
+            .as_ref()
+            .is_some_and(|row| {
+                !matches!(row.storage, InputStorage::Source(_))
+                    && row.frame.position() >= row.frame.limit()
+            })
+        {
+            return match self.command.finish_resident_exhaustion(
+                &mut self.observer,
+                &mut self.immediate_write_retirement,
+            ) {
+                None => Ok(None),
+                Some(boundary) => self.finish_input_boundary(boundary, finish),
+            };
+        }
+        self.advance_source_or_parameter(create_control_sequences, finish)
+    }
+
     #[cold]
     #[inline(never)]
-    pub(super) fn advance_input_boundary<R>(
+    fn advance_source_or_parameter<R>(
         &mut self,
         create_control_sequences: bool,
         finish: &mut impl FnMut(
@@ -280,44 +316,35 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let levels = &mut self.command.roots.input.levels;
         let row = levels.current.as_mut().expect("current input");
         let frame = &mut row.frame;
-        if frame.position() < frame.limit() {
-            let position = frame.start() as usize + frame.position() as usize;
-            let word = match &row.storage {
-                InputStorage::Source(_) => None,
-                crate::input::InputStorage::MacroBody(body) => {
-                    body.body.definition_words().get(position).copied()
-                }
-                crate::input::InputStorage::StoredList(list) => list.words().get(position).copied(),
-                crate::input::InputStorage::List(_) => {
-                    levels.words.get(position).map(|word| word.token_word())
-                }
-                crate::input::InputStorage::MacroArgument { .. } => None,
+        let position = frame.start() as usize + frame.position() as usize;
+        let word = match &row.storage {
+            InputStorage::Source(_) => None,
+            crate::input::InputStorage::MacroBody(body) => {
+                body.body.definition_words().get(position).copied()
             }
-            .ok_or_else(CommandError::input_invariant)?;
-            let slot = word
-                .out_parameter_slot()
-                .ok_or_else(CommandError::input_invariant)?;
-            let (region, span) = match &row.storage {
-                crate::input::InputStorage::MacroBody(body) => (
-                    body.argument_region,
-                    body.argument_len(&levels.arguments, slot),
-                ),
-                _ => (None, None),
-            };
-            let source = frame.source_context();
-            frame.advance_resident();
-            self.command
-                .push_resident_parameter_cursor(slot, region, span, source, &mut self.observer)
-                .map_err(|()| CommandError::input_invariant())?;
-            return Ok(None);
+            crate::input::InputStorage::StoredList(list) => list.words().get(position).copied(),
+            crate::input::InputStorage::List(_) => {
+                levels.words.get(position).map(|word| word.token_word())
+            }
+            crate::input::InputStorage::MacroArgument { .. } => None,
         }
-        let Some(boundary) = self
-            .command
-            .finish_resident_exhaustion(&mut self.observer, &mut self.immediate_write_retirement)
-        else {
-            return Ok(None);
+        .ok_or_else(CommandError::input_invariant)?;
+        let slot = word
+            .out_parameter_slot()
+            .ok_or_else(CommandError::input_invariant)?;
+        let (region, span) = match &row.storage {
+            crate::input::InputStorage::MacroBody(body) => (
+                body.argument_region,
+                body.argument_len(&levels.arguments, slot),
+            ),
+            _ => (None, None),
         };
-        self.finish_input_boundary(boundary, finish)
+        let source = frame.source_context();
+        frame.advance_resident();
+        self.command
+            .push_resident_parameter_cursor(slot, region, span, source, &mut self.observer)
+            .map_err(|()| CommandError::input_invariant())?;
+        Ok(None)
     }
 
     #[cold]

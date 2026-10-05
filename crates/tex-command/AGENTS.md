@@ -272,7 +272,11 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   printed identity and spelling are demanded by their actual consumers.
   Macro chains remain iterative; failure unwinds for host replay.
 - `src/processor/expand/input.rs`: source reads, borrowed source-character
-  admission, and cold line/retirement/recovery transitions. Reads invoke the scalar consumer
+  admission, and cold line/parameter/recovery transitions. Exhausted resident
+  owners retire directly through the reader's inline boundary, with the storage
+  owner's pop/release kept out of its frame. Real terminal/template retention
+  and replay completion still enter their existing cold handlers.
+  Reads invoke the scalar consumer
   without constructing commands or publishing backup authority. Source
   reads stage a file diagnostic coordinate; settled raw delivery publishes it
   only when §342 reaches a command exit.

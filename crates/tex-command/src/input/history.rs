@@ -1378,7 +1378,7 @@ impl<G> InputStack<G> {
 
     /// Releases the actual current resident owner, then restores its parent.
     /// Detached source coordinates do not participate in resident retirement.
-    #[inline(always)]
+    #[inline(never)]
     pub(super) fn pop_resident(&mut self) {
         if let Some(
             row @ InputLevel {

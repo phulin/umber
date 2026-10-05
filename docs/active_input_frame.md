@@ -51,6 +51,13 @@ returns its cold boundary with the existing identity. Do not retire through
 an ambiguous optional result and then inspect the new current owner merely to
 discover whether a pop occurred. Conservation uses this same retirement.
 
+The shared reader retires exhausted resident input at its inline boundary,
+after the word-span borrow ends. The actual storage owner's pop and release
+remains out of the reader's frame. Source acquisition and parameter substitution
+enter one cold handler; retained terminal/template input and replay completion
+keep their existing demands. No ordinary exhaustion passes through the cold
+source/parameter dispatcher.
+
 ## Cold traversal and capture
 
 The semantic level order is suspended levels from oldest to newest followed by
