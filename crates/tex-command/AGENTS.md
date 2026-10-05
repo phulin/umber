@@ -331,8 +331,10 @@ before exhaustion/retirement, and MacroArgument words remain raw.
 - `src/processor/expand_replay.rs` and `src/processor/expand_render.rs`:
   expansion-result insertion plus shared append-oriented TeX command and
   conversion rendering. These contain no expansion driver or semantic owner.
-- `src/processor/mod.rs`: processor construction plus the episode-local
-  observation delivery cursor used at a direct executor boundary; it restores
+- `src/processor/mod.rs`: processor construction and read-only World
+  effect-position and diagnostic-boundary queries that borrow their actual
+  owners without lending unrelated execution owners. Its episode-local
+  observation delivery cursor is used at a direct executor boundary; it restores
   observation ordering but owns no command/input semantics or retry state.
   There is no delivery stamp or backup freshness proof: §325 `back_input`
   accepts the delivered command it is handed, exactly as TeX's `cur_tok`, and
@@ -451,6 +453,8 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   reader enters command state.
 
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement.
+  Macro activation construction folds into its actual caller, including the
+  known absence of arguments for a simple call.
   Ordinary exhausted token, macro-body, and macro-argument rows retire the
   actual current resident owner directly, release its one storage
   owner, and settle observation/alignment/replay completion from copy-small

@@ -50,12 +50,9 @@ pub(super) fn run<G>(
 ) -> Result<MainControlStep, ExecError> {
     let mut completed = *completed_operations;
     let result = (|| {
-        let initial_effect_pos =
-            processor.with_execution_owners(|context, _, _, _, _, _, _, _, _| context.effect_pos());
+        let initial_effect_pos = processor.effect_pos();
         while completed < remaining_operations {
-            let lookahead = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                execution.main_loop_active
-            });
+            let lookahead = processor.host_facts().main_loop_active;
 
             let mut completion = None;
             let observing = processor.is_observed();
@@ -98,16 +95,19 @@ pub(super) fn run<G>(
                         }
                     }
                     completed += 1;
-                    let (mut next_lookahead, host_boundary) = processor.with_execution_owners(
-                        |context, _, effects, _, _, execution, _, _, _| {
-                            // Relax can only flush character shaping or publish a
-                            // demanded scanner/trace diagnostic. It cannot close a
-                            // mode list, start page output or prepare a World job.
-                            let diagnostic_boundary = context.effect_pos() != initial_effect_pos
-                                || effects.has_first_recoverable();
-                            if code == codes::RELAX {
-                                (false, diagnostic_boundary)
-                            } else {
+                    // Relax can flush character shaping or publish a demanded
+                    // diagnostic; it cannot close a list or prepare page output.
+                    let (mut next_lookahead, host_boundary) = if code == codes::RELAX {
+                        (
+                            false,
+                            processor.has_diagnostic_boundary_since(initial_effect_pos),
+                        )
+                    } else {
+                        processor.with_execution_owners(
+                            |context, _, effects, _, _, execution, _, _, _| {
+                                let diagnostic_boundary = context.effect_pos()
+                                    != initial_effect_pos
+                                    || effects.has_first_recoverable();
                                 (
                                     execution.main_loop_active,
                                     diagnostic_boundary
@@ -121,9 +121,9 @@ pub(super) fn run<G>(
                                                 || context
                                                     .page_builder_resume_after_output_pending())),
                                 )
-                            }
-                        },
-                    );
+                            },
+                        )
+                    };
                     if host_boundary {
                         completion = Some(Ok(MainControlStep::Continue));
                         return Ok(ControlFlow::Break(()));
@@ -145,9 +145,7 @@ pub(super) fn run<G>(
                         };
                         completed += appended as usize;
                         if appended != 0 {
-                            next_lookahead = processor.with_execution_owners(
-                                |_, _, _, _, _, execution, _, _, _| execution.main_loop_active,
-                            );
+                            next_lookahead = processor.host_facts().main_loop_active;
                         }
                         if let Some(error) = characters.error {
                             completion = Some(Err(error));

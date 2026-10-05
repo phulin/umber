@@ -26,6 +26,11 @@ from the suspended vector. Source retirement keeps the same projection ordering
 and occupied-buffer bookkeeping. Macro arguments still retire above their
 owning body; only the body's retirement returns its final argument region.
 
+Macro-frame construction folds into its actual activation caller.
+Parameterless calls need no separate argument-publication call frame. Input
+conservation and draining genuinely depleted owners remain the existing
+transitions.
+
 The final traced-word vector, argument arena, live parameter count, source-slot
 owners, input-level identities and cold context epoch remain the existing
 owners. This change adds no allocator, arena, reference acquisition, retained

@@ -359,6 +359,7 @@ impl<G> CommandState<G> {
     ///
     /// The body row owns the final argument region and immutable definition span.
     /// Retirement returns the region and subtracts its actual parameter count.
+    #[inline(always)]
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,

@@ -617,6 +617,20 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
         &self.host.facts
     }
 
+    /// Reads the actual World effect position without lending execution owners.
+    #[must_use]
+    #[inline(always)]
+    pub fn effect_pos(&self) -> tex_state::EffectPos {
+        self.state.effect_pos()
+    }
+
+    /// Live diagnostic demands produced by scanning, expansion or execution.
+    #[must_use]
+    #[inline(always)]
+    pub fn has_diagnostic_boundary_since(&self, position: tex_state::EffectPos) -> bool {
+        self.state.effect_pos() != position || self.diagnostic_effects.has_first_recoverable()
+    }
+
     /// Reborrows the actual owners for a completed source-free native command.
     /// Synchronous scanners have returned before their caller can invoke this.
     /// The observer is reborrowed alongside the actual semantic owners, so

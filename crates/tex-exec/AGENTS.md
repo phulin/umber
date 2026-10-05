@@ -92,6 +92,9 @@ not allocate a vector merely to publish one already-complete node.
   Terminal dispatch reads a scalar key without an optional wrapper or fallback
   font selector. Entry inspects the actual host facts directly; it lends
   mutable execution owners only when pending characters require a real flush.
+  Fetch-role queries borrow actual host facts directly. Relax continuation
+  reads the live World effect position and recoverable diagnostic demand
+  without a mutable execution-owner callback.
 - `src/main_control/interpreter/box_inputs.rs`: the one native `scan_box`
   operand selection and actual destinations. Direct register handoffs create
   no temporary construction mark; lastbox removal precedes destination

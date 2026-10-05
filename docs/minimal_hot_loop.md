@@ -80,6 +80,11 @@ within the live processor. Deferred show-completion and outer-page-build
 fields are removed; insertion closure builds its page at the actual producer. Real output, diagnostics, tracing,
 observation and host-budget demands publish at their consuming boundaries.
 
+Relax continuation reads the live World effect position and first recoverable
+diagnostic demand directly. Fetch-role queries borrow the actual execution
+facts. Neither query lends the full set of mutable semantic owners; genuine
+output and execution demands retain their scoped owner loans.
+
 The replacement must pass the complete native, profiling and authoritative
 formatting/lint gates and preserve the ordered canonical divergence baseline.
 Frozen binaries are measured against the pre-replacement engine and pinned
@@ -147,7 +152,9 @@ independent lifetimes. Native lease release walks its reserved free list
 iteratively; abandoned capture and aggregate restore release their own actual
 owners. Returned vector capacity stays with the engine and is excluded from
 captures. Ordinary parameterless macros acquire no argument region or matcher
-carrier. Their genuine body frame and invocation origin remain.
+carrier. Their genuine body frame and invocation origin remain. Activation
+construction folds into its caller, so a known parameterless call does not
+carry the matcher's argument-publication branch through a separate function.
 
 The expansion consumer owns the shared reader’s semantic back edge. A macro
 activates directly from its resolved word and continues that same read loop;
@@ -160,10 +167,10 @@ reader invokes its actual expansion consumer inline; recursive primitive
 expansion and parameter matching retain their own exceptional call frames. Each reader
 clears its actual destination at its own completion or failure boundary; no
 generic result-settlement adapter repeats that cleanup after the reader
-returns. Main control folds its real fetch label into its retained command
-consumer, but production fetching still returns `CurrentCommand` records.
-Moving the complete sole switch into synchronous native consumption remains
-unimplemented; the exported consumer API alone does not remove that handoff.
+returns. Main control consumes ordinary spelling and native meaning directly
+in its sole synchronous mode/command switch. Ordinary terminal consumption
+constructs no `CurrentCommand`; exceptional delivery, recovery and observation
+retain only the command evidence their real consumers require.
 
 Assignments share one mutation policy. A local first write at a new TeX level
 owns a native group preimage. A first touch in a retained host checkpoint
