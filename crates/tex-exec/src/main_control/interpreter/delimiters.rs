@@ -99,7 +99,7 @@ pub(super) fn close<G>(
             )?;
             Ok::<_, ExecError>((content, closed))
         })?;
-    groups::finish_native_group_leave(processor, GroupKind::MathLeft, "math left group")?;
+    groups::leave(processor, GroupKind::MathLeft, "math left group")?;
     processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
         execution
             .active_math_left_boundaries

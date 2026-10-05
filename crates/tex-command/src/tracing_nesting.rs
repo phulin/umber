@@ -73,7 +73,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     /// e-TeX 2.6 [23.328]'s `group_warning`, emitted immediately before an
     /// `unsave` closes a group that was already open when this file began.
-    pub fn warn_cross_file_group_close(
+    pub(crate) fn warn_cross_file_group_close(
         &mut self,
         group_depth: usize,
         kind: &str,

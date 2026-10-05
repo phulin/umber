@@ -47,7 +47,7 @@ fn open_choice_branch<G>(
 pub(super) fn close_choice<G>(
     processor: &mut Processor<'_, '_, G>,
 ) -> Result<MainControlStep, ExecError> {
-    groups::finish_native_group_leave(processor, GroupKind::MathChoice, "math choice group")?;
+    groups::leave(processor, GroupKind::MathChoice, "math choice group")?;
     let complete =
         processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
             let mut level = crate::box_runtime::commit_current_list(
@@ -267,7 +267,7 @@ fn accept_field<G>(
 pub(super) fn close_field<G>(
     processor: &mut Processor<'_, '_, G>,
 ) -> Result<MainControlStep, ExecError> {
-    groups::finish_native_group_leave(processor, GroupKind::Math, "math group")?;
+    groups::leave(processor, GroupKind::Math, "math group")?;
     processor.with_execution_owners(|context, _, effects, fuel, _, execution, _, _, _| {
         let target = *execution
             .active_math_fields

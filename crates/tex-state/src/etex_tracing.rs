@@ -22,6 +22,7 @@ impl<G> CommandContext<'_, G> {
     /// `level` is e-TeX's `qo(cur_level)`: the number of groups open
     /// *including* the one just entered, matching `\currentgrouplevel` and
     /// the level `\showgroups` prints for the same frame.
+    #[inline(always)]
     pub fn trace_group_enter(
         &self,
         effects: &mut crate::diagnostic::DiagnosticEffects,
@@ -32,21 +33,7 @@ impl<G> CommandContext<'_, G> {
         if self.int_param(IntParam::TRACING_GROUPS) <= 0 {
             return;
         }
-        let mut diagnostic = self.begin_diagnostic(effects);
-        diagnostic
-            .print_char('{')
-            .print("entering ")
-            .print(kind.group_text())
-            .print(" (level ")
-            .print_int(saturating_i32(level))
-            .print_char(')');
-        if entered_line != 0 {
-            diagnostic
-                .print(" at line ")
-                .print_int(saturating_i32(entered_line));
-        }
-        diagnostic.print_char('}');
-        diagnostic.end(false);
+        self.print_group_trace(effects, kind, level, entered_line, true);
     }
 
     /// e-TeX 2.6 [19.282]'s `group_trace(true)`, called when
@@ -55,6 +42,7 @@ impl<G> CommandContext<'_, G> {
     ///
     /// `level` and `entered_line` were captured from the group being closed
     /// before restoration popped its frame.
+    #[inline(always)]
     pub fn trace_group_leave(
         &self,
         effects: &mut crate::diagnostic::DiagnosticEffects,
@@ -65,17 +53,34 @@ impl<G> CommandContext<'_, G> {
         if self.int_param(IntParam::TRACING_GROUPS) <= 0 {
             return;
         }
+        self.print_group_trace(effects, kind, level, entered_line, false);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn print_group_trace(
+        &self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+        kind: GroupKind,
+        level: u32,
+        entered_line: u32,
+        entering: bool,
+    ) {
         let mut diagnostic = self.begin_diagnostic(effects);
         diagnostic
             .print_char('{')
-            .print("leaving ")
+            .print(if entering { "entering " } else { "leaving " })
             .print(kind.group_text())
             .print(" (level ")
             .print_int(saturating_i32(level))
             .print_char(')');
         if entered_line != 0 {
             diagnostic
-                .print(" entered at line ")
+                .print(if entering {
+                    " at line "
+                } else {
+                    " entered at line "
+                })
                 .print_int(saturating_i32(entered_line));
         }
         diagnostic.print_char('}');

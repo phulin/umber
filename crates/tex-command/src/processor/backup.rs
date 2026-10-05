@@ -288,7 +288,19 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut tex_state::diagnostic::DiagnosticEffects,
             &tex_state::GroupRestorationEntry<G>,
         ),
-    ) -> Result<tex_state::GroupFrame, CommandError> {
+    ) -> Result<(), CommandError> {
+        let (level, boundary) = {
+            let frames = self.state.group_frames();
+            (
+                frames.len(),
+                frames
+                    .last()
+                    .map(|frame| (frame.kind(), frame.entered_line())),
+            )
+        };
+        if let Some((kind, entered_line)) = boundary {
+            self.warn_cross_file_group_close(level, kind.group_text(), entered_line);
+        }
         let etex = self.profile().capabilities().supports_etex();
         let command = &mut *self.command;
         let host = &mut self.host;
@@ -297,8 +309,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let effects = &mut *self.diagnostic_effects;
         let mut linked = None;
         let mut failure = None;
-        let frame = self
-            .state
+        self.state
             .end_group_observed(kind, |state, event| match event {
                 tex_state::GroupUnsaveEvent::Restoration(entry) => restore(state, effects, entry),
                 tex_state::GroupUnsaveEvent::AfterGroup(word) if failure.is_none() => {
@@ -355,7 +366,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         if let Some(error) = failure {
             return Err(error);
         }
-        Ok(frame)
+        self.state.trace_group_leave(
+            effects,
+            kind,
+            u32::try_from(level).unwrap_or(u32::MAX),
+            boundary.map_or(0, |(_, entered_line)| entered_line),
+        );
+        Ok(())
     }
 
     /// Canonical backing operation used by `\\noexpand` for one replayed

@@ -217,7 +217,7 @@ fn finish_inline<G>(processor: &mut Processor<'_, '_, G>) -> Result<(), ExecErro
             Ok::<_, ExecError>(())
         },
     )?;
-    groups::finish_native_group_leave(processor, GroupKind::MathShift, "math shift group")?;
+    groups::leave(processor, GroupKind::MathShift, "math shift group")?;
     processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
         execution.active_math_shifts.pop();
     });
@@ -260,7 +260,7 @@ fn finish_equation_number<G>(processor: &mut Processor<'_, '_, G>) -> Result<(),
                 Some(command),
             )
         });
-    groups::finish_native_group_leave(processor, GroupKind::MathShift, "equation number group")?;
+    groups::leave(processor, GroupKind::MathShift, "equation number group")?;
     processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
         execution.active_math_shifts.pop();
     });

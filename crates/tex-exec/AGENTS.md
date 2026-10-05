@@ -13,7 +13,13 @@ flushes. Ordinary group open/close must not repeat this work or construct a
 native-group preparation/result wrapper. Native delivery without an
 exceptional record performs no observation check at continuation.
 
-Group close drives the same `CommandProcessor::end_group` native stack walk in the sole direct dispatcher. Its diagnostic callback renders each restoration while the saved owners are live; aftergroup words enter final input during unsave. There is no restoration receipt, token result vector, or delayed aftergroup scheduling helper. Ordinary, observed, diagnostic, and nested commands use that same group seam.
+Group close drives the same `CommandProcessor::end_group` native stack walk in
+the sole interpreter. That actual owner prints the cross-file warning before
+restoration, renders saved values while their owners are live, admits aftergroup
+words directly, and traces leaving through the restored live parameter. The
+executor receives only completion or failure; no full group frame, restoration
+receipt, token result vector or finishing stage crosses this seam. Ordinary,
+observed, diagnostic and nested commands use it alike.
 
 Fixed-size page publications pass their actual node arrays directly into the
 admitted state owner. Box, math, discretionary and indentation wrappers must

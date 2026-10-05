@@ -2,35 +2,16 @@
 use super::*;
 
 /// Unsave through the actual scanner that owns aftergroup input delivery.
-pub(super) fn finish_native_group_leave<G, Facts: tex_command::CommandHostFacts<G>>(
+pub(super) fn leave<G, Facts: tex_command::CommandHostFacts<G>>(
     processor: &mut CommandProcessor<'_, '_, G, Facts>,
     kind: GroupKind,
     error_context: &'static str,
 ) -> Result<MainControlStep, ExecError> {
-    let (level, frame) =
-        processor.with_execution_owners(|context, _, _, _, _observer, _execution, _, _, _| {
-            let frames = context.group_frames();
-            (frames.len(), frames.last().copied())
-        });
-    if let Some(frame) = frame {
-        processor.warn_cross_file_group_close(
-            level,
-            frame.kind().group_text(),
-            frame.entered_line(),
-        );
-    }
-    let result = processor.end_group(kind, crate::assignments::tracing::trace_group_restoration);
-    let frame = result.map_err(|_| ExecError::MissingToken {
-        context: error_context,
-    })?;
-    processor.with_execution_owners(|context, _, effects, _, _observer, _execution, _, _, _| {
-        context.trace_group_leave(
-            effects,
-            frame.kind(),
-            u32::try_from(level).unwrap_or(u32::MAX),
-            frame.entered_line(),
-        );
-    });
+    processor
+        .end_group(kind, crate::assignments::tracing::trace_group_restoration)
+        .map_err(|_| ExecError::MissingToken {
+            context: error_context,
+        })?;
     Ok(MainControlStep::Continue)
 }
 
@@ -48,7 +29,7 @@ pub(super) fn close_tex_group<G>(
     match (code, group) {
         (codes::CHAR_END_GROUP, Some(GroupKind::Simple))
         | (codes::PRIMITIVE_END_GROUP, Some(GroupKind::SemiSimple)) => {
-            finish_native_group_leave(
+            leave(
                 processor,
                 group.expect("selected native group"),
                 "ordinary group",
@@ -218,7 +199,7 @@ fn close_output<G>(processor: &mut Processor<'_, '_, G>) -> Result<MainControlSt
             Ok::<_, ExecError>((level, output_context))
         },
     )?;
-    finish_native_group_leave(processor, GroupKind::Output, "output routine group")?;
+    leave(processor, GroupKind::Output, "output routine group")?;
     processor.with_execution_owners(|context, _, effects, _, _, execution, _, _, _| {
         execution.main_loop_active = false;
         execution.boxes.output_routine_active = false;

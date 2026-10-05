@@ -307,7 +307,7 @@ pub(super) fn close_noalign<G>(
             )
         },
     )?;
-    groups::finish_native_group_leave(processor, GroupKind::NoAlign, "noalign group")?;
+    groups::leave(processor, GroupKind::NoAlign, "noalign group")?;
     processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
         execution
             .active_alignment
@@ -322,9 +322,9 @@ fn finish<G>(
     processor: &mut Processor<'_, '_, G>,
     receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<MainControlStep, ExecError> {
-    groups::finish_native_group_leave(processor, GroupKind::Align, "align1")
+    groups::leave(processor, GroupKind::Align, "align1")
         .map_err(|_| ExecError::Fatal(FatalError::confusion("align1")))?;
-    groups::finish_native_group_leave(processor, GroupKind::Align, "align0")
+    groups::leave(processor, GroupKind::Align, "align0")
         .map_err(|_| ExecError::Fatal(FatalError::confusion("align0")))?;
     let display = processor.with_execution_owners(
         |context, command, effects, fuel, observer, execution, _, _, _| {

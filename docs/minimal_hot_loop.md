@@ -22,6 +22,14 @@ The cells retain their existing values, group levels and checkpoint epochs;
 assignment, first-touch journals and restoration continue to address those
 same cells. No tracing cache or deferred synchronization is introduced.
 
+Native unsave owns its cross-file warning before restoration, the actual saved
+value and aftergroup deliveries, and group-leave tracing after restoration.
+The executor receives only completion or failure; it does not collect a full
+group frame to print two scalar fields. Group tracing tests the live parameter
+inline and enters its cold printer only when demanded. The leave guard reads
+the restored parameter, preserving locally changed tracing settings without a
+cache or a separate finishing stage.
+
 ## Persistent interpreter replacement
 
 The command-processing core is replaced as one implementation. The existing

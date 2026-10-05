@@ -75,7 +75,7 @@ pub(super) fn close<G>(
             ))
         },
     )?;
-    groups::finish_native_group_leave(processor, group, "box group")?;
+    groups::leave(processor, group, "box group")?;
     let step = processor.with_execution_owners(
         |context, command, effects, fuel, observer, execution, _, _, _| {
             let diagnostic = crate::pack_report::PackDiagnosticContext {
@@ -253,7 +253,7 @@ fn close_insertion<G>(
                 ))
             },
         )?;
-    groups::finish_native_group_leave(processor, GroupKind::Insert, "insert group")?;
+    groups::leave(processor, GroupKind::Insert, "insert group")?;
     processor.with_execution_owners(
         |context, command, effects, fuel, observer, execution, _, _, _| {
             let mut level = crate::box_runtime::commit_current_list(

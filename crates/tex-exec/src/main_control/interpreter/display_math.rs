@@ -131,7 +131,7 @@ pub(super) fn finish<G>(
                 Ok::<_, ExecError>(directions)
             },
         )?;
-    groups::finish_native_group_leave(processor, GroupKind::MathShift, "display math group")?;
+    groups::leave(processor, GroupKind::MathShift, "display math group")?;
     processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
         execution.active_math_shifts.pop();
     });
@@ -165,7 +165,7 @@ pub(super) fn finish_alignment<G>(
             )?;
             Ok::<_, ExecError>(interrupt.active_directions)
         })?;
-    groups::finish_native_group_leave(processor, GroupKind::MathShift, "display alignment group")?;
+    groups::leave(processor, GroupKind::MathShift, "display alignment group")?;
     processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
         execution.active_math_shifts.pop();
     });

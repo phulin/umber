@@ -523,6 +523,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   executor-facing recovery operations, and scanner-status outer/runaway
   interception respectively. They share the live processor directly and add
   no recovery queue, command slot, or runtime dispatch layer.
+  `backup.rs` also owns native unsave: cross-file warning, saved-value
+  observation, actual aftergroup input and leave tracing through the restored
+  parameter. It returns completion or failure without a group-frame packet.
 - `src/processor/alignment_interception.rs`: alignment-aware delivery entry,
   typed delimiter/v-template handoff, and active-cell input proofs over the
   canonical alignment state; it never reclassifies input in the executor.

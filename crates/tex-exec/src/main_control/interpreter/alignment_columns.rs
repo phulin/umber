@@ -81,7 +81,7 @@ pub(super) fn finish_cell<G>(
         delimiter
     };
     if delimiter != AlignmentCellDelimiter::Span {
-        groups::finish_native_group_leave(processor, GroupKind::Align, "alignment entry group")?;
+        groups::leave(processor, GroupKind::Align, "alignment entry group")?;
         processor.with_execution_owners(|context, command, effects, _, _, _, _, _, _| {
             enter_group(context, command, effects, GroupKind::Align)
         });

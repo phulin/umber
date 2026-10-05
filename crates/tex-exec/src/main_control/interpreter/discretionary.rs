@@ -79,7 +79,7 @@ pub(super) fn close_part<G>(
                 .map(|index| context.slice_page_node_span(part, index..part_len).list());
             Ok::<_, ExecError>((nodes, deleted, prefix_end))
         })?;
-    groups::finish_native_group_leave(processor, GroupKind::Disc, "discretionary group")?;
+    groups::leave(processor, GroupKind::Disc, "discretionary group")?;
     let complete = processor.with_execution_owners(
         |context, command, effects, _, _, execution, _, _, _| {
             let active =
