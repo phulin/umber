@@ -55,10 +55,12 @@ The following are explicitly rejected:
   generation; and
 - changing the restart boundary to make reclamation easier.
 
-The generic `SealedBatch<Lane>` already used to transfer one freshly built
-typed lane is an operation result, not a page-liveness batch. It may remain
-move-only. It must not acquire dependencies, reference counts, checkpoint
-leases, or independent long-term ownership.
+The former generic `SealedBatch` and `DetachedBatch` transfer protocol is
+deleted. No production caller seals such a batch, so arenas have no pending
+batch state or batch serial counter. Actual construction marks select suffixes;
+paired region preflight proves their ownership and dependency floors before
+direct transfer. Builders, operation marks, checkpoint forks, and region
+generations remain the real lifecycle authorities.
 
 A chunk envelope retains its first two live logical keys inline. A newly built box
 usually needs a body block, a wrapper block, and an annex block; admitting either actual
@@ -73,6 +75,20 @@ candidate exists; their union must not inflate every ordinary box owner.
 Candidate acceptance or rejection consumes that allocation, and region
 retirement releases its one or three actual envelopes directly without first
 building a vector of owners.
+
+Opening and transferring a box construction validates each paired lane before
+either lane changes. The exclusive region and pool borrows then carry that
+proof through sealing; sealing must not repeat owner, tail, and boundary
+admission. The same sealing operation serves checked public boundaries and
+already-preflighted paired transitions. No retained proof cache is needed.
+
+The move-only closure-build mark is the construction authority. Transfer callers
+must first consume their live mode and operation roots and check retained page
+roots. A receipt copied from that same mark cannot prove root consumption and
+is not part of the design. There is no closure receipt or per-region build
+serial; region generations, batch boundaries, chunk incarnations, dependency
+floors, and the move-only mark provide the actual checks. A rejected paired
+transfer returns the original mark before changing either lane.
 
 A move of the entire envelope transfers that envelope directly. Splitting at
 zero and appending to an empty owner do not allocate or rebuild key and gap
@@ -299,8 +315,8 @@ existing recursive copier builds a fresh destination: that pass already
 visits every selected occurrence and gives repeated source children separate
 destination storage. A fresh durable region produced by
 `copy_page_root_to_durable` or `copy_durable_owner` is a potential issuer.
-`finish_built_page_root_to_durable` cannot issue it from its consumed-roots
-receipt alone, since the receipt does not count incoming child edges or prove
+`finish_built_page_root_to_durable` cannot issue it from its construction mark
+alone, since the mark does not count incoming child edges or prove
 that every allocated record is reachable. Retained page regions and arbitrary
 owner-relative roots continue through the recursive copier.
 
@@ -1358,8 +1374,8 @@ reintroducing `Vec<Node>` or rebuilding their transforms.
    and any remaining arbitrary cross-region node reference.
 7. Delete or permanently reject `PageMaterialBatch`, `PageMaterialRoot`, batch
    dependencies/counts, root registries/censuses, and compatibility
-   materialization seams. Keep generic operation-local `SealedBatch` promotion
-   only if it remains exclusive and dependency-free.
+   materialization seams, including the unused generic sealed/detached batch
+   protocol and its pending state.
 8. Add the counters, allocation gates, exact lifecycle tests, full semantic
    suite, and quality gates before declaring the node lifetime migration
    complete.

@@ -86,14 +86,11 @@ impl<T, Lane> ForkArena<T, Lane> {
     {
         self.validate_pool(pool)?;
         destination.validate_pool(pool)?;
-        if self.active_builder || self.pending_batch.is_some() {
+        if self.active_builder {
             return Err(ForkArenaError::InvalidRegion);
         }
         if self.owner == destination.owner || destination.active_builder {
             return Err(ForkArenaError::InvalidRegion);
-        }
-        if destination.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
         }
         let prefix_len = match &self.ownership {
             ForkOwnership::Accepted(_) => self.base_payload_chunks as usize,
@@ -151,16 +148,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         payload_start: usize,
         floors: SuffixFloorRebase,
     ) -> usize {
-        self.bind_pool(pool)
-            .expect("suffix move source pool was preflighted");
-        destination
-            .bind_pool(pool)
-            .expect("suffix move destination pool was preflighted");
-        self.seal_boundary(pool)
-            .expect("suffix move source boundary was preflighted");
-        destination
-            .seal_boundary(pool)
-            .expect("suffix move destination boundary was preflighted");
+        self.seal_proved_boundary(pool);
+        destination.seal_proved_boundary(pool);
         let payload = self
             .detach_suffix(payload_start)
             .expect("suffix move range was preflighted");

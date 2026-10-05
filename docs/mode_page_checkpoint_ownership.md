@@ -61,10 +61,10 @@ Active paragraph, math, alignment, and box builders own exclusive typed chunk
 regions. Their persistent `ActiveListBuilder` state is coordinate-only: every
 mutation temporarily presents the one caller-owned pool and lane, and an open
 builder prevents checkpoint sealing. Appending an immutable page/durable list
-adds only its canonical ranges; replacement nodes are appended once. Sealing a
-complete output produces a move-only `SealedBatch`; lane
-promotion transfers its whole chunk envelopes and canonical range descriptors
-to page-material ownership while retaining stable raw chunk keys. Mixed
+adds only its canonical ranges; replacement nodes are appended once. Completed
+construction uses a move-only paired node/annex mark and direct region transfer
+while retaining stable raw chunk keys. The unused generic sealed/detached batch
+protocol and its per-arena pending state are deleted. Mixed
 transforms reuse unchanged ranges and append replacement nodes once. Random
 access binary-searches cumulative range endpoints, while a sequential cursor
 retains its scalar position across short-lived arena borrows.

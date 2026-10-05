@@ -83,6 +83,8 @@ impl Drop for DropTracked {
 }
 
 impl super::RegionValue<ActiveLane> for u32 {
+    const HAS_INLINE_REGION_LISTS: bool = false;
+
     fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<ActiveLane>)) {}
 
     fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
@@ -103,12 +105,16 @@ impl super::RegionValue<LeafLane> for u32 {
 }
 
 impl super::RegionValue<PageLane> for u32 {
+    const HAS_INLINE_REGION_LISTS: bool = false;
+
     fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<PageLane>)) {}
 
     fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
 }
 
 impl super::RegionValue<ActiveLane> for u64 {
+    const HAS_INLINE_REGION_LISTS: bool = false;
+
     fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<ActiveLane>)) {}
 
     fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
@@ -1940,18 +1946,6 @@ fn exhaustive_test_audit_rejects_unconstructible_length_and_chain_roots() {
         arena.audit_owned_list(&pool, root),
         Err(ForkArenaError::InvalidRange)
     );
-
-    let mut ingress_pool = ChunkPool::<u32>::with_chunk_bytes(1);
-    let mut ingress_arena = ForkArena::<u32, ActiveLane>::new();
-    let batch = ingress_arena
-        .begin_batch(&mut ingress_pool)
-        .expect("cold ingress boundary");
-    let mut malformed = list(&mut ingress_arena, &mut ingress_pool, [4, 5, 6]);
-    malformed.len += 1;
-    assert!(matches!(
-        ingress_arena.seal_batch(&mut ingress_pool, batch, vec![malformed]),
-        Err(ForkArenaError::InvalidRange)
-    ));
 }
 
 #[test]
@@ -2224,7 +2218,7 @@ fn shared_tail_noop_rollback_keeps_exclusive_mutation_rejected() {
 }
 
 #[test]
-fn batch_sealing_rejects_unfinished_dependency_metadata() {
+fn suffix_transfer_rejects_unfinished_dependency_metadata() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(32);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
     let mark = arena.begin_batch(&mut pool).expect("batch boundary");
@@ -2234,8 +2228,9 @@ fn batch_sealing_rejects_unfinished_dependency_metadata() {
         .expect("owned chunk")
         .dependency_metadata_complete = false;
 
+    let destination = arena.empty_lane::<PageLane>();
     assert_eq!(
-        arena.seal_batch(&mut pool, mark, vec![root]).map(|_| ()),
+        arena.preflight_suffix_move(&pool, &destination, mark.payload_start(), &[root], None),
         Err(ForkArenaError::InvalidRegion),
         "an incomplete publication cannot be repaired at seal time"
     );
@@ -2243,10 +2238,9 @@ fn batch_sealing_rejects_unfinished_dependency_metadata() {
         .validate_exclusive_lineage_mut(root.tail.raw, arena.owner, arena.lineage)
         .expect("owned chunk")
         .dependency_metadata_complete = true;
-    let batch = arena
-        .seal_batch(&mut pool, mark, vec![root])
-        .expect("completed publication seals");
-    arena.cancel_batch(batch).expect("cancel sealed test batch");
+    arena
+        .preflight_suffix_move(&pool, &destination, mark.payload_start(), &[root], None)
+        .expect("completed publication transfers");
 }
 
 #[test]
@@ -2980,7 +2974,7 @@ fn rejected_candidate_truncates_detached_active_builder_output() {
 }
 
 #[test]
-fn sealed_batch_promotes_whole_chunks_between_typed_lanes() {
+fn suffix_transfer_moves_whole_chunks_between_typed_lanes() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
     let mut active = ForkArena::<u32, ActiveLane>::new();
     let mut page = active.empty_lane::<PageLane>();
@@ -2991,16 +2985,22 @@ fn sealed_batch_promotes_whole_chunks_between_typed_lanes() {
     let right = list(&mut active, &mut pool, [3, 4, 5]);
     let left_logical_words = left.words();
     let right_logical_words = right.words();
-    let batch = active
-        .seal_batch(&mut pool, region, vec![left, right])
-        .expect("sealed batch");
-    assert!(matches!(
-        active.begin_builder(&mut pool),
-        Err(ForkArenaError::ActiveBatch)
-    ));
-    let promoted = active
-        .promote_batch_into(&mut pool, &mut page, batch)
-        .expect("whole-chunk promotion");
+    active
+        .preflight_suffix_move(&pool, &page, region.payload_start(), &[left, right], None)
+        .expect("whole suffix preflight");
+    active.move_proved_suffix_into(
+        &mut pool,
+        &mut page,
+        region.payload_start(),
+        super::SuffixFloorRebase {
+            nodes: true,
+            paired: None,
+        },
+    );
+    let promoted = [
+        super::rebrand_list(left, page.owner),
+        super::rebrand_list(right, page.owner),
+    ];
     assert_eq!(promoted[0].words(), left_logical_words);
     assert_eq!(promoted[1].words(), right_logical_words);
     assert_eq!(promoted.len(), 2);
@@ -3563,7 +3563,7 @@ fn logical_positions_are_pool_stable_and_foreign_spaces_fail_closed() {
     );
 }
 
-fn detached_promotion_allocation_cost(prefix_chunks: usize) -> AllocationMeasurement {
+fn suffix_transfer_allocation_cost(prefix_chunks: usize) -> AllocationMeasurement {
     const ALLOCATION_OWNER: usize = 15;
 
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(std::mem::size_of::<Option<u32>>());
@@ -3579,31 +3579,30 @@ fn detached_promotion_allocation_cost(prefix_chunks: usize) -> AllocationMeasure
     let mut source = ForkArena::<u32, ActiveLane>::new();
     let mark = source.begin_batch(&mut pool).expect("transfer boundary");
     let root = list(&mut source, &mut pool, [41]);
-    let batch = source
-        .seal_batch(&mut pool, mark, vec![root])
-        .expect("sealed transfer batch");
-    let detached = source
-        .detach_batch(&mut pool, batch)
-        .map_err(|failure| failure.error)
-        .expect("detached transfer batch");
     let mut destination = source.empty_lane::<PageLane>();
 
     let before = thread_measurement(ALLOCATION_OWNER);
-    let (promoted, scanned) = {
+    {
         let _scope = scope(ALLOCATION_OWNER);
         source
-            .promote_detached_batch_into(&mut pool, &mut destination, detached)
-            .map_err(|failure| failure.error)
-            .expect("detached batch promotion")
-    };
+            .preflight_suffix_move(&pool, &destination, mark.payload_start(), &[root], None)
+            .expect("suffix preflight");
+        source.move_proved_suffix_into(
+            &mut pool,
+            &mut destination,
+            mark.payload_start(),
+            super::SuffixFloorRebase {
+                nodes: true,
+                paired: None,
+            },
+        );
+    }
     let after = thread_measurement(ALLOCATION_OWNER);
 
-    assert_eq!(scanned, 0, "promotion rewrites no moved payload value");
     assert_eq!(destination.counters().source_nodes_copied, 0);
-    assert_eq!(promoted.len(), 1);
     assert_eq!(
         destination
-            .list(&pool, promoted[0])
+            .list(&pool, super::rebrand_list(root, destination.owner))
             .expect("promoted root")
             .get(0),
         Some(&41)
@@ -3615,12 +3614,12 @@ fn detached_promotion_allocation_cost(prefix_chunks: usize) -> AllocationMeasure
 }
 
 #[test]
-fn detached_promotion_allocation_is_independent_of_shared_pool_slot_depth() {
-    let low = detached_promotion_allocation_cost(0);
-    let high = detached_promotion_allocation_cost(4_096);
+fn suffix_transfer_allocation_is_independent_of_shared_pool_slot_depth() {
+    let low = suffix_transfer_allocation_cost(0);
+    let high = suffix_transfer_allocation_cost(4_096);
 
     eprintln!(
-        "DETACHED_PROMOTION_ALLOCATION_SCALE resolver_entry_bytes={} chunk_meta_bytes={} low_calls={} low_bytes={} high_slot=4096 high_calls={} high_bytes={}",
+        "SUFFIX_TRANSFER_ALLOCATION_SCALE resolver_entry_bytes={} chunk_meta_bytes={} low_calls={} low_bytes={} high_slot=4096 high_calls={} high_bytes={}",
         std::mem::size_of::<Option<(u32, usize)>>(),
         std::mem::size_of::<super::ChunkMeta>(),
         low.calls,
@@ -3636,7 +3635,7 @@ fn detached_promotion_allocation_is_independent_of_shared_pool_slot_depth() {
 }
 
 #[test]
-fn failed_high_slot_promotion_reattaches_the_exact_source_suffix() {
+fn foreign_pool_suffix_transfer_rejects_before_detaching_source() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(std::mem::size_of::<Option<u32>>());
     let mut filler = ForkArena::<u32, ActiveLane>::new();
     let mut filler_builder = filler.begin_builder(&mut pool).expect("filler builder");
@@ -3648,14 +3647,6 @@ fn failed_high_slot_promotion_reattaches_the_exact_source_suffix() {
     let mut source = ForkArena::<u32, ActiveLane>::new();
     let mark = source.begin_batch(&mut pool).expect("transfer boundary");
     let root = list(&mut source, &mut pool, [71, 73]);
-    let batch = source
-        .seal_batch(&mut pool, mark, vec![root])
-        .expect("sealed transfer batch");
-    let detached = source
-        .detach_batch(&mut pool, batch)
-        .map_err(|failure| failure.error)
-        .expect("detached transfer batch");
-
     let mut foreign_pool = ChunkPool::<u32>::with_chunk_bytes(32);
     let mut destination = source.empty_lane::<PageLane>();
     let mut foreign_builder = destination
@@ -3663,19 +3654,16 @@ fn failed_high_slot_promotion_reattaches_the_exact_source_suffix() {
         .expect("foreign destination builder");
     foreign_builder.push(99).expect("foreign append");
     let foreign_root = foreign_builder.finish();
-    let failure = source
-        .promote_detached_batch_into(&mut pool, &mut destination, detached)
-        .expect_err("foreign-bound destination rejects the transfer");
-    assert_eq!(failure.error, ForkArenaError::InvalidChunk);
-    assert!(
-        source.reattach_batch(&mut pool, failure.batch).is_ok(),
-        "failed transfer returns its exact suffix"
+    assert_eq!(
+        source.preflight_suffix_move(&pool, &destination, mark.payload_start(), &[root], None),
+        Err(ForkArenaError::InvalidChunk),
+        "foreign-bound destination rejects before either owner changes"
     );
 
     assert_eq!(
         source
             .list(&pool, root)
-            .expect("reattached source root")
+            .expect("unchanged source root")
             .iter()
             .copied()
             .collect::<Vec<_>>(),
@@ -3709,12 +3697,19 @@ fn sequence_summaries_move_atomically_with_promoted_direct_chunks() {
         }
         builder.finish()
     };
-    let batch = active
-        .seal_batch(&mut pool, region, vec![source])
-        .expect("sealed batch");
-    let promoted = active
-        .promote_batch_into(&mut pool, &mut page, batch)
-        .expect("promote summary storage")[0];
+    active
+        .preflight_suffix_move(&pool, &page, region.payload_start(), &[source], None)
+        .expect("summary suffix preflight");
+    active.move_proved_suffix_into(
+        &mut pool,
+        &mut page,
+        region.payload_start(),
+        super::SuffixFloorRebase {
+            nodes: true,
+            paired: None,
+        },
+    );
+    let promoted = super::rebrand_list(source, page.owner);
     let (middle, summary, work) = page
         .slice_list_summarized(&mut pool, promoted, 3..61, |value| value.wrapping_add(100))
         .expect("summarized promoted slice");

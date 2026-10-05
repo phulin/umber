@@ -19,9 +19,9 @@ use tex_dense_prefix::Superblock;
 
 use crate::node_sequence::SemanticSequenceIdentity;
 
-mod batch_transfer;
 mod checkpoint_lifecycle;
 mod compound_transfer;
+mod construction_boundary;
 mod consumed_window;
 mod exact_chunks;
 mod front;
@@ -2773,52 +2773,6 @@ impl<Lane> core::fmt::Debug for CheckpointMark<Lane> {
     }
 }
 
-/// Exclusive whole-chunk suffix available for semantic-lane promotion.
-pub struct SealedBatch<Lane> {
-    arena: u32,
-    serial: u64,
-    payload_start: u32,
-    payload_end: u32,
-    lists: Vec<ArenaListId<Lane>>,
-}
-
-/// A prevalidated whole-chunk suffix temporarily loaned out of its source
-/// arena. The chunk payload remains owned by the source arena until the loan
-/// is either returned or committed into a destination arena.
-#[allow(dead_code)] // Used by the implemented closure-transfer stage before its production carrier cutover.
-pub(crate) struct DetachedBatch<Lane> {
-    arena: u32,
-    serial: u64,
-    payload_start: u32,
-    payload: SparseChunks,
-    lists: Vec<ArenaListId<Lane>>,
-    rebrand_values: u64,
-}
-
-/// Failed detached-suffix settlement returns the move-only loan unchanged.
-#[allow(dead_code)] // Used by the implemented closure-transfer stage before its production carrier cutover.
-pub(crate) struct DetachedBatchTransferError<Lane> {
-    pub(crate) error: ForkArenaError,
-    pub(crate) batch: DetachedBatch<Lane>,
-}
-
-/// Failed transfer which returns the still-exclusive sealed suffix token.
-pub(crate) struct BatchTransferError<Lane> {
-    pub(crate) error: ForkArenaError,
-    #[cfg_attr(not(test), allow(dead_code))]
-    // Test-only recovery proves failed batches remain move-only.
-    pub(crate) batch: SealedBatch<Lane>,
-}
-
-impl<Lane> core::fmt::Debug for BatchTransferError<Lane> {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter
-            .debug_struct("BatchTransferError")
-            .field("error", &self.error)
-            .finish_non_exhaustive()
-    }
-}
-
 /// Payload hook used by coarse-region transfers.
 ///
 /// A transfer validates every embedded coordinate before changing either
@@ -3005,17 +2959,8 @@ pub struct ForkArena<T, Lane> {
     ownership: ForkOwnership,
     base_payload_chunks: u32,
     active_builder: bool,
-    pending_batch: Option<PendingBatch>,
-    next_batch_serial: u64,
     counters: ForkArenaCounters,
     _types: PhantomData<(T, Lane)>,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct PendingBatch {
-    serial: u64,
-    payload_start: u32,
-    payload_end: u32,
 }
 
 /// One operation-local loan of several disjoint chunk intervals. Vacancies
@@ -3056,8 +3001,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
             active_builder: false,
-            pending_batch: None,
-            next_batch_serial: 1,
             counters: ForkArenaCounters::default(),
             _types: PhantomData,
         }
@@ -3073,8 +3016,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
             active_builder: false,
-            pending_batch: None,
-            next_batch_serial: 1,
             counters: ForkArenaCounters::default(),
             _types: PhantomData,
         }
@@ -3176,9 +3117,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
         }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
-        }
         u32::try_from(self.live_payload_len()).map_err(|_| ForkArenaError::CapacityOverflow)?;
         self.validate_live_chunks(pool)
     }
@@ -3186,9 +3124,6 @@ impl<T, Lane> ForkArena<T, Lane> {
     pub(crate) fn can_retire_region(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
-        }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
         }
         self.validate_live_chunks(pool)
     }
@@ -3272,8 +3207,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             ownership: ForkOwnership::Accepted(shared),
             base_payload_chunks: 0,
             active_builder: false,
-            pending_batch: None,
-            next_batch_serial: 1,
             counters,
             _types: PhantomData,
         };
@@ -3809,9 +3742,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
         }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
-        }
         let operation = self.operation_mark(pool);
         self.active_builder = true;
         let mut root = ArenaListId::empty();
@@ -3937,7 +3867,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         mark: OperationMark<Lane>,
     ) -> Result<(), ForkArenaError> {
         self.bind_pool(pool)?;
-        if self.active_builder || self.pending_batch.is_some() || mark.arena != self.owner {
+        if self.active_builder || mark.arena != self.owner {
             return Err(ForkArenaError::InvalidOperationMark);
         }
         self.truncate_payload(
@@ -4019,9 +3949,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
         }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
-        }
         let operation = self.operation_mark(pool);
         self.active_builder = true;
         Ok(ForkArenaBuilder {
@@ -4052,9 +3979,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.bind_pool(pool)?;
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
-        }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
         }
         let operation = self.operation_mark(pool);
         self.append_unsealed_list_from_mark(pool, values, operation)
@@ -4132,9 +4056,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.bind_pool(pool)?;
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
-        }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
         }
         let operation = operation.unwrap_or_else(|| self.begin_unsealed_copy_operation(pool));
         if operation.mark.arena != self.owner
@@ -4223,9 +4144,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
         }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
-        }
         let operation = operation.unwrap_or_else(|| self.begin_unsealed_copy_operation(pool));
         if operation.mark.arena != self.owner
             || operation.mark.payload_chunks as usize > self.live_payload_len()
@@ -4283,9 +4201,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.bind_pool(pool)?;
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
-        }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
         }
         let capacity = pool.payload.chunk_capacity();
         let total = lengths
@@ -4397,9 +4312,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.bind_pool(pool)?;
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
-        }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
         }
         if !builder.is_vacant() {
             return Err(ForkArenaError::InvalidActiveListBuilder);
@@ -4913,9 +4825,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.bind_pool(pool)?;
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
-        }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
         }
         if len > (u32::MAX - root.len) as usize {
             return Err(ForkArenaError::CapacityOverflow);
@@ -5629,16 +5538,26 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
     ) -> Result<SealedBoundary<Lane>, ForkArenaError> {
         self.can_seal_boundary(pool)?;
-        self.bind_pool(pool)
-            .expect("boundary pool binding was preflighted");
+        Ok(self.seal_proved_boundary(pool))
+    }
+
+    /// Seals a boundary already proved under these exclusive owner/pool borrows.
+    /// Paired transitions prove both lanes before mutating either one.
+    pub(crate) fn seal_proved_boundary(&mut self, pool: &mut ChunkPool<T>) -> SealedBoundary<Lane> {
+        debug_assert!(!self.active_builder);
+        debug_assert!(self.validate_pool(pool).is_ok());
+        debug_assert!(u32::try_from(self.live_payload_len()).is_ok());
+        self.pool_owner = Some(pool.owner);
         let payload_tail = self.live_key_at(self.live_payload_len().saturating_sub(1));
         let mut sealed = 0_u64;
         let mut unused_bytes = 0_u64;
         {
             if let Some(key) = payload_tail
-                && !pool.payload.is_sealed(key, self.owner)?
+                && !pool.payload.chunks[key.ordinal as usize].sealed
             {
-                let unused = pool.payload.seal(key, self.owner)?;
+                let unused = pool
+                    .payload
+                    .seal_constructed_tail(key, self.owner, self.lineage);
                 sealed += 1;
                 unused_bytes = unused_bytes
                     .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
@@ -5649,13 +5568,12 @@ impl<T, Lane> ForkArena<T, Lane> {
             .counters
             .unused_sealed_bytes
             .saturating_add(unused_bytes);
-        Ok(SealedBoundary {
+        SealedBoundary {
             arena: self.owner,
-            payload_chunks: u32::try_from(self.live_payload_len())
-                .expect("payload boundary length was preflighted"),
+            payload_chunks: self.live_payload_len() as u32,
             payload_tail,
             _lane: PhantomData,
-        })
+        }
     }
 
     /// Returns the empty canonical list for this arena lane.
@@ -5916,6 +5834,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.audit_direct_chain(pool, list)
     }
 
+    #[cfg(test)]
     fn audit_direct_chain(
         &self,
         pool: &ChunkPool<T>,
@@ -5970,6 +5889,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     }
 }
 
+#[cfg(test)]
 fn rebrand_list<Source, Destination>(
     list: ArenaListId<Source>,
     _arena: u32,

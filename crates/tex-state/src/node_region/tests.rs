@@ -1,5 +1,4 @@
 use super::*;
-use crate::fork_arena::{ArenaListId, ForkArena, PageMaterialLane};
 use crate::glue::Order;
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Sign};
 use crate::scaled::{GlueSetRatio, Scaled};
@@ -16,18 +15,6 @@ fn boxed(children: PageListId) -> Node<PageListId> {
         glue_order: Order::Normal,
         children,
     }))
-}
-
-fn publish_raw(
-    arena: &mut ForkArena<Node<PageListId>, PageMaterialLane>,
-    pool: &mut ChunkPool<Node<PageListId>>,
-    nodes: impl IntoIterator<Item = Node<PageListId>>,
-) -> ArenaListId<PageMaterialLane> {
-    let mut builder = arena.begin_builder(pool).expect("open list builder");
-    for node in nodes {
-        builder.push(node).expect("publish test node");
-    }
-    builder.finish()
 }
 
 fn resident_address<Role>(
@@ -238,84 +225,6 @@ fn typed_annex_bulk_publication_completes_dependency_metadata() {
 }
 
 #[test]
-fn suffix_transfer_preflights_and_rebrands_the_whole_nested_closure() {
-    let mut chunks = ChunkPool::<Node<PageListId>>::with_chunk_bytes(64);
-    let mut source = ForkArena::<Node<PageListId>, PageMaterialLane>::new();
-    let mut destination = ForkArena::<Node<PageListId>, PageMaterialLane>::new();
-    let mark = source.begin_batch(&mut chunks).expect("suffix start");
-    let child = publish_raw(&mut source, &mut chunks, [Node::Penalty(23)]);
-    let parent = publish_raw(
-        &mut source,
-        &mut chunks,
-        [boxed(PageListId::from_parts(child, None))],
-    );
-    let child_address = source
-        .list(&chunks, child)
-        .expect("source child")
-        .get(0)
-        .map(std::ptr::from_ref)
-        .expect("source child address");
-    let batch = source
-        .seal_batch(&mut chunks, mark, vec![parent])
-        .expect("sealed suffix");
-
-    let [moved_parent]: [_; 1] = source
-        .promote_batch_into(&mut chunks, &mut destination, batch)
-        .expect("self-contained suffix transfer")
-        .try_into()
-        .expect("one root");
-    let moved_parent = destination
-        .list(&chunks, moved_parent)
-        .expect("moved parent");
-    let Node::HList(box_node) = moved_parent.get(0).expect("parent node") else {
-        panic!("moved parent lost box shape");
-    };
-    let moved_child = destination
-        .list(&chunks, box_node.children.coordinate())
-        .expect("rebranded child");
-    assert_eq!(
-        moved_child.get(0).map(std::ptr::from_ref),
-        Some(child_address)
-    );
-}
-
-#[test]
-fn suffix_transfer_failure_returns_the_unchanged_batch_authority() {
-    let mut chunks = ChunkPool::<Node<PageListId>>::with_chunk_bytes(64);
-    let mut source = ForkArena::<Node<PageListId>, PageMaterialLane>::new();
-    let mut destination = ForkArena::<Node<PageListId>, PageMaterialLane>::new();
-    let prefix_child = publish_raw(&mut source, &mut chunks, [Node::Penalty(29)]);
-    let mark = source.begin_batch(&mut chunks).expect("suffix start");
-    let parent = publish_raw(
-        &mut source,
-        &mut chunks,
-        [boxed(PageListId::from_parts(prefix_child, None))],
-    );
-    let batch = source
-        .seal_batch(&mut chunks, mark, vec![parent])
-        .expect("sealed suffix");
-    let source_before = source.counters();
-    let destination_before = destination.counters();
-
-    let failure = source
-        .promote_batch_into(&mut chunks, &mut destination, batch)
-        .expect_err("suffix may not retain a prefix coordinate");
-    assert_eq!(failure.error, ForkArenaError::InvalidRegion);
-    assert_eq!(source.counters(), source_before);
-    assert_eq!(destination.counters(), destination_before);
-    assert_eq!(
-        source
-            .list(&chunks, parent)
-            .expect("source parent remains live")
-            .len(),
-        1
-    );
-    source
-        .cancel_batch(failure.batch)
-        .expect("returned batch authority cancels cleanly");
-}
-
-#[test]
 fn explicit_copy_deep_copies_recursive_nodes_and_preserves_source() {
     let mut pool = NodePool::with_chunk_bytes(64);
     let mut source = pool.start_region::<DurableRole>().expect("source");
@@ -506,12 +415,9 @@ fn closure_build_transfer_is_zero_copy_and_address_stable() {
         .expect("source list")
         .testing_node_address(0)
         .expect("source address");
-    let receipt = source
-        .consumed_closure_roots_receipt(&mark)
-        .expect("owner-local roots consumed");
     let mut destination = pool.start_region::<DurableRole>().expect("destination");
     let moved = source
-        .move_closure_suffix_into(&mut pool, mark, root, receipt, &mut destination)
+        .move_closure_suffix_into(&mut pool, mark, root, &mut destination)
         .map_err(|failure| failure.error)
         .expect("transfer closure");
     assert!(
@@ -556,12 +462,9 @@ fn closure_transfer_moves_node_and_annex_suffix_together() {
         .get(0)
         .map(std::ptr::from_ref)
         .expect("annex address");
-    let receipt = source
-        .consumed_closure_roots_receipt(&mark)
-        .expect("closure roots consumed");
     let mut destination = pool.start_region::<DurableRole>().expect("destination");
     source
-        .move_closure_suffix_into(&mut pool, mark, root, receipt, &mut destination)
+        .move_closure_suffix_into(&mut pool, mark, root, &mut destination)
         .map_err(|failure| failure.error)
         .expect("aggregate transfer");
     assert!(source.annex_arena.list(&pool.annex_chunks, annex).is_err());
@@ -596,9 +499,6 @@ fn annex_preflight_failure_rejects_the_whole_move_before_mutation() {
         .expect("annex suffix builder");
     annex_builder.push(107).expect("annex word");
     let annex = annex_builder.finish();
-    let receipt = source
-        .consumed_closure_roots_receipt(&mark)
-        .expect("closure roots consumed");
     let mut destination = pool.start_region::<DurableRole>().expect("destination");
     let mut open_destination_annex =
         crate::fork_arena::ActiveListBuilder::<u32, NodeAnnexLane>::vacant();
@@ -608,7 +508,7 @@ fn annex_preflight_failure_rejects_the_whole_move_before_mutation() {
         .expect("open destination annex builder");
 
     let failure = source
-        .move_closure_suffix_into(&mut pool, mark, root, receipt, &mut destination)
+        .move_closure_suffix_into(&mut pool, mark, root, &mut destination)
         .expect_err("open annex destination must reject before node mutation");
     assert_eq!(failure.error, ForkArenaError::InvalidRegion);
     assert_eq!(source.list(&pool, root).expect("restored nodes").len(), 1);
@@ -813,12 +713,9 @@ fn closure_build_transfer_rebrands_nested_suffix_children() {
     let root = source
         .publish_owned(&mut pool, [boxed(child.list)])
         .expect("parent");
-    let receipt = source
-        .consumed_closure_roots_receipt(&mark)
-        .expect("owner-local roots consumed");
     let mut destination = pool.start_region::<DurableRole>().expect("destination");
     let moved = source
-        .move_closure_suffix_into(&mut pool, mark, root, receipt, &mut destination)
+        .move_closure_suffix_into(&mut pool, mark, root, &mut destination)
         .map_err(|failure| failure.error)
         .expect("nested transfer");
     let parent = destination.list(&pool, moved).expect("moved parent");
@@ -856,12 +753,9 @@ fn checkpoint_before_closure_build_does_not_force_a_copy() {
     let root = source
         .publish_owned(&mut pool, [Node::Penalty(59)])
         .expect("closure root");
-    let receipt = source
-        .consumed_closure_roots_receipt(&mark)
-        .expect("owner-local roots consumed");
     let mut destination = pool.start_region::<DurableRole>().expect("destination");
     source
-        .move_closure_suffix_into(&mut pool, mark, root, receipt, &mut destination)
+        .move_closure_suffix_into(&mut pool, mark, root, &mut destination)
         .map_err(|failure| failure.error)
         .expect("transfer after checkpoint");
 
@@ -890,15 +784,11 @@ fn prefix_child_rejects_without_mutation_and_fallback_is_counted() {
         .publish_owned(&mut pool, [boxed(child.list)])
         .expect("interleaved parent");
     let before = source.counters();
-    let receipt = source
-        .consumed_closure_roots_receipt(&mark)
-        .expect("owner-local roots consumed");
     let mut rejected = pool.start_region::<DurableRole>().expect("destination");
-    let failure =
-        match source.move_closure_suffix_into(&mut pool, mark, root, receipt, &mut rejected) {
-            Ok(_) => panic!("prefix child is outside the suffix"),
-            Err(failure) => failure,
-        };
+    let failure = match source.move_closure_suffix_into(&mut pool, mark, root, &mut rejected) {
+        Ok(_) => panic!("prefix child is outside the suffix"),
+        Err(failure) => failure,
+    };
     assert_eq!(failure.error, ForkArenaError::InvalidRegion);
     let _mark = failure.mark;
     assert_eq!(source.counters(), before);
@@ -1087,7 +977,7 @@ fn paired_box_rollback_checks_annex_before_returning_node_chunks() {
 }
 
 #[test]
-fn foreign_root_receipt_rejects_without_detaching_suffix() {
+fn foreign_root_rejects_without_detaching_suffix() {
     let mut pool = NodePool::with_chunk_bytes(64);
     let mut source = pool.start_region::<PageRole>().expect("source");
     let mark = source
@@ -1103,20 +993,12 @@ fn foreign_root_receipt_rejects_without_detaching_suffix() {
         _role: PhantomData,
     };
     let before = source.counters();
-    let receipt = source
-        .consumed_closure_roots_receipt(&mark)
-        .expect("owner-local roots consumed");
     let mut rejected = pool.start_region::<DurableRole>().expect("destination");
-    let failure = match source.move_closure_suffix_into(
-        &mut pool,
-        mark,
-        foreign_root,
-        receipt,
-        &mut rejected,
-    ) {
-        Ok(_) => panic!("foreign root cannot name the suffix"),
-        Err(failure) => failure,
-    };
+    let failure =
+        match source.move_closure_suffix_into(&mut pool, mark, foreign_root, &mut rejected) {
+            Ok(_) => panic!("foreign root cannot name the suffix"),
+            Err(failure) => failure,
+        };
     assert_eq!(failure.error, ForkArenaError::InvalidRegion);
     let _mark = failure.mark;
     assert_eq!(source.counters(), before);
@@ -1134,12 +1016,9 @@ fn shared_pool_retires_transferred_source_and_rejects_stale_id() {
     let root = source
         .publish_owned(&mut pool, [Node::Penalty(73)])
         .expect("closure root");
-    let receipt = source
-        .consumed_closure_roots_receipt(&mark)
-        .expect("owner-local roots consumed");
     let mut destination = pool.start_region::<DurableRole>().expect("destination");
     source
-        .move_closure_suffix_into(&mut pool, mark, root, receipt, &mut destination)
+        .move_closure_suffix_into(&mut pool, mark, root, &mut destination)
         .map_err(|failure| failure.error)
         .expect("transfer");
     assert!(pool.retire_region(source).is_ok(), "empty source retires");

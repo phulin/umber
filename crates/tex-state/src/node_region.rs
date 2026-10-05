@@ -296,7 +296,6 @@ impl NodePool {
             pub_arena: arena,
             annex_arena,
             active_annex_operation: None,
-            next_closure_build: 1,
             borrows: Vec::new(),
             _role: PhantomData,
         })
@@ -468,7 +467,6 @@ pub struct NodeRegion<Role> {
     pub(crate) pub_arena: ForkArena<RegionNode, PageMaterialLane>,
     pub(crate) annex_arena: ForkArena<u32, NodeAnnexLane>,
     pub(crate) active_annex_operation: Option<crate::fork_arena::OperationMark<NodeAnnexLane>>,
-    next_closure_build: u64,
     /// Frozen registry slots whose lists this region's records may name.
     /// Each entry holds one share; rollback never removes entries.
     borrows: Vec<u32>,
@@ -514,14 +512,10 @@ impl<Role> NodeRegion<Role> {
         pool: &mut NodePool,
     ) -> Result<NodeSealedBoundary, ForkArenaError> {
         self.preflight_checkpoint_boundary(pool)?;
-        let nodes = self
-            .pub_arena
-            .seal_boundary(&mut pool.chunks)
-            .expect("paired node boundary was preflighted");
+        let nodes = self.pub_arena.seal_proved_boundary(&mut pool.chunks);
         let annex = self
             .annex_arena
-            .seal_boundary(&mut pool.annex_chunks)
-            .expect("paired annex boundary was preflighted");
+            .seal_proved_boundary(&mut pool.annex_chunks);
         Ok(NodeSealedBoundary { nodes, annex })
     }
 
@@ -736,23 +730,12 @@ impl<Role> NodeRegion<Role> {
         pool.validate_region(self)?;
         self.pub_arena.can_seal_boundary(&pool.chunks)?;
         self.annex_arena.can_seal_boundary(&pool.annex_chunks)?;
-        let serial = self.next_closure_build;
-        self.next_closure_build = serial
-            .checked_add(1)
-            .ok_or(ForkArenaError::CapacityOverflow)?;
-        let batch = self
-            .pub_arena
-            .begin_batch(&mut pool.chunks)
-            .expect("paired node batch was preflighted");
-        let annex_batch = self
-            .annex_arena
-            .begin_batch(&mut pool.annex_chunks)
-            .expect("paired annex batch was preflighted");
+        let batch = self.pub_arena.begin_proved_batch(&mut pool.chunks);
+        let annex_batch = self.annex_arena.begin_proved_batch(&mut pool.annex_chunks);
         let rollback = self.pub_arena.operation_mark(&pool.chunks);
         let annex_rollback = self.annex_arena.operation_mark(&pool.annex_chunks);
         Ok(ClosureBuildMark {
             region: self.id,
-            serial,
             batch,
             annex_batch,
             rollback,
@@ -909,24 +892,6 @@ impl<Role> NodeRegion<Role> {
         Ok(())
     }
 
-    /// Converts the caller's owner-local root audit into the receipt consumed
-    /// by closure sealing. Production callers may invoke this only after the
-    /// PageBuilder, ModeList, operation journal, and checkpoint owner have
-    /// removed every root created after `mark`.
-    pub(crate) fn consumed_closure_roots_receipt(
-        &self,
-        mark: &ClosureBuildMark<Role>,
-    ) -> Result<ConsumedClosureRootsReceipt<Role>, ForkArenaError> {
-        if mark.region != self.id {
-            return Err(ForkArenaError::InvalidRegion);
-        }
-        Ok(ConsumedClosureRootsReceipt {
-            region: self.id,
-            serial: mark.serial,
-            _role: PhantomData,
-        })
-    }
-
     pub(crate) fn root(
         &self,
         pool: &NodePool,
@@ -991,7 +956,6 @@ impl<Role> NodeRegion<Role> {
 /// structural-copy path that deliberately keeps the suffix page-owned.
 pub struct ClosureBuildMark<Role> {
     region: NodeRegionId,
-    serial: u64,
     batch: BatchMark<PageMaterialLane>,
     annex_batch: BatchMark<NodeAnnexLane>,
     rollback: crate::fork_arena::OperationMark<PageMaterialLane>,
@@ -1004,7 +968,6 @@ impl<Role> core::fmt::Debug for ClosureBuildMark<Role> {
         formatter
             .debug_struct("ClosureBuildMark")
             .field("region", &self.region)
-            .field("serial", &self.serial)
             .finish_non_exhaustive()
     }
 }
@@ -1187,15 +1150,6 @@ impl<Role> ClosureBuildMark<Role> {
     pub(crate) const fn region_id(&self) -> NodeRegionId {
         self.region
     }
-}
-
-/// Consumed proof that no owner-local root outside the closure names its
-/// suffix. It is intentionally neither clonable nor constructible from raw
-/// coordinates.
-pub(crate) struct ConsumedClosureRootsReceipt<Role> {
-    region: NodeRegionId,
-    serial: u64,
-    _role: PhantomData<fn(Role) -> Role>,
 }
 
 /// Failed seal with the original move-only construction authority restored.

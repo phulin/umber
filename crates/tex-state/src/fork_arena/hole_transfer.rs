@@ -35,7 +35,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.can_seal_boundary(pool)?;
         destination.can_seal_boundary(pool)?;
         if self.owner == destination.owner
-            || self.pending_batch.is_some()
             || !matches!(destination.ownership, ForkOwnership::Accepted(_))
             || destination.base_payload_chunks != 0
         {

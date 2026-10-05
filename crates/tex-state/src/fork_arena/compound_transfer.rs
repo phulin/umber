@@ -72,7 +72,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         destination.can_seal_boundary(pool)?;
         let selected_start = ranges.first().map_or(0, |range| range.start);
         if self.owner == destination.owner
-            || self.pending_batch.is_some()
             || !matches!(destination.ownership, ForkOwnership::Accepted(_))
             || if destination_has_prefix {
                 destination.base_payload_chunks != 0

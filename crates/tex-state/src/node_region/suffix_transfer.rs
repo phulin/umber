@@ -10,13 +10,14 @@ impl<Role> NodeRegion<Role> {
     /// metadata write; no detached intermediate loan exists. Every failure precedes mutation and returns the live
     /// build authority, so an `InvalidRegion` rejection may still select a
     /// structural copy.
+    /// Callers must consume their live roots and check retained page roots
+    /// before moving their construction mark here.
     #[allow(clippy::result_large_err)] // Failure returns the sole move-only build authority.
     pub(crate) fn move_closure_suffix_into<Destination>(
         &mut self,
         pool: &mut NodePool,
         mark: ClosureBuildMark<Role>,
         root: RegionRoot<Role>,
-        receipt: ConsumedClosureRootsReceipt<Role>,
         destination: &mut NodeRegion<Destination>,
     ) -> Result<RegionRoot<Destination>, ClosureSealError<Role>> {
         let node_start = mark.batch.payload_start();
@@ -25,11 +26,7 @@ impl<Role> NodeRegion<Role> {
             .validate_region(self)
             .and_then(|()| pool.validate_region(destination))
             .and_then(|()| {
-                if mark.region != self.id
-                    || receipt.region != self.id
-                    || receipt.serial != mark.serial
-                    || root.region != self.id
-                {
+                if mark.region != self.id || root.region != self.id {
                     return Err(ForkArenaError::InvalidRegion);
                 }
                 self.pub_arena.preflight_suffix_move(

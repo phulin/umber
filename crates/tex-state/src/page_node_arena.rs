@@ -1086,14 +1086,10 @@ impl PageMaterialRegion {
             Ok(root) => root,
             Err(error) => return Err((error, Some(mark))),
         };
-        let receipt = match source.region.consumed_closure_roots_receipt(&mark) {
-            Ok(receipt) => receipt,
-            Err(error) => return Err((error, Some(mark))),
-        };
         // Coordinates are pool-stable, so the move rescans no values.
         source
             .region
-            .move_closure_suffix_into(pool, mark, source_root, receipt, &mut destination.region)
+            .move_closure_suffix_into(pool, mark, source_root, &mut destination.region)
             .map(|root| (root.page_list(), 0))
             .map_err(|failure| {
                 let (error, mark) = failure.into_parts();
@@ -1390,7 +1386,6 @@ impl<'a> PageMaterialArena<'a> {
         _origin: BuiltBoxOrigin,
     ) -> Result<DurableNodeClosure, ForkArenaError> {
         let source_root = self.region.root(self.pool, root)?;
-        let receipt = self.region.consumed_closure_roots_receipt(&mark)?;
         let mut durable = match self.pool.start_region::<DurableRole>() {
             Ok(durable) => durable,
             Err(error) => {
@@ -1398,13 +1393,9 @@ impl<'a> PageMaterialArena<'a> {
                 return Err(error);
             }
         };
-        let moved = self.region.move_closure_suffix_into(
-            self.pool,
-            mark,
-            source_root,
-            receipt,
-            &mut durable,
-        );
+        let moved =
+            self.region
+                .move_closure_suffix_into(self.pool, mark, source_root, &mut durable);
         let durable_root = match moved {
             Ok(root) => root,
             Err(failure) => {

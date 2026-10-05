@@ -154,9 +154,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
         }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
-        }
         let key = pool.payload.allocate_sealed_exact(
             self.owner,
             self.lineage,

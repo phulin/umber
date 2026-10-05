@@ -206,8 +206,9 @@ Definition-owned parameter programs expose literal delimiter views only for none
   transfers; dense owners retain direct vector indexing.
   The first two live keys reside in its actual owner; whole-envelope moves do no
   metadata allocation, and retirement consumes keys without a copied vector.
-- `src/fork_arena/batch_transfer.rs`: Exclusive batch closure, detachment,
-  reattachment, adoption, and promotion of the existing arena lane.
+- `src/fork_arena/construction_boundary.rs`: Construction boundaries, cancellation,
+  shared-prefix proof and unique successor adoption. The unused sealed/detached
+  batch protocol, pending state and serial counter are deleted.
 - `src/fork_arena/compound_transfer.rs`: Exact disjoint interval ownership
   proof, move, and operation rollback with stable sparse logical positions,
   including a private-prefix destination for selected consumed windows.
@@ -367,6 +368,7 @@ Definition-owned parameter programs expose literal delimiter views only for none
 - `src/node_region.rs` and `src/node_region/tests.rs`: Exclusive move-only node
   regions above the shared fixed-chunk pool, generation-checked owner-relative
   roots and direct borrowed `NodeCursor` admission, paired node/annex checkpoint and closure marks,
+  single-preflight paired sealing without immediately consumed root receipts or build serials,
   mutation-free recursive transfer preflight, address-stable aggregate
   detach/rollback, fixed-size whole-region transfer receipts, and reason-counted structural-copy fallback. The exact
   32-byte `NodeRecord` and region-owned typed `u32` annex settle together;

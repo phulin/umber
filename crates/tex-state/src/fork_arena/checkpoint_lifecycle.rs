@@ -41,7 +41,6 @@ impl<T, Lane> ForkArena<T, Lane> {
     ) -> Result<usize, ForkArenaError> {
         self.bind_pool(pool)?;
         if self.active_builder
-            || self.pending_batch.is_some()
             || !matches!(self.ownership, ForkOwnership::Accepted(_))
             || !self.validates_checkpoint(mark)
         {
@@ -70,7 +69,6 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// settlement phases are infallible.
     pub fn can_begin_checkpoint_candidate(&self, mark: CheckpointMark<Lane>) -> bool {
         !self.active_builder
-            && self.pending_batch.is_none()
             && matches!(self.ownership, ForkOwnership::Accepted(_))
             && self.validates_checkpoint(mark)
     }
@@ -78,7 +76,6 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// Read-only admission for restoring the sole current candidate lineage.
     pub fn can_restore_current_checkpoint(&self, mark: CheckpointMark<Lane>) -> bool {
         !self.active_builder
-            && self.pending_batch.is_none()
             && matches!(self.ownership, ForkOwnership::Forked(_))
             && self.validates_checkpoint(mark)
     }
@@ -354,9 +351,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
         }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
-        }
         if !matches!(self.ownership, ForkOwnership::Accepted(_)) {
             return Err(ForkArenaError::AlreadyForked);
         }
@@ -538,7 +532,6 @@ impl<T, Lane> ForkArena<T, Lane> {
     ) -> Result<usize, ForkArenaError> {
         self.bind_pool(pool)?;
         if self.active_builder
-            || self.pending_batch.is_some()
             || boundary.arena != self.owner
             || boundary.payload_chunks as usize != self.live_payload_len()
             || retained.is_some_and(|mark| !self.validates_checkpoint(mark))

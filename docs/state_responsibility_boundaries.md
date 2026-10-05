@@ -3,11 +3,11 @@
 This pass keeps the existing owner, admission, and checkpoint authority while
 reducing a synchronized arena record and duplicate borrowed traversal paths.
 
-| Owner            | Retained authority                                                                       | Method groups                                                                                                              |
-| ---------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `World`          | One host backend, effect and input ledgers, and `WorldSnapshot`                          | `input_dependencies`, `effect_publication`, and `checkpoint_lifecycle`                                                     |
-| `ForkArena`      | One typed lane of logical coordinates, topology, and settlement metadata                 | `checkpoint_lifecycle`, `batch_transfer`, and `whole_region_transfer`; physical `ChunkPool` remains the sole payload owner |
-| `CommandContext` | One already-admitted borrow of session, retained generation, dense core, and page region | `pdf_commands`, `page_material`, and `page_builder`                                                                        |
+| Owner            | Retained authority                                                                       | Method groups                                                                                                                     |
+| ---------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `World`          | One host backend, effect and input ledgers, and `WorldSnapshot`                          | `input_dependencies`, `effect_publication`, and `checkpoint_lifecycle`                                                            |
+| `ForkArena`      | One typed lane of logical coordinates, topology, and settlement metadata                 | `checkpoint_lifecycle`, `construction_boundary`, and `whole_region_transfer`; physical `ChunkPool` remains the sole payload owner |
+| `CommandContext` | One already-admitted borrow of session, retained generation, dense core, and page region | `pdf_commands`, `page_material`, and `page_builder`                                                                               |
 
 The child modules contain inherent methods on these same types. They add no
 service, owner, snapshot, or conversion. `Universe` still admits and settles
