@@ -65,7 +65,8 @@ def parse_inventory(source: str) -> list[Suite]:
             raise ValueError(f"inventory line {line_number}: unknown class {row.case_class}")
         if not row.prerequisites or not row.status:
             raise ValueError(f"inventory line {line_number}: missing prerequisite/status")
-        expected_lane = "manual" if row.mode == "host-ignored" else "subsystem"
+        manual_feature = row.mode == "feature" and row.status == "ignored-manual"
+        expected_lane = "manual" if row.mode == "host-ignored" or manual_feature else "subsystem"
         if row.lane != expected_lane:
             raise ValueError(f"inventory line {line_number}: invalid lane {row.lane}")
         if row.mode == "feature" and row.feature == "-":
@@ -76,10 +77,11 @@ def parse_inventory(source: str) -> list[Suite]:
             raise ValueError(f"inventory line {line_number}: feature test must use an exact selector")
         if row.mode == "wasm" and (row.match != "all" or row.selector != "*"):
             raise ValueError(f"inventory line {line_number}: WASM target must select all tests")
-        if row.mode == "host-ignored":
+        if row.mode == "host-ignored" or manual_feature:
             target_args = target_arguments(row.target)
+            feature_args = ["--features", row.feature] if manual_feature else []
             expected = [
-                "cargo", "test", "-q", "-p", row.package, *target_args,
+                "cargo", "test", "-q", "-p", row.package, *feature_args, *target_args,
                 row.selector, "--", *(["--exact"] if row.match == "exact" else []),
                 "--ignored",
             ]
@@ -134,7 +136,7 @@ def validate_optional_rows(rows: list[Suite], packages: dict[str, dict]) -> None
             raise ValueError(f"{row.package} {row.target}: Cargo target is absent")
         if row.mode == "feature" and row.feature not in package["features"]:
             raise ValueError(f"{row.package}: feature {row.feature} is absent")
-        if row.mode == "host-ignored":
+        if row.mode == "host-ignored" or row.status == "ignored-manual":
             continue
         command = shlex.split(row.command)
         expected_script = "scripts/check-tools.sh" if row.mode == "feature" else "scripts/check-wasm.sh"

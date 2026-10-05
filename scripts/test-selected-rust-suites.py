@@ -48,6 +48,20 @@ feature_prefix = replace(
     command="scripts/check-tools.sh profiling-command-tests", status="selected-only",
 )
 rejects(lambda: module.parse_inventory("\t".join(feature_prefix.__dict__.values())), "exact selector")
+manual_feature = replace(
+    declared, mode="feature", feature="profiling",
+    command="cargo test -q -p example --features profiling --lib tests::manual -- --exact --ignored",
+)
+assert module.parse_inventory("\t".join(manual_feature.__dict__.values())) == [manual_feature]
+for invalid in [
+    replace(manual_feature, command=manual_feature.command.replace(" --ignored", "")),
+    replace(manual_feature, command=manual_feature.command.replace("--features profiling", "--features other")),
+]:
+    rejects(lambda: module.parse_inventory("\t".join(invalid.__dict__.values())), "command does not select")
+rejects(
+    lambda: module.parse_inventory("\t".join(replace(manual_feature, lane="subsystem").__dict__.values())),
+    "invalid lane",
+)
 wasm_subset = replace(
     declared, mode="wasm", lane="subsystem",
     command="scripts/check-wasm.sh wasm-bindgen", status="selected-only",

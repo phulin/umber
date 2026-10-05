@@ -124,7 +124,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `selected-rust-suite-inventory.tsv`, `check-selected-rust-suites.py`, and
   `test-selected-rust-suites.py`: grouped nonbibliography Rust suite index,
   Cargo/libtest discovery gate for ignored host tests, optional target/feature
-  resolution checks, and negative inventory contracts. The routine stage
+  resolution checks, explicit feature-enabled manual command validation, and
+  negative inventory contracts. The routine stage
   recognizes library crate-type sets and declared child-module WASM tests;
   discovers ignored tests without executing them or compiling optional
   profiling/WASM configurations.
