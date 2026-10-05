@@ -11,7 +11,10 @@ struct RelaxConsumer {
     ready: bool,
 }
 
-impl<G> crate::NativeWordConsumer<crate::CommandProcessor<'_, '_, G>, G> for RelaxConsumer {
+impl<G>
+    crate::NativeWordConsumer<crate::CommandProcessor<'_, '_, G>, G, crate::InitialCommandHostFacts>
+    for RelaxConsumer
+{
     const RESIDENT_TERMINALS: bool = true;
     fn resident_ready(&self) -> bool {
         self.ready
@@ -19,6 +22,9 @@ impl<G> crate::NativeWordConsumer<crate::CommandProcessor<'_, '_, G>, G> for Rel
 
     fn resident_terminal(
         &mut self,
+        _: &mut tex_state::ResidentGroups<'_, G>,
+        _: &mut crate::InitialCommandHostFacts,
+        _: u32,
         _: TracedTokenWord,
         meaning: &MeaningWord<G>,
     ) -> ControlFlow<(), bool> {

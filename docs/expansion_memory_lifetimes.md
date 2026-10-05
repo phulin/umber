@@ -485,3 +485,12 @@ substitution, exhaustion and source transitions release the span and invalidate
 that fact. Reporting, tracing, character flushing and observation still use
 their actual full delivery/entry boundaries. Fuel charges precede each frame
 advance, including the word that ends an operation budget.
+
+The resident reader borrows immutable live meaning rows separately from the
+actual journal, lineage and dependency bookkeeping. Its terminal consumer borrows
+that restricted group authority and statically typed host facts disjoint from
+the input span. Ordinary groups
+retain this loan only while they preserve input and demand no tracing or
+restoration. A close with saved records or aftergroup words declines before
+mutation; the shared reader releases its span before the real unsave/insertion.
+No loan or admission flag crosses a checkpoint or resource boundary.

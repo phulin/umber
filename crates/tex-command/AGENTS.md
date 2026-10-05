@@ -99,6 +99,8 @@ synchronous callback to one shared scanner-call boundary, which enters the same
 reader without copying it for each scanner closure. Single-command delivery
 returns directly; no heap callback or second reader exists.
 
+Restricted resident consumers borrow immutable live meaning rows and the disjoint actual group bookkeeping plus statically typed host facts; the file-line scalar comes from the current input header. No extra processor or input owner is created.
+
 Resident input completes directly into its consumer or leaves the authoritative
 row/cursor at a real source, exhaustion or parameter boundary. There is no
 input-transition descriptor or immediately consuming transition dispatcher.

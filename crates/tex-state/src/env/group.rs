@@ -38,7 +38,7 @@ pub struct GroupFrame {
 }
 
 impl GroupFrame {
-    pub(super) const fn new(
+    pub(crate) const fn new(
         kind: GroupKind,
         entered_line: u32,
         lineage: u64,

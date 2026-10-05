@@ -784,3 +784,104 @@ fn clean_noop_spans_interrupt_for_tracing_assignments_and_expansion_effects() {
         });
     }
 }
+
+#[test]
+fn retained_groups_obey_each_operation_cut_and_charge_each_word_once() {
+    // §§1030--1031 and 1061: braces and primitive groups have distinct kinds.
+    // Every cut must leave the following operation untouched, including cuts
+    // inside groups, and resuming must preserve the sole input cursor.
+    let depths = [1, 2, 1, 1, 0, 1, 2, 1, 0, 0];
+    let mut first_fuel = None;
+    for budget in 1..=depths.len() {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, br"\def\m{\begingroup{}\relax\endgroup{\begingroup\endgroup}\relax}\m\count0=9 \relax%");
+            control.advance(stores).expect("definition");
+            let burned = control.fuel.fuel_mut().burned();
+            let mut effects = DiagnosticEffects::new();
+            let mut provider = None;
+            let mut completed = 0;
+            let step = control
+                .interpret_chunk(
+                    stores,
+                    &mut effects,
+                    false,
+                    &mut provider,
+                    budget,
+                    &mut completed,
+                )
+                .expect("retained group cut");
+            assert!(matches!(step, MainControlStep::Continue));
+            assert_eq!(completed, budget);
+            assert_eq!(
+                admitted!(stores, |context| context.execution_group_depth()),
+                depths[budget - 1]
+            );
+            assert_eq!(
+                admitted!(stores, |context| context.count(0).expect("untouched tail")),
+                0
+            );
+            let fuel = control.fuel.fuel_mut().burned() - burned;
+            assert_eq!(fuel, *first_fuel.get_or_insert(fuel) + budget as u64 - 1);
+            run_to_end(&mut control, stores);
+            assert_eq!(
+                admitted!(stores, |context| context.execution_group_depth()),
+                0
+            );
+            assert_eq!(
+                admitted!(stores, |context| context.count(0).expect("resumed tail")),
+                9
+            );
+        });
+    }
+}
+
+#[test]
+fn retained_groups_restore_live_tracing_and_insert_aftergroup_at_the_boundary() {
+    for budget in [1, 2, 64] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, br"\tracingonline=1\tracingcommands=1\def\m{\begingroup\tracingcommands=0{}\relax\endgroup\relax}\m\tracingcommands=0\def\mark{\message{[after]}}\def\g{\begingroup{}\aftergroup\mark\endgroup{}\relax}\g\count0=9 \relax%");
+            let mut effects = DiagnosticEffects::new();
+            let mut provider = None;
+            let mut finished = false;
+            for _ in 0..128 {
+                let mut completed = 0;
+                let step = control
+                    .interpret_chunk(
+                        stores,
+                        &mut effects,
+                        false,
+                        &mut provider,
+                        budget,
+                        &mut completed,
+                    )
+                    .expect("group restoration boundary");
+                if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+                    finished = true;
+                    break;
+                }
+            }
+            assert!(finished, "budget={budget}");
+            let terminal = terminal_text(stores);
+            assert_eq!(
+                terminal.matches(r"\relax").count(),
+                1,
+                "restored tracing: {terminal}"
+            );
+            assert_eq!(
+                terminal.matches("[after]").count(),
+                1,
+                "aftergroup runs once"
+            );
+            assert_eq!(
+                admitted!(stores, |context| context.execution_group_depth()),
+                0
+            );
+            assert_eq!(
+                admitted!(stores, |context| context.count(0).expect("tail")),
+                9
+            );
+        });
+    }
+}

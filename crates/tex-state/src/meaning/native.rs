@@ -125,9 +125,9 @@ impl<G> MeaningWord<G> {
     #[must_use]
     #[inline(always)]
     pub const fn is_relax(&self) -> bool {
-        let opcode = self.opcode();
-        opcode == OP_RELAX
-            || (opcode == RAW_SCALAR && (self.coordinate.get() >> OPCODE_SHIFT) as u8 == OP_RELAX)
+        // The raw escape stores only reserved font/macro/raw opcodes; scalar
+        // relax words always keep their actual opcode in `command`.
+        self.opcode() == OP_RELAX
     }
 
     #[must_use]

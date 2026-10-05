@@ -12,11 +12,11 @@ struct ScalarWords<'a, Consume, const MAIN_CONTROL: bool> {
 }
 
 impl<'state, 'host, G, Facts, Consume, const MAIN_CONTROL: bool>
-    ExpandedReaderConsumer<CommandProcessor<'state, 'host, G, Facts>, G>
+    ExpandedReaderConsumer<CommandProcessor<'state, 'host, G, Facts>, G, Facts>
     for ScalarWords<'_, Consume, MAIN_CONTROL>
 where
     Facts: crate::CommandHostFacts<G>,
-    Consume: NativeWordConsumer<CommandProcessor<'state, 'host, G, Facts>, G>,
+    Consume: NativeWordConsumer<CommandProcessor<'state, 'host, G, Facts>, G, Facts>,
 {
     const NATIVE_TERMINAL: bool = true;
     const RESIDENT_TERMINALS: bool = Consume::RESIDENT_TERMINALS;
@@ -31,10 +31,14 @@ where
     #[inline(always)]
     fn resident_terminal(
         &mut self,
+        context: &mut tex_state::ResidentGroups<'_, G>,
+        facts: &mut Facts,
+        entered_line: u32,
         spelling: TracedTokenWord,
         meaning: &MeaningWord<G>,
     ) -> ControlFlow<(), bool> {
-        self.consume.resident_terminal(spelling, meaning)
+        self.consume
+            .resident_terminal(context, facts, entered_line, spelling, meaning)
     }
 
     #[inline(always)]
@@ -91,7 +95,7 @@ where
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn consume_expanded_words(
         &mut self,
-        consume: &mut impl NativeWordConsumer<Self, G>,
+        consume: &mut impl NativeWordConsumer<Self, G, Facts>,
     ) -> Result<(), CommandError> {
         let mut destination = None;
         loop {
@@ -118,7 +122,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// recovery lend their demanded record only during consumption.
     pub fn consume_main_control(
         &mut self,
-        consume: &mut impl NativeWordConsumer<Self, G>,
+        consume: &mut impl NativeWordConsumer<Self, G, Facts>,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut destination = None;
         self.consume_expanded_with_mode::<false, false>(
@@ -140,7 +144,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// their raw delivery alone, including when observation is requested.
     pub fn consume_main_loop_lookahead(
         &mut self,
-        consume: &mut impl NativeWordConsumer<Self, G>,
+        consume: &mut impl NativeWordConsumer<Self, G, Facts>,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut destination = None;
         self.consume_expanded_with_mode::<false, false>(

@@ -125,7 +125,8 @@ impl IntegerOperand {
 }
 
 impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
-    crate::NativeWordConsumer<CommandProcessor<'state, 'host, G, Facts>, G> for IntegerOperand
+    crate::NativeWordConsumer<CommandProcessor<'state, 'host, G, Facts>, G, Facts>
+    for IntegerOperand
 {
     const RESIDENT_TERMINALS: bool = true;
     const RESIDENT_LITERALS: bool = true;
@@ -143,6 +144,9 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
     #[inline(always)]
     fn resident_terminal(
         &mut self,
+        _context: &mut tex_state::ResidentGroups<'_, G>,
+        _facts: &mut Facts,
+        _entered_line: u32,
         spelling: TracedTokenWord,
         meaning: &tex_state::meaning::MeaningWord<G>,
     ) -> ControlFlow<(), bool> {

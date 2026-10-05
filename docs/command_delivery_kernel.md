@@ -863,3 +863,53 @@ establish a short-workload cycle improvement. The reader's native main-control
 stack reservation shrank from 680 to 632 bytes in ordinary x86-64 release code.
 Machine code contains the outlined integer scanner body but no separate native
 integer consumer entry; its unused selector is erased before the call.
+
+## Input-preserving ordinary groups
+
+The retained reader splits the admitted state into its immutable actual meaning
+rows and a restricted group-state loan, then lends the group loan and host facts
+to its synchronous resident consumer while the input words remain borrowed.
+The group loan borrows the actual journal, lineage counter, integer parameters
+and dependency runtime; it cannot assign or restore meaning rows. These loans
+are disjoint from the authoritative input cursor. This separation lets the
+reader lend an actual live meaning row through group execution. Accepted
+control sequences copy no meaning word; only a decline transfers its actual
+meaning value to full delivery. The two views
+are scoped borrows, with no copied values, new owner or persistent state. They
+are acquired only after resident readiness admits a physical word; cold input
+and full delivery create no unused group loan. Journal admission is checked
+only by actual group operations, so unrelated scanners erase the unused loan. The
+consumer receives the current file line from the actual input header; a span
+cannot cross a line acquisition. The facts type remains statically known, and
+unused loans disappear from scanner specializations. No processor facade,
+command record, additional input owner or checkpoint field is introduced.
+
+Once terminal entry has flushed pending characters, published scanner reports
+and checked the live command tracing demand, ordinary group commands can retain
+that span. Primitive group entry opens a semi-simple group; a literal or alias
+begin-group opens a simple group unless math, output-opening or recovery-opening
+semantics demand full interpretation. Live meaning lookup remains mandatory.
+Group tracing interrupts admission, and close also honors cross-file nesting
+tracing. Consecutive accepted groups cannot change those demands.
+
+An empty close checks the actual top boundary kind and saved-record suffix before
+mutation. A mismatch or nonempty suffix declines without consuming saved owners;
+the existing unsave path then restores values and inserts aftergroup words at
+their canonical positions. Both closes pop the same actual boundary and poison
+the same environment dependency timeline. The temporary lowered-level interval
+belongs only to real unsave work, not to an empty close. There is no auxiliary
+emptiness count, restoration queue or post-command stage.
+
+A full terminal continuation refreshes resident readiness from actual character,
+lookahead, report and tracing state. In particular a group restoration may change
+command tracing, so its entry-time flag cannot authorize the following span.
+Operation-budget cuts and token fuel remain charged by their existing owners.
+
+The synchronous terminal consumer owns its actual completed-operation scalar.
+The caller moves that value into each reader episode and reads it back before
+handling the reader's return, including errors. Accepted words update the same
+scalar directly; no external counter pointer is reloaded or written per word.
+This is operation-budget ownership at the consumer boundary, not a second
+counter or a post-command stage. The existing exhaustive scalar-word tests
+validate the no-op tag predicate: reserved raw scalar escapes cannot contain a
+relax opcode, so no raw-coordinate fallback is needed for that predicate.

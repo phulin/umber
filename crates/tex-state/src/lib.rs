@@ -206,6 +206,7 @@ pub use env::{
     GroupRestorationOutcome, GroupRestorationTraceState, GroupRestorationValue, StateError,
     UniqueBoxRegisterTake,
 };
+pub use env::{CommandMeaningRows, ResidentGroups};
 pub use font::PdfFontCode;
 pub use generation::GenerationBrand;
 pub use input::{AlignmentScannerPhase, LiteralSpanPolicy, SourceId, TokenListReplayKind};

@@ -108,6 +108,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   user-space instructions per iteration for each given Umber executable and,
   with `--pdftex`, the pinned clean pdfTeX oracle; writes a JSON receipt of
   actual snippets, successful execution and counts without compatibility gate keys.
+  Dense primitive and literal-brace group cases measure retained-span execution alongside the existing short-entry group case.
+
 - `test-paired-measure.py`: hermetic mock-executable contract tests for the
   paired measurement runner's identity, failure, validation, and summary
   behavior.

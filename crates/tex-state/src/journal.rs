@@ -461,6 +461,36 @@ impl<G> SaveJournal<G> {
         self.record_group_exit_with_records(frame);
     }
 
+    pub(crate) fn begin_group(
+        &mut self,
+        kind: crate::GroupKind,
+        entered_line: u32,
+        next_group_lineage: &mut u64,
+    ) -> Result<(), crate::StateError> {
+        let depth = u32::try_from(self.group_frames().len())
+            .map_err(|_| crate::StateError::GroupDepthExhausted)?;
+        depth
+            .checked_add(2)
+            .ok_or(crate::StateError::GroupDepthExhausted)?;
+        let lineage = *next_group_lineage;
+        *next_group_lineage = lineage
+            .checked_add(1)
+            .ok_or(crate::StateError::GroupLineageExhausted)?;
+        let journal_start =
+            u32::try_from(self.len()).map_err(|_| crate::StateError::GroupDepthExhausted)?;
+        let (save_stack_words_before, last_save_push_words_before) = self.save_stack_projection();
+        let frame = GroupFrame::new(
+            kind,
+            entered_line,
+            lineage,
+            journal_start,
+            save_stack_words_before,
+            last_save_push_words_before,
+        );
+        self.record_group_enter(frame);
+        Ok(())
+    }
+
     pub(crate) fn record_group_exit_with_records(&mut self, frame: GroupFrame) {
         #[cfg(feature = "profiling")]
         self.record_profile_group_exit();

@@ -79,13 +79,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             false,
             &|_, suppress, mode| !OBSERVED && !suppress && !mode.requires_persistent_settlement(),
             &mut |_| {},
-            &mut |_, state, fuel, alignment, word, _, _, kind, _mode| {
+            &mut |_, meanings, _, fuel, alignment, _, _, word, _, _, kind, _mode| {
                 let literal = word.literal_catcode();
                 let stop = if literal.is_some_and(|cat| cat != Catcode::Active) {
                     None
                 } else {
-                    let mut meaning = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
-                    state.write_packed_token_command_into(word, &mut meaning);
+                    let Some(symbol) = word.control_sequence() else {
+                        return ControlFlow::Continue(Err(()));
+                    };
+                    let meaning = *meanings.get(symbol);
                     if meaning.is_outer() {
                         return ControlFlow::Continue(Err(()));
                     }

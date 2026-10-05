@@ -56,6 +56,8 @@ CASES: dict[str, str] = {
     "expandafter": r"\expandafter\relax\mzero",
     "csname": r"\csname relax\endcsname",
     "group": r"\begingroup\endgroup",
+    "group64": r"\begingroup\endgroup" * 64,
+    "brace64": r"{}" * 64,
     "group_let": r"\begingroup\let\y\relax\endgroup",
     "advance": r"\advance\count2 by 1 ",
     "count": r"\count2=5 ",

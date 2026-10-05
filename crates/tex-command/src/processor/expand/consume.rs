@@ -44,7 +44,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         const OBSERVED: bool,
         const PRESERVE_UNDEFINED: bool,
         const STOP_PROTECTED: bool,
-        Consumer: ExpandedReaderConsumer<Self, G>,
+        Consumer: ExpandedReaderConsumer<Self, G, Facts>,
     >(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
@@ -86,39 +86,61 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut |terminal| terminal.input_boundary(),
             &mut {
                 #[inline(always)]
-                |terminal, state, fuel, alignment, word, origin, _, kind, _mode| {
-                    let meaning = if let Some(symbol) = word.control_sequence() {
-                        *state.compact_control_sequence_meaning_word(symbol)
-                    } else if Consumer::RESIDENT_LITERALS
+                |terminal,
+                 meanings,
+                 state,
+                 fuel,
+                 alignment,
+                 facts,
+                 entered_line,
+                 word,
+                 origin,
+                 _,
+                 kind,
+                 _mode| {
+                    let mut admit = |meaning: &MeaningWord<G>| {
+                        let admitted = terminal.resident_terminal(
+                            state,
+                            facts,
+                            entered_line,
+                            tex_state::token::TracedTokenWord::from_parts(word, origin),
+                            meaning,
+                        );
+                        #[cfg(feature = "profiling")]
+                        if !matches!(admitted, ControlFlow::Continue(false)) {
+                            fuel.record_raw_delivery(
+                                _mode.scanner_active(),
+                                word.requires_meaning_lookup(),
+                                kind,
+                            );
+                        }
+                        #[cfg(not(feature = "profiling"))]
+                        let _ = (&fuel, kind);
+                        match admitted {
+                            ControlFlow::Break(()) => ControlFlow::Break(DeliveryStatus::Command),
+                            ControlFlow::Continue(true) => ControlFlow::Continue(Ok(())),
+                            ControlFlow::Continue(false) => {
+                                ControlFlow::Continue(Err(Some(*meaning)))
+                            }
+                        }
+                    };
+                    if let Some(symbol) = word.control_sequence() {
+                        // Borrow the actual row through input-preserving group execution.
+                        // Only a declined word copies its meaning into full delivery.
+                        return admit(meanings.get(symbol));
+                    }
+                    if Consumer::RESIDENT_LITERALS
                         && let (Some(cat), Some(ch)) = (word.literal_catcode(), word.literal_char())
                         && cat != tex_state::token::Catcode::Active
                     {
-                        MeaningWord::scalar(Meaning::char_token_word(ch, cat))
-                    } else {
-                        return ControlFlow::Continue(Err(None));
-                    };
-                    let admitted = terminal.resident_terminal(
-                        tex_state::token::TracedTokenWord::from_parts(word, origin),
-                        &meaning,
-                    );
-                    if !matches!(admitted, ControlFlow::Continue(false)) {
-                        if Consumer::RESIDENT_LITERALS {
-                            alignment.account_literal_catcode(word.literal_catcode());
+                        let meaning = MeaningWord::scalar(Meaning::char_token_word(ch, cat));
+                        let result = admit(&meaning);
+                        if !matches!(result, ControlFlow::Continue(Err(_))) {
+                            alignment.account_literal_catcode(Some(cat));
                         }
-                        #[cfg(feature = "profiling")]
-                        fuel.record_raw_delivery(
-                            _mode.scanner_active(),
-                            word.requires_meaning_lookup(),
-                            kind,
-                        );
-                        #[cfg(not(feature = "profiling"))]
-                        let _ = (fuel, kind);
+                        return result;
                     }
-                    match admitted {
-                        ControlFlow::Break(()) => ControlFlow::Break(DeliveryStatus::Command),
-                        ControlFlow::Continue(true) => ControlFlow::Continue(Ok(())),
-                        ControlFlow::Continue(false) => ControlFlow::Continue(Err(Some(meaning))),
-                    }
+                    ControlFlow::Continue(Err(None))
                 }
             },
             &mut {

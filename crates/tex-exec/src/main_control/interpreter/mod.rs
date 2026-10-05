@@ -59,7 +59,7 @@ pub(super) fn run<G>(
             let observing = processor.is_observed();
             let mut consume = terminal::InterpreterTerminals {
                 remaining_operations,
-                completed: &mut completed,
+                completed,
                 observation_receipts,
                 completion: &mut completion,
                 observing,
@@ -71,8 +71,9 @@ pub(super) fn run<G>(
                 processor.consume_main_loop_lookahead(&mut consume)
             } else {
                 processor.consume_main_control(&mut consume)
-            }
-            .map_err(command_error)?;
+            };
+            completed = consume.completed;
+            let status = status.map_err(command_error)?;
             if let Some(completion) = completion {
                 return completion;
             }

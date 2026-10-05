@@ -5,12 +5,14 @@ pub mod banks;
 pub(crate) mod durable_boxes;
 #[path = "env/meaning_bank.rs"]
 mod meaning_bank;
+mod resident;
 mod restoration;
 pub(crate) use durable_boxes::{
     AcceptedDurableBoxTail, DurableBoxCursor, DurableBoxState, DurableFormState,
     OutputCarrierTarget,
 };
 pub use durable_boxes::{DurableNodeMetadata, UniqueBoxRegisterTake};
+pub use resident::{CommandMeaningRows, ResidentGroups};
 mod font_runtime;
 #[path = "env/group.rs"]
 pub(crate) mod group;
@@ -1722,29 +1724,10 @@ impl<G> DenseState<G> {
         kind: GroupKind,
         entered_line: u32,
     ) -> Result<(), StateError> {
-        let depth = u32::try_from(self.journal().group_frames().len())
-            .map_err(|_| StateError::GroupDepthExhausted)?;
-        depth
-            .checked_add(2)
-            .ok_or(StateError::GroupDepthExhausted)?;
-        let lineage = self.next_group_lineage;
-        self.next_group_lineage = lineage
-            .checked_add(1)
-            .ok_or(StateError::GroupLineageExhausted)?;
-        let journal_start =
-            u32::try_from(self.journal().len()).map_err(|_| StateError::GroupDepthExhausted)?;
-        let (save_stack_words_before, last_save_push_words_before) =
-            self.journal().save_stack_projection();
-        let frame = GroupFrame::new(
-            kind,
-            entered_line,
-            lineage,
-            journal_start,
-            save_stack_words_before,
-            last_save_push_words_before,
-        );
-        self.journal_mut().record_group_enter(frame);
-        Ok(())
+        self.journal
+            .as_mut()
+            .expect("admitted journal")
+            .begin_group(kind, entered_line, &mut self.next_group_lineage)
     }
 
     pub(crate) fn restore_group_mutation(

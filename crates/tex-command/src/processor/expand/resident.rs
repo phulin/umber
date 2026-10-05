@@ -101,11 +101,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         retain: &impl Fn(&Consumer, bool, crate::processor::delivery_mode::DeliveryMode) -> bool,
         admit: &mut impl FnMut(
             &mut Consumer,
-            &mut tex_state::CommandContext<'_, G>,
+            &tex_state::CommandMeaningRows<'_, G>,
+            &mut tex_state::ResidentGroups<'_, G>,
             &mut crate::fuel::CommandFuel,
             &mut tex_state::diagnostic::DiagnosticEffects,
             &mut crate::processor::alignment::AlignmentDeliveryState<G>,
             &mut Facts,
+            u32,
             TokenWord,
             OriginId,
             bool,
@@ -139,14 +141,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             _ => crate::fuel::RawDeliveryKind::StoredToken,
         };
         macro_rules! admit_word {
-            ($word:expr, $origin:expr) => {
+            ($meanings:expr, $groups:expr, $entered_line:expr, $word:expr, $origin:expr) => {
                 admit(
                     consumer,
-                    self.state,
+                    $meanings,
+                    $groups,
                     self.fuel,
                     self.diagnostic_effects,
                     &mut self.command.roots.alignment,
                     &mut self.host.facts,
+                    $entered_line,
                     $word,
                     $origin,
                     suppress,
@@ -174,9 +178,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     if !retain(consumer, suppress, self.command.delivery_mode) {
                         break 'span (word, origin, Admission::default());
                     }
+                    let entered_line =
+                        u32::try_from(self.command.roots.input.retained_file_line_number)
+                            .unwrap_or(0);
+                    let (meanings, mut groups) = self.state.resident_groups();
                     // A declined first word needs no suffix iterator. It still
                     // borrows this actual array and advances the sole cursor.
-                    match admit_word!(word, origin) {
+                    match admit_word!(&meanings, &mut groups, entered_line, word, origin) {
                         ControlFlow::Continue(Ok(())) => self.fuel.charge()?,
                         ControlFlow::Continue(Err(admission)) => {
                             break 'span (word, origin, admission);
@@ -195,11 +203,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                       origin| {
                         admit(
                             consumer,
-                            self.state,
+                            &meanings,
+                            &mut groups,
                             fuel,
                             self.diagnostic_effects,
                             &mut self.command.roots.alignment,
                             &mut self.host.facts,
+                            entered_line,
                             word,
                             origin,
                             suppress,

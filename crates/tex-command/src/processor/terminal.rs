@@ -7,9 +7,10 @@ use tex_state::meaning::MeaningWord;
 use tex_state::token::TracedTokenWord;
 
 /// A terminal consumer may execute input-preserving words while the actual
-/// resident span remains borrowed. Full processor access ends that borrow.
+/// resident span remains borrowed, with disjoint actual group bookkeeping and host loans.
+/// Full processor access ends that borrow.
 /// Readiness belongs to this invocation, never to command/checkpoint state.
-pub trait NativeWordConsumer<Processor, G> {
+pub trait NativeWordConsumer<Processor, G, Facts> {
     const RESIDENT_TERMINALS: bool = false;
     const RESIDENT_LITERALS: bool = false;
 
@@ -29,6 +30,9 @@ pub trait NativeWordConsumer<Processor, G> {
 
     fn resident_terminal(
         &mut self,
+        _context: &mut tex_state::ResidentGroups<'_, G>,
+        _facts: &mut Facts,
+        _entered_line: u32,
         _spelling: TracedTokenWord,
         _meaning: &MeaningWord<G>,
     ) -> ControlFlow<(), bool> {
@@ -40,7 +44,7 @@ pub trait NativeWordConsumer<Processor, G> {
     fn input_boundary(&mut self) {}
 }
 
-impl<Processor, G, Consume> NativeWordConsumer<Processor, G> for Consume
+impl<Processor, G, Facts, Consume> NativeWordConsumer<Processor, G, Facts> for Consume
 where
     Consume: FnMut(
         &mut Processor,

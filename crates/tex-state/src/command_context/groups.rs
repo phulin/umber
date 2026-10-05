@@ -86,10 +86,30 @@ impl<'a, G> CommandContext<'a, G> {
         mut observe: impl FnMut(&mut Self, crate::GroupUnsaveEvent<'_, G>),
     ) -> Result<crate::GroupFrame, StateError> {
         let frame = self.admitted.state_ref().closing_group(kind)?;
-        self.admitted.state().journal_mut().begin_unsave();
         if self.admitted.state_ref().group_has_saved_records(frame) {
+            self.admitted.state().journal_mut().begin_unsave();
             self.restore_group_records(frame, &mut observe)?;
         }
+        self.pop_group_boundary(frame);
+        Ok(frame)
+    }
+
+    /// Lends live meaning rows and the actual disjoint group bookkeeping.
+    /// Releasing these views permits assignments, restoration and full access.
+    #[inline(always)]
+    pub fn resident_groups(
+        &mut self,
+    ) -> (
+        crate::CommandMeaningRows<'_, G>,
+        crate::ResidentGroups<'_, G>,
+    ) {
+        self.admitted
+            .state()
+            .resident_groups(&mut self.resident.dependencies)
+    }
+
+    #[inline(always)]
+    fn pop_group_boundary(&mut self, frame: crate::GroupFrame) {
         self.admitted
             .state()
             .journal_mut()
@@ -97,7 +117,6 @@ impl<'a, G> CommandContext<'a, G> {
         self.resident
             .dependencies
             .poison(TrackedRegionBarrier::EnvironmentTimelineChange);
-        Ok(frame)
     }
 
     pub fn end_group(&mut self, kind: crate::GroupKind) -> Result<crate::GroupFrame, StateError> {

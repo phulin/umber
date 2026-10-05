@@ -24,7 +24,7 @@ use crate::observation::{
 /// Synchronous action of the actual expansion consumer. Empty ordinary hooks
 /// disappear in its static reader specialization; collection borrows its final
 /// output and scanner episode for the duration of this call only.
-pub(crate) trait ExpandedReaderConsumer<Processor, G> {
+pub(crate) trait ExpandedReaderConsumer<Processor, G, Facts> {
     /// Read each operand with get_token/get_next alignment and capacity semantics.
     const RAW_TOKEN: bool = false;
     const NATIVE_TERMINAL: bool = false;
@@ -50,6 +50,9 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G> {
 
     fn resident_terminal(
         &mut self,
+        _context: &mut tex_state::ResidentGroups<'_, G>,
+        _facts: &mut Facts,
+        _entered_line: u32,
         _spelling: TracedTokenWord,
         _meaning: &tex_state::meaning::MeaningWord<G>,
     ) -> std::ops::ControlFlow<(), bool> {
@@ -102,7 +105,7 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G> {
 
 struct DeliveredCommand;
 
-impl<Processor, G> ExpandedReaderConsumer<Processor, G> for DeliveredCommand {
+impl<Processor, G, Facts> ExpandedReaderConsumer<Processor, G, Facts> for DeliveredCommand {
     fn terminal(
         &mut self,
         _processor: &mut Processor,
@@ -310,7 +313,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             false,
             &|_, _, _| false,
             &mut |_| {},
-            &mut |_, _, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(Err(())),
+            &mut |_, _, _, _, _, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(Err(())),
             &mut |_, processor, word, origin, suppress, site, kind, _| {
                 processor
                     .finish_delivered_word::<OBSERVED>(
@@ -368,9 +371,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         interrupt: &mut impl FnMut(&mut Consumer),
         admit: &mut impl FnMut(
             &mut Consumer,
-            &mut tex_state::CommandContext<'_, G>,
+            &tex_state::CommandMeaningRows<'_, G>,
+            &mut tex_state::ResidentGroups<'_, G>,
             &mut crate::fuel::CommandFuel,
             &mut super::alignment::AlignmentDeliveryState<G>,
+            &mut Facts,
+            u32,
             TokenWord,
             OriginId,
             bool,
@@ -400,18 +406,30 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     &mut {
                         #[inline(always)]
                         |consumer,
+                         meanings,
                          state,
                          fuel,
                          _,
                          alignment,
-                         _,
+                         facts,
+                         entered_line,
                          word,
                          origin,
                          suppress,
                          kind,
                          mode| {
                             let result = admit(
-                                consumer, state, fuel, alignment, word, origin, suppress, kind,
+                                consumer,
+                                meanings,
+                                state,
+                                fuel,
+                                alignment,
+                                facts,
+                                entered_line,
+                                word,
+                                origin,
+                                suppress,
+                                kind,
                                 mode,
                             );
                             result.map_break(std::ops::ControlFlow::Break)
@@ -538,7 +556,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// expansion actions retain native capacity and completion semantics.
     pub(crate) fn consume_raw_expansion<const STOP_PROTECTED: bool>(
         &mut self,
-        consumer: &mut impl ExpandedReaderConsumer<Self, G>,
+        consumer: &mut impl ExpandedReaderConsumer<Self, G, Facts>,
     ) -> Result<(), CommandError> {
         let mut destination = None;
         let result = if self.is_observed() {
@@ -573,7 +591,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
         role: ExpandedReaderRole,
-        terminal: &mut impl ExpandedReaderConsumer<Self, G>,
+        terminal: &mut impl ExpandedReaderConsumer<Self, G, Facts>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.with_expanded_delivery(destination, |processor, destination| {
             if processor.is_observed() {

@@ -7,7 +7,7 @@ use std::ops::ControlFlow;
 struct OneExpansion;
 
 impl<G, Facts: crate::CommandHostFacts<G>>
-    ExpandedReaderConsumer<CommandProcessor<'_, '_, G, Facts>, G> for OneExpansion
+    ExpandedReaderConsumer<CommandProcessor<'_, '_, G, Facts>, G, Facts> for OneExpansion
 {
     const RAW_TOKEN: bool = true;
     const NATIVE_TERMINAL: bool = true;

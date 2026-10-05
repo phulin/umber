@@ -91,8 +91,9 @@ not allocate a vector merely to publish one already-complete node.
   recovery and endv. There is no selected-command fallback.
   Terminal dispatch receives the actual scalar key from expansion without an optional wrapper or fallback font selector. Native main-control, character, accent and alignment continuations use that key directly; codes.rs contains only compile-time selectors. Diagnostic preflight derives its key from the genuinely already-fetched command. Entry inspects the actual host facts directly; it lends
   mutable execution owners only when pending characters require a real flush.
-  Fetch-role queries borrow actual host facts directly. Relax continuation
-  reads the live World effect position and recoverable diagnostic demand
+  Fetch-role queries borrow actual host facts directly.
+  Retained ordinary groups use the actual disjoint state/execution loans; saved records, aftergroup, tracing, math and recovery interrupt that span.
+  Relax continuation reads the live World effect position and recoverable diagnostic demand
   without a mutable execution-owner callback.
 - `src/main_control/interpreter/box_inputs.rs`: the one native `scan_box`
   operand selection and actual destinations. Direct register handoffs create
@@ -417,4 +418,4 @@ Page-material and page-region work-count assertions require `profiling` and
 run through `scripts/check-tools.sh profiling-arena-tests`. Routine tests
 retain shape, stable-address, stale-root and checkpoint/replay assertions.
 
-- `src/main_control/interpreter/terminal.rs`: the actual synchronous interpreter consumer, local operation count and clean no-op admission. It owns no input or execution state and retains no meaning cache; input transitions and full terminal entry invalidate the local no-op fact.
+- `src/main_control/interpreter/terminal.rs`: the actual synchronous interpreter consumer, owned operation-budget scalar and clean no-op/group admission. It owns no input or execution state and retains no meaning cache; input transitions and full terminal entry invalidate the local no-op fact.

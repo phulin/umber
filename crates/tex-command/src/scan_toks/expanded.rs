@@ -14,7 +14,8 @@ pub(super) struct ReplacementConsumer<'a, G> {
 }
 
 impl<G, Facts: crate::CommandHostFacts<G>>
-    ExpandedReaderConsumer<CommandProcessor<'_, '_, G, Facts>, G> for ReplacementConsumer<'_, G>
+    ExpandedReaderConsumer<CommandProcessor<'_, '_, G, Facts>, G, Facts>
+    for ReplacementConsumer<'_, G>
 {
     const RAW_TOKEN: bool = true;
     const NATIVE_TERMINAL: bool = true;
