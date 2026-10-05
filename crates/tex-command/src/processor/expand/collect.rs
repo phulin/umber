@@ -51,10 +51,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         ) -> Result<ControlFlow<R>, CommandError>,
     ) -> Result<Option<R>, CommandError> {
         self.create_source_control_sequences = true;
-        self.consume_input::<false, _>(
+        self.consume_input::<_, _, _>(
             true,
-            &mut |_, _, _, _, _, _, _| ControlFlow::Continue(false),
-            &mut |processor, word, origin, suppress, site, kind| {
+            &mut (),
+            &|_, _, _| false,
+            &mut |_| {},
+            &mut |_, _, _, _, _, _, _, _| ControlFlow::Continue(Err(())),
+            &mut |_, processor, word, origin, suppress, site, kind, _| {
                 let literal = word.literal_catcode();
                 let mut meaning = None;
                 let mut lookup = false;
@@ -205,10 +208,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     && self.settle_resident_run_boundary()?
                 {}
             }
-            let selected = self.consume_input::<false, _>(
+            let selected = self.consume_input::<_, _, _>(
                 true,
-                &mut |_, _, _, _, _, _, _| ControlFlow::Continue(false),
-                &mut |processor, word, origin, suppress, site, kind| {
+                &mut (),
+                &|_, _, _| false,
+                &mut |_| {},
+                &mut |_, _, _, _, _, _, _, _| ControlFlow::Continue(Err(())),
+                &mut |_, processor, word, origin, suppress, site, kind, _| {
                     let literal = word.literal_catcode();
                     // Literal spelling already supplies all collection facts. Active
                     // characters and control sequences still need live outer validity.

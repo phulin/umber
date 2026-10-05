@@ -401,10 +401,16 @@ fn native_main_lookahead_preserves_mixed_expansion_and_observed_fuel_cuts() {
             };
             let mut output = Vec::new();
             let result = if native {
-                processor.consume_main_loop_lookahead(&mut |_, spelling, _, _, _| {
-                    output.push(spelling.semantic_token());
-                    Ok(std::ops::ControlFlow::Continue(()))
-                })
+                processor.consume_main_loop_lookahead(&mut crate::terminal_consumer::<
+                    crate::CommandProcessor<'_, '_, _>,
+                    _,
+                    _,
+                >(
+                    |_, spelling, _, _, _| {
+                        output.push(spelling.semantic_token());
+                        Ok(std::ops::ControlFlow::Continue(()))
+                    },
+                ))
             } else {
                 let mut destination = None;
                 loop {

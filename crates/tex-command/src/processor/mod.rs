@@ -3,6 +3,8 @@
 pub(crate) mod alignment;
 mod alignment_interception;
 mod backup;
+mod terminal;
+pub use terminal::{NativeWordConsumer, terminal_consumer};
 pub(crate) mod delivery_mode;
 mod end_input;
 pub(crate) mod expand;

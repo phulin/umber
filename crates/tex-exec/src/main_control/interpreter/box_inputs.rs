@@ -46,67 +46,73 @@ pub(super) fn scan<G>(
 ) -> Result<MainControlStep, ExecError> {
     let mut result = None;
     let status = processor
-        .consume_main_control(&mut |processor, spelling, meaning, _, exceptional| {
-            let code = meaning.control_code();
-            if matches!(code, codes::RELAX | codes::CHAR_SPACE) {
-                return Ok(ControlFlow::Continue(()));
-            }
-            result = Some((|| match code {
-                codes::PRIMITIVE_H_BOX | codes::PRIMITIVE_V_BOX | codes::PRIMITIVE_V_TOP => {
-                    let primitive = match code {
-                        codes::PRIMITIVE_H_BOX => UnexpandablePrimitive::HBox,
-                        codes::PRIMITIVE_V_BOX => UnexpandablePrimitive::VBox,
-                        _ => UnexpandablePrimitive::VTop,
-                    };
-                    construction(processor, primitive, destination, receipts)
+        .consume_main_control(&mut tex_command::terminal_consumer::<
+            Processor<'_, '_, G>,
+            G,
+            _,
+        >(
+            |processor, spelling, meaning, _, exceptional| {
+                let code = meaning.control_code();
+                if matches!(code, codes::RELAX | codes::CHAR_SPACE) {
+                    return Ok(ControlFlow::Continue(()));
                 }
-                codes::PRIMITIVE_BOX | codes::PRIMITIVE_COPY => register(
-                    processor,
-                    code == codes::PRIMITIVE_COPY,
-                    destination,
-                    receipts,
-                ),
-                codes::PRIMITIVE_LAST_BOX => last(processor, destination, receipts),
-                codes::PRIMITIVE_V_SPLIT => split(processor, destination, receipts),
-                codes::PRIMITIVE_H_RULE | codes::PRIMITIVE_V_RULE
-                    if matches!(destination, Destination::Leader(_)) =>
-                {
-                    let primitive = if code == codes::PRIMITIVE_H_RULE {
-                        UnexpandablePrimitive::HRule
-                    } else {
-                        UnexpandablePrimitive::VRule
-                    };
-                    let rule = processor.scan_rule_spec(primitive).map_err(command_error)?;
-                    report_scan(processor)?;
-                    processor.with_execution_owners(
-                        |context, command, effects, fuel, _, execution, _, _, _| {
-                            finish(
-                                destination,
-                                Some(Node::Rule {
-                                    width: rule.width,
-                                    height: rule.height,
-                                    depth: rule.depth,
-                                }),
-                                context,
-                                command,
-                                effects,
-                                fuel,
-                                execution,
-                                receipts,
-                            )
-                        },
-                    )?;
-                    leaders::finish_leader(processor)
-                }
-                _ => {
-                    processor
-                        .back_consumed_word(spelling, exceptional)
-                        .map_err(command_error)?;
-                    missing(processor)
-                }
-            })());
-            Ok(ControlFlow::Break(()))
-        })
+                result = Some((|| match code {
+                    codes::PRIMITIVE_H_BOX | codes::PRIMITIVE_V_BOX | codes::PRIMITIVE_V_TOP => {
+                        let primitive = match code {
+                            codes::PRIMITIVE_H_BOX => UnexpandablePrimitive::HBox,
+                            codes::PRIMITIVE_V_BOX => UnexpandablePrimitive::VBox,
+                            _ => UnexpandablePrimitive::VTop,
+                        };
+                        construction(processor, primitive, destination, receipts)
+                    }
+                    codes::PRIMITIVE_BOX | codes::PRIMITIVE_COPY => register(
+                        processor,
+                        code == codes::PRIMITIVE_COPY,
+                        destination,
+                        receipts,
+                    ),
+                    codes::PRIMITIVE_LAST_BOX => last(processor, destination, receipts),
+                    codes::PRIMITIVE_V_SPLIT => split(processor, destination, receipts),
+                    codes::PRIMITIVE_H_RULE | codes::PRIMITIVE_V_RULE
+                        if matches!(destination, Destination::Leader(_)) =>
+                    {
+                        let primitive = if code == codes::PRIMITIVE_H_RULE {
+                            UnexpandablePrimitive::HRule
+                        } else {
+                            UnexpandablePrimitive::VRule
+                        };
+                        let rule = processor.scan_rule_spec(primitive).map_err(command_error)?;
+                        report_scan(processor)?;
+                        processor.with_execution_owners(
+                            |context, command, effects, fuel, _, execution, _, _, _| {
+                                finish(
+                                    destination,
+                                    Some(Node::Rule {
+                                        width: rule.width,
+                                        height: rule.height,
+                                        depth: rule.depth,
+                                    }),
+                                    context,
+                                    command,
+                                    effects,
+                                    fuel,
+                                    execution,
+                                    receipts,
+                                )
+                            },
+                        )?;
+                        leaders::finish_leader(processor)
+                    }
+                    _ => {
+                        processor
+                            .back_consumed_word(spelling, exceptional)
+                            .map_err(command_error)?;
+                        missing(processor)
+                    }
+                })());
+                Ok(ControlFlow::Break(()))
+            },
+        ))
         .map_err(command_error)?;
     match result {
         Some(result) => result,

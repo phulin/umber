@@ -304,7 +304,7 @@ Definition-owned parameter programs expose literal delimiter views only for none
   directly; definition publication compiles them once for scans, imports, and
   format loading.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
-- `src/meaning/native.rs`: Two-word native command encoding, complete font
+- `src/meaning/native.rs`: Two-word native command encoding, direct no-op family classification, complete font
   identity/definition-coordinate projections, direct primitive/character
   queries and demanded cold decoding. Dispatch keys have no optional wrapper.
   Scalar flags and character payloads retain their natural packed positions. No

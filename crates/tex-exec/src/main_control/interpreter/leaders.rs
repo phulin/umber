@@ -16,89 +16,97 @@ pub(super) fn finish_leader<G>(
         });
     let mut result = None;
     let status = processor
-        .consume_main_control(&mut |processor, spelling, meaning, _, exceptional| {
-            let code = meaning.control_code();
-            if matches!(code, codes::CHAR_SPACE | codes::RELAX) {
-                return Ok(ControlFlow::Continue(()));
-            }
-            result = Some((|| {
-                let glue = if (horizontal && code == codes::PRIMITIVE_H_SKIP)
-                    || (!horizontal && code == codes::PRIMITIVE_V_SKIP)
-                {
-                    let spec = processor.scan_glue(false).map_err(command_error)?;
-                    Some((spec, processor.scanned_glue_shared_zero()))
-                } else {
-                    let infinite = match (horizontal, code) {
-                        (true, codes::PRIMITIVE_H_FIL) | (false, codes::PRIMITIVE_V_FIL) => {
-                            Some((Order::Fil, false, false))
-                        }
-                        (true, codes::PRIMITIVE_H_FILL) | (false, codes::PRIMITIVE_V_FILL) => {
-                            Some((Order::Fill, false, false))
-                        }
-                        (true, codes::PRIMITIVE_H_SS) | (false, codes::PRIMITIVE_V_SS) => {
-                            Some((Order::Fil, false, true))
-                        }
-                        (true, codes::PRIMITIVE_H_FIL_NEG)
-                        | (false, codes::PRIMITIVE_V_FIL_NEG) => Some((Order::Fil, true, false)),
-                        _ => None,
-                    };
-                    infinite.map(|(order, negative, shrink)| {
-                        let unit = Scaled::from_raw(if negative {
-                            -Scaled::UNITY
-                        } else {
-                            Scaled::UNITY
-                        });
-                        let zero = Scaled::from_raw(0);
-                        (
-                            GlueSpec {
-                                width: zero,
-                                stretch: if shrink { zero } else { unit },
-                                stretch_order: if shrink { Order::Normal } else { order },
-                                shrink: if shrink { unit } else { zero },
-                                shrink_order: if shrink { order } else { Order::Normal },
-                            },
-                            false,
-                        )
-                    })
-                };
-                let Some((glue, shared_zero)) = glue else {
-                    processor
-                        .back_consumed_word(spelling, exceptional)
-                        .map_err(command_error)?;
-                    return bad_leader_glue(processor);
-                };
-                report_scan(processor)?;
-                processor.with_execution_owners(
-                    |context, command, effects, fuel, _, execution, _, _, _| {
-                        execution.main_loop_active = false;
-                        if let Some((kind, payload)) = payload {
-                            crate::box_runtime::append_leader_contribution(
-                                &mut execution.modes,
-                                context,
-                                effects,
-                                kind,
-                                payload,
-                                glue,
-                                if shared_zero {
-                                    tex_state::node::GlueSpecOrigin::SharedZero
-                                } else {
-                                    tex_state::node::GlueSpecOrigin::Owned
+        .consume_main_control(&mut tex_command::terminal_consumer::<
+            Processor<'_, '_, G>,
+            G,
+            _,
+        >(
+            |processor, spelling, meaning, _, exceptional| {
+                let code = meaning.control_code();
+                if matches!(code, codes::CHAR_SPACE | codes::RELAX) {
+                    return Ok(ControlFlow::Continue(()));
+                }
+                result = Some((|| {
+                    let glue = if (horizontal && code == codes::PRIMITIVE_H_SKIP)
+                        || (!horizontal && code == codes::PRIMITIVE_V_SKIP)
+                    {
+                        let spec = processor.scan_glue(false).map_err(command_error)?;
+                        Some((spec, processor.scanned_glue_shared_zero()))
+                    } else {
+                        let infinite = match (horizontal, code) {
+                            (true, codes::PRIMITIVE_H_FIL) | (false, codes::PRIMITIVE_V_FIL) => {
+                                Some((Order::Fil, false, false))
+                            }
+                            (true, codes::PRIMITIVE_H_FILL) | (false, codes::PRIMITIVE_V_FILL) => {
+                                Some((Order::Fill, false, false))
+                            }
+                            (true, codes::PRIMITIVE_H_SS) | (false, codes::PRIMITIVE_V_SS) => {
+                                Some((Order::Fil, false, true))
+                            }
+                            (true, codes::PRIMITIVE_H_FIL_NEG)
+                            | (false, codes::PRIMITIVE_V_FIL_NEG) => {
+                                Some((Order::Fil, true, false))
+                            }
+                            _ => None,
+                        };
+                        infinite.map(|(order, negative, shrink)| {
+                            let unit = Scaled::from_raw(if negative {
+                                -Scaled::UNITY
+                            } else {
+                                Scaled::UNITY
+                            });
+                            let zero = Scaled::from_raw(0);
+                            (
+                                GlueSpec {
+                                    width: zero,
+                                    stretch: if shrink { zero } else { unit },
+                                    stretch_order: if shrink { Order::Normal } else { order },
+                                    shrink: if shrink { unit } else { zero },
+                                    shrink_order: if shrink { order } else { Order::Normal },
                                 },
-                                fuel,
-                            )?;
-                            crate::vertical::build_page_if_outer_vertical(
-                                &execution.modes,
-                                context,
-                                effects,
-                                command,
-                            )?;
-                        }
-                        Ok(MainControlStep::Continue)
-                    },
-                )
-            })());
-            Ok(ControlFlow::Break(()))
-        })
+                                false,
+                            )
+                        })
+                    };
+                    let Some((glue, shared_zero)) = glue else {
+                        processor
+                            .back_consumed_word(spelling, exceptional)
+                            .map_err(command_error)?;
+                        return bad_leader_glue(processor);
+                    };
+                    report_scan(processor)?;
+                    processor.with_execution_owners(
+                        |context, command, effects, fuel, _, execution, _, _, _| {
+                            execution.main_loop_active = false;
+                            if let Some((kind, payload)) = payload {
+                                crate::box_runtime::append_leader_contribution(
+                                    &mut execution.modes,
+                                    context,
+                                    effects,
+                                    kind,
+                                    payload,
+                                    glue,
+                                    if shared_zero {
+                                        tex_state::node::GlueSpecOrigin::SharedZero
+                                    } else {
+                                        tex_state::node::GlueSpecOrigin::Owned
+                                    },
+                                    fuel,
+                                )?;
+                                crate::vertical::build_page_if_outer_vertical(
+                                    &execution.modes,
+                                    context,
+                                    effects,
+                                    command,
+                                )?;
+                            }
+                            Ok(MainControlStep::Continue)
+                        },
+                    )
+                })());
+                Ok(ControlFlow::Break(()))
+            },
+        ))
         .map_err(command_error)?;
     match result {
         Some(result) => result,

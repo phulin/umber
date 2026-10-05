@@ -417,3 +417,5 @@ the same native switch. No additional command eligibility front is introduced.
 Page-material and page-region work-count assertions require `profiling` and
 run through `scripts/check-tools.sh profiling-arena-tests`. Routine tests
 retain shape, stable-address, stale-root and checkpoint/replay assertions.
+
+- `src/main_control/interpreter/terminal.rs`: the actual synchronous interpreter consumer, local operation count and clean no-op admission. It owns no input or execution state and retains no meaning cache; input transitions and full terminal entry invalidate the local no-op fact.

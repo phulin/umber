@@ -8,48 +8,54 @@ pub(super) fn immediate<G>(
 ) -> Result<MainControlStep, ExecError> {
     let mut result = None;
     let status = processor
-        .consume_main_control(&mut |processor, spelling, meaning, _, exceptional| {
-            let code = meaning.control_code();
-            if code == codes::CHAR_SPACE {
-                return Ok(ControlFlow::Continue(()));
-            }
-            result = Some((|| {
-                let pdf_name = match code {
-                    codes::PRIMITIVE_PDF_OBJECT => Some("pdfobj"),
-                    codes::PRIMITIVE_PDF_X_FORM => Some("pdfxform"),
-                    codes::PRIMITIVE_PDF_X_IMAGE => Some("pdfximage"),
-                    _ => None,
-                };
-                if let Some(name) = pdf_name
-                    && processor.int_param(IntParam::PDF_OUTPUT) <= 0
-                {
-                    processor
-                        .back_consumed_word(spelling, exceptional)
-                        .map_err(command_error)?;
-                    processor
-                        .back_consumed_word(outer, outer_exceptional)
-                        .map_err(command_error)?;
-                    return Err(ExecError::PdfExtensionInDviMode(name));
+        .consume_main_control(&mut tex_command::terminal_consumer::<
+            Processor<'_, '_, G>,
+            G,
+            _,
+        >(
+            |processor, spelling, meaning, _, exceptional| {
+                let code = meaning.control_code();
+                if code == codes::CHAR_SPACE {
+                    return Ok(ControlFlow::Continue(()));
                 }
-                match code {
-                    codes::PRIMITIVE_OPEN_OUT => open_out(processor, true),
-                    codes::PRIMITIVE_WRITE => write(processor, true),
-                    codes::PRIMITIVE_CLOSE_OUT => close_out(processor, true),
-                    codes::PRIMITIVE_PDF_OBJECT => pdf::object(processor, true),
-                    codes::PRIMITIVE_PDF_X_FORM => {
-                        pdf::form(processor, UnexpandablePrimitive::PdfXForm, true)
-                    }
-                    codes::PRIMITIVE_PDF_X_IMAGE => pdf::image(processor),
-                    _ => {
+                result = Some((|| {
+                    let pdf_name = match code {
+                        codes::PRIMITIVE_PDF_OBJECT => Some("pdfobj"),
+                        codes::PRIMITIVE_PDF_X_FORM => Some("pdfxform"),
+                        codes::PRIMITIVE_PDF_X_IMAGE => Some("pdfximage"),
+                        _ => None,
+                    };
+                    if let Some(name) = pdf_name
+                        && processor.int_param(IntParam::PDF_OUTPUT) <= 0
+                    {
                         processor
                             .back_consumed_word(spelling, exceptional)
                             .map_err(command_error)?;
-                        Ok(MainControlStep::Continue)
+                        processor
+                            .back_consumed_word(outer, outer_exceptional)
+                            .map_err(command_error)?;
+                        return Err(ExecError::PdfExtensionInDviMode(name));
                     }
-                }
-            })());
-            Ok(ControlFlow::Break(()))
-        })
+                    match code {
+                        codes::PRIMITIVE_OPEN_OUT => open_out(processor, true),
+                        codes::PRIMITIVE_WRITE => write(processor, true),
+                        codes::PRIMITIVE_CLOSE_OUT => close_out(processor, true),
+                        codes::PRIMITIVE_PDF_OBJECT => pdf::object(processor, true),
+                        codes::PRIMITIVE_PDF_X_FORM => {
+                            pdf::form(processor, UnexpandablePrimitive::PdfXForm, true)
+                        }
+                        codes::PRIMITIVE_PDF_X_IMAGE => pdf::image(processor),
+                        _ => {
+                            processor
+                                .back_consumed_word(spelling, exceptional)
+                                .map_err(command_error)?;
+                            Ok(MainControlStep::Continue)
+                        }
+                    }
+                })());
+                Ok(ControlFlow::Break(()))
+            },
+        ))
         .map_err(command_error)?;
     match result {
         Some(result) => result,

@@ -217,22 +217,28 @@ fn resident_character_stop_resumes_without_reselecting_each_word() {
         let writes = crate::command::command_ownership_counters().resolved_writes;
         assert_eq!(
             processor
-                .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
-                    assert!(exceptional.is_none());
-                    let Token::Char {
-                        ch,
-                        cat: Catcode::Letter,
-                    } = spelling.semantic_token()
-                    else {
-                        panic!("native prefix stopped after its operation budget");
-                    };
-                    characters.push(ch);
-                    Ok(if characters.len() == 17 {
-                        std::ops::ControlFlow::Break(())
-                    } else {
-                        std::ops::ControlFlow::Continue(())
-                    })
-                })
+                .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
+                    crate::CommandProcessor<'_, '_, _>,
+                    _,
+                    _,
+                >(
+                    |_, spelling, _, _, exceptional| {
+                        assert!(exceptional.is_none());
+                        let Token::Char {
+                            ch,
+                            cat: Catcode::Letter,
+                        } = spelling.semantic_token()
+                        else {
+                            panic!("native prefix stopped after its operation budget");
+                        };
+                        characters.push(ch);
+                        Ok(if characters.len() == 17 {
+                            std::ops::ControlFlow::Break(())
+                        } else {
+                            std::ops::ControlFlow::Continue(())
+                        })
+                    }
+                ))
                 .expect("native prefix"),
             crate::DeliveryStatus::Command
         );
@@ -241,22 +247,28 @@ fn resident_character_stop_resumes_without_reselecting_each_word() {
         let mut tail = None;
         assert_eq!(
             processor
-                .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
-                    assert!(exceptional.is_none());
-                    match spelling.semantic_token() {
-                        Token::Char {
-                            ch,
-                            cat: Catcode::Letter,
-                        } => {
-                            characters.push(ch);
-                            Ok(std::ops::ControlFlow::Continue(()))
-                        }
-                        token => {
-                            tail = Some(token);
-                            Ok(std::ops::ControlFlow::Break(()))
+                .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
+                    crate::CommandProcessor<'_, '_, _>,
+                    _,
+                    _,
+                >(
+                    |_, spelling, _, _, exceptional| {
+                        assert!(exceptional.is_none());
+                        match spelling.semantic_token() {
+                            Token::Char {
+                                ch,
+                                cat: Catcode::Letter,
+                            } => {
+                                characters.push(ch);
+                                Ok(std::ops::ControlFlow::Continue(()))
+                            }
+                            token => {
+                                tail = Some(token);
+                                Ok(std::ops::ControlFlow::Break(()))
+                            }
                         }
                     }
-                })
+                ))
                 .expect("native continuation"),
             crate::DeliveryStatus::Command
         );
@@ -304,18 +316,24 @@ fn resident_character_fuel_failure_preserves_exact_consumed_prefix() {
             let writes = crate::command::command_ownership_counters().resolved_writes;
             assert!(
                 processor
-                    .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
-                        assert!(exceptional.is_none());
-                        let Token::Char {
-                            ch,
-                            cat: Catcode::Letter,
-                        } = spelling.semantic_token()
-                        else {
-                            panic!("letter input");
-                        };
-                        characters.push(ch);
-                        Ok(std::ops::ControlFlow::Continue(()))
-                    })
+                    .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
+                        crate::CommandProcessor<'_, '_, _>,
+                        _,
+                        _,
+                    >(
+                        |_, spelling, _, _, exceptional| {
+                            assert!(exceptional.is_none());
+                            let Token::Char {
+                                ch,
+                                cat: Catcode::Letter,
+                            } = spelling.semantic_token()
+                            else {
+                                panic!("letter input");
+                            };
+                            characters.push(ch);
+                            Ok(std::ops::ControlFlow::Continue(()))
+                        }
+                    ))
                     .is_err()
             );
             assert_eq!(characters, &"abcdefg"[..limit as usize]);

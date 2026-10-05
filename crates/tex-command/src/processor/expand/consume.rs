@@ -39,6 +39,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// The ordinary expansion consumer owns one read/interpret back edge.
     /// A supplied command is a distinct entry boundary, never an optional-slot
     /// choice repeated for each newly read word.
+    #[inline(always)]
     pub(super) fn expanded_delivery_loop<
         const OBSERVED: bool,
         const PRESERVE_UNDEFINED: bool,
@@ -71,27 +72,68 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         } else {
             expanded = supplied;
         }
-        let status = self.consume_input::<false, _>(
+        let status = self.consume_input::<_, _, _>(
             self.create_source_control_sequences,
-            &mut |_, _, _, _, _, _, _| ControlFlow::Continue(false),
+            terminal,
+            &|terminal, suppress, mode| {
+                Consumer::RESIDENT_TERMINALS
+                    && !OBSERVED
+                    && terminal.resident_ready()
+                    && !suppress
+                    && !mode.requires_persistent_settlement()
+            },
+            &mut |terminal| terminal.input_boundary(),
+            &mut {
+                #[inline(always)]
+                |terminal, state, fuel, _, word, _, kind, _mode| {
+                    let Some(symbol) = word.control_sequence() else {
+                        return ControlFlow::Continue(Err(None));
+                    };
+                    let meaning = *state.compact_control_sequence_meaning_word(symbol);
+                    let admitted = terminal.resident_terminal(&meaning);
+                    if !matches!(admitted, ControlFlow::Continue(false)) {
+                        #[cfg(feature = "profiling")]
+                        fuel.record_raw_delivery(
+                            _mode.scanner_active(),
+                            word.requires_meaning_lookup(),
+                            kind,
+                        );
+                        #[cfg(not(feature = "profiling"))]
+                        let _ = (fuel, kind);
+                    }
+                    match admitted {
+                        ControlFlow::Break(()) => ControlFlow::Break(DeliveryStatus::Command),
+                        ControlFlow::Continue(true) => ControlFlow::Continue(Ok(())),
+                        ControlFlow::Continue(false) => ControlFlow::Continue(Err(Some(meaning))),
+                    }
+                }
+            },
             &mut {
                 // This is the actual reading/interpretation back edge. Keeping
                 // its invocation in the reader avoids a per-token result call;
                 // recursive primitive expansion and matching stay outlined.
                 #[inline(always)]
-                |processor, word, origin, suppress, site, kind| {
-                    let (meaning, control_sequence) = processor.resolve_token_word(word);
+                |terminal: &mut Consumer,
+                 processor,
+                 word,
+                 origin,
+                 suppress,
+                 site,
+                 kind,
+                 resolved: Option<MeaningWord<G>>| {
+                    let (meaning, control_sequence) = match resolved {
+                        Some(meaning) => (meaning, word.control_sequence()),
+                        None => processor.resolve_token_word(word),
+                    };
                     processor.record_consumed_word(kind, word.requires_meaning_lookup());
-                    if !OBSERVED
+                    let mode = processor.command.delivery_mode;
+                    let native = !OBSERVED
+                        && !suppress
+                        && !mode.alignment_active()
+                        && (!mode.scanner_active() || !meaning.is_outer());
+                    if native
                         && let Some((flags, definition)) = meaning.macro_parts()
                         && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
-                        && !processor
-                            .command
-                            .delivery_mode
-                            .requires_semantic_settlement(
-                                suppress,
-                                flags.contains(MeaningFlags::OUTER),
-                            )
                     {
                         let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
                         terminal.before_action(processor);
@@ -108,11 +150,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         expanded = true;
                         return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                     }
-                    let native = !OBSERVED
-                        && !processor
-                            .command
-                            .delivery_mode
-                            .requires_semantic_settlement(suppress, meaning.is_outer());
                     let native_action;
                     if native {
                         native_action = classify_native_command(word, &meaning);

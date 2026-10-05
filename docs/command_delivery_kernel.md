@@ -700,3 +700,55 @@ nor repeatedly writes its already-false character-loop flag. Every return to
 execution refreshes admission before the next reader invocation. Diagnostic
 spelling updates the actual scan origin; the driver owns its command origin
 only when a word returns to the switch.
+
+## Resident terminal spans
+
+Main control's continuing terminal consumer borrows the reader's actual span.
+It may admit an input-preserving terminal using the live meaning lookup while
+that borrow remains selected. The input frame remains the sole cursor: every
+accepted word advances it after its exact fuel charge. The iterator bounds the
+selected physical suffix once; it owns no replacement words or input state.
+Retainability, suppression and delivery regime are read at span entry.
+Single-word reads and declined initial admissions use the same reader without
+constructing a suffix iterator. Its suffix is acquired only after a retained
+admission continues.
+Ordinary control sequences resolve directly from the live dense meaning table;
+a declined word hands that actual meaning to full delivery. Active characters
+and engine sentinels take full delivery, so no symbol or command record is
+needed in the restricted handoff.
+
+The reader charges on entry, then charges the next word immediately when an
+admission continues. Cold transitions carry that charge unchanged. A budget
+stop charges no following word, and a fuel failure leaves the next word unread.
+There is no reservation callback, prepaid flag or reader specialization for
+fuel bookkeeping.
+
+A full processor terminal can scan or replace input, so it runs only after the
+span borrow ends. Expansion, substitution, exhaustion and source transitions
+also release that borrow. Consumer-local facts about a clean no-op entry are
+invalidated at these transitions; meanings are never cached across words.
+Observation, suppression and semantic delivery settlement retain their actual
+full delivery path. Main control keeps reporting, tracing and character
+flushing at demanded entry boundaries, then consecutive clean no-ops need no
+additional effect or recoverable-diagnostic polling.
+
+The shared reader passes its one consumer explicitly to restricted admission
+and full delivery. There is no interior-mutability bridge, second input owner,
+command construction for admitted words, or command completion cleanup stage.
+
+Machine-code inspection of the x86-64 ordinary release reader confirms that
+the retained no-op back edge contains the live lookup, direct no-op-family
+predicate, actual cursor advance, operation count, budget and fuel charge. It
+contains no storage selection, terminal-selector mapping, command tracing,
+character flush or diagnostic polling. Full delivery shares one native
+eligibility decision across macro activation and subsequent expansion or
+terminal dispatch; outer classification is demanded only by an active scanner.
+
+On the measured 64-no-op workload, startup/empty-loop-cancelled instructions
+fell from about 180 to 48 per no-op (pinned pdfTeX: 91). Five rotated runs of
+100,000 iterations measured median whole-workload cycles of 126 to 98 per
+no-op, including startup and loop overhead (pdfTeX: 49). Short entries remain
+more expensive: a single no-op rose from 180 to 212 marginal instructions,
+and the two-no-op macro workload rose about 1% in whole-loop instructions.
+The retained span removes repeated work within its admitted prefix; its
+initial admission and full-delivery boundary remain optimization targets.

@@ -373,7 +373,11 @@ fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
         );
         let mut consumed = String::new();
         let result = processor
-            .consume_main_control(&mut |processor, word, _, _, exceptional| {
+            .consume_main_control(&mut tex_command::terminal_consumer::<
+                CommandProcessor<'_, '_, _, &mut ExecutionState<_>>,
+                _,
+                _,
+            >(|processor, word, _, _, exceptional| {
                 assert!(
                     exceptional.is_none(),
                     "ordinary execution needs no command record"
@@ -429,7 +433,7 @@ fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
                 } else {
                     std::ops::ControlFlow::Continue(())
                 })
-            })
+            }))
             .expect("native main-control consumption");
         assert_eq!(result, tex_command::DeliveryStatus::Command);
         assert_eq!(consumed, "HTVKYQ");
@@ -446,6 +450,8 @@ fn native_terminal_continuation_preserves_the_actual_operation_budget() {
     // replacement text and each group boundary.
     for source in [
         br"\def\m{\relax\relax}\m\m\m\count0=9 \relax%".as_slice(),
+        br"\def\m#1{\relax\relax#1\relax\relax}\m{\relax\relax}\count0=9 \relax%",
+        br"\def\m{\let\noop\relax\noop\noop\def\noop{\count2=8 }\noop\nullfont}\m\count0=9 \relax%",
         br"\def\m{{}}\m\m\m\count0=9 \relax%",
         br"\def\m{\begingroup\endgroup}\m\m\m\count0=9 \relax%",
         br"\def\m{\nullfont\nullfont}\m\m\m\count0=9 \relax%",
@@ -514,6 +520,7 @@ fn native_terminals_after_text_refresh_delivery_and_preserve_group_restoration()
         (r"\probe ", "yz"),
         (r"\expandafter\probe\relax ", "yz"),
         (r"\relax ", "xyz"),
+        (r"\def\noop{\relax\relax\relax}\noop ", "xyz"),
         (r"\f ", "xyz"),
         (r"\textfont0=\f ", "xyz"),
         (r"\scriptfont0=\f ", "xyz"),
@@ -721,6 +728,54 @@ fn native_math_characters_and_active_mathcodes_preserve_budget_boundaries() {
                     .collect::<String>()
             });
             assert_eq!(characters, expected, "source={source}, budget={budget}");
+        });
+    }
+}
+
+#[test]
+fn clean_noop_spans_interrupt_for_tracing_assignments_and_expansion_effects() {
+    // TeX82 §§298, 1030 and 1031: each demanded command trace uses the live
+    // tracing parameter; §366 expansion can print between terminal no-ops.
+    for budget in [1, 2, 64] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, br"\def\m#1{\relax\relax#1\relax\relax}\tracingonline=1\m{\tracingcommands=1\relax\relax\tracingcommands=0}\m{\def\empty{}\tracingmacros=1\empty\tracingmacros=0\message{[between-noops]}}\count0=9 \relax%");
+            let mut effects = DiagnosticEffects::new();
+            let mut provider = None;
+            let mut finished = false;
+            for _ in 0..128 {
+                let mut completed = 0;
+                let step = control
+                    .interpret_chunk(
+                        stores,
+                        &mut effects,
+                        false,
+                        &mut provider,
+                        budget,
+                        &mut completed,
+                    )
+                    .expect("native no-op span boundaries");
+                if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+                    finished = true;
+                    break;
+                }
+            }
+            assert!(finished, "budget={budget}");
+            let terminal = terminal_text(stores);
+            assert_eq!(
+                terminal.matches(r"\relax").count(),
+                2,
+                "live tracing: budget={budget}, terminal={terminal}"
+            );
+            assert_eq!(
+                terminal.matches("[between-noops]").count(),
+                1,
+                "synchronous effect is published once"
+            );
+            assert_eq!(
+                admitted!(stores, |context| context.count(0).expect("tail register")),
+                9
+            );
         });
     }
 }

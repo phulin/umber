@@ -2,16 +2,18 @@
 use super::*;
 
 #[inline(always)]
+/// Returns the live tracing demand for this terminal entry.
 pub(super) fn command<G>(
     processor: &mut Processor<'_, '_, G>,
     code: u64,
     meaning: &tex_state::meaning::MeaningWord<G>,
     symbol: Option<Symbol>,
-) {
+) -> bool {
     if processor.int_param(IntParam::TRACING_COMMANDS) <= 0 {
-        return;
+        return false;
     }
     print_command(processor, code, meaning, symbol);
+    true
 }
 
 #[cold]

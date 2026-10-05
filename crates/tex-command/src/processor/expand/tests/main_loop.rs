@@ -107,11 +107,17 @@ fn main_source_suffix_yields_lexical_boundaries_to_the_native_reader() {
             let mut tail = None;
             assert_eq!(
                 processor
-                    .consume_main_loop_lookahead(&mut |_, spelling, meaning, _, exceptional| {
-                        assert!(exceptional.is_none());
-                        tail = Some((spelling.semantic_token(), meaning.character()));
-                        Ok(ControlFlow::Break(()))
-                    })
+                    .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
+                        crate::CommandProcessor<'_, '_, _>,
+                        _,
+                        _,
+                    >(
+                        |_, spelling, meaning, _, exceptional| {
+                            assert!(exceptional.is_none());
+                            tail = Some((spelling.semantic_token(), meaning.character()));
+                            Ok(ControlFlow::Break(()))
+                        }
+                    ))
                     .expect("native lexical boundary"),
                 crate::DeliveryStatus::Command
             );
@@ -249,15 +255,21 @@ fn native_macro_body_charges_each_word_once() {
         let mut delivered = Vec::new();
         assert_eq!(
             processor
-                .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
-                    assert!(exceptional.is_none());
-                    delivered.push(spelling);
-                    Ok(if delivered.len() == 4 {
-                        ControlFlow::Break(())
-                    } else {
-                        ControlFlow::Continue(())
-                    })
-                })
+                .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
+                    crate::CommandProcessor<'_, '_, _>,
+                    _,
+                    _,
+                >(
+                    |_, spelling, _, _, exceptional| {
+                        assert!(exceptional.is_none());
+                        delivered.push(spelling);
+                        Ok(if delivered.len() == 4 {
+                            ControlFlow::Break(())
+                        } else {
+                            ControlFlow::Continue(())
+                        })
+                    }
+                ))
                 .expect("native lookahead"),
             crate::DeliveryStatus::Command
         );
@@ -353,15 +365,21 @@ fn native_macro_argument_charges_each_word_once() {
         let mut delivered = Vec::new();
         assert_eq!(
             processor
-                .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
-                    assert!(exceptional.is_none());
-                    delivered.push(spelling);
-                    Ok(if delivered.len() == 3 {
-                        ControlFlow::Break(())
-                    } else {
-                        ControlFlow::Continue(())
-                    })
-                })
+                .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
+                    crate::CommandProcessor<'_, '_, _>,
+                    _,
+                    _,
+                >(
+                    |_, spelling, _, _, exceptional| {
+                        assert!(exceptional.is_none());
+                        delivered.push(spelling);
+                        Ok(if delivered.len() == 3 {
+                            ControlFlow::Break(())
+                        } else {
+                            ControlFlow::Continue(())
+                        })
+                    }
+                ))
                 .expect("native lookahead"),
             crate::DeliveryStatus::Command
         );
@@ -417,15 +435,21 @@ fn native_lookahead_restore_keeps_fuel_monotonic() {
             let mut delivered = Vec::new();
             assert_eq!(
                 processor
-                    .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
-                        assert!(exceptional.is_none());
-                        delivered.push(spelling);
-                        Ok(if delivered.len() == 2 {
-                            ControlFlow::Break(())
-                        } else {
-                            ControlFlow::Continue(())
-                        })
-                    })
+                    .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
+                        crate::CommandProcessor<'_, '_, _>,
+                        _,
+                        _,
+                    >(
+                        |_, spelling, _, _, exceptional| {
+                            assert!(exceptional.is_none());
+                            delivered.push(spelling);
+                            Ok(if delivered.len() == 2 {
+                                ControlFlow::Break(())
+                            } else {
+                                ControlFlow::Continue(())
+                            })
+                        }
+                    ))
                     .expect("native lookahead"),
                 crate::DeliveryStatus::Command
             );
@@ -589,25 +613,31 @@ fn execution_character_boundaries_expand_without_constructing_commands() {
             let mut terminal = None;
             assert_eq!(
                 processor
-                    .consume_main_loop_lookahead(&mut |_, spelling, _, _, exceptional| {
-                        assert!(exceptional.is_none(), "source={source}");
-                        match spelling.semantic_token() {
-                            Token::Char {
-                                ch,
-                                cat: Catcode::Letter | Catcode::Other,
-                            } => {
-                                characters.push(ch);
-                                Ok(ControlFlow::Continue(()))
-                            }
-                            Token::Cs(symbol) if symbol == relax => {
-                                terminal = Some(spelling.token_word());
-                                Ok(ControlFlow::Break(()))
-                            }
-                            token => {
-                                panic!("unexpected native terminal {token:?}, source={source}")
+                    .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
+                        crate::CommandProcessor<'_, '_, _>,
+                        _,
+                        _,
+                    >(
+                        |_, spelling, _, _, exceptional| {
+                            assert!(exceptional.is_none(), "source={source}");
+                            match spelling.semantic_token() {
+                                Token::Char {
+                                    ch,
+                                    cat: Catcode::Letter | Catcode::Other,
+                                } => {
+                                    characters.push(ch);
+                                    Ok(ControlFlow::Continue(()))
+                                }
+                                Token::Cs(symbol) if symbol == relax => {
+                                    terminal = Some(spelling.token_word());
+                                    Ok(ControlFlow::Break(()))
+                                }
+                                token => {
+                                    panic!("unexpected native terminal {token:?}, source={source}")
+                                }
                             }
                         }
-                    })
+                    ))
                     .expect("native expansion"),
                 crate::DeliveryStatus::Command
             );

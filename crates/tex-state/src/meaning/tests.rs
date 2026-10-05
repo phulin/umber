@@ -138,6 +138,7 @@ fn native_dispatch_preserves_scalar_domain_and_semantic_classification() {
                 assert_eq!(native.scalar_word(), Some(scalar));
                 assert!(!native.is_macro());
                 assert!(!native.is_font());
+                assert_eq!(native.is_relax(), opcode == super::OP_RELAX);
                 assert_eq!(native.is_undefined(), opcode == super::OP_UNDEFINED);
                 assert_eq!(
                     native.control_code(),

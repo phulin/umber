@@ -563,16 +563,22 @@ fn native_main_control_continues_across_macro_bodies_without_command_records() {
         let mut consumed = 0;
         assert_eq!(
             processor
-                .consume_main_control(&mut |_, spelling, meaning, _, exceptional| {
-                    assert!(exceptional.is_none());
-                    if meaning.scalar_word() == Some(Meaning::RELAX_WORD) {
-                        consumed += 1;
-                        Ok(std::ops::ControlFlow::Continue(()))
-                    } else {
-                        terminal = Some(spelling.semantic_token());
-                        Ok(std::ops::ControlFlow::Break(()))
+                .consume_main_control(&mut crate::terminal_consumer::<
+                    crate::CommandProcessor<'_, '_, _>,
+                    _,
+                    _,
+                >(
+                    |_, spelling, meaning, _, exceptional| {
+                        assert!(exceptional.is_none());
+                        if meaning.scalar_word() == Some(Meaning::RELAX_WORD) {
+                            consumed += 1;
+                            Ok(std::ops::ControlFlow::Continue(()))
+                        } else {
+                            terminal = Some(spelling.semantic_token());
+                            Ok(std::ops::ControlFlow::Break(()))
+                        }
                     }
-                })
+                ))
                 .expect("native continuation"),
             crate::DeliveryStatus::Command
         );

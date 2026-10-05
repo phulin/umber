@@ -40,8 +40,10 @@ DEFAULT_PDFTEX = PRIMARY / "target/pdftex14029-oracle/bin/umber-pdftex14029-orac
 CASES: dict[str, str] = {
     "base": "",
     "relax": r"\relax",
+    "relax64": r"\relax" * 64,
     "mzero": r"\mzero",
     "mbody": r"\mbody",
+    "mbody64": r"\longrelax",
     "mone": r"\mone x",
     "mone_brace": r"\mone{xy}",
     "mtwo": r"\mtwo\relax\relax",
@@ -71,7 +73,7 @@ def document(snippet: str, iterations: int) -> str:
     return "\n".join((
         r"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \count255=0",
         r"\def\mzero{}\def\mone#1{}\def\mtwo#1#2{#2#1}\def\mdelim#1.#2\stop{}",
-        r"\def\mbody{\relax\relax}\let\x\relax",
+        r"\def\mbody{\relax\relax}\let\x\relax\def\longrelax{" + r"\relax" * 64 + "}",
         r"\def\iter{\ifnum\count255<" + str(iterations)
         + r" \advance\count255 by 1 " + snippet + r"\expandafter\iter\fi}\iter",
         r"\end",

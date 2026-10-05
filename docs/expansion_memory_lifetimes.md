@@ -418,18 +418,13 @@ source retirement, parameter substitution and EOF recovery retain their
 existing authoritative input transitions. The consumer preserves get-next
 control-sequence creation policy, rather than adopting get-token interning.
 
-The shared reader reserves one fuel charge before entering cold input
-transitions. A continuing resident consumer spends that reservation on its
-first word and charges before advancing each subsequent word. A call-local
-boolean records whether the next word is already charged. Frame exhaustion
-and parameter substitution retry under that reservation, so neither transition
-adds a charge. Fuel reservation may fail before cursor advancement. Native admission then
-consumes the charged word without constructing a per-word error result. Call-local
-reservation and nesting facts unwind on failure and never enter checkpoints.
-Continuing reservation bookkeeping is selected statically for this consumer.
-Ordinary single-word consumers compile the reservation and its callback
-wrappers away; both use the same canonical input loop and cold transitions.
-No completed-command cleanup or settlement stage is introduced.
+The shared reader charges once before entering input, then charges the next
+word immediately after accepted resident admission continues. Frame exhaustion
+and parameter substitution retry under that existing charge. Fuel failure
+therefore precedes the next cursor advance, and a budget stop charges no
+following word. The actual reader needs no reservation callback, prepaid flag
+or fuel-specific specialization. Conditional nesting remains call-local and
+unwinds on failure; neither it nor the span iterator enters checkpoints.
 
 ## Source spelling ends at lexical consumption
 
@@ -476,3 +471,15 @@ into their final print or PDF entry. No retained token-list publication or
 intermediate extension request precedes that consumption. Native box operands
 select an actual destination through the canonical reader; exclusive register
 transfers allocate neither a command payload nor a construction interval.
+
+## Borrowed resident terminal continuation
+
+The canonical reader retains its actual physical suffix iterator and packed
+frame across admitted input-preserving terminals. Its one synchronous consumer
+holds the invocation-local operation count and clean no-op fact; it holds no
+input backing, definition owner, meaning cache or checkpoint state. A live
+meaning lookup precedes every admission. Full processor access, expansion,
+substitution, exhaustion and source transitions release the span and invalidate
+that fact. Reporting, tracing, character flushing and observation still use
+their actual full delivery/entry boundaries. Fuel charges precede each frame
+advance, including the word that ends an operation budget.

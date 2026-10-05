@@ -38,7 +38,7 @@ pub(super) fn enter<G>(
     meaning: &MeaningWord<G>,
     control_sequence: Option<Symbol>,
     code: u64,
-) -> Result<(), ExecError> {
+) -> Result<bool, ExecError> {
     if processor.has_pending_reports() {
         report_scan(processor)?;
     }
@@ -65,8 +65,7 @@ pub(super) fn enter<G>(
                 .map_err(|error| capture_error(processor, spelling, error))?;
         }
     }
-    trace::command(processor, code, meaning, control_sequence);
-    Ok(())
+    Ok(trace::command(processor, code, meaning, control_sequence))
 }
 
 #[inline(always)]

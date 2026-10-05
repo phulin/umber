@@ -28,6 +28,7 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G> {
     /// Read each operand with get_token/get_next alignment and capacity semantics.
     const RAW_TOKEN: bool = false;
     const NATIVE_TERMINAL: bool = false;
+    const RESIDENT_TERMINALS: bool = false;
 
     fn native_terminal(
         &mut self,
@@ -38,6 +39,19 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G> {
     ) -> Result<std::ops::ControlFlow<()>, CommandError> {
         unreachable!("this consumer requests a delivery record")
     }
+
+    fn resident_ready(&self) -> bool {
+        false
+    }
+
+    fn resident_terminal(
+        &mut self,
+        _meaning: &tex_state::meaning::MeaningWord<G>,
+    ) -> std::ops::ControlFlow<(), bool> {
+        std::ops::ControlFlow::Continue(false)
+    }
+
+    fn input_boundary(&mut self) {}
 
     fn before_action(&mut self, _processor: &mut Processor) {}
 
@@ -270,10 +284,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let status = self.consume_input::<false, _>(
+        let status = self.consume_input::<_, _, _>(
             self.create_source_control_sequences,
-            &mut |_, _, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
-            &mut |processor, word, origin, suppress, site, kind| {
+            &mut (),
+            &|_, _, _| false,
+            &mut |_| {},
+            &mut |_, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(Err(())),
+            &mut |_, processor, word, origin, suppress, site, kind, _| {
                 processor
                     .finish_delivered_word::<OBSERVED>(
                         word,
@@ -320,10 +337,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// retry under that same charge; no token result is constructed between
     /// storage, resolution and consumption.
     #[inline(always)]
-    fn consume_input<const CONTINUING: bool, R>(
+    #[allow(clippy::too_many_arguments)] // Actual consumer, admission and input-transition actions.
+    fn consume_input<R, Consumer, Admission: Default>(
         &mut self,
         create_control_sequences: bool,
+        consumer: &mut Consumer,
+        retain: &impl Fn(&Consumer, bool, super::delivery_mode::DeliveryMode) -> bool,
+        interrupt: &mut impl FnMut(&mut Consumer),
         admit: &mut impl FnMut(
+            &mut Consumer,
             &mut tex_state::CommandContext<'_, G>,
             &mut crate::fuel::CommandFuel,
             &mut super::alignment::AlignmentDeliveryState<G>,
@@ -331,77 +353,55 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             bool,
             crate::fuel::RawDeliveryKind,
             super::delivery_mode::DeliveryMode,
-        ) -> std::ops::ControlFlow<R, bool>,
+        ) -> std::ops::ControlFlow<R, Result<(), Admission>>,
         finish: &mut impl FnMut(
+            &mut Consumer,
             &mut Self,
             TokenWord,
             OriginId,
             bool,
             ReadSite,
             crate::fuel::RawDeliveryKind,
+            Admission,
         ) -> Result<std::ops::ControlFlow<R>, CommandError>,
         finished: impl Fn(DeliveryStatus) -> Result<std::ops::ControlFlow<R>, CommandError>,
     ) -> Result<R, CommandError> {
-        let prepaid = std::cell::Cell::new(false);
         loop {
             self.pending_diagnostic_location = None;
             self.charge_command_action()?;
-            if CONTINUING {
-                prepaid.set(true);
-            }
             let consumed = loop {
-                let resident = if CONTINUING {
-                    self.consume_resident_input(
-                        &mut |fuel| {
-                            if !prepaid.get() {
-                                fuel.charge()?;
-                                prepaid.set(true);
-                            }
-                            Ok(())
-                        },
-                        &mut |state, fuel, _, alignment, _, word, _, suppress, kind, mode| {
-                            let result = admit(state, fuel, alignment, word, suppress, kind, mode);
-                            if matches!(result, std::ops::ControlFlow::Continue(true)) {
-                                prepaid.set(false);
-                            }
+                let resident = self.consume_resident_input(
+                    consumer,
+                    retain,
+                    &mut {
+                        #[inline(always)]
+                        |consumer, state, fuel, _, alignment, _, word, _, suppress, kind, mode| {
+                            let result =
+                                admit(consumer, state, fuel, alignment, word, suppress, kind, mode);
                             result.map_break(std::ops::ControlFlow::Break)
-                        },
-                        &mut |processor, word, origin, suppress, site, kind| {
-                            if !prepaid.get() {
-                                processor.charge_command_action()?;
-                                prepaid.set(true);
-                            }
-                            finish(processor, word, origin, suppress, site, kind)
-                        },
-                    )?
-                } else {
-                    self.consume_resident_input(
-                        &mut |_| Ok(()),
-                        &mut |_, _, _, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(false),
-                        finish,
-                    )?
-                };
+                        }
+                    },
+                    finish,
+                )?;
                 if let Some(result) = resident {
                     break result;
                 }
-                if CONTINUING && !prepaid.get() {
-                    self.charge_command_action()?;
-                    prepaid.set(true);
-                }
-                let boundary = if CONTINUING {
-                    self.advance_input_boundary(
-                        create_control_sequences,
-                        &mut |processor, word, origin, suppress, site, kind| {
-                            if !prepaid.get() {
-                                processor.charge_command_action()?;
-                                prepaid.set(true);
-                            }
-                            finish(processor, word, origin, suppress, site, kind)
-                        },
-                    )?
-                } else {
-                    self.advance_input_boundary(create_control_sequences, finish)?
-                };
+                interrupt(consumer);
+                let boundary = self.advance_input_boundary(
+                    create_control_sequences,
+                    &mut |processor, word, origin, suppress, site, kind| {
+                        finish(
+                            consumer,
+                            processor,
+                            word,
+                            origin,
+                            suppress,
+                            site,
+                            kind,
+                            Admission::default(),
+                        )
+                    },
+                )?;
                 if let Some(result) = boundary {
                     match result {
                         std::ops::ControlFlow::Continue(value) => break value,

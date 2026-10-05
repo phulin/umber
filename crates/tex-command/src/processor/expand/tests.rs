@@ -1,6 +1,8 @@
 mod kernel;
 mod nesting;
 mod resident_runs;
+#[path = "tests/resident_terminals.rs"]
+mod resident_terminals;
 
 #[path = "tests/delivery.rs"]
 mod delivery;

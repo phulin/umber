@@ -927,3 +927,7 @@ Command and conditional trace printers query the executor's live mode prefix
 at the actual print and advance its existing `shown_mode` owner there (TeX82
 §299/§367, with §1370 no-mode during deferred writes). There is no owned prefix
 mailbox, trace-printed flag or tracing preparation before a fetch.
+
+- `src/processor/terminal.rs`: native word consumer contract and concrete full-processor callback typing. Restricted terminal admission retains the existing reader span; full processor access and input transitions invalidate invocation-local readiness.
+
+- `src/processor/expand/tests/resident_terminals.rs`: exact native no-op fuel and budget cuts, full-access exclusion within a span, and actual frame retirement interruptions.

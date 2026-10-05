@@ -73,12 +73,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
     ) -> Result<ConditionalDelimiter, CommandError> {
         let nested = Cell::new(0_u32);
-        self.consume_input::<true, _>(
+        self.consume_input::<_, _, _>(
             self.create_source_control_sequences,
-            &mut |state, fuel, alignment, word, suppress, kind, mode| {
-                if OBSERVED || mode.requires_persistent_settlement() || suppress {
-                    return ControlFlow::Continue(false);
-                }
+            &mut (),
+            &|_, suppress, mode| !OBSERVED && !suppress && !mode.requires_persistent_settlement(),
+            &mut |_| {},
+            &mut |_, state, fuel, alignment, word, _, kind, _mode| {
                 let literal = word.literal_catcode();
                 let stop = if literal.is_some_and(|cat| cat != Catcode::Active) {
                     None
@@ -86,18 +86,18 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let mut meaning = MeaningWord::scalar(Meaning::UNDEFINED_WORD);
                     state.write_packed_token_command_into(word, &mut meaning);
                     if meaning.is_outer() {
-                        return ControlFlow::Continue(false);
+                        return ControlFlow::Continue(Err(()));
                     }
                     consume_meaning(&meaning, &nested)
                 };
                 alignment.account_literal_catcode(literal);
                 #[cfg(feature = "profiling")]
-                fuel.record_raw_run(mode.scanner_active(), kind, 1);
+                fuel.record_raw_run(_mode.scanner_active(), kind, 1);
                 #[cfg(not(feature = "profiling"))]
                 let _ = (fuel, kind);
-                stop.map_or(ControlFlow::Continue(true), ControlFlow::Break)
+                stop.map_or(ControlFlow::Continue(Ok(())), ControlFlow::Break)
             },
-            &mut |processor, word, origin, suppress, site, kind| {
+            &mut |_, processor, word, origin, suppress, site, kind, _| {
                 let literal = word.literal_catcode();
                 let mut meaning = None;
                 let mut lookup = false;

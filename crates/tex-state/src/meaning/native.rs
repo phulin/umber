@@ -2,7 +2,7 @@
 
 use super::{
     DefinitionRef, ExpandablePrimitive, FLAGS_SHIFT, FontId, Meaning, MeaningFlags,
-    OP_EXPANDABLE_PRIMITIVE, OP_FONT, OP_MACRO, OP_UNDEFINED, OP_UNEXPANDABLE_PRIMITIVE,
+    OP_EXPANDABLE_PRIMITIVE, OP_FONT, OP_MACRO, OP_RELAX, OP_UNDEFINED, OP_UNEXPANDABLE_PRIMITIVE,
     OPCODE_SHIFT, OPERAND_MASK, ResolvedMeaning, UnexpandablePrimitive,
 };
 use crate::token::Catcode;
@@ -119,6 +119,15 @@ impl<G> MeaningWord<G> {
             RAW_SCALAR => Meaning::runtime_word_control_code(self.coordinate.get()),
             _ => Meaning::runtime_word_control_code(self.command),
         }
+    }
+
+    /// Tests the no-op family without deriving an unrelated terminal selector.
+    #[must_use]
+    #[inline(always)]
+    pub const fn is_relax(&self) -> bool {
+        let opcode = self.opcode();
+        opcode == OP_RELAX
+            || (opcode == RAW_SCALAR && (self.coordinate.get() >> OPCODE_SHIFT) as u8 == OP_RELAX)
     }
 
     #[must_use]

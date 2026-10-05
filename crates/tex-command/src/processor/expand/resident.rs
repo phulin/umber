@@ -42,10 +42,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// and hands boundary scalars straight to the caller's actual consumer.
     /// Only a cold input transition leaves without consuming a word.
     #[inline(always)]
-    pub(super) fn consume_resident_input<R>(
+    pub(super) fn consume_resident_input<R, Consumer, Admission: Default>(
         &mut self,
-        reserve: &mut impl FnMut(&mut crate::fuel::CommandFuel) -> Result<(), CommandError>,
+        consumer: &mut Consumer,
+        retain: &impl Fn(&Consumer, bool, crate::processor::delivery_mode::DeliveryMode) -> bool,
         admit: &mut impl FnMut(
+            &mut Consumer,
             &mut tex_state::CommandContext<'_, G>,
             &mut crate::fuel::CommandFuel,
             &mut tex_state::diagnostic::DiagnosticEffects,
@@ -56,14 +58,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             bool,
             crate::fuel::RawDeliveryKind,
             crate::processor::delivery_mode::DeliveryMode,
-        ) -> ControlFlow<R, bool>,
+        ) -> ControlFlow<R, Result<(), Admission>>,
         finish: &mut impl FnMut(
+            &mut Consumer,
             &mut Self,
             TokenWord,
             OriginId,
             bool,
             ReadSite,
             crate::fuel::RawDeliveryKind,
+            Admission,
         ) -> Result<R, CommandError>,
     ) -> Result<Option<R>, CommandError> {
         let levels = &mut self.command.roots.input.levels;
@@ -81,43 +85,77 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             InputStorage::MacroArgument { .. } => crate::fuel::RawDeliveryKind::MacroArgument,
             _ => crate::fuel::RawDeliveryKind::StoredToken,
         };
+        macro_rules! admit_word {
+            ($word:expr, $origin:expr) => {
+                admit(
+                    consumer,
+                    self.state,
+                    self.fuel,
+                    self.diagnostic_effects,
+                    &mut self.command.roots.alignment,
+                    &mut self.host.facts,
+                    $word,
+                    $origin,
+                    suppress,
+                    kind,
+                    self.command.delivery_mode,
+                )
+            };
+        }
         macro_rules! consume_run {
-            ($words:expr, $project:expr, $parameters:expr) => {{
-                let words = $words;
-                let start = frame.start() as usize;
-                loop {
-                    let position = frame.position();
-                    if position >= frame.limit() {
-                        return Ok(None);
-                    }
-                    let (word, origin) = $project(words[start + position as usize]);
+            ($words:expr, $project:expr, $parameters:expr) => {
+                'span: {
+                    let words = $words;
+                    let start = frame.start() as usize;
+                    let position = start
+                        .checked_add(frame.position() as usize)
+                        .ok_or_else(CommandError::input_invariant)?;
+                    let &packed = words
+                        .get(position)
+                        .ok_or_else(CommandError::input_invariant)?;
+                    let (word, origin) = $project(packed);
                     if $parameters && word.out_parameter_slot().is_some() {
-                        // The owning cold parameter call advances this position
-                        // exactly once before attempting substitution.
                         return Ok(None);
                     }
-                    reserve(self.fuel)?;
                     frame.advance_resident();
-                    match admit(
-                        self.state,
-                        self.fuel,
-                        self.diagnostic_effects,
-                        &mut self.command.roots.alignment,
-                        &mut self.host.facts,
-                        word,
-                        origin,
-                        suppress,
-                        kind,
-                        self.command.delivery_mode,
-                    ) {
-                        ControlFlow::Continue(true) => {}
-                        ControlFlow::Continue(false) => break (word, origin),
+                    if !retain(consumer, suppress, self.command.delivery_mode) {
+                        break 'span (word, origin, Admission::default());
+                    }
+                    // A declined first word needs no suffix iterator. It still
+                    // borrows this actual array and advances the sole cursor.
+                    match admit_word!(word, origin) {
+                        ControlFlow::Continue(Ok(())) => self.fuel.charge()?,
+                        ControlFlow::Continue(Err(admission)) => {
+                            break 'span (word, origin, admission);
+                        }
                         ControlFlow::Break(result) => return Ok(Some(result)),
                     }
+                    let limit = start
+                        .checked_add(frame.limit() as usize)
+                        .ok_or_else(CommandError::input_invariant)?;
+                    let words = words
+                        .get(position + 1..limit)
+                        .ok_or_else(CommandError::input_invariant)?;
+                    for &packed in words {
+                        let (word, origin) = $project(packed);
+                        if $parameters && word.out_parameter_slot().is_some() {
+                            // Substitution owns this still-unread parameter.
+                            return Ok(None);
+                        }
+                        frame.advance_resident();
+                        match admit_word!(word, origin) {
+                            ControlFlow::Continue(Ok(())) => self.fuel.charge()?,
+                            ControlFlow::Continue(Err(admission)) => {
+                                break 'span (word, origin, admission);
+                            }
+                            ControlFlow::Break(result) => return Ok(Some(result)),
+                        }
+                    }
+                    return Ok(None);
                 }
-            }};
+            };
         }
-        let (word, origin) = match &row.storage {
+        let (word, origin, admission) = match &row.storage {
             InputStorage::Source(_) => return Ok(None),
             InputStorage::MacroBody(body) => consume_run!(
                 body.body.definition_words(),
@@ -146,6 +184,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 true
             ),
         };
-        finish(self, word, origin, suppress, ReadSite::Resident, kind).map(Some)
+        finish(
+            consumer,
+            self,
+            word,
+            origin,
+            suppress,
+            ReadSite::Resident,
+            kind,
+            admission,
+        )
+        .map(Some)
     }
 }
