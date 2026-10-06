@@ -68,8 +68,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// accompanying ``Display math should end with $$`` diagnostic.
     pub fn scan_display_end_math_shift(&mut self) -> Result<bool, CommandError> {
         let mut shift = false;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, _, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, _, exceptional| {
                 shift = meaning
                     .character()
                     .is_some_and(|(_, cat)| cat == Catcode::MathShift);

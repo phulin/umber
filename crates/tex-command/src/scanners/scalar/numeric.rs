@@ -272,8 +272,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // character code), so it must see the token before any `back_input`
         // could split the quantity from its operand.
         let mut scanned = None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, control_sequence, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 match meaning.character() {
                     Some((' ' | '+', _)) => {}
                     Some(('-', _)) => negative = !negative,
@@ -369,8 +369,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // signed internal glue through the width-only dimension scanner
         // instead would drop its stretch and shrink.
         let mut scanned = None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, control_sequence, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 match meaning.character() {
                     Some((' ' | '+', _)) => {}
                     Some(('-', _)) => negative = !negative,

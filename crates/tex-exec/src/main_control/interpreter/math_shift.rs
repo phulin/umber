@@ -108,7 +108,7 @@ pub(super) fn enter<G>(
 ) -> Result<(), ExecError> {
     processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
         execution.main_loop_active = false;
-        enter_group(context, command, effects, GroupKind::MathShift);
+        command.begin_group(context, effects, GroupKind::MathShift);
         context
             .assign_int_param(IntParam::FAM, -1, tex_state::AssignmentScope::Local)
             .expect("family parameter is admitted");

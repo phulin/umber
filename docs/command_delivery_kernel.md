@@ -278,8 +278,9 @@ scanner-call boundary. Each scanner keeps its result locals in its calling
 frame and consumes native spelling and meaning directly. Accepted characters
 construct no command. Exceptional and observed deliveries lend their demanded
 cold record during the callback; rejected ordinary words are backed up from
-spelling. The scalar callback boundary prevents each keyword or digit closure
-from copying the complete reader into the executable. It has no selector enum,
+spelling. Full-access callback loans share a `dyn FnMut` type, preventing each grammar
+closure from copying the complete reader into the executable. Resident keyword
+and digit consumers keep their concrete span admission. It has no selector enum,
 heap callback, parked continuation or additional input state.
 
 Expansion, raw and expanded observation, alignment admission, provenance, and

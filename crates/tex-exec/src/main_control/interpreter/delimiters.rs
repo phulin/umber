@@ -6,7 +6,7 @@ pub(super) fn left<G>(processor: &mut Processor<'_, '_, G>) -> Result<MainContro
     report_scan(processor)?;
     processor.with_execution_owners(|context, command, effects, _, _, execution, _, _, _| {
         execution.main_loop_active = false;
-        enter_group(context, command, effects, GroupKind::MathLeft);
+        command.begin_group(context, effects, GroupKind::MathLeft);
         execution.modes.push_at_line(
             Mode::Math,
             command
@@ -106,7 +106,7 @@ pub(super) fn close<G>(
             .pop()
             .expect("live left group");
         if middle {
-            enter_group(context, command, effects, GroupKind::MathLeft);
+            command.begin_group(context, effects, GroupKind::MathLeft);
             execution.modes.push_at_line(
                 Mode::Math,
                 command

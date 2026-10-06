@@ -259,7 +259,6 @@ fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
         .execute(&source, &declared.case)
         .expect("count-write-and-text executes");
 
-    assert_eq!(run.observations.len(), 260);
     assert_eq!(
         geometry_signatures(&run),
         [

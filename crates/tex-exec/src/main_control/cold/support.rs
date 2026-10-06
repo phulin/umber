@@ -1,7 +1,6 @@
 //! Shared cold semantic helpers for boxes, arithmetic, diagnostics, and hooks.
 
 use super::super::*;
-use super::groups::enter_group;
 use super::operand_values::*;
 
 pub(in crate::main_control) const fn assignment_scope(
@@ -416,7 +415,9 @@ pub(in crate::main_control) fn glue_scale(
 /// through the `else` branch below like any other mode.
 #[allow(clippy::too_many_arguments)] // borrows actual disjoint owners; no temporary owner bundle
 pub(in crate::main_control) fn begin_replay_box<G>(
-    construction: ScannedBoxConstruction,
+    kind: ReplayBoxKind,
+    group_kind: GroupKind,
+    packing: PackSpec,
     target: Option<PendingSetBox>,
     shipout_region: Option<tex_state::node_region::PageClosureBuildMark>,
     modes: &mut ModeNest,
@@ -427,7 +428,6 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     fuel: &mut tex_command::CommandFuel,
     receipts: Option<&mut Vec<MutationRecord>>,
 ) -> Result<(), ExecError> {
-    let kind = ReplayBoxKind::from_scanned(construction.kind);
     let isolated_box = target.is_none()
         && shipout_region.is_none()
         && matches!(
@@ -440,27 +440,6 @@ pub(in crate::main_control) fn begin_replay_box<G>(
         crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, effects, fuel)?;
     }
     let box_segment_start = isolated_box.then(|| stores.begin_page_node_region());
-    let packing = match construction.packing {
-        ScannedPackingSpec::Natural => PackSpec::Natural,
-        ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
-        ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
-    };
-    // TeX82 §1083 uses `adjusted_hbox_group` only when the hbox will be
-    // appended (`box_context<box_flag`) in either vertical mode
-    // (`abs(mode)=vmode`). A register, shipout, or shifted construction uses
-    // `hbox_group`.
-    let group_kind = if kind == ReplayBoxKind::HBox
-        && target.is_none()
-        && shipout_region.is_none()
-        && matches!(
-            modes.current_mode(),
-            Mode::Vertical | Mode::InternalVertical
-        ) {
-        GroupKind::AdjustedHBox
-    } else {
-        kind.group_kind()
-    };
-    enter_group(stores, command, effects, group_kind);
     modes.push_at_line(
         if kind.horizontal() {
             Mode::RestrictedHorizontal

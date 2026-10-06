@@ -229,27 +229,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         })
     }
 
-    /// Reads a box body's mandatory opening brace: TeX82 §403's
-    /// `scan_left_brace`, which every box-opening site reaches through
-    /// §645's `scan_spec` (`new_save_level(c); scan_left_brace`) or §1099's
-    /// `begin_insert_or_adjust` (`new_save_level(insert_group);
-    /// scan_left_brace`).
-    ///
-    /// §403 *consumes* that brace; the save level it belongs to was already
-    /// opened by the caller, so nothing is delivered to main control on its
-    /// behalf. The brace is therefore never backed up here: replay opens the
-    /// group when it receives the construction, exactly as `new_save_level`
-    /// runs before `scan_left_brace`.
-    ///
-    /// When the mandatory brace is absent, §403 recovers by backing up the
-    /// offending command and behaving as though a `{` had been read.
-    /// `scan_left_brace` has already performed that backup, so this returns
-    /// on the same footing: the brace is accounted for either way.
-    fn scan_box_group_opening(&mut self) -> Result<(), CommandError> {
-        let _ = self.scan_left_brace()?;
-        Ok(())
-    }
-
     /// Scans the `to`/`spread` clause of TeX82 §645's `scan_spec`.
     ///
     /// §645 is the single routine every specification-taking group opener
@@ -258,101 +237,75 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// spec_code:=additional; cur_val:=0; goto found end; scan_normal_dimen`.
     /// An absent clause is `spread 0pt`, which packs at natural size.
     ///
-    /// Both call sites in this crate -- §1083's box construction and §774's
-    /// `init_align` -- must share it: `\halign to <dimen>{`, `\halign spread
-    /// <dimen>{`, and `\hbox to <dimen>{` are the same scan, and a site that
-    /// skipped straight to §403's mandatory left brace would reject the `t`
-    /// of `to` as a missing brace.
+    /// Alignment's §774 caller keeps its existing group protocol. Box entry
+    /// consumes its first word directly in `scan_box_spec` below, sharing
+    /// §407's keyword matcher for a real packing clause.
     pub(super) fn scan_spec_packing(&mut self) -> Result<ScannedPackingSpec, CommandError> {
-        let mut phase = PackingScalarPhase::ToKeyword;
-        loop {
-            match phase {
-                PackingScalarPhase::ToKeyword => {
-                    let result = self.scan_keyword("to");
-                    if result? {
-                        phase = PackingScalarPhase::Dimension { exactly: true };
-                    } else {
-                        phase = PackingScalarPhase::SpreadKeyword;
-                    }
-                }
-                PackingScalarPhase::SpreadKeyword => {
-                    let result = self.scan_keyword("spread");
-                    if result? {
-                        phase = PackingScalarPhase::Dimension { exactly: false };
-                    } else {
-                        return Ok(ScannedPackingSpec::Natural);
-                    }
-                }
-                PackingScalarPhase::Dimension { exactly } => {
-                    let result = self.scan_dimension();
-                    let value = result?;
-                    return Ok(if exactly {
-                        ScannedPackingSpec::Exactly(value)
-                    } else {
-                        ScannedPackingSpec::Spread(value)
-                    });
-                }
-            }
-        }
-    }
-
-    /// Scans TeX82 §1083's complete box-construction prefix: §645's
-    /// `scan_spec`, whose optional `to`/`spread` clause and mandatory left
-    /// brace are both consumed before replay enters the box group.
-    ///
-    /// §1167's `mmode+vcenter` runs the identical prefix
-    /// (`scan_spec(vcenter_group,false)`), so `\vcenter` is scanned here
-    /// rather than as a math text field: its body is an internal vertical
-    /// list, not an mlist, and only §1168's closing action distinguishes it
-    /// from `\vbox`.
-    pub fn scan_box_construction(
-        &mut self,
-        primitive: UnexpandablePrimitive,
-    ) -> Result<ScannedBoxConstruction, CommandError> {
-        let kind = match primitive {
-            UnexpandablePrimitive::HBox => ScannedBoxKind::HBox,
-            UnexpandablePrimitive::VBox => ScannedBoxKind::VBox,
-            UnexpandablePrimitive::VTop => ScannedBoxKind::VTop,
-            UnexpandablePrimitive::VCenter => ScannedBoxKind::VCenter,
-            _ => return Err(CommandError::input_invariant()),
-        };
-        let packing = self.scan_spec_packing()?;
-        self.scan_box_group_opening()?;
-        Ok(ScannedBoxConstruction { kind, packing })
-    }
-
-    /// Scans TeX82 §1099's `begin_insert_or_adjust` prefix, the one routine
-    /// both `\insert` and `\vadjust` enter: `if cur_cmd=vadjust then
-    /// cur_val:=255 else scan_eight_bit_int`, then
-    /// `new_save_level(insert_group); scan_left_brace`.
-    ///
-    /// `scan_eight_bit_int` owns its range clamp and queues §433's diagnostic
-    /// for the executor's canonical error channel. The effective value is
-    /// carried to replay; `\vadjust` skips the scan entirely, so its fixed
-    /// 255 is never subject to that diagnostic.
-    pub fn scan_insert_construction(
-        &mut self,
-        is_vadjust: bool,
-    ) -> Result<ScannedInsertConstruction, CommandError> {
-        let pre = if is_vadjust && self.command.profile().capabilities().supports_pdftex() {
-            self.scan_keyword("pre")?
-        } else {
+        let exactly = if self.scan_keyword("to")? {
+            true
+        } else if self.scan_keyword("spread")? {
             false
-        };
-        let (class, reserved_class_context) = if is_vadjust {
-            (255, None)
         } else {
-            let result = self.scan_restricted_integer(RestrictedIntegerClass::EightBit);
-            let class = result?.value;
-            let context = (class == 255).then(|| self.command.output_open_context(self.state));
-            (class, context)
+            return Ok(ScannedPackingSpec::Natural);
         };
-        self.scan_box_group_opening()?;
-        Ok(ScannedInsertConstruction {
-            class,
-            is_vadjust,
-            pre,
-            reserved_class_context,
+        let value = self.scan_dimension()?;
+        Ok(if exactly {
+            ScannedPackingSpec::Exactly(value)
+        } else {
+            ScannedPackingSpec::Spread(value)
         })
+    }
+
+    /// TeX82 §§403/645/1083: packing expands outside the new group,
+    /// mandatory-brace expansion inside it, before the executor enters its mode.
+    pub fn scan_box_spec(
+        &mut self,
+        group: tex_state::GroupKind,
+    ) -> Result<ScannedPackingSpec, CommandError> {
+        let mut packing = None;
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, control_sequence, exceptional| {
+                let character = meaning.character();
+                let keyword = if control_sequence.is_none() {
+                    match character.map(|(ch, _)| ch.to_ascii_lowercase()) {
+                        Some('t') => Some("to"),
+                        Some('s') => Some("spread"),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                if keyword.is_none() && matches!(character, Some((_, Catcode::Space))) {
+                    return Ok(std::ops::ControlFlow::Continue(()));
+                }
+                let value = if let Some(keyword) = keyword {
+                    if processor.scan_keyword_tail(keyword, spelling)? {
+                        let size = processor.scan_dimension()?;
+                        if keyword == "to" {
+                            ScannedPackingSpec::Exactly(size)
+                        } else {
+                            ScannedPackingSpec::Spread(size)
+                        }
+                    } else {
+                        ScannedPackingSpec::Natural
+                    }
+                } else {
+                    ScannedPackingSpec::Natural
+                };
+                processor
+                    .command
+                    .begin_group(processor.state, processor.diagnostic_effects, group);
+                if keyword.is_some()
+                    || processor
+                        .consume_left_brace(spelling, meaning, exceptional)?
+                        .is_none()
+                {
+                    processor.scan_left_brace()?;
+                }
+                packing = Some(value);
+                Ok(std::ops::ControlFlow::Break(()))
+            },
+        ))?;
+        packing.ok_or_else(CommandError::input_invariant)
     }
 }

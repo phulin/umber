@@ -1,5 +1,8 @@
 # Docs Guidance
 
+`terminal_callback_ownership.md` defines borrowed full-access callbacks sharing
+one compiled reader, with concrete resident consumers and existing checkpoints.
+
 `font_identity_lookup.md` defines immutable generated-font lookup, its
 rollback-coupled derived index, and the current realized-font identity API.
 
@@ -23,9 +26,11 @@ changes record usage, and actual tracing and semantic events own their work.
 `structured_scanner_ownership.md` maps the structured command scanner
 families, their shared processor authority, and their replay boundary.
 
-`box_prefix_grammar.md` selects the pending command-owned `scan_spec` redesign:
+`box_prefix_grammar.md` defines the consuming command-owned `scan_spec` redesign:
 packing expansion outside the new group, mandatory-brace expansion inside it,
 direct kind/packing ownership and deletion of backup/reread and request work.
+Insertion prefixes follow §1099's class/error, group/brace, and body-entry order
+without a construction request or retained diagnostic context.
 
 `main_control_responsibilities.md` maps the executor's private resource and
 root-source modules onto the unchanged `MainControl` owner.

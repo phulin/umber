@@ -302,8 +302,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 ExpressionPhase::FactorLeading => {
                     let mut parenthesis = false;
                     let probe =
-                        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                            |processor, spelling, meaning, _code, _, exceptional| {
+                        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+                            &mut |processor, spelling, meaning, _code, _, exceptional| {
                                 let character = meaning.character();
                                 if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
                                     return Ok(std::ops::ControlFlow::Continue(()));
@@ -433,8 +433,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         parenthesized: bool,
     ) -> Result<ExpressionOperator, CommandError> {
         let mut operator = ExpressionOperator::None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, _, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, _, exceptional| {
                 let character = meaning.character();
                 if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
                     return Ok(std::ops::ControlFlow::Continue(()));

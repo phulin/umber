@@ -27,7 +27,7 @@ fn open_choice_branch<G>(
     processor.with_execution_owners(
         |context, command, effects, _, observer, execution, _, _, _| {
             execution.main_loop_active = false;
-            enter_group(context, command, effects, GroupKind::MathChoice);
+            command.begin_group(context, effects, GroupKind::MathChoice);
             execution.modes.push_at_line(
                 Mode::Math,
                 command
@@ -143,7 +143,7 @@ pub(super) fn equation_number<G>(
             (list.take_nodes(), list.take_incomplete_fraction())
         };
         let display = finish_math_list(nodes, incomplete, context)?;
-        enter_group(context, command, effects, GroupKind::MathShift);
+        command.begin_group(context, effects, GroupKind::MathShift);
         context
             .assign_int_param(IntParam::FAM, -1, tex_state::AssignmentScope::Local)
             .expect("family parameter is admitted");
@@ -244,7 +244,7 @@ fn accept_field<G>(
                     math_char(context, u32::from(code), episode.provenance.primary)?.1,
                 ),
                 MathFieldBody::OpenGroup => {
-                    enter_group(context, command, effects, GroupKind::Math);
+                    command.begin_group(context, effects, GroupKind::Math);
                     execution.modes.push_at_line(
                         Mode::Math,
                         command

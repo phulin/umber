@@ -48,16 +48,18 @@ pub trait NativeWordConsumer<Processor, G, Facts> {
     fn input_boundary(&mut self) {}
 }
 
-impl<Processor, G, Facts, Consume> NativeWordConsumer<Processor, G, Facts> for Consume
-where
-    Consume: FnMut(
+type TerminalCallback<'a, Processor, G> = dyn FnMut(
         &mut Processor,
         TracedTokenWord,
         &MeaningWord<G>,
         u64,
         Option<Symbol>,
         Option<&CurrentCommand<G>>,
-    ) -> Result<ControlFlow<()>, CommandError>,
+    ) -> Result<ControlFlow<()>, CommandError>
+    + 'a;
+
+impl<Processor, G, Facts> NativeWordConsumer<Processor, G, Facts>
+    for &mut TerminalCallback<'_, Processor, G>
 {
     #[inline(always)]
     fn consume(
@@ -80,19 +82,11 @@ where
     }
 }
 
-/// Gives a full processor callback its actual word signature at construction.
-/// The callback itself is the consumer; this creates no wrapper or owner.
+/// Lends the actual full-access callback without specializing the reader for
+/// its closure type. Resident consumers keep their concrete admission types.
 #[inline(always)]
-pub fn terminal_consumer<Processor, G, Consume>(consume: Consume) -> Consume
-where
-    Consume: FnMut(
-        &mut Processor,
-        TracedTokenWord,
-        &MeaningWord<G>,
-        u64,
-        Option<Symbol>,
-        Option<&CurrentCommand<G>>,
-    ) -> Result<ControlFlow<()>, CommandError>,
-{
+pub fn terminal_consumer<'a, Processor, G>(
+    consume: &'a mut TerminalCallback<'a, Processor, G>,
+) -> &'a mut TerminalCallback<'a, Processor, G> {
     consume
 }

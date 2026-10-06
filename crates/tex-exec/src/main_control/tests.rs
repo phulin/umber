@@ -1418,6 +1418,8 @@ mod assignments;
 #[cfg(feature = "profiling")]
 #[path = "tests/box_allocations.rs"]
 mod box_allocations;
+#[path = "tests/box_prefix.rs"]
+mod box_prefix;
 #[path = "tests/csname_runs.rs"]
 mod csname_runs;
 #[path = "tests/diagnostics_recovery.rs"]
@@ -1428,6 +1430,8 @@ mod episode_observation;
 mod execution_lifecycle;
 #[path = "tests/initialization_formats.rs"]
 mod initialization_formats;
+#[path = "tests/insertion_prefix.rs"]
+mod insertion_prefix;
 #[path = "tests/list_material.rs"]
 mod list_material;
 #[path = "tests/observation_equivalence.rs"]

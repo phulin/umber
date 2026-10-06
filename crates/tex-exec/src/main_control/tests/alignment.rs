@@ -522,16 +522,8 @@ fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
                             character: '{',
                             catcode: Catcode::BeginGroup,
                         }],
-                        vec![ObservedToken::Character {
-                            character: '{',
-                            catcode: Catcode::BeginGroup,
-                        }],
-                        vec![ObservedToken::Character {
-                            character: '{',
-                            catcode: Catcode::BeginGroup,
-                        }],
                     ],
-                    "only the setbox/alignment/noalign opening scanners back input; crcr and the alignment-closing right brace are consumed"
+                    "the register terminator and alignment packing probes back input; the consuming box prefix, noalign brace, crcr and alignment-closing brace do not"
                 );
             });
         });

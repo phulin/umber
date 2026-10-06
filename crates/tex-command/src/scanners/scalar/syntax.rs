@@ -226,14 +226,32 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             bytes: keyword.as_bytes(),
             matched: smallvec::SmallVec::new(),
         };
-        if let Err(error) = self.consume_expanded_words(&mut keyword) {
+        self.finish_keyword(&mut keyword)
+    }
+
+    /// Continue §407 after the actual caller has matched its first letter.
+    pub(crate) fn scan_keyword_tail(
+        &mut self,
+        keyword: &'static str,
+        first: TracedTokenWord,
+    ) -> Result<bool, CommandError> {
+        let mut keyword = Keyword {
+            bytes: keyword.as_bytes(),
+            matched: smallvec::smallvec![crate::input::BackedUpToken { spelling: first }],
+        };
+        self.finish_keyword(&mut keyword)
+    }
+
+    #[inline(always)]
+    fn finish_keyword(&mut self, keyword: &mut Keyword<'_>) -> Result<bool, CommandError> {
+        if let Err(error) = self.consume_expanded_words(keyword) {
             return Err(self.finish_scalar_error(error));
         }
         let matched_keyword = keyword.matched.len() == keyword.bytes.len();
         if !matched_keyword && !keyword.matched.is_empty() {
             // Back the offender first, then the prefix as a separate level.
             // At EOF only the actual prefix exists.
-            self.back_list(keyword.matched);
+            self.back_list(core::mem::take(&mut keyword.matched));
         }
         // A complete match consumes its prefix outright.
         Ok(matched_keyword)

@@ -77,8 +77,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     pub fn scan_math_field_episode(&mut self) -> Result<MathFieldEpisode, CommandError> {
         let mut field = None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, code, _, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, code, _, exceptional| {
                 let provenance = StructuredProvenance {
                     primary: spelling.origin(),
                 };
@@ -241,8 +241,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return self.scan_delimiter_number();
         }
         let mut delimiter = None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, control_sequence, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 let code = if let Some((ch, Catcode::Letter | Catcode::Other)) = meaning.character()
                 {
                     processor.state.delcode(ch)

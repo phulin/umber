@@ -843,9 +843,8 @@ fn internal_expansion_and_font_selection_consume_native_operands() {
             .consume_expanded_words(&mut crate::terminal_consumer::<
                 crate::CommandProcessor<'_, '_, _>,
                 _,
-                _,
             >(
-                |processor, spelling, meaning, _code, _, exceptional| {
+                &mut |processor, spelling, meaning, _code, _, exceptional| {
                     if let Some((ch, _)) = meaning.character() {
                         text.push(ch);
                         Ok(std::ops::ControlFlow::Continue(()))

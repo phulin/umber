@@ -50,7 +50,9 @@ const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
 // older producer would bypass the current engine entirely.
 // Version 21 rechecks protected terminals after every expansion restart.
 // Version 22 requires the frozen nullfont identifier in every TeX format.
-const PRODUCER_CONTRACT_VERSION: u32 = 22;
+// Version 23 consumes box prefixes without speculative rereads and opens box
+// and insertion groups before mandatory-brace expansion (TeX82 §§645/1099).
+const PRODUCER_CONTRACT_VERSION: u32 = 23;
 // Version 2 carries the producing source identity on geometry observations.
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 

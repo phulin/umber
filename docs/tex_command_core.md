@@ -1054,13 +1054,13 @@ reaches the page contribution list.
 procedures as `\insert` above, §1099/§1100) shares that entire construction
 rather than duplicating it: tex.web's own
 `begin_insert_or_adjust` sets `cur_val:=255` directly for `\vadjust` instead
-of calling `scan_eight_bit_int`, so both reach one
-`scan_insert_construction(is_vadjust)` that builds the same
-`ScannedInsertConstruction{class: 255, ..}` used for `\insert`, with a
-dedicated `is_vadjust` flag telling replay to skip the 0..=255 clamp and the
-"you can't `\insert255`" rejection -- both diagnostics are specific to a
-user-scanned class and would otherwise misfire on `\vadjust`'s always-valid
-255 sentinel. `\vadjust` in (outer or internal) vertical mode is one of
+of calling `scan_eight_bit_int`. The native interpreter scans and reports the
+actual class before opening the command-owned group, then consumes the
+mandatory brace before paragraph reset and body-mode entry. pdfTeX's optional
+`pre` keyword is scanned before group entry. There is no construction request,
+retained diagnostic-context string, or replay clamp; only a user-scanned
+class reaches the reserved-255 diagnostic, while adjustment's sentinel remains
+valid. `\vadjust` in (outer or internal) vertical mode is one of
 tex.web's "Forbidden cases" (the illegal-insert/adjust handler, sharing
 `report_illegal_case` with `IllegalBoxShift`/`IllegalItalicCorrection`) rather
 than `any_mode` like `\insert`. `finish_insert_or_adjust_group` branches on
@@ -1098,29 +1098,17 @@ headers. The e-TeX numbered `\marks<n>{...}`
 variant is not wired (tracked separately for the e-TeX phase, umber2-johp.9).
 
 TeX82 §1073's box-shift prefixes (`\raise`, `\lower`, `\moveleft`,
-`\moveright`) cross the boundary as one completed operation, unlike the
-box-opener family above: `CommandProcessor::scan_box_shift` owns the mode
-legality that `tex.web`'s `abs(mode)+cur_cmd` dispatch performs by construction
-(`\raise`/`\lower` legal only outside vertical mode, `\moveleft`/`\moveright`
-only inside it; the three complementary "Forbidden cases" combinations never
-reach a scanner at all, so replay's `IllegalBoxShift` reports
-`report_illegal_case` without having scanned anything), the already-signed
-dimension (`\lower`/`\moveright` keep it, `\raise`/`\moveleft` negate it), and
-then `scan_box`'s own operand (§1076): any `make_box` command. `\hbox`/`\vbox`/
-`\vtop` reuse `scan_box_construction` and are returned as an ordinary
-`ScannedBoxShiftPayload::Construction`, deferring to the same
-`active_boxes`/`BoxEndGroup` machinery as `BeginBox` --
-`ActiveReplayBox` carries the pending signed shift, applied to
-`shift_amount(cur_box)` immediately before `BoxEndGroup`'s ordinary
-(non-register, non-shipout, non-leader) append, since a box-shift's own box
-can never itself be a `\setbox` target, `\shipout` operand, or leader payload
-(`scan_box` requires `cur_cmd=make_box`, which `vmove`/`hmove` never are).
-`\box`, `\copy`, `\lastbox`, and `\vsplit` instead resolve to a node
-immediately inside `tex-command`, exactly as they do outside a shift, and
-replay shifts and appends that completed value the same way `\box<n>` does
-standalone. A rejected non-box operand replays `scan_box`'s own "A <box> was
-supposed to be here" backup exactly like `scan_leader_payload`'s twin
-recovery, leaving the diagnostic to replay since it needs a `Universe` sink.
+`\moveright`) run in the native mode switch. Legal arms scan their signed
+shift dimension and enter the same `scan_box` consumer with a list destination.
+That consumer selects the final native box kind directly. Command-owned
+`scan_box_spec` consumes packing, opens the real group, and then scans the
+mandatory brace (TeX82 §§403/645/1083). It returns only packing; there is no
+construction request or duplicate box-kind enum. Execution enters the box
+mode and stores the pending shift in its final `ActiveReplayBox` owner.
+`\box`, `\copy`, `\lastbox`, and `\vsplit` instead deliver their actual
+completed node to that destination. A rejected box operand uses canonical
+backup and the demanded missing-box diagnostic. See
+[Box prefix grammar](box_prefix_grammar.md) for the group and expansion order.
 
 Several no-operand primitives cross the boundary as a bare mode-classification
 with no scanner of their own, since `scan_command` already has the live mode

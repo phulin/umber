@@ -503,3 +503,10 @@ retain this loan only while they preserve input and demand no tracing or
 restoration. A close with saved records or aftergroup words declines before
 mutation; the shared reader releases its span before the real unsave/insertion.
 No loan or admission flag crosses a checkpoint or resource boundary.
+
+Box prefixes open the existing state-owned group after packing expansion and
+before mandatory-brace expansion (TeX82 §§645/1083). A resource miss in that
+interval owns the group while still using the enclosing mode; no active box
+or construction request exists yet. Aggregate replay restores those real
+roots. Execution enters the new mode and installs its final box only after
+brace scanning finishes.

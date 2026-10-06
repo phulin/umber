@@ -1,4 +1,4 @@
-//! Executor-facing fact publication from the authoritative command owner.
+//! Group entry and executor-facing fact publication from the command owner.
 
 use super::{CommandSemanticDiagnostic, CommandState};
 use crate::AlignmentRecord;
@@ -25,6 +25,21 @@ fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
 }
 
 impl<G> CommandState<G> {
+    /// TeX82 §273's real save level, with its demand-only group trace.
+    pub fn begin_group(
+        &self,
+        state: &mut tex_state::CommandContext<'_, G>,
+        diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+        kind: tex_state::GroupKind,
+    ) {
+        let entered_line = self.current_file_line_number();
+        state
+            .begin_group(kind, entered_line)
+            .expect("native TeX group boundary opens");
+        let level = u32::try_from(state.execution_group_depth()).unwrap_or(u32::MAX);
+        state.trace_group_enter(diagnostic_effects, kind, level, entered_line);
+    }
+
     /// Reports whether an actual executor-requested list needs trace publication.
     #[must_use]
     pub fn has_pending_named_token_list_pushes(&self) -> bool {

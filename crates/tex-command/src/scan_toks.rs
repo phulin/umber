@@ -1089,44 +1089,57 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// (`umber2-johp.209`).
     pub fn scan_left_brace(&mut self) -> Result<Option<OriginId>, CommandError> {
         let mut opening = None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, _, exceptional| {
-                let character = meaning.character();
-                if matches!(character, Some((_, Catcode::Space)))
-                    || *meaning == tex_state::meaning::MeaningWord::scalar(Meaning::RELAX_WORD)
-                {
-                    return Ok(std::ops::ControlFlow::Continue(()));
-                }
-                if matches!(character, Some((_, Catcode::BeginGroup))) {
-                    opening = Some(Some(spelling.origin()));
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-                let deferred = {
-                    let mut report = processor.state.print_err("Missing { inserted");
-                    report.help(&[
-                        "A left brace was mandatory here, so I've put one in.",
-                        "You might want to delete and/or insert some corrections",
-                        "so that I will find a matching right brace soon.",
-                        "(If you're confused by all this, try typing `I}' now.)",
-                    ]);
-                    report.defer()
-                };
-                // §403 prepares the report before `back_error`, then renders §310
-                // from the backed-up input so §314 names the rejected token.
-                processor.back_consumed_word(spelling, exceptional)?;
-                let context = processor.command.output_open_context(processor.state);
-                let mut report = processor.state.resume_error_report(deferred);
-                report.context(context);
-                let outcome = report.error();
-                processor.finish_error_outcome(outcome)?;
-                // The synthetic brace is not input; only its align_state contribution
-                // precedes the caller while the rejected word remains backed up.
-                processor.command.alignment.align_state += 1;
-                opening = Some(None);
-                Ok(std::ops::ControlFlow::Break(()))
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, _, exceptional| {
+                opening = processor.consume_left_brace(spelling, meaning, exceptional)?;
+                Ok(if opening.is_some() {
+                    std::ops::ControlFlow::Break(())
+                } else {
+                    std::ops::ControlFlow::Continue(())
+                })
             },
         ))?;
         opening.ok_or_else(CommandError::input_invariant)
+    }
+
+    /// Consume an already-selected word through the same §403 grammar.
+    pub(crate) fn consume_left_brace(
+        &mut self,
+        spelling: TracedTokenWord,
+        meaning: &tex_state::meaning::MeaningWord<G>,
+        exceptional: Option<&CurrentCommand<G>>,
+    ) -> Result<Option<Option<OriginId>>, CommandError> {
+        let character = meaning.character();
+        if matches!(character, Some((_, Catcode::Space)))
+            || *meaning == tex_state::meaning::MeaningWord::scalar(Meaning::RELAX_WORD)
+        {
+            return Ok(None);
+        }
+        if matches!(character, Some((_, Catcode::BeginGroup))) {
+            return Ok(Some(Some(spelling.origin())));
+        }
+        let deferred = {
+            let mut report = self.state.print_err("Missing { inserted");
+            report.help(&[
+                "A left brace was mandatory here, so I've put one in.",
+                "You might want to delete and/or insert some corrections",
+                "so that I will find a matching right brace soon.",
+                "(If you're confused by all this, try typing `I}' now.)",
+            ]);
+            report.defer()
+        };
+        // §403 prepares the report before `back_error`, then renders §310
+        // from the backed-up input so §314 names the rejected token.
+        self.back_consumed_word(spelling, exceptional)?;
+        let context = self.command.output_open_context(self.state);
+        let mut report = self.state.resume_error_report(deferred);
+        report.context(context);
+        let outcome = report.error();
+        self.finish_error_outcome(outcome)?;
+        // The synthetic brace is not input; only its align_state contribution
+        // precedes the caller while the rejected word remains backed up.
+        self.command.alignment.align_state += 1;
+        Ok(Some(None))
     }
 
     /// Scans the prefix before a macro replacement's compulsory opening
@@ -1464,8 +1477,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<bool, CommandError> {
         let mut operand_read = false;
         let mut value = None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, control_sequence, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 operand_read = true;
                 value = processor.scan_the_internal_value(
                     spelling,

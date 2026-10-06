@@ -664,8 +664,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
     ) -> Result<ScannedScalar<InternalValue>, CommandError> {
         let mut scanned = None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, control_sequence, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 let value = match processor.scan_the_internal_value(
                     spelling,
                     meaning,
@@ -791,8 +791,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut fraction = [0_u8; 17];
         let mut fraction_len = 0;
         if decimal {
-            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                |processor, spelling, meaning, _code, _control_sequence, exceptional| {
+            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+                &mut |processor, spelling, meaning, _code, _control_sequence, exceptional| {
                     match meaning.character() {
                         Some((ch, Catcode::Other)) if ch.is_ascii_digit() => {
                             if fraction_len < fraction.len() {
@@ -827,8 +827,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // Replay it once, then finish the `fil` suffix without routing the
             // same candidate through unrelated physical-unit keywords.
             let mut matched = false;
-            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                |_, _, meaning, _code, _, _| {
+            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+                &mut |_, _, meaning, _code, _, _| {
                     matched = matches!(meaning.character(), Some(('f', _)));
                     Ok(std::ops::ControlFlow::Break(()))
                 },
@@ -1047,8 +1047,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// retires that exhausted backup before installing the new one.
     fn probe_dimension_unit(&mut self, mu: bool) -> Result<Option<Scaled>, CommandError> {
         let mut unit = None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, control_sequence, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 if matches!(meaning.character(), Some((_, Catcode::Space))) {
                     return Ok(std::ops::ControlFlow::Continue(()));
                 }
@@ -1096,8 +1096,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX82 §443's `⟨Scan an optional space⟩`:
     /// `get_x_token; if cur_cmd<>spacer then back_input`.
     fn scan_optional_space(&mut self) -> Result<(), CommandError> {
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, _, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, _, exceptional| {
                 if !matches!(meaning.character(), Some((_, Catcode::Space))) {
                     processor.back_consumed_word(spelling, exceptional)?;
                 }
@@ -1124,8 +1124,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn scan_infinite_unit_from_fil(&mut self) -> Result<DimensionUnit, CommandError> {
         for expected in ['i', 'l'] {
             let mut matched = false;
-            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                |_, _, meaning, _code, _, _| {
+            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+                &mut |_, _, meaning, _code, _, _| {
                     matched = meaning
                         .character()
                         .is_some_and(|(ch, _)| ch.eq_ignore_ascii_case(&expected));

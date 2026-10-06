@@ -229,13 +229,6 @@ pub(super) enum RuleScalarPhase {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PackingScalarPhase {
-    ToKeyword,
-    SpreadKeyword,
-    Dimension { exactly: bool },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MathFieldRestrictedKind {
     Character,
     MathCharacter,

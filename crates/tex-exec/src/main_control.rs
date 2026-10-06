@@ -13,8 +13,8 @@ use tex_command::{
     MathFractionKind, MathScriptKind, PdfImageRequest, PdfImageResource,
     PreparedAlignmentCellTemplates, RegisteredSourceKind, ResourceFulfillment,
     ResourceInstallOutcome, ResourceNeed, ResourceProvider, RestrictedIntegerClass,
-    ScannedBoxConstruction, ScannedBoxKind, ScannedGeneratedFontDefinition,
-    ScannedInsertConstruction, ScannedPackingSpec, SourceRegistration, SourceRegistrationError,
+    ScannedGeneratedFontDefinition, ScannedPackingSpec, SourceRegistration,
+    SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -247,17 +247,12 @@ enum ReplayBoxKind {
 }
 
 impl ReplayBoxKind {
-    /// The one mapping from a scanned §645 `scan_spec` construction to the
-    /// replay kind that closes it. `\leaders`' payload scan and §1073's
-    /// box-shift scan both require `cur_cmd=make_box` (§1073/§1078), so
-    /// neither can deliver `\vcenter`; sharing this mapping keeps that fact
-    /// stated once instead of once per call site.
-    const fn from_scanned(kind: ScannedBoxKind) -> Self {
-        match kind {
-            ScannedBoxKind::HBox => Self::HBox,
-            ScannedBoxKind::VBox => Self::VBox,
-            ScannedBoxKind::VTop => Self::VTop,
-            ScannedBoxKind::VCenter => Self::VCenter,
+    fn construction_group(self, appended: bool, mode: Mode) -> GroupKind {
+        if self == Self::HBox && appended && matches!(mode, Mode::Vertical | Mode::InternalVertical)
+        {
+            GroupKind::AdjustedHBox
+        } else {
+            self.group_kind()
         }
     }
 
@@ -2452,12 +2447,8 @@ impl<G> MainControl<G> {
                     // opening the matching semantic group and mode barriers.
                     drop(processor);
                     opened?;
-                    enter_group(
-                        &mut context,
-                        &mut self.command,
-                        diagnostic_effects,
-                        GroupKind::Output,
-                    );
+                    self.command
+                        .begin_group(&mut context, diagnostic_effects, GroupKind::Output);
                     drop(context);
                     self.execution.modes.push_at_line(
                         Mode::InternalVertical,

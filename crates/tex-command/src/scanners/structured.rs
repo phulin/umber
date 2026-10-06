@@ -41,11 +41,11 @@ use internal_state::{
     AlignmentPreamblePhase, AlignmentPreambleScalar, AlignmentPreambleScalarPhase,
     AlignmentPreambleState, EXTRA_PARAMETER_DIAGNOSTIC, MISSING_DELIMITER_DIAGNOSTIC,
     MISSING_DELIMITER_HELP, MISSING_PARAMETER_DIAGNOSTIC, MathFieldRestrictedKind,
-    PackingScalarPhase, PdfActionScalarPhase, PdfActionScalarProgress, PdfFormScalarPhase,
-    PdfFormScalarProgress, PdfGraphicsScalarPhase, PdfImageScalarPhase, PdfImageScalarProgress,
-    PdfNavigationScalarPhase, PdfNavigationScalarProgress, PdfObjectScalarPhase,
-    PdfObjectScalarProgress, PendingPdfActionOwner, PendingPdfColorStackAction,
-    PendingPdfImagePage, RuleScalarPhase, static_meaning,
+    PdfActionScalarPhase, PdfActionScalarProgress, PdfFormScalarPhase, PdfFormScalarProgress,
+    PdfGraphicsScalarPhase, PdfImageScalarPhase, PdfImageScalarProgress, PdfNavigationScalarPhase,
+    PdfNavigationScalarProgress, PdfObjectScalarPhase, PdfObjectScalarProgress,
+    PendingPdfActionOwner, PendingPdfColorStackAction, PendingPdfImagePage, RuleScalarPhase,
+    static_meaning,
 };
 mod box_values;
 mod definition_values;
@@ -57,8 +57,7 @@ mod token_requests;
 pub use token_requests::TokenRequest;
 
 pub use box_values::{
-    ScannedBoxConstruction, ScannedBoxKind, ScannedDisplayDiagnostic, ScannedInsertConstruction,
-    ScannedPackingSpec, ScannedRuleSpec, ScannedVSplit,
+    ScannedDisplayDiagnostic, ScannedPackingSpec, ScannedRuleSpec, ScannedVSplit,
 };
 pub use definition_values::{
     ExpandedWriteText, FontLoadRequest, FontSizeRecovery, GeneratedFontKind, PdfActionDestination,

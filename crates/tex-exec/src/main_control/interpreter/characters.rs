@@ -27,42 +27,40 @@ pub(super) fn no_boundary<G>(
     }
     let mut completion = None;
     let status = processor
-        .consume_main_control(&mut tex_command::terminal_consumer::<
-            Processor<'_, '_, G>,
-            G,
-            _,
-        >(
-            |processor, spelling, meaning, code, symbol, exceptional| {
-                if code == codes::PRIMITIVE_NO_BOUNDARY {
-                    trace::command(processor, code, meaning, symbol);
-                    return Ok(ControlFlow::Continue(()));
-                }
-                if matches!(
-                    code,
-                    codes::CHAR_LETTER
-                        | codes::CHAR_OTHER
-                        | codes::CHAR_GIVEN
-                        | codes::PRIMITIVE_CHAR
-                ) {
-                    processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                        execution
-                            .modes
-                            .current_list_mutation()
-                            .set_no_boundary(true)
-                    });
-                }
-                completion = Some(dispatch::execute(
-                    processor,
-                    spelling,
-                    meaning,
-                    symbol,
-                    exceptional,
-                    receipts,
-                    code,
-                ));
-                Ok(ControlFlow::Break(()))
-            },
-        ))
+        .consume_main_control(
+            &mut tex_command::terminal_consumer::<Processor<'_, '_, G>, G>(
+                &mut |processor, spelling, meaning, code, symbol, exceptional| {
+                    if code == codes::PRIMITIVE_NO_BOUNDARY {
+                        trace::command(processor, code, meaning, symbol);
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                    if matches!(
+                        code,
+                        codes::CHAR_LETTER
+                            | codes::CHAR_OTHER
+                            | codes::CHAR_GIVEN
+                            | codes::PRIMITIVE_CHAR
+                    ) {
+                        processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                            execution
+                                .modes
+                                .current_list_mutation()
+                                .set_no_boundary(true)
+                        });
+                    }
+                    completion = Some(dispatch::execute(
+                        processor,
+                        spelling,
+                        meaning,
+                        symbol,
+                        exceptional,
+                        receipts,
+                        code,
+                    ));
+                    Ok(ControlFlow::Break(()))
+                },
+            ),
+        )
         .map_err(command_error)?;
     match completion {
         Some(step) => step,
@@ -75,31 +73,29 @@ pub(super) fn ignore_spaces<G>(
 ) -> Result<MainControlStep, ExecError> {
     let mut completion = None;
     let status = processor
-        .consume_main_control(&mut tex_command::terminal_consumer::<
-            Processor<'_, '_, G>,
-            G,
-            _,
-        >(
-            |processor, spelling, meaning, code, symbol, exceptional| {
-                if code == codes::CHAR_SPACE {
-                    return Ok(ControlFlow::Continue(()));
-                }
-                if code == codes::PRIMITIVE_IGNORE_SPACES {
-                    trace::command(processor, code, meaning, symbol);
-                    return Ok(ControlFlow::Continue(()));
-                }
-                completion = Some(dispatch::execute(
-                    processor,
-                    spelling,
-                    meaning,
-                    symbol,
-                    exceptional,
-                    receipts,
-                    code,
-                ));
-                Ok(ControlFlow::Break(()))
-            },
-        ))
+        .consume_main_control(
+            &mut tex_command::terminal_consumer::<Processor<'_, '_, G>, G>(
+                &mut |processor, spelling, meaning, code, symbol, exceptional| {
+                    if code == codes::CHAR_SPACE {
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                    if code == codes::PRIMITIVE_IGNORE_SPACES {
+                        trace::command(processor, code, meaning, symbol);
+                        return Ok(ControlFlow::Continue(()));
+                    }
+                    completion = Some(dispatch::execute(
+                        processor,
+                        spelling,
+                        meaning,
+                        symbol,
+                        exceptional,
+                        receipts,
+                        code,
+                    ));
+                    Ok(ControlFlow::Break(()))
+                },
+            ),
+        )
         .map_err(command_error)?;
     match completion {
         Some(step) => step,

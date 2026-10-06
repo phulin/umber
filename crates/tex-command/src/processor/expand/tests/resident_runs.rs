@@ -220,9 +220,8 @@ fn resident_character_stop_resumes_without_reselecting_each_word() {
                 .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
                     crate::CommandProcessor<'_, '_, _>,
                     _,
-                    _,
                 >(
-                    |_, spelling, _, _code, _, exceptional| {
+                    &mut |_, spelling, _, _code, _, exceptional| {
                         assert!(exceptional.is_none());
                         let Token::Char {
                             ch,
@@ -250,9 +249,8 @@ fn resident_character_stop_resumes_without_reselecting_each_word() {
                 .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
                     crate::CommandProcessor<'_, '_, _>,
                     _,
-                    _,
                 >(
-                    |_, spelling, _, _code, _, exceptional| {
+                    &mut |_, spelling, _, _code, _, exceptional| {
                         assert!(exceptional.is_none());
                         match spelling.semantic_token() {
                             Token::Char {
@@ -319,9 +317,8 @@ fn resident_character_fuel_failure_preserves_exact_consumed_prefix() {
                     .consume_main_loop_lookahead(&mut crate::terminal_consumer::<
                         crate::CommandProcessor<'_, '_, _>,
                         _,
-                        _,
                     >(
-                        |_, spelling, _, _code, _, exceptional| {
+                        &mut |_, spelling, _, _code, _, exceptional| {
                             assert!(exceptional.is_none());
                             let Token::Char {
                                 ch,

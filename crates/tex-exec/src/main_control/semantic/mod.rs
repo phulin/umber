@@ -23,5 +23,3 @@ mod streams;
 pub(super) use streams::*;
 mod text;
 pub(super) use text::*;
-mod insertions;
-pub(super) use insertions::*;

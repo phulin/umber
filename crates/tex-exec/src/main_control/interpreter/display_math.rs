@@ -206,19 +206,17 @@ fn resume<G>(
     })?;
     if scan_space {
         processor
-            .consume_expanded_words(&mut tex_command::terminal_consumer::<
-                Processor<'_, '_, G>,
-                G,
-                _,
-            >(
-                |processor, spelling, _meaning, code, _, exceptional| {
-                    let space = code == codes::CHAR_SPACE;
-                    if !space {
-                        processor.back_consumed_word(spelling, exceptional)?;
-                    }
-                    Ok(ControlFlow::Break(()))
-                },
-            ))
+            .consume_expanded_words(
+                &mut tex_command::terminal_consumer::<Processor<'_, '_, G>, G>(
+                    &mut |processor, spelling, _meaning, code, _, exceptional| {
+                        let space = code == codes::CHAR_SPACE;
+                        if !space {
+                            processor.back_consumed_word(spelling, exceptional)?;
+                        }
+                        Ok(ControlFlow::Break(()))
+                    },
+                ),
+            )
             .map_err(command_error)?;
         report_scan(processor)?;
     }

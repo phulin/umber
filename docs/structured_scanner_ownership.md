@@ -20,9 +20,14 @@ executor:
 The modules add no new scanner framework. They implement methods on the
 existing `CommandProcessor` and use the same scalar scanner, token collector,
 delivery, and recovery methods. Result and local-progress declarations live in
-private value modules, with explicit reexports preserving the original
-`structured` namespace and crate API. Executor callers receive
+private value modules, with explicit reexports for their real callers. Executor callers receive
 completed, typed operands and never resume a partial source scan. Tests that
 guard source-level delivery and scanner-status boundaries inspect every
 structured family implementation; fixture tests verify token consumption and
 error ordering.
+
+Box prefixes consume their first expanded word directly, continue the actual
+packing keyword when present, and open the state-owned TeX group before
+mandatory-brace expansion. They return only packing. Execution selects the
+final box kind and later enters its mode; no construction request or duplicate
+kind crosses the scanner boundary.

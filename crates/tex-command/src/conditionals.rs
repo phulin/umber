@@ -1053,8 +1053,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(never)]
     fn scan_if_relation(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
         let mut relation = None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, control_sequence, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, _code, control_sequence, exceptional| {
                 let character = meaning.character();
                 relation = Some(match character {
                     Some(('<', _)) => IfRelation::Less,

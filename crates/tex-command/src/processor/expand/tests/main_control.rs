@@ -282,9 +282,13 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                                     Ok(std::ops::ControlFlow::Break(()))
                                 };
                             if lookahead {
-                                processor.consume_main_loop_lookahead(&mut consume)
+                                processor.consume_main_loop_lookahead(
+                                    &mut crate::terminal_consumer::<_, _>(&mut consume),
+                                )
                             } else {
-                                processor.consume_main_control(&mut consume)
+                                processor.consume_main_control(
+                                    &mut crate::terminal_consumer::<_, _>(&mut consume),
+                                )
                             }
                         } else if main_control {
                             processor.consume_expanded_with_mode::<false, false>(
@@ -567,9 +571,8 @@ fn native_main_control_continues_across_macro_bodies_without_command_records() {
                 .consume_main_control(&mut crate::terminal_consumer::<
                     crate::CommandProcessor<'_, '_, _>,
                     _,
-                    _,
                 >(
-                    |_, spelling, meaning, _code, _, exceptional| {
+                    &mut |_, spelling, meaning, _code, _, exceptional| {
                         assert!(exceptional.is_none());
                         if meaning.scalar_word() == Some(Meaning::RELAX_WORD) {
                             consumed += 1;

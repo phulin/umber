@@ -9,6 +9,101 @@ struct FirstParagraph<G> {
     root: Option<crate::EngineCheckpoint<G>>,
 }
 
+#[test]
+fn resource_replay_restores_construction_groups_before_body_mode_and_builder_exist() {
+    // §§645/1083/1099: a resource miss during mandatory-brace expansion owns the
+    // new group, but still uses the enclosing mode and has no active box.
+    for (head, everybox_count) in [(r"\setbox0=\hbox\relax", 1), (r"\insert0\relax", 0)] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            stores
+                .begin_retained_session()
+                .expect("rollback-capable World");
+            let mut control = MainControl::tex82_initex(stores);
+            register_cmr10_as(&mut control, stores, "cmr10.tfm");
+            register_source(
+                &mut control,
+                format!(
+                    r"\font\f=cmr10 \f A\par
+            \everyhbox={{\global\advance\count0 by1 }}
+            {head}\csname scopedprefix\endcsname\input child
+            \ifx\scopedprefix\undefined\count1=1 \else\count1=2 \fi\end"
+                )
+                .as_bytes(),
+            );
+            let mut output = OutputLedger::new();
+            let mut sink = FirstParagraph { root: None };
+            assert!(matches!(
+                next(&mut control, stores, &mut output, &mut sink),
+                CanonicalStepResult::Committed(_)
+            ));
+            let effect_prefix = stores.world().effect_pos();
+            let mut need = None;
+            for _ in 0..2 {
+                need = None;
+                for _ in 0..128 {
+                    match next(&mut control, stores, &mut output, &mut sink) {
+                        CanonicalStepResult::ResourceNeed(found) => {
+                            need = Some(found);
+                            break;
+                        }
+                        CanonicalStepResult::Progress(_) | CanonicalStepResult::Committed(_) => {}
+                        result => panic!("unexpected prefix result: {result:?}"),
+                    }
+                }
+                assert!(matches!(need, Some(ResourceNeed::Input { .. })));
+                assert_eq!(
+                    admitted!(stores, |context| context.execution_group_depth()),
+                    1
+                );
+                assert_eq!(control.execution.modes.current_mode(), Mode::Vertical);
+                assert!(control.execution.boxes.active_boxes.is_empty());
+                assert_eq!(stores.count(0).expect("everyhbox not started"), 0);
+                let spent = control.fuel_burned();
+                control
+                    .restore_resource_replay(
+                        sink.root.as_ref().expect("full root"),
+                        stores,
+                        &mut output,
+                    )
+                    .expect("full prefix rollback");
+                assert_eq!(
+                    admitted!(stores, |context| context.execution_group_depth()),
+                    0
+                );
+                assert!(control.command.named_boundary_is_quiescent());
+                assert_eq!(stores.world().effect_pos(), effect_prefix);
+                assert_eq!(control.fuel_burned(), spent);
+            }
+            let need = need.expect("prefix input need");
+            let ResourceNeed::Input { name, .. } = &need else {
+                unreachable!()
+            };
+            output
+                .fulfill(
+                    &mut control,
+                    &need,
+                    ResourceFulfillment::input(
+                        name,
+                        RegisteredSourceKind::Generated,
+                        Arc::<[u8]>::from(&b"{}"[..]),
+                    ),
+                )
+                .expect("verified prefix input");
+            finish(&mut control, stores, &mut output, &mut sink);
+            assert_eq!(
+                stores.count(0).expect("only hbox schedules everyhbox"),
+                everybox_count
+            );
+            assert_eq!(stores.count(1).expect("prefix definition is local"), 1);
+            assert_eq!(
+                admitted!(stores, |context| context.execution_group_depth()),
+                0
+            );
+            assert!(control.execution.boxes.active_boxes.is_empty());
+        });
+    }
+}
+
 impl<G> CheckpointSink<G> for FirstParagraph<G> {
     fn wants_checkpoint(&self, boundary: EngineBoundary) -> bool {
         self.root.is_none() && boundary == EngineBoundary::OuterParagraphEnd

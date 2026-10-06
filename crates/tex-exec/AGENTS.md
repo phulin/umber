@@ -165,9 +165,8 @@ not allocate a vector merely to publish one already-complete node.
   installed cell. Native read publication moves the same owner into its actual
   assignment arm. Let aliases the scanned key with no namespace promotion. Provisional
   shorthand tracing renders the old meaning before replacement releases it.
-- `src/main_control/cold/`: genuine native alignment, PDF, grouping, and
-  recovery helpers shared by the direct engine. `groups.rs` owns live group
-  entry/unsave; `conditions.rs` owns partoken policy and final conditional
+- `src/main_control/cold/`: genuine native alignment, PDF, and
+  recovery helpers shared by the direct engine. `conditions.rs` owns partoken policy and final conditional
   reporting; `operand_values.rs` contains concrete arithmetic operands.
   `alignment.rs`, `pdf.rs`, and `support.rs` retain the actual builder, PDF,
   and source-free semantic owners. There is no cold operation scanner,
@@ -453,3 +452,27 @@ execution performs no scalar-word reconstruction or second character-kind decode
 Resident no-op, group and glyph execution receives the selected key and payload directly; it does not construct or decode a native meaning record for literal admission.
 
 The outlined resident group function owns its key classification and actual group action; the no-op loop does not inline the group switch.
+
+`interpreter/box_inputs.rs` and `interpreter/boxes.rs` select the final native
+box kind and group before calling command-owned `scan_box_spec`. Its completed
+prefix already owns the real group; execution then enters the mode and
+installs the final box owner and everybox input. The cold group-entry module
+is deleted; callers share `CommandState::begin_group`.
+`src/main_control/tests/box_prefix.rs` pins packing versus brace expansion
+group ownership, case/category-independent keyword behavior, failed-prefix
+recovery, brace aliases, tracing and everybox mode ordering.
+
+Full-access word callbacks in native operand grammars lend a synchronous
+`dyn FnMut` through `terminal_consumer`; their closure types no longer
+specialize the entire command reader. `InterpreterTerminals` and resident
+glyph/group/grammar admission remain concrete. No callback enters retained
+execution or checkpoint state.
+
+`src/main_control/interpreter/insertions.rs` owns §1099's actual class/error,
+group/brace, paragraph-reset and body-mode sequence. The old semantic insertion
+module, construction request and deferred diagnostic context are deleted.
+Insertion close uses the page builder's live command loan; §82 input rendering
+runs only for a demanded page diagnostic, without an eager context string.
+`src/main_control/tests/insertion_prefix.rs` checks scope, enclosing/body mode,
+reserved-class report order and pdfTeX adjustment prefixes. Aggregate restore
+coverage includes a resource miss with an open insertion group and no body owner.

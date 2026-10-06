@@ -376,9 +376,8 @@ fn native_execution_consumer_changes_the_live_mode_owner_before_expansion() {
             .consume_main_control(&mut tex_command::terminal_consumer::<
                 CommandProcessor<'_, '_, _, &mut ExecutionState<_>>,
                 _,
-                _,
             >(
-                |processor, word, _, _code, _, exceptional| {
+                &mut |processor, word, _, _code, _, exceptional| {
                     assert!(
                         exceptional.is_none(),
                         "ordinary execution needs no command record"

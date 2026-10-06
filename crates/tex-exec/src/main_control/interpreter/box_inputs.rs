@@ -46,72 +46,71 @@ pub(super) fn scan<G>(
 ) -> Result<MainControlStep, ExecError> {
     let mut result = None;
     let status = processor
-        .consume_main_control(&mut tex_command::terminal_consumer::<
-            Processor<'_, '_, G>,
-            G,
-            _,
-        >(
-            |processor, spelling, _meaning, code, _, exceptional| {
-                if matches!(code, codes::RELAX | codes::CHAR_SPACE) {
-                    return Ok(ControlFlow::Continue(()));
-                }
-                result = Some((|| match code {
-                    codes::PRIMITIVE_H_BOX | codes::PRIMITIVE_V_BOX | codes::PRIMITIVE_V_TOP => {
-                        let primitive = match code {
-                            codes::PRIMITIVE_H_BOX => UnexpandablePrimitive::HBox,
-                            codes::PRIMITIVE_V_BOX => UnexpandablePrimitive::VBox,
-                            _ => UnexpandablePrimitive::VTop,
-                        };
-                        construction(processor, primitive, destination, receipts)
+        .consume_main_control(
+            &mut tex_command::terminal_consumer::<Processor<'_, '_, G>, G>(
+                &mut |processor, spelling, _meaning, code, _, exceptional| {
+                    if matches!(code, codes::RELAX | codes::CHAR_SPACE) {
+                        return Ok(ControlFlow::Continue(()));
                     }
-                    codes::PRIMITIVE_BOX | codes::PRIMITIVE_COPY => register(
-                        processor,
-                        code == codes::PRIMITIVE_COPY,
-                        destination,
-                        receipts,
-                    ),
-                    codes::PRIMITIVE_LAST_BOX => last(processor, destination, receipts),
-                    codes::PRIMITIVE_V_SPLIT => split(processor, destination, receipts),
-                    codes::PRIMITIVE_H_RULE | codes::PRIMITIVE_V_RULE
-                        if matches!(destination, Destination::Leader(_)) =>
-                    {
-                        let primitive = if code == codes::PRIMITIVE_H_RULE {
-                            UnexpandablePrimitive::HRule
-                        } else {
-                            UnexpandablePrimitive::VRule
-                        };
-                        let rule = processor.scan_rule_spec(primitive).map_err(command_error)?;
-                        report_scan(processor)?;
-                        processor.with_execution_owners(
-                            |context, command, effects, fuel, _, execution, _, _, _| {
-                                finish(
-                                    destination,
-                                    Some(Node::Rule {
-                                        width: rule.width,
-                                        height: rule.height,
-                                        depth: rule.depth,
-                                    }),
-                                    context,
-                                    command,
-                                    effects,
-                                    fuel,
-                                    execution,
-                                    receipts,
-                                )
-                            },
-                        )?;
-                        leaders::finish_leader(processor)
-                    }
-                    _ => {
-                        processor
-                            .back_consumed_word(spelling, exceptional)
-                            .map_err(command_error)?;
-                        missing(processor)
-                    }
-                })());
-                Ok(ControlFlow::Break(()))
-            },
-        ))
+                    result = Some((|| match code {
+                        codes::PRIMITIVE_H_BOX
+                        | codes::PRIMITIVE_V_BOX
+                        | codes::PRIMITIVE_V_TOP => construction(
+                            processor,
+                            ReplayBoxKind::from_execution_key(code),
+                            destination,
+                            receipts,
+                        ),
+                        codes::PRIMITIVE_BOX | codes::PRIMITIVE_COPY => register(
+                            processor,
+                            code == codes::PRIMITIVE_COPY,
+                            destination,
+                            receipts,
+                        ),
+                        codes::PRIMITIVE_LAST_BOX => last(processor, destination, receipts),
+                        codes::PRIMITIVE_V_SPLIT => split(processor, destination, receipts),
+                        codes::PRIMITIVE_H_RULE | codes::PRIMITIVE_V_RULE
+                            if matches!(destination, Destination::Leader(_)) =>
+                        {
+                            let primitive = if code == codes::PRIMITIVE_H_RULE {
+                                UnexpandablePrimitive::HRule
+                            } else {
+                                UnexpandablePrimitive::VRule
+                            };
+                            let rule =
+                                processor.scan_rule_spec(primitive).map_err(command_error)?;
+                            report_scan(processor)?;
+                            processor.with_execution_owners(
+                                |context, command, effects, fuel, _, execution, _, _, _| {
+                                    finish(
+                                        destination,
+                                        Some(Node::Rule {
+                                            width: rule.width,
+                                            height: rule.height,
+                                            depth: rule.depth,
+                                        }),
+                                        context,
+                                        command,
+                                        effects,
+                                        fuel,
+                                        execution,
+                                        receipts,
+                                    )
+                                },
+                            )?;
+                            leaders::finish_leader(processor)
+                        }
+                        _ => {
+                            processor
+                                .back_consumed_word(spelling, exceptional)
+                                .map_err(command_error)?;
+                            missing(processor)
+                        }
+                    })());
+                    Ok(ControlFlow::Break(()))
+                },
+            ),
+        )
         .map_err(command_error)?;
     match result {
         Some(result) => result,
@@ -132,25 +131,25 @@ fn missing<G>(processor: &mut Processor<'_, '_, G>) -> Result<MainControlStep, E
 
 fn construction<G>(
     processor: &mut Processor<'_, '_, G>,
-    primitive: UnexpandablePrimitive,
+    box_kind: ReplayBoxKind,
     destination: Destination,
     receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<MainControlStep, ExecError> {
-    let construction = processor
-        .scan_box_construction(primitive)
-        .map_err(command_error)?;
+    let group = box_kind.construction_group(
+        matches!(destination, Destination::List(_)),
+        processor.host_facts().modes.current_mode(),
+    );
+    let packing = processor.scan_box_spec(group).map_err(command_error)?;
+    let packing = match packing {
+        ScannedPackingSpec::Natural => PackSpec::Natural,
+        ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
+        ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
+    };
     report_scan(processor)?;
     processor.with_execution_owners(
         |context, command, effects, fuel, observer, execution, _, _, _| {
             execution.main_loop_active = false;
             if let Destination::Leader(kind) = destination {
-                let box_kind = ReplayBoxKind::from_scanned(construction.kind);
-                let packing = match construction.packing {
-                    ScannedPackingSpec::Natural => PackSpec::Natural,
-                    ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
-                    ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
-                };
-                enter_group(context, command, effects, box_kind.group_kind());
                 execution.modes.push_at_line(
                     if box_kind.horizontal() {
                         Mode::RestrictedHorizontal
@@ -203,7 +202,9 @@ fn construction<G>(
                     BoxShiftAxis::Vertical
                 };
                 begin_replay_box(
-                    construction,
+                    box_kind,
+                    group,
+                    packing,
                     target,
                     shipout,
                     &mut execution.modes,

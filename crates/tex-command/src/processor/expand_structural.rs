@@ -93,8 +93,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let result = (|| {
             let mut completed = false;
             while !self.is_observed() && self.consume_csname_run(&mut name)? {}
-            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-                |processor, spelling, meaning, _code, control_sequence, exceptional| {
+            self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+                &mut |processor, spelling, meaning, _code, control_sequence, exceptional| {
                     if *meaning == tex_state::meaning::MeaningWord::scalar(END_CS_NAME_WORD) {
                         completed = true;
                         return Ok(std::ops::ControlFlow::Break(()));

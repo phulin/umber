@@ -92,11 +92,14 @@ fn nested_readers(
                 Ok(std::ops::ControlFlow::Continue(()))
             };
             let result = if main_control {
-                processor.consume_main_control(&mut consume).map(|status| {
-                    assert_eq!(status, crate::DeliveryStatus::End);
-                })
+                processor
+                    .consume_main_control(&mut crate::terminal_consumer::<_, _>(&mut consume))
+                    .map(|status| {
+                        assert_eq!(status, crate::DeliveryStatus::End);
+                    })
             } else {
-                processor.consume_expanded_words(&mut consume)
+                processor
+                    .consume_expanded_words(&mut crate::terminal_consumer::<_, _>(&mut consume))
             };
             assert_eq!(processor.command.transient.active_expansion_depth, 0);
             assert_eq!(processor.expansion_depth, 0);
@@ -405,9 +408,8 @@ fn native_main_lookahead_preserves_mixed_expansion_and_observed_fuel_cuts() {
                 processor.consume_main_loop_lookahead(&mut crate::terminal_consumer::<
                     crate::CommandProcessor<'_, '_, _>,
                     _,
-                    _,
                 >(
-                    |_, spelling, _, _code, _, _| {
+                    &mut |_, spelling, _, _code, _, _| {
                         output.push(spelling.semantic_token());
                         Ok(std::ops::ControlFlow::Continue(()))
                     },
@@ -553,20 +555,24 @@ fn native_primitive_and_terminal_runs_construct_no_commands() {
                 } else if lookahead {
                     assert_eq!(
                         processor
-                            .consume_main_loop_lookahead(&mut consume)
+                            .consume_main_loop_lookahead(&mut crate::terminal_consumer::<_, _>(
+                                &mut consume
+                            ))
                             .expect("native raw main lookahead"),
                         crate::DeliveryStatus::End,
                     );
                 } else if main_control {
                     assert_eq!(
                         processor
-                            .consume_main_control(&mut consume)
+                            .consume_main_control(&mut crate::terminal_consumer::<_, _>(
+                                &mut consume
+                            ))
                             .expect("native main control"),
                         crate::DeliveryStatus::End,
                     );
                 } else {
                     processor
-                        .consume_expanded_words(&mut consume)
+                        .consume_expanded_words(&mut crate::terminal_consumer::<_, _>(&mut consume))
                         .expect("expanded native run");
                 }
                 assert_eq!(delivered, count);

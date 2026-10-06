@@ -38,8 +38,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         const PARAMETER: u64 = Meaning::runtime_word_control_code(Meaning::TokParam(0).encode());
         self.scan_optional_equals()?;
         let mut value = None;
-        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, code, _, exceptional| {
+        self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G>(
+            &mut |processor, spelling, meaning, code, _, exceptional| {
                 let collected = match code {
                     RELAX => return Ok(std::ops::ControlFlow::Continue(())),
                     SPACE if meaning.character().is_some() => {

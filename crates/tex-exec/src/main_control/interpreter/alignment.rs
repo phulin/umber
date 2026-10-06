@@ -130,7 +130,7 @@ pub(super) fn begin<G>(
             .as_mut()
             .expect("live alignment")
             .packing = alignment_pack_spec(packing);
-        enter_group(context, command, effects, GroupKind::Align);
+        command.begin_group(context, effects, GroupKind::Align);
         Ok::<_, ExecError>(())
     })?;
     processor
@@ -147,7 +147,7 @@ pub(super) fn begin<G>(
                     .as_mut()
                     .expect("live alignment preamble"),
             )?;
-            enter_group(context, command, effects, GroupKind::Align);
+            command.begin_group(context, effects, GroupKind::Align);
             schedule_everycr(command, context);
             command.publish_named_token_list_pushes(context, effects, observer);
             Ok::<_, ExecError>(())
@@ -192,7 +192,7 @@ pub(super) fn peek<G>(
                             .as_mut()
                             .expect("live noalign")
                             .noalign_open = true;
-                        enter_group(context, command, effects, GroupKind::NoAlign);
+                        command.begin_group(context, effects, GroupKind::NoAlign);
                         if execution.modes.current_mode() == Mode::InternalVertical {
                             crate::paragraph_end::normal_paragraph(
                                 &mut execution.modes,

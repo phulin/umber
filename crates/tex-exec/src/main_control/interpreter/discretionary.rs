@@ -35,7 +35,7 @@ fn open_part<G>(processor: &mut Processor<'_, '_, G>) -> Result<MainControlStep,
                 .try_into()
                 .unwrap_or(i32::MAX),
         )?;
-        enter_group(context, command, effects, GroupKind::Disc);
+        command.begin_group(context, effects, GroupKind::Disc);
         execution.main_loop_active = false;
         Ok(MainControlStep::Continue)
     })

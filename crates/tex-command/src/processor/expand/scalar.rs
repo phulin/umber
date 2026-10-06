@@ -337,7 +337,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     None,
                     ExpandedReaderRole::Scanner,
                     &mut ScalarWords::<_, false> {
-                        consume: &mut consume,
+                        consume: &mut crate::terminal_consumer::<Self, G>(&mut consume),
                     },
                 )?;
                 match status {

@@ -26,6 +26,7 @@ mod driver;
 mod fonts;
 mod glue_identity;
 mod groups;
+mod insertions;
 mod leaders;
 mod material;
 mod math;
@@ -136,5 +137,18 @@ fn finish_input_boundary<G>(
         tex_command::DeliveryStatus::ReplayCompleted(_)
         | tex_command::DeliveryStatus::AlignmentEndTemplate => Ok(MainControlStep::Continue),
         _ => unreachable!("canonical terminal reader handles alignment and scalar boundaries"),
+    }
+}
+
+impl ReplayBoxKind {
+    /// Actual box kind selected directly from the already-classified terminal.
+    const fn from_execution_key(code: u64) -> Self {
+        match code {
+            codes::PRIMITIVE_H_BOX => Self::HBox,
+            codes::PRIMITIVE_V_BOX => Self::VBox,
+            codes::PRIMITIVE_V_TOP => Self::VTop,
+            codes::PRIMITIVE_V_CENTER => Self::VCenter,
+            _ => panic!("selected native box terminal"),
+        }
     }
 }

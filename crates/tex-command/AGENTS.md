@@ -193,7 +193,7 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   and halted full-checkpoint abandonment;
   `src/state/projection.rs` owns allocation-free retained-byte
   and dependency views; `src/state/executor_publication.rs` owns ordered
-  executor-facing fact transfer and demand-only queued-list publication. Each is an inherent implementation on the
+  executor-facing fact transfer, canonical group entry with demanded tracing, and demand-only queued-list publication. Each is an inherent implementation on the
   same authoritative `CommandState`; none adds a facade or state owner. A named
   checkpoint copies the quiescent transient roots by value; warmed command
   delivery performs no root admission and writes no journal. A resource miss
@@ -936,7 +936,7 @@ Immediate I/O selection is executor-owned native terminal dispatch. `write.rs`
 retains the real write-text scan and sentinel expansion; the former
 `ImmediateExtension` request union and command reconstruction scanner are deleted.
 
-Native scalar and main-control consumers use concrete synchronous callbacks.
+Resident grammars and the native interpreter use concrete consumers. Full-processor callbacks borrow one erased synchronous callback type so their closure types do not clone the expanded reader.
 `consume_main_source_characters` lends the actual source suffix to the live
 horizontal builder with explicit operation and fuel bounds. It shares the
 canonical source cursor and constructs no ordinary command or token list.
@@ -944,8 +944,7 @@ Alignment endv proves its exhausted input independently of §791 cell closure,
 so executor off-save recovery can retain a cell while closing a nested group.
 Brace resets belong to real column and row lookahead rather than cell finish.
 
-Native terminal consumers use statically inlined callbacks in the canonical
-reader. Integer-parameter queries read the existing admitted dense bank directly;
+Resident terminal consumers stay statically inlined in the canonical reader. Full-access closure callbacks share a borrowed `dyn FnMut` entry. Integer-parameter queries read the existing admitted dense bank directly;
 there is no pass-through untracked-integer alias or tracing cache to synchronize.
 
 Command and conditional trace printers query the executor's live mode prefix
@@ -953,7 +952,7 @@ at the actual print and advance its existing `shown_mode` owner there (TeX82
 §299/§367, with §1370 no-mode during deferred writes). There is no owned prefix
 mailbox, trace-printed flag or tracing preparation before a fetch.
 
-- `src/processor/terminal.rs`: native word consumer contract and concrete full-processor callback typing. Restricted admission borrows actual spelling and meaning; literal admission is a static consumer capability. It retains actual input spans; full consumers consume their entry proof before semantic mutation, while expansion and source/effect transitions invalidate it at their producers. Pure parameter and resident-retirement transitions retain that invocation-local proof. Full native delivery shares its one scalar selector between expansion classification and terminal consumption; consumers do not reclassify the same terminal meaning. Exceptional delivery derives the selector after its demanded semantic adjustment.
+- `src/processor/terminal.rs`: native word consumer contract and borrowed full-processor callback typing. Restricted admission borrows actual spelling and meaning; literal admission is a static consumer capability. It retains actual input spans; full consumers consume their entry proof before semantic mutation, while expansion and source/effect transitions invalidate it at their producers. Pure parameter and resident-retirement transitions retain that invocation-local proof. Full native delivery shares its one scalar selector between expansion classification and terminal consumption; consumers do not reclassify the same terminal meaning. Exceptional delivery derives the selector after its demanded semantic adjustment.
 
 - `src/processor/expand/tests/resident_terminals.rs`: exact native no-op fuel and budget cuts, full-access exclusion within a span, and actual frame retirement interruptions.
 
@@ -977,3 +976,15 @@ success boolean and mapping adapters remain deleted.
 Parameter substitution, ordinary resident retirement, source boundaries
 and expansion invalidate quiet execution facts before full processor access; a declined word retains its
 single resolved meaning through that handoff.
+
+Box entry consumes `scan_box_spec` through the sole reader: packing expands in
+the enclosing group, then real group entry precedes mandatory-brace expansion.
+It returns only packing. The construction record, duplicate box-kind enum,
+packing phase enum and construction-only brace wrapper are deleted.
+`scan_toks.rs` shares its mandatory-brace grammar with the already-read box
+prefix word; `scanners/scalar/syntax.rs` continues the real keyword matcher
+after its first matched letter.
+
+Insertion and adjustment prefixes scan actual scalar operands in the native
+interpreter, which opens the command-owned group before `scan_left_brace`.
+`ScannedInsertConstruction` and its scanner/export adapters are deleted.

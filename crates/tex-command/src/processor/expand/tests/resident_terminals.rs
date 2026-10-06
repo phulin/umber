@@ -317,9 +317,8 @@ fn terminal_selectors_follow_expansion_and_live_redefinition() {
                 .consume_main_control(&mut crate::terminal_consumer::<
                     crate::CommandProcessor<'_, '_, _>,
                     _,
-                    _,
                 >(
-                    |processor, _, meaning, code, _, exceptional| {
+                    &mut |processor, _, meaning, code, _, exceptional| {
                         assert_eq!(
                             meaning.resolve(),
                             tex_state::meaning::ResolvedMeaning::Static(expected[delivered])

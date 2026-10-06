@@ -60,76 +60,77 @@ fn scan_base<G>(
 ) -> Result<Option<(u8, OriginId)>, ExecError> {
     let mut base = Ok(None);
     processor
-        .consume_expanded_words(&mut tex_command::terminal_consumer::<
-            Processor<'_, '_, G>,
-            G,
-            _,
-        >(
-            |processor, spelling, meaning, code, symbol, exceptional| {
-                let value = static_meaning(meaning.resolve());
-                match value {
-                    Meaning::Relax
-                    | Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    } => {
-                        return Ok(ControlFlow::Continue(()));
-                    }
-                    Meaning::CharToken {
-                        ch,
-                        cat: Catcode::Letter | Catcode::Other | Catcode::Active,
-                    }
-                    | Meaning::CharGiven(ch) => {
-                        base = u8::try_from(ch as u32)
-                            .map(|ch| Some((ch, spelling.origin())))
-                            .map_err(|_| ExecError::InvalidCode {
-                                context: "accent base",
-                                value: ch as i32,
+        .consume_expanded_words(
+            &mut tex_command::terminal_consumer::<Processor<'_, '_, G>, G>(
+                &mut |processor, spelling, meaning, code, symbol, exceptional| {
+                    let value = static_meaning(meaning.resolve());
+                    match value {
+                        Meaning::Relax
+                        | Meaning::CharToken {
+                            cat: Catcode::Space,
+                            ..
+                        } => {
+                            return Ok(ControlFlow::Continue(()));
+                        }
+                        Meaning::CharToken {
+                            ch,
+                            cat: Catcode::Letter | Catcode::Other | Catcode::Active,
+                        }
+                        | Meaning::CharGiven(ch) => {
+                            base = u8::try_from(ch as u32)
+                                .map(|ch| Some((ch, spelling.origin())))
+                                .map_err(|_| ExecError::InvalidCode {
+                                    context: "accent base",
+                                    value: ch as i32,
+                                });
+                        }
+                        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
+                            base =
+                                processor
+                                    .scan_integer()
+                                    .map_err(command_error)
+                                    .and_then(|value| {
+                                        u8::try_from(value.value)
+                                            .map(|ch| Some((ch, spelling.origin())))
+                                            .map_err(|_| ExecError::InvalidCode {
+                                                context: "accent base",
+                                                value: value.value,
+                                            })
+                                    });
+                        }
+                        _ if tex_command::exceeds_max_non_prefixed_command(value) => {
+                            processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                                execution.set_box_forbidden_depth += 1;
                             });
-                    }
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
-                        base = processor
-                            .scan_integer()
-                            .map_err(command_error)
-                            .and_then(|value| {
-                                u8::try_from(value.value)
-                                    .map(|ch| Some((ch, spelling.origin())))
-                                    .map_err(|_| ExecError::InvalidCode {
-                                        context: "accent base",
-                                        value: value.value,
-                                    })
+                            let step = dispatch::execute(
+                                processor,
+                                spelling,
+                                meaning,
+                                symbol,
+                                exceptional,
+                                receipts,
+                                code,
+                            );
+                            processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
+                                execution.set_box_forbidden_depth -= 1;
+                                execution.main_loop_active = false;
                             });
-                    }
-                    _ if tex_command::exceeds_max_non_prefixed_command(value) => {
-                        processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                            execution.set_box_forbidden_depth += 1;
-                        });
-                        let step = dispatch::execute(
-                            processor,
-                            spelling,
-                            meaning,
-                            symbol,
-                            exceptional,
-                            receipts,
-                            code,
-                        );
-                        processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
-                            execution.set_box_forbidden_depth -= 1;
-                            execution.main_loop_active = false;
-                        });
-                        match step {
-                            Ok(MainControlStep::Continue) => return Ok(ControlFlow::Continue(())),
-                            Ok(_) => {}
-                            Err(error) => base = Err(error),
+                            match step {
+                                Ok(MainControlStep::Continue) => {
+                                    return Ok(ControlFlow::Continue(()));
+                                }
+                                Ok(_) => {}
+                                Err(error) => base = Err(error),
+                            }
+                        }
+                        _ => {
+                            processor.back_consumed_word(spelling, exceptional)?;
                         }
                     }
-                    _ => {
-                        processor.back_consumed_word(spelling, exceptional)?;
-                    }
-                }
-                Ok(ControlFlow::Break(()))
-            },
-        ))
+                    Ok(ControlFlow::Break(()))
+                },
+            ),
+        )
         .map_err(command_error)?;
     report_scan(processor)?;
     base

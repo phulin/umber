@@ -3,18 +3,24 @@ use super::*;
 
 pub(super) fn begin<G>(
     processor: &mut Processor<'_, '_, G>,
-    primitive: UnexpandablePrimitive,
+    kind: ReplayBoxKind,
     receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<MainControlStep, ExecError> {
-    let construction = processor
-        .scan_box_construction(primitive)
-        .map_err(command_error)?;
+    let group = kind.construction_group(true, processor.host_facts().modes.current_mode());
+    let packing = processor.scan_box_spec(group).map_err(command_error)?;
+    let packing = match packing {
+        ScannedPackingSpec::Natural => PackSpec::Natural,
+        ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
+        ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
+    };
     report_scan(processor)?;
     processor.with_execution_owners(
         |context, command, effects, fuel, observer, execution, _, _, _| {
             execution.main_loop_active = false;
             begin_replay_box(
-                construction,
+                kind,
+                group,
+                packing,
                 None,
                 None,
                 &mut execution.modes,
@@ -224,10 +230,9 @@ fn close_insertion<G>(
     class: u16,
     pre: bool,
 ) -> Result<MainControlStep, ExecError> {
-    let (page_context, pack_context, split_top_skip, split_max_depth, floating_penalty) = processor
+    let (pack_context, split_top_skip, split_max_depth, floating_penalty) = processor
         .with_execution_owners(
             |context, command, effects, fuel, observer, execution, _, _, _| {
-                let page_context = command.output_open_context(context);
                 let diagnostic =
                     command_diagnostic_context(command, execution.boxes.output_routine_active);
                 let pack_context = diagnostic.packing();
@@ -245,7 +250,6 @@ fn close_insertion<G>(
                     .map(|id| context.glue(id))
                     .unwrap_or(GlueSpec::ZERO);
                 Ok::<_, ExecError>((
-                    page_context,
                     pack_context,
                     skip,
                     context.dimen_param(DimenParam::SPLIT_MAX_DEPTH),
@@ -318,11 +322,11 @@ fn close_insertion<G>(
             }
             execution.main_loop_active = false;
             context.publish_diagnostic_effects_before_synchronous_print(effects);
-            crate::vertical::build_page_if_outer_vertical_with_error_context(
+            crate::vertical::build_page_if_outer_vertical(
                 &execution.modes,
                 context,
                 effects,
-                &page_context,
+                command,
             )?;
             Ok(MainControlStep::Continue)
         },

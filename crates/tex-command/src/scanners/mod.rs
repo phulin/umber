@@ -20,9 +20,8 @@ pub use structured::{
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImagePageBox,
     PdfImagePageSelection, PdfImageRequest, PdfNavigationRequest, PdfObjectRequest,
     PdfOutlineRequest, PdfStartLinkRequest, PdfThreadRequest, RegisteredInput, ScannedBalancedText,
-    ScannedBoxConstruction, ScannedBoxKind, ScannedCharacterDefinition, ScannedDisplayDiagnostic,
-    ScannedFileName, ScannedGeneratedFontDefinition, ScannedInsertConstruction,
-    ScannedMacroDefinition, ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFraction,
-    ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedVSplit,
-    StructuredProvenance, TokenRequest, WriteStreamSelector,
+    ScannedCharacterDefinition, ScannedDisplayDiagnostic, ScannedFileName,
+    ScannedGeneratedFontDefinition, ScannedMacroDefinition, ScannedMathCharacter,
+    ScannedMathDelimiter, ScannedMathFraction, ScannedPackingSpec, ScannedRegisterDefinition,
+    ScannedRuleSpec, ScannedVSplit, StructuredProvenance, TokenRequest, WriteStreamSelector,
 };

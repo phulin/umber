@@ -767,26 +767,7 @@ pub(super) fn execute<'state, 'host, G>(
                     );
                 }
             }
-            let construction = processor
-                .scan_insert_construction(adjust)
-                .map_err(command_error)?;
-            report_scan(processor)?;
-            let step = processor.with_execution_owners(
-                |context, command, effects, fuel, _, execution, _, _, _| {
-                    execution.main_loop_active = false;
-                    semantic::execute_begin_insert(
-                        context,
-                        &mut execution.modes,
-                        command,
-                        effects,
-                        fuel,
-                        &mut execution.boxes,
-                        construction,
-                    )
-                },
-            )?;
-            recovery::finish_error_dialogue(processor)?;
-            Ok(step)
+            insertions::begin(processor, adjust)
         }
         codes::PRIMITIVE_WD | codes::PRIMITIVE_HT | codes::PRIMITIVE_DP => {
             let index = processor
@@ -999,7 +980,7 @@ pub(super) fn execute<'state, 'host, G>(
                 if recovery_opening {
                     return processor.with_execution_owners(
                         |context, command, effects, _, _, execution, _, _, _| {
-                            enter_group(context, command, effects, GroupKind::Simple);
+                            command.begin_group(context, effects, GroupKind::Simple);
                             execution.boxes.recovery_simple_group_pending = false;
                             execution.boxes.recovery_simple_group_open = true;
                             Ok(MainControlStep::Continue)
@@ -1019,7 +1000,7 @@ pub(super) fn execute<'state, 'host, G>(
                 GroupKind::SemiSimple
             };
             processor.with_execution_owners(|context, command, effects, _, _, _, _, _, _| {
-                enter_group(context, command, effects, kind);
+                command.begin_group(context, effects, kind);
                 Ok(MainControlStep::Continue)
             })
         }
@@ -1612,13 +1593,11 @@ pub(super) fn execute<'state, 'host, G>(
                     exceptional,
                 );
             }
-            let primitive = match code {
-                codes::PRIMITIVE_H_BOX => UnexpandablePrimitive::HBox,
-                codes::PRIMITIVE_V_BOX => UnexpandablePrimitive::VBox,
-                codes::PRIMITIVE_V_TOP => UnexpandablePrimitive::VTop,
-                _ => UnexpandablePrimitive::VCenter,
-            };
-            boxes::begin(processor, primitive, observation_receipts)
+            boxes::begin(
+                processor,
+                ReplayBoxKind::from_execution_key(code),
+                observation_receipts,
+            )
         }
         codes::PRIMITIVE_H_RULE | codes::PRIMITIVE_V_RULE => {
             let mode = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
