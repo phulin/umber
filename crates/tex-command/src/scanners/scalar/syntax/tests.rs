@@ -26,6 +26,66 @@ fn alias<G>(universe: &mut tex_state::Universe<G>, name: &str, ch: char, cat: Ca
 }
 
 #[test]
+fn optional_equals_requires_the_literal_other_token() {
+    // §405 compares cur_tok, while spaces are skipped by their meaning.
+    for observed in [false, true] {
+        crate::test_harness::with_universe(|universe| {
+            let space = alias(universe, "blank", ' ', Catcode::Space);
+            let equals_alias = alias(universe, "equals", '=', Catcode::Other);
+            let active = universe.intern_active_character('~').expect("active name");
+            universe
+                .assign_meaning(
+                    active,
+                    MeaningWord::from_static(Meaning::CharToken {
+                        ch: '=',
+                        cat: Catcode::Other,
+                    }),
+                    AssignmentScope::Global,
+                )
+                .expect("active equals alias");
+            let tail = character('X', Catcode::Other);
+            for (candidate, accepted) in [
+                (character('=', Catcode::Other), true),
+                (character('=', Catcode::Letter), false),
+                (equals_alias, false),
+                (character('~', Catcode::Active), false),
+            ] {
+                let mut command = CommandState::default();
+                crate::test_harness::push(&mut command, [space, candidate, tail]);
+                let mut capabilities = CommandHostCapabilities::default();
+                let mut fuel = crate::CommandFuelLedger::default();
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut observer = Observer;
+                let mut context = universe.command_context().expect("context");
+                let processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut effects,
+                );
+                let mut processor = if observed {
+                    processor.with_observer(&mut observer)
+                } else {
+                    processor
+                };
+                assert_eq!(
+                    processor.scan_optional_equals().expect("equals scan"),
+                    accepted
+                );
+                assert_eq!(
+                    crate::test_harness::expect_expanded_command(&mut processor)
+                        .spelling()
+                        .semantic_token(),
+                    if accepted { tail } else { candidate },
+                    "actual unconsumed token"
+                );
+            }
+        });
+    }
+}
+
+#[test]
 fn keyword_requires_literal_spelling_and_preserves_failed_prefix_levels() {
     for observed in [false, true] {
         crate::test_harness::with_universe(|universe| {

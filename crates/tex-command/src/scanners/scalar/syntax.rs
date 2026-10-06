@@ -16,11 +16,17 @@ struct OptionalEquals {
 
 impl OptionalEquals {
     #[inline(always)]
-    fn accept(&mut self, character: Option<(char, Catcode)>) -> ControlFlow<(), bool> {
+    fn accept(
+        &mut self,
+        spelling: TracedTokenWord,
+        character: Option<(char, Catcode)>,
+    ) -> ControlFlow<(), bool> {
         match character {
             Some((' ', Catcode::Space)) => ControlFlow::Continue(true),
             // §405 compares the actual other-category '=' token.
-            Some(('=', Catcode::Other)) => {
+            Some(('=', Catcode::Other))
+                if spelling.token_word().matches_character('=', Catcode::Other) =>
+            {
                 self.equals = true;
                 ControlFlow::Break(())
             }
@@ -52,13 +58,14 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
         _facts: &mut Facts,
         _entered_line: u32,
         _macro_origin: Option<tex_state::token::OriginId>,
-        _spelling: TracedTokenWord,
+        spelling: TracedTokenWord,
         code: u64,
         operand: u64,
     ) -> ControlFlow<(), bool> {
-        self.accept(tex_state::meaning::MeaningWord::<G>::character_from_parts(
-            code, operand,
-        ))
+        self.accept(
+            spelling,
+            tex_state::meaning::MeaningWord::<G>::character_from_parts(code, operand),
+        )
     }
 
     #[inline(always)]
@@ -71,7 +78,7 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
         _control_sequence: Option<Symbol>,
         exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<ControlFlow<()>, CommandError> {
-        match self.accept(meaning.character()) {
+        match self.accept(spelling, meaning.character()) {
             ControlFlow::Continue(true) => Ok(ControlFlow::Continue(())),
             ControlFlow::Break(()) => Ok(ControlFlow::Break(())),
             ControlFlow::Continue(false) => {

@@ -52,7 +52,9 @@ const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
 // Version 22 requires the frozen nullfont identifier in every TeX format.
 // Version 23 consumes box prefixes without speculative rereads and opens box
 // and insertion groups before mandatory-brace expansion (TeX82 §§645/1099).
-const PRODUCER_CONTRACT_VERSION: u32 = 23;
+// Version 24 consumes setbox optional equals with its box selector and requires
+// literal optional-equals token identity (TeX82 §§405/1241).
+const PRODUCER_CONTRACT_VERSION: u32 = 24;
 // Version 2 carries the producing source identity on geometry observations.
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 

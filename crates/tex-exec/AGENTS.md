@@ -458,6 +458,10 @@ box kind and group before calling command-owned `scan_box_spec`. Its completed
 prefix already owns the real group; execution then enters the mode and
 installs the final box owner and everybox input. The cold group-entry module
 is deleted; callers share `CommandState::begin_group`.
+Register destinations consume optional equals and box selection in one native
+callback. Ordinary declined equals creates no backup or parked command; genuine
+report/recovery boundaries restore actual spelling when required. Forbidden
+setbox still leaves the body head unread after its actual optional-equals scan.
 `src/main_control/tests/box_prefix.rs` pins packing versus brace expansion
 group ownership, case/category-independent keyword behavior, failed-prefix
 recovery, brace aliases, tracing and everybox mode ordering.

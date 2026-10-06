@@ -27,6 +27,7 @@ fn token_word_round_trips_every_category_code() {
             let word = TokenWord::pack(token);
             assert_eq!(word.token(), Some(token));
             assert_eq!(word.semantic_token(), token);
+            assert!(word.matches_character(ch, cat));
         }
     }
 }
@@ -65,6 +66,7 @@ fn control_sequence_tokens_use_admitted_session_coordinates() {
                 Some(expected_kind)
             );
             assert_eq!(TokenWord::pack(token).semantic_token(), token);
+            assert!(!TokenWord::pack(token).matches_character('x', Catcode::Other));
         }
     })
     .expect("fresh universe");

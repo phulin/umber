@@ -307,6 +307,13 @@ impl TokenWord {
         }
     }
 
+    /// Tests exact character-token identity without resolving its meaning.
+    #[must_use]
+    #[inline(always)]
+    pub const fn matches_character(self, ch: char, cat: Catcode) -> bool {
+        self.0 == ((ch as u32) << Self::CATCODE_BITS) | cat as u32
+    }
+
     /// Returns the character of a literal character spelling.
     #[must_use]
     #[inline(always)]

@@ -2,6 +2,62 @@
 use super::*;
 
 #[test]
+fn setbox_consumes_optional_equals_and_box_selection_in_one_grammar() {
+    // §§405/1084/1241: one optional literal sign, then spaces/relax and a
+    // genuine box head. An equals after relax is already the box offender.
+    for observed in [false, true] {
+        for (prefix, valid) in [
+            (r"\head", true),
+            (r" = \head", true),
+            (r"\relax\head", true),
+            (r"=\relax\head", true),
+            (r"\relax=\head", false),
+            (r"==\head", false),
+            (r"\equal\head", false),
+        ] {
+            crate::test_harness::with_nonstop_plain_universe(|stores| {
+                let mut control = MainControl::tex82_initex(stores);
+                let source = format!(
+                    "\\setbox0=\\hbox{{\\kern2pt}}\\def\\head{{\\hbox}}\\let\\equal==\\setbox0{prefix}{{\\kern1pt}}\\end"
+                );
+                register_source(&mut control, source.as_bytes());
+                if observed {
+                    run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+                } else {
+                    run_to_end(&mut control, stores);
+                }
+                let root = stores
+                    .copy_box_to_page(0)
+                    .expect("box register survives recovery");
+                let Some(Node::HList(boxed)) = first_published_node(stores, root) else {
+                    panic!("expected hbox");
+                };
+                assert_eq!(
+                    boxed.width.raw(),
+                    if valid {
+                        Scaled::UNITY
+                    } else {
+                        2 * Scaled::UNITY
+                    },
+                    "{source}"
+                );
+                let terminal = terminal_text(stores);
+                assert_eq!(
+                    terminal.matches("A <box> was supposed to be here").count(),
+                    usize::from(!valid),
+                    "{source}: {terminal}"
+                );
+                assert_eq!(
+                    terminal.matches("! ").count(),
+                    usize::from(!valid),
+                    "{source}: {terminal}"
+                );
+            });
+        }
+    }
+}
+
+#[test]
 fn vcenter_prefix_uses_the_same_group_boundary_and_everyvbox_body() {
     // §§645/1167: vcenter uses scan_spec too. Pinned pdfTeX agrees on
     // these three scope controls and the single null-math-font diagnostic.

@@ -17,12 +17,13 @@ pub(super) fn set_box<G>(
     let index = processor
         .scan_profile_register_index()
         .map_err(command_error)?;
-    processor.scan_optional_equals().map_err(command_error)?;
     report_scan(processor)?;
     let forbidden = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
         execution.set_box_forbidden_depth != 0
     });
     if forbidden {
+        processor.scan_optional_equals().map_err(command_error)?;
+        report_scan(processor)?;
         processor.with_execution_owners(|context, command, effects, _, _, _, _, _, _| {
             report_improper_setbox(command.output_open_context(context), context, effects)
         })?;
@@ -45,10 +46,30 @@ pub(super) fn scan<G>(
     receipts: &mut Option<Vec<MutationRecord>>,
 ) -> Result<MainControlStep, ExecError> {
     let mut result = None;
+    // §1241's register destination scans optional equals before scan_box.
+    // Keep both grammars in this reader; a declined sign is already the head.
+    let mut equals_pending = matches!(destination, Destination::Register(_));
     let status = processor
         .consume_main_control(
             &mut tex_command::terminal_consumer::<Processor<'_, '_, G>, G>(
                 &mut |processor, spelling, _meaning, code, _, exceptional| {
+                    if equals_pending {
+                        if processor.has_pending_reports() {
+                            processor.back_consumed_word(spelling, exceptional)?;
+                            if let Err(error) = report_scan(processor) {
+                                result = Some(Err(error));
+                                return Ok(ControlFlow::Break(()));
+                            }
+                            return Ok(ControlFlow::Continue(()));
+                        }
+                        if code == codes::CHAR_SPACE {
+                            return Ok(ControlFlow::Continue(()));
+                        }
+                        equals_pending = false;
+                        if spelling.token_word().matches_character('=', Catcode::Other) {
+                            return Ok(ControlFlow::Continue(()));
+                        }
+                    }
                     if matches!(code, codes::RELAX | codes::CHAR_SPACE) {
                         return Ok(ControlFlow::Continue(()));
                     }

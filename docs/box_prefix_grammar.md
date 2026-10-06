@@ -52,6 +52,24 @@ semantic consumers.
 
 ## One consuming grammar
 
+For `setbox`, the register scanner is followed by one optional-equals and box
+selection grammar in the existing native box consumer. Its actual register
+destination implies the initial equals phase; other destinations begin at box
+selection. Spaces keep that first phase open. The first nonspace ends it: a
+literal other-category equals is consumed, while any other word proceeds
+directly to box selection with its already-resolved meaning. Relax remains a
+non-equals word which the box selector skips. No consumed head is parked or
+backed up merely to move between these two grammars.
+
+TeX82 §405 compares exact token identity, so a control sequence or active alias
+of equals cannot supply the optional sign. The shared optional-equals scanner
+uses the same packed-word identity rule. Pending register diagnostics report
+before further scanning, and demanded expansion reports end the borrow at their
+actual boundary. If a report needs recovery before an already-read head is
+consumed, restore that real spelling before reporting and retry. Forbidden
+`setbox` still scans optional equals before its error and leaves the box head
+unread, as §1241 requires. It does not enter the construction grammar.
+
 Use the sole expanded reader to consume leading spaces and classify the first
 substantive packing word once. Keyword spelling follows §407: only a literal
 character can match, comparison ignores ASCII case and character category,

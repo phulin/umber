@@ -549,6 +549,7 @@ Definition-owned parameter programs expose literal delimiter views only for none
 - `src/tests/replay.rs`: Feature-gated generated invariant test for exact
   generation-typed checkpoint replay.
 - `src/token.rs`: Token and catcode value definitions, constructors,
+  exact packed character-token identity through `matches_character`,
   classification helpers, destination-directed packed command resolution
   which writes the consumer's final native `MeaningWord` without class
   construction and returns only the resolved control-sequence identity. Lookup
