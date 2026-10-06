@@ -23,6 +23,10 @@ changes record usage, and actual tracing and semantic events own their work.
 `structured_scanner_ownership.md` maps the structured command scanner
 families, their shared processor authority, and their replay boundary.
 
+`box_prefix_grammar.md` selects the pending command-owned `scan_spec` redesign:
+packing expansion outside the new group, mandatory-brace expansion inside it,
+direct kind/packing ownership and deletion of backup/reread and request work.
+
 `main_control_responsibilities.md` maps the executor's private resource and
 root-source modules onto the unchanged `MainControl` owner.
 
