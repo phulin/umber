@@ -39,7 +39,7 @@ fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
     let mut semantics = std::collections::hash_map::DefaultHasher::new();
     roots.engine_semantics.hash(&mut semantics);
     feed(semantics.finish());
-    feed(roots.input.levels.len() as u64);
+    feed(roots.input.levels.rows.len() as u64);
     feed(roots.input.retained_file_line_number as u64);
     feed(u64::from(roots.input.terminal_context_line.is_some()));
     feed(roots.input.pending_sources.len() as u64);

@@ -55,7 +55,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(true);
         }
         let levels = &self.command.roots.input.levels;
-        let Some(row) = levels.current.as_ref() else {
+        let Some(row) = levels.rows.last() else {
             return Ok(false);
         };
         let InputStorage::MacroBody(body) = &row.storage else {
@@ -122,8 +122,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .roots
                 .input
                 .levels
-                .current
-                .as_ref()
+                .rows
+                .last()
                 .is_some_and(|row| matches!(row.storage, InputStorage::Source(_)))
             {
                 match self.consume_source_input(
@@ -145,9 +145,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             } else {
                 None
             };
-            let input_depth = self.command.roots.input.levels.len();
+            let input_depth = self.command.roots.input.levels.rows.len();
             let levels = &mut self.command.roots.input.levels;
-            let Some(row) = levels.current.as_mut() else {
+            let Some(row) = levels.rows.last_mut() else {
                 return Ok(None);
             };
             let frame = &mut row.frame;

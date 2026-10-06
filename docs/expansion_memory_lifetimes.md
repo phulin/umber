@@ -467,14 +467,17 @@ Resident rows store the actual packed frame beside their token owner. The one-fi
 
 The authoritative InputLevel contains one packed frame and one InputStorage union, including its sole boxed SourceSlot. SourceLevel, ResidentTokenRow, ResidentTokenStorage and ResidentSourceTop are deleted. MacroBodyCursor retains the actual immutable definition and final argument region; parameter input borrows that region. SourceSlot advances with the real packed frame, and full checkpoint copies retain only their admitted source or durable/traced word owners. No additional row wrapper, source view, compatibility accessor or native lifetime counter is introduced.
 
-InputStack owns its actual current level directly; its vector contains only
-suspended levels. Push suspends the previous owner, and resident pop releases
-its final word or argument suffix before dropping it in place and restoring
-its parent. Cold context display and source-coordinate checks borrow the
-actual suspended/current sequence without collecting rows. Captures retain
-this same distinction under the existing quiescent admission rules. The old
-row-vector field, slice dereference and generic slice-index facade are deleted;
-ordinary delivery never computes a top-row coordinate.
+InputStack owns one oldest-to-current vector of actual input rows. Push appends
+only the child. Resident pop releases its word suffix or final argument region
+before dropping only that row in place; its parent stays in the vector. Source
+retirement may move its own row into the synchronous diagnostic projection.
+Readers borrow the final row once per physical span, releasing that borrow
+before mutation can relocate the vector. Cold context display, source-coordinate
+checks and checkpoint capture traverse that same vector through standard slice
+iteration. Restore clears displaced rows and abandoned argument regions, copies
+captured rows into reusable capacity and advances the context epoch. The split
+current/suspended owners, custom two-part iterator and coordinate accessors are
+deleted. No cached pointer or duplicate active owner exists.
 
 ModeNest likewise owns one actual current semantic level and only suspended
 levels in its bounded vector. Current mode, list, pending characters and list

@@ -187,7 +187,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// `end_token_list`; it must not let those tokens resume in main control.
     /// Returns whether the diagnostic is required.
     pub fn finish_selected_output_routine(&mut self) -> Result<bool, CommandError> {
-        let Some(output_index) = self.command.input.levels.iter().rposition(|level| {
+        let Some(output_index) = self.command.input.levels.rows.iter().rposition(|level| {
             matches!(
                 level,
                 level if matches!(
@@ -204,20 +204,26 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
         let levels = &self.command.input.levels;
         let output_has_remaining = levels.pending_token_word(output_index).is_some();
-        let levels_above_are_depleted_backups = (output_index + 1..levels.len()).all(|index| {
-            matches!(
-                levels.level(index).expect("admitted input").frame.kind(),
-                tex_state::packed_input::InputFrameKind::BackedUp
-            ) && levels.pending_token_word(index).is_none()
-        });
+        let levels_above_are_depleted_backups =
+            (output_index + 1..levels.rows.len()).all(|index| {
+                matches!(
+                    levels.rows.get(index).expect("admitted input").frame.kind(),
+                    tex_state::packed_input::InputFrameKind::BackedUp
+                ) && levels.pending_token_word(index).is_none()
+            });
         let unbalanced = output_has_remaining || !levels_above_are_depleted_backups;
 
         if unbalanced {
-            let output_identity = levels.level(output_index).expect("output input").identity();
+            let output_identity = levels
+                .rows
+                .get(output_index)
+                .expect("output input")
+                .identity();
             let mut discarded = None;
             loop {
                 let levels = &self.command.input.levels;
                 let output_has_remaining = levels
+                    .rows
                     .iter()
                     .position(|level| level.identity() == output_identity)
                     .is_some_and(|index| levels.pending_token_word(index).is_some());
@@ -256,7 +262,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     | InputStorage::MacroArgument { .. },
                 ..
             },
-        ) = levels.current.as_ref()
+        ) = levels.rows.last()
         else {
             return Ok(());
         };
@@ -264,7 +270,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             row.storage,
             crate::input::InputStorage::List(_) | crate::input::InputStorage::StoredList(_)
         ) || !matches!(row.behavior(), TokenBehavior::BackedUp(_))
-            || levels.pending_token_word(levels.len() - 1).is_some()
+            || levels.pending_token_word(levels.rows.len() - 1).is_some()
             || !matches!(
                 levels
                     .row_words(row)
@@ -322,7 +328,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(SourceExhaustionStatus::Continue);
         }
         if self.state.int_param(IntParam::TRACING_NESTING) > 1 {
-            let context = match self.command.input.levels.current.as_ref() {
+            let context = match self.command.input.levels.rows.last() {
                 Some(
                     source @ InputLevel {
                         storage: InputStorage::Source(_),
@@ -487,7 +493,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// The top row §§325 and 390 would retire, with its end-of-level action.
     #[inline(always)]
     pub(super) fn depleted_input_top(&self) -> Option<(InputLevelId, RetirementBehavior)> {
-        match self.command.input.levels.current.as_ref() {
+        match self.command.input.levels.rows.last() {
             Some(
                 level @ row @ InputLevel {
                     storage:

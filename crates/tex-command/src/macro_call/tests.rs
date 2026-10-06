@@ -150,6 +150,7 @@ fn unobserved_parameterless_macro_activates_directly_and_elides_empty_body_row()
                 .command
                 .input
                 .levels
+                .rows
                 .iter()
                 .any(|level| level.macro_body().is_some()),
             "an empty simple replacement has no resident input row"
@@ -570,6 +571,7 @@ fn failed_macro_call_keeps_the_resident_definition_owner() {
                 .command
                 .input
                 .levels
+                .rows
                 .iter()
                 .any(|level| level.macro_body().is_some())
         );

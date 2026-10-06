@@ -53,8 +53,8 @@ fn integer_resident_fuel_cuts_leave_the_next_word_unread() {
                     .roots
                     .input
                     .levels
-                    .current
-                    .as_ref()
+                    .rows
+                    .last()
                     .expect("actual input frame")
                     .frame
                     .position(),
@@ -217,8 +217,8 @@ fn integer_digits_continue_through_expansion_at_every_fuel_cut() {
                         .command
                         .input
                         .levels
-                        .current
-                        .as_ref()
+                        .rows
+                        .last()
                         .expect("live input")
                         .frame
                         .position(),
@@ -265,15 +265,15 @@ fn integer_resident_span_releases_at_actual_frame_retirement() {
             processor.scan_integer().expect("continued integer").value,
             -123456
         );
-        assert_eq!(processor.command.roots.input.levels.len(), 1);
+        assert_eq!(processor.command.roots.input.levels.rows.len(), 1);
         assert_eq!(
             processor
                 .command
                 .roots
                 .input
                 .levels
-                .current
-                .as_ref()
+                .rows
+                .last()
                 .expect("parent input frame")
                 .frame
                 .position(),

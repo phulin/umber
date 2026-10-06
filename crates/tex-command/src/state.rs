@@ -472,7 +472,7 @@ impl<G> CommandState<G> {
     /// Returns the number of live TeX input levels retained by this command state.
     #[must_use]
     pub fn input_level_count(&self) -> usize {
-        self.input.levels.len()
+        self.input.levels.rows.len()
     }
 
     /// Returns runtime-only TeX82 command-stack maxima for §1334.
@@ -489,6 +489,7 @@ impl<G> CommandState<G> {
         let tail = self
             .input
             .levels
+            .rows
             .iter()
             .rev()
             .take(limit)
@@ -509,7 +510,7 @@ impl<G> CommandState<G> {
                 },
             })
             .collect();
-        (self.input.levels.len(), tail)
+        (self.input.levels.rows.len(), tail)
     }
 
     pub(crate) fn name_in_progress(&self) -> bool {
@@ -572,7 +573,7 @@ impl<G> CommandState<G> {
     #[doc(hidden)]
     #[must_use]
     pub fn live_physical_root_source_id(&self) -> Option<tex_state::SourceId> {
-        self.input.levels.iter().find_map(|level| {
+        self.input.levels.rows.iter().find_map(|level| {
             let source @ crate::input::InputLevel {
                 storage: crate::input::InputStorage::Source(_),
                 ..
@@ -780,7 +781,7 @@ impl<G> CommandState<G> {
 
     /// Whether TeX82 §1370's artificial deferred-write input is live.
     pub(crate) fn expanding_deferred_write(&self) -> bool {
-        self.input.levels.iter().any(|level| {
+        self.input.levels.rows.iter().any(|level| {
             matches!(
                 level,
                 level
@@ -845,6 +846,7 @@ impl<G> CommandState<G> {
     pub fn replay_episode_is_active(&self, episode: CommandReplayEpisode) -> bool {
         self.input
             .levels
+            .rows
             .iter()
             .any(|level| level.identity() == episode.0)
     }
@@ -1225,7 +1227,7 @@ impl<G> CommandState<G> {
                 )
                 && level.retirement() == RetirementBehavior::AwaitingVTemplateRetirement
         };
-        let Some(top) = self.input.levels.current.as_ref() else {
+        let Some(top) = self.input.levels.rows.last() else {
             return Err(AlignmentLifecycleError::VTemplateNotExhausted);
         };
         if retained_v_template(top) {
@@ -1245,7 +1247,8 @@ impl<G> CommandState<G> {
             && self
                 .input
                 .levels
-                .level(self.input.levels.len().saturating_sub(2))
+                .rows
+                .get(self.input.levels.rows.len().saturating_sub(2))
                 .is_some_and(retained_v_template)
         {
             Ok(())
@@ -1523,7 +1526,7 @@ impl<G> CommandState<G> {
     /// effect carrier.
     #[must_use]
     pub fn live_file_framing_name(&self, source: tex_state::SourceId) -> Option<&str> {
-        self.input.levels.iter().find_map(|level| {
+        self.input.levels.rows.iter().find_map(|level| {
             let level @ InputLevel {
                 storage: InputStorage::Source(_),
                 ..
@@ -1608,7 +1611,7 @@ impl<G> CommandState<G> {
         let level @ InputLevel {
             storage: InputStorage::Source(_),
             ..
-        } = self.input.levels.current.as_ref()?
+        } = self.input.levels.rows.last()?
         else {
             return None;
         };
@@ -1672,7 +1675,10 @@ impl<G> CommandState<G> {
         };
         let mut frame = crate::input::PackedInputFrame::source(identity.0, own_source);
         frame.set_source_context(source_context);
-        self.stack_usage.input_stack = self.stack_usage.input_stack.max(self.input.levels.len());
+        self.stack_usage.input_stack = self
+            .stack_usage
+            .input_stack
+            .max(self.input.levels.rows.len());
         self.input.levels.push_source(
             frame,
             crate::input::SourceSlot::new(
@@ -1690,6 +1696,7 @@ impl<G> CommandState<G> {
     pub(crate) fn current_source_open_depths(&self) -> Option<&crate::input::SourceOpenDepths> {
         self.input
             .levels
+            .rows
             .iter()
             .rev()
             .find_map(|entry| match entry {
@@ -1715,32 +1722,28 @@ impl<G> CommandState<G> {
     ) -> Option<&crate::input::SourceOpenDepths> {
         #[cfg(test)]
         RETIREMENT_TOP_SOURCE_CHECKS.with(|checks| checks.set(checks.get().saturating_add(1)));
-        self.input
-            .levels
-            .current
-            .as_ref()
-            .and_then(|entry| match entry {
-                source @ InputLevel {
-                    storage: InputStorage::Source(_),
-                    ..
-                } if source.identity() == identity => source
-                    .source_slot()
-                    .expect("source input")
-                    .open_depths
-                    .as_ref(),
-                InputLevel {
-                    storage: InputStorage::Source(_),
-                    ..
-                }
-                | InputLevel {
-                    storage:
-                        InputStorage::List(_)
-                        | InputStorage::StoredList(_)
-                        | InputStorage::MacroBody(_)
-                        | InputStorage::MacroArgument { .. },
-                    ..
-                } => None,
-            })
+        self.input.levels.rows.last().and_then(|entry| match entry {
+            source @ InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            } if source.identity() == identity => source
+                .source_slot()
+                .expect("source input")
+                .open_depths
+                .as_ref(),
+            InputLevel {
+                storage: InputStorage::Source(_),
+                ..
+            }
+            | InputLevel {
+                storage:
+                    InputStorage::List(_)
+                    | InputStorage::StoredList(_)
+                    | InputStorage::MacroBody(_)
+                    | InputStorage::MacroArgument { .. },
+                ..
+            } => None,
+        })
     }
 
     /// Applies TeX's `\endinput` retirement request to the active physical
@@ -1750,6 +1753,7 @@ impl<G> CommandState<G> {
         let has_source = self
             .input
             .levels
+            .rows
             .iter()
             .rev()
             .find_map(|level| match level {
@@ -1837,7 +1841,7 @@ impl<G> CommandState<G> {
                 storage: InputStorage::Source(_),
                 ..
             },
-        ) = self.input.levels.current.as_ref()
+        ) = self.input.levels.rows.last()
         else {
             return None;
         };
@@ -1991,6 +1995,7 @@ impl<G> CommandState<G> {
             && self
                 .input
                 .levels
+                .rows
                 .iter()
                 .rev()
                 .find_map(|level| match level {

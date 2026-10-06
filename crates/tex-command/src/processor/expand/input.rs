@@ -63,7 +63,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         } else {
             None
         };
-        let input_depth = self.command.roots.input.levels.len();
+        let input_depth = self.command.roots.input.levels.rows.len();
         let InputLevel {
             frame,
             storage: InputStorage::Source(slot),
@@ -72,8 +72,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .roots
             .input
             .levels
-            .current
-            .as_mut()
+            .rows
+            .last_mut()
             .expect("selected source input")
         else {
             return Err(CommandError::input_invariant());
@@ -207,8 +207,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .roots
             .input
             .levels
-            .current
-            .as_mut()
+            .rows
+            .last_mut()
             .expect("current source input")
         else {
             return Err(CommandError::input_invariant());
@@ -355,7 +355,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(never)]
     pub(super) fn substitute_resident_parameter(&mut self) -> Result<(), CommandError> {
         let levels = &mut self.command.roots.input.levels;
-        let row = levels.current.as_mut().expect("current input");
+        let row = levels.rows.last_mut().expect("current input");
         let frame = &mut row.frame;
         let position = frame.start() as usize + frame.position() as usize;
         let word = match &row.storage {
@@ -456,8 +456,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .command
                     .input
                     .levels
-                    .current
-                    .as_ref()
+                    .rows
+                    .last()
                     .filter(|level| !matches!(level.storage, InputStorage::Source(_)))
                     .is_some_and(|cursor| cursor.identity() == identity)
                 {

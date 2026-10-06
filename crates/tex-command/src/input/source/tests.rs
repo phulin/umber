@@ -250,5 +250,5 @@ fn opening_requires_a_retained_registration() {
         .expect_err("unknown source must not create a cursor");
 
     assert_eq!(error.source(), SourceId::new(77));
-    assert!(state.input.levels.current.is_none());
+    assert!(state.input.levels.rows.is_empty());
 }

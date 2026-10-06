@@ -598,11 +598,11 @@ fn resident_stopper_retires_its_exhausted_level() {
         );
 
         let _stopper = crate::test_harness::expect_token_command(&mut processor);
-        let levels = processor.command.input.levels.len();
+        let levels = processor.command.input.levels.rows.len();
         processor
             .retire_delivery_level()
             .expect("the stopper's exhausted level retires");
-        assert_eq!(processor.command.input.levels.len(), levels - 1);
+        assert_eq!(processor.command.input.levels.rows.len(), levels - 1);
     });
 }
 

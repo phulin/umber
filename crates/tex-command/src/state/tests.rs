@@ -300,7 +300,7 @@ fn default_command_state_is_quiescent_at_a_cold_summary_boundary() {
     crate::test_harness::with_universe(|_universe| {
         let state = CommandState::<()>::default();
         assert!(state.scanner.is_quiescent());
-        assert!(state.input.levels.current.is_none());
+        assert!(state.input.levels.rows.is_empty());
     });
 }
 

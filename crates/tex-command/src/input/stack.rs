@@ -283,12 +283,7 @@ impl<G> CommandState<G> {
         observer: &mut Option<&mut dyn crate::CommandObserver>,
         immediate_write_retirement: &mut Option<InputLevelId>,
     ) -> Option<ResidentBoundary> {
-        let row = self
-            .input
-            .levels
-            .current
-            .as_ref()
-            .expect("current token input");
+        let row = self.input.levels.rows.last().expect("current token input");
         assert!(
             !matches!(row.storage, InputStorage::Source(_)),
             "current resident owner contains token input"
@@ -327,30 +322,35 @@ impl<G> CommandState<G> {
     #[must_use]
     pub fn transient_dynamic_words(&self) -> usize {
         let arguments = self.input.levels.arguments.captured_word_len();
-        self.input.levels.iter().fold(arguments, |words, level| {
-            let InputLevel { frame, storage } = level;
-            let owned = match storage {
-                InputStorage::Source(_) => 0,
-                InputStorage::List(
-                    super::PackedTokenOwnership::Transient | super::PackedTokenOwnership::BackedUp,
-                ) => frame.limit(),
-                // The activation's live argument spans; its parameter text and
-                // replacement stand for TeX's shared definition list.
-                InputStorage::MacroBody(body) => body
-                    .argument_values(&self.input.levels.arguments)
-                    .iter()
-                    .map(|span| span.len() as usize)
-                    .sum::<usize>() as u32,
-                InputStorage::StoredList(_) => 0,
-                InputStorage::List(super::PackedTokenOwnership::Stored)
-                | InputStorage::MacroArgument { .. } => 0,
-            };
-            words.saturating_add(owned as usize)
-        })
+        self.input
+            .levels
+            .rows
+            .iter()
+            .fold(arguments, |words, level| {
+                let InputLevel { frame, storage } = level;
+                let owned = match storage {
+                    InputStorage::Source(_) => 0,
+                    InputStorage::List(
+                        super::PackedTokenOwnership::Transient
+                        | super::PackedTokenOwnership::BackedUp,
+                    ) => frame.limit(),
+                    // The activation's live argument spans; its parameter text and
+                    // replacement stand for TeX's shared definition list.
+                    InputStorage::MacroBody(body) => body
+                        .argument_values(&self.input.levels.arguments)
+                        .iter()
+                        .map(|span| span.len() as usize)
+                        .sum::<usize>() as u32,
+                    InputStorage::StoredList(_) => 0,
+                    InputStorage::List(super::PackedTokenOwnership::Stored)
+                    | InputStorage::MacroArgument { .. } => 0,
+                };
+                words.saturating_add(owned as usize)
+            })
     }
 
     pub(crate) fn top_input_level_identity(&self) -> Option<InputLevelId> {
-        self.input.levels.current.as_ref().map(InputLevel::identity)
+        self.input.levels.rows.last().map(InputLevel::identity)
     }
 
     /// Installs one complete macro activation and its replacement-body level:
@@ -405,7 +405,10 @@ impl<G> CommandState<G> {
     /// Accounts for TeX82's logical `begin_token_list` boundary when an empty
     /// simple macro needs no resident input row.
     pub(crate) fn record_empty_macro_activation(&mut self) {
-        self.stack_usage.input_stack = self.stack_usage.input_stack.max(self.input.levels.len());
+        self.stack_usage.input_stack = self
+            .stack_usage
+            .input_stack
+            .max(self.input.levels.rows.len());
     }
 
     /// Accounts for an empty-replacement macro with parameters: the logical
@@ -509,8 +512,8 @@ impl<G> CommandState<G> {
         let level = self
             .input
             .levels
-            .current
-            .as_ref()
+            .rows
+            .last()
             .ok_or(InputRetirementError::NoInput)?;
         let actual = level.identity();
         if actual != expected {
@@ -645,7 +648,7 @@ impl<G> CommandState<G> {
     /// therefore unwind top-down here even when a macro body, an alignment
     /// template, or a partially consumed source is still live.
     pub(crate) fn pop_input_level_at_end_of_job(&mut self) -> Option<InputRetirement> {
-        let level = self.input.levels.current.as_ref()?;
+        let level = self.input.levels.rows.last()?;
         if let row @ InputLevel {
             storage: InputStorage::MacroBody(_),
             ..
@@ -724,7 +727,10 @@ impl<G> CommandState<G> {
     #[inline(always)]
     pub(crate) fn push_input_level(&mut self, level: InputLevel<G>) {
         // TeX82 §321 checks `input_ptr` before `push_input` increments it.
-        self.stack_usage.input_stack = self.stack_usage.input_stack.max(self.input.levels.len());
+        self.stack_usage.input_stack = self
+            .stack_usage
+            .input_stack
+            .max(self.input.levels.rows.len());
         self.input.levels.push(level);
     }
 
@@ -738,6 +744,7 @@ impl<G> CommandState<G> {
         let line = self
             .input
             .levels
+            .rows
             .iter()
             .rev()
             .find_map(|level| match level {

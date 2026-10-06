@@ -174,8 +174,8 @@ fn skipped_resident_run_stops_before_the_over_budget_word() {
                 .roots
                 .input
                 .levels
-                .current
-                .as_ref()
+                .rows
+                .last()
                 .expect("resident input")
             else {
                 panic!("resident input expected")
@@ -382,7 +382,7 @@ fn skipped_resident_run_crosses_an_exhausted_frame_without_scalar_delivery() {
         drop(processor);
         assert_eq!(fuel.burned(), 6, "every skipped word is charged once");
         assert_eq!(
-            command.roots.input.levels.len(),
+            command.roots.input.levels.rows.len(),
             1,
             "the exhausted frame is popped"
         );

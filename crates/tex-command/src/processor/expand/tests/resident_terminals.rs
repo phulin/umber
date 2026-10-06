@@ -340,8 +340,8 @@ fn native_resident_noops_keep_the_span_until_the_exact_budget_cut() {
                         .roots
                         .input
                         .levels
-                        .current
-                        .as_ref()
+                        .rows
+                        .last()
                         .expect("actual frame")
                         .frame
                         .position() as usize,
@@ -398,8 +398,8 @@ fn resident_noop_fuel_exhaustion_leaves_the_next_word_unread() {
                         .roots
                         .input
                         .levels
-                        .current
-                        .as_ref()
+                        .rows
+                        .last()
                         .expect("actual frame")
                         .frame
                         .position() as usize,
@@ -445,7 +445,7 @@ fn ordinary_frame_retirement_preserves_the_clean_continuation() {
             "ordinary token retirement does not change execution-entry facts"
         );
         assert_eq!(consumer.resident, 7);
-        assert_eq!(processor.command.roots.input.levels.len(), 1);
+        assert_eq!(processor.command.roots.input.levels.rows.len(), 1);
         drop(processor);
         assert_eq!(fuel.burned(), 8);
     });

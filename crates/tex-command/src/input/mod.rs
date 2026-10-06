@@ -368,9 +368,9 @@ pub(crate) fn tracked_input_projection<G>(
     if !input.pending_sources.is_empty() {
         return None;
     }
-    stack.u64(input.levels.len() as u64);
+    stack.u64(input.levels.rows.len() as u64);
     let mut line = ProjectionHasher::new(0x696e_6c69_6e65_0001);
-    for level in input.levels.iter() {
+    for level in input.levels.rows.iter() {
         match level {
             source @ InputLevel {
                 storage: InputStorage::Source(_),
@@ -599,7 +599,7 @@ impl<G> InputState<G> {
     /// each selected level.
     pub(crate) fn output_open_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
         let rendered =
-            self.render_context_for_levels(&self.levels, self.levels.len(), None, stores);
+            self.render_context_for_levels(&self.levels, self.levels.rows.len(), None, stores);
         #[cfg(test)]
         DIAGNOSTIC_CONTEXT_MEASUREMENT.with(|measurement| {
             let mut measurement = measurement.get();
@@ -625,8 +625,8 @@ impl<G> InputState<G> {
         stores: &tex_state::CommandContext<'_, G>,
     ) -> bool {
         let widths = stores.error_context_widths();
-        for (index, level) in self.levels.iter().enumerate().rev() {
-            let current = index + 1 == self.levels.len();
+        for (index, level) in self.levels.rows.iter().enumerate().rev() {
+            let current = index + 1 == self.levels.rows.len();
             match level {
                 source @ InputLevel {
                     storage: InputStorage::Source(_),
@@ -673,11 +673,11 @@ impl<G> InputState<G> {
         retiring: &InputLevel<G>,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
-        self.render_context_for_levels(&self.levels, self.levels.len(), Some(retiring), stores)
+        self.render_context_for_levels(&self.levels, self.levels.rows.len(), Some(retiring), stores)
     }
 
     pub(crate) fn output_close_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
-        let output_index = self.levels.iter().position(|level| {
+        let output_index = self.levels.rows.iter().position(|level| {
             matches!(
                 level,
                 level if matches!(
@@ -686,7 +686,7 @@ impl<G> InputState<G> {
                 )
             )
         });
-        let level_count = output_index.unwrap_or_else(|| self.levels.len());
+        let level_count = output_index.unwrap_or(self.levels.rows.len());
         self.render_context_for_levels(&self.levels, level_count, None, stores)
     }
 
@@ -706,7 +706,7 @@ impl<G> InputState<G> {
             char::from_u32(stores.int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR) as u32);
         let live_endlinechar =
             char::from_u32(stores.int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32);
-        let project_level = |index: usize| match input_levels.level(index)? {
+        let project_level = |index: usize| match input_levels.rows.get(index)? {
             source @ InputLevel {
                 storage: InputStorage::Source(_),
                 ..
@@ -741,7 +741,7 @@ impl<G> InputState<G> {
             },
         };
         let mut reached_bottom_source = false;
-        for (index, level) in input_levels.iter().take(level_count).enumerate().rev() {
+        for (index, level) in input_levels.rows.iter().take(level_count).enumerate().rev() {
             let current = index + 1 == level_count;
             let visible = match level {
                 source @ InputLevel {

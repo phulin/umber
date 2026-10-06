@@ -165,7 +165,7 @@ fn keyword_requires_literal_spelling_and_preserves_failed_prefix_levels() {
             }
             // §407 backs a matched prefix above the separate offending level.
             assert!(!processor.scan_keyword("em").expect("partial mismatch"));
-            assert_eq!(processor.command.roots.input.levels.len(), 3);
+            assert_eq!(processor.command.roots.input.levels.rows.len(), 3);
             for token in [
                 character('e', Catcode::Letter),
                 tail,
@@ -238,8 +238,8 @@ fn small_scalar_syntax_charges_once_and_stops_before_the_next_word() {
                             .roots
                             .input
                             .levels
-                            .current
-                            .as_ref()
+                            .rows
+                            .last()
                             .expect("actual frame")
                             .frame
                             .position(),

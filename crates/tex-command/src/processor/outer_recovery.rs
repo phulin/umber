@@ -52,7 +52,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // than manufacture a `<to be read again>` token-list level.
         let delivered_by_read = command.is_direct_source_delivery()
             && matches!(
-                self.command.input.levels.current.as_ref(),
+                self.command.input.levels.rows.last(),
                 Some(source @ InputLevel { storage: InputStorage::Source(_), .. })
                     if matches!(source.source_slot().expect("source input").name_class, SourceNameClass::ReadStream(_))
             );

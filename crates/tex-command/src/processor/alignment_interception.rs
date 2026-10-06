@@ -97,7 +97,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .active_v_template_level(alignment)
             .map_err(|_| CommandError::input_invariant())?;
         let mut found = false;
-        for level in self.command.input.levels.iter().rev() {
+        for level in self.command.input.levels.rows.iter().rev() {
             // TeX82 §1131 walks downward only while `state=token_list` and
             // `loc=null`. A live token either in the v-template itself or in
             // an interposed token-list frame is the canonical interwoven-

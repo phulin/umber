@@ -354,7 +354,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// of the level that supplied it, which reading never pops, and that
     /// level's cursor after the delivery.
     pub(super) fn observed_delivery_coordinate(&self) -> (u64, u64) {
-        let Some(level) = self.command.input.levels.current.as_ref() else {
+        let Some(level) = self.command.input.levels.rows.last() else {
             return (0, 0);
         };
         let position = match level {
@@ -444,6 +444,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.command
             .input
             .levels
+            .rows
             .iter()
             .rev()
             .find_map(|level| match level {

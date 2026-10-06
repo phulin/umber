@@ -474,9 +474,10 @@ exact fuel, plus contextual matching/tracing as interruption controls.
   final regions. A source row owns one boxed `SourceSlot`
   with backing, line cursor, `everyeof`, ancestry, and retirement state.
   `open_depths` is `\tracingnesting`'s record, borrowed before retirement.
-- `src/input/active.rs`: The actual current input level, suspended owners and
-  borrowed cold traversal. No row-vector or slice dereference facade remains;
-  native readers borrow the current owner directly.
+- `src/input/active.rs`: One oldest-to-current vector of actual input owners.
+  Readers borrow its final row once per physical span. Push/pop leaves parent
+  rows in place; standard slice iteration serves cold traversal. The separate
+  current owner, suspended vector and custom iterator are deleted.
 - `src/input/history.rs` and `src/input/history/tests.rs`: source, token-word and
   argument owner transitions, cold captures and diagnostic coordinates on `InputStack`.
   The live stack is the only mutable copy; a checkpoint copies it by value at

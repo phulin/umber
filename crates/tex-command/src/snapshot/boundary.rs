@@ -268,7 +268,7 @@ impl<G> CommandState<G> {
         let generation = universe
             .generation_owner()
             .expect("command capture generation was preflighted");
-        let root_source_anchor = self.input.levels.iter().find_map(|level| {
+        let root_source_anchor = self.input.levels.rows.iter().find_map(|level| {
             let source @ crate::input::InputLevel {
                 storage: crate::input::InputStorage::Source(_),
                 ..

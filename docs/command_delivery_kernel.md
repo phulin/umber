@@ -62,6 +62,27 @@ profiling counters are structural evidence, not production timing.
 
 ## Input ownership
 
+`InputStack::rows` owns all input levels in oldest-to-current order. Its last
+row is the active reader. Pushing child input appends that child; retiring it
+releases its words and argument region before dropping only that final row.
+Parents remain in the vector throughout child execution. Source retirement
+may move the retiring child into its synchronous diagnostic projection, but
+never moves its parent. Source-buffer accounting changes at admission and
+retirement, not at ordinary token delivery.
+
+Readers borrow `rows.last_mut()` once for each physical span and separately
+borrow the actual word and argument storage. The borrow ends before any stack
+mutation, which may relocate the vector. No cached row pointer, parallel active
+owner, or storage selector survives that boundary. Cold coordinates index the
+same vector; traversal uses standard slice iterators.
+
+Checkpoint capture copies these actual rows and their transient words at the
+existing quiescent boundary. Restore drops displaced rows, clears abandoned
+argument regions, copies the captured rows into reusable vector capacity, and
+advances the diagnostic context epoch. Macro and argument rows remain excluded
+from named captures. Row identities, replay fences, source ancestry, fuel cuts,
+and retirement ordering retain their existing semantic authority.
+
 The semantic input stack is the stack of resumable readers. Each source,
 replacement, argument, or stored-token frame owns its logical position and the
 physical cursor appropriate to its storage lifetime. Parent readers remain in

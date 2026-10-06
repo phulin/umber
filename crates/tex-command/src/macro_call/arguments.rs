@@ -96,7 +96,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let input = &mut processor.command.input.levels;
                     input
                         .arguments
-                        .append_from_input(tokens, word, input.current.as_ref(), false)
+                        .append_from_input(tokens, word, input.rows.last(), false)
                         .map_err(|_| CommandError::input_invariant())?;
                     Ok(std::ops::ControlFlow::Break(true))
                 })?
@@ -201,7 +201,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         let input = &mut processor.command.input.levels;
                         input
                             .arguments
-                            .append_from_input(tokens, word, input.current.as_ref(), true)
+                            .append_from_input(tokens, word, input.rows.last(), true)
                             .map_err(|_| CommandError::input_invariant())?;
                         return Ok(std::ops::ControlFlow::Break(false));
                     }
@@ -250,7 +250,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             let input = &mut processor.command.input.levels;
                             input
                                 .arguments
-                                .append_from_input(tokens, word, input.current.as_ref(), true)
+                                .append_from_input(tokens, word, input.rows.last(), true)
                                 .map_err(|_| CommandError::input_invariant())?;
                             return Ok(std::ops::ControlFlow::Break(false));
                         }
@@ -276,7 +276,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let input = &mut processor.command.input.levels;
                     input
                         .arguments
-                        .append_from_input(tokens, word, input.current.as_ref(), false)
+                        .append_from_input(tokens, word, input.rows.last(), false)
                         .map_err(|_| CommandError::input_invariant())?;
                     Ok(std::ops::ControlFlow::Break(false))
                 })?

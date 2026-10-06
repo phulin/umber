@@ -185,7 +185,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         if maximum == 0 || self.is_observed() {
             return Ok(0);
         }
-        let Some(current) = self.command.input.levels.current.as_ref() else {
+        let Some(current) = self.command.input.levels.rows.last() else {
             return Ok(0);
         };
         if !matches!(current.storage, crate::input::InputStorage::Source(_)) {
