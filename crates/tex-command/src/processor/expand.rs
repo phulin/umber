@@ -441,7 +441,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     break result;
                 }
                 interrupt(consumer);
-                let boundary = self.advance_input_boundary(
+                let boundary = self.finish_input_boundary(
+                    crate::input::ResidentBoundary::Empty,
                     &mut |processor, word, origin, suppress, site, kind| {
                         finish(
                             consumer,

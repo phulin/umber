@@ -152,6 +152,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         }
                     };
                     if let Some(meaning) = resolved {
+                        if !meaning.is_relax() && meaning.suppressed_by_noexpand() {
+                            return ControlFlow::Continue(Err(Some(meaning)));
+                        }
                         return match admit(meaning.execution_key(), meaning.operand()) {
                             ControlFlow::Break(()) => ControlFlow::Break(DeliveryStatus::Command),
                             ControlFlow::Continue(true) => ControlFlow::Continue(Ok(())),
@@ -206,13 +209,27 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
                     {
                         let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
-                        terminal.before_action(processor);
                         let result = if Consumer::RAW_TOKEN {
+                            terminal.before_action(processor);
                             processor.with_expansion_depth(|processor| {
-                                processor.activate_read_macro(word, origin, flags, definition, name)
+                                processor.activate_read_macro(
+                                    word,
+                                    origin,
+                                    flags,
+                                    definition,
+                                    name,
+                                    &mut |_| {},
+                                )
                             })
                         } else {
-                            processor.activate_read_macro(word, origin, flags, definition, name)
+                            processor.activate_read_macro(
+                                word,
+                                origin,
+                                flags,
+                                definition,
+                                name,
+                                &mut |processor| terminal.before_action(processor),
+                            )
                         };
                         if let Err(failure) = result {
                             terminal.recover(processor, failure)?;
@@ -431,6 +448,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// invocation facts survive matching; diagnostics need no delivery geometry
     /// or command record, even on prefix failure.
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)] // Invocation facts and the actual contextual entry action.
     pub(super) fn activate_read_macro(
         &mut self,
         word: tex_state::token::TokenWord,
@@ -438,16 +456,24 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         flags: MeaningFlags,
         definition: tex_state::DefinitionRef<G>,
         name: Symbol,
+        before_context: &mut dyn FnMut(&mut Self),
     ) -> Result<(), CommandError> {
         self.record_macro_expansion();
-        self.macro_call_parts(flags, definition, name, origin, |processor| {
-            processor.report_unobserved_macro_prefix_mismatch(
-                tex_state::token::TracedTokenWord::from_parts(word, origin),
-                flags,
-                definition,
-                name,
-            );
-        })
+        self.macro_call_parts(
+            flags,
+            definition,
+            name,
+            origin,
+            before_context,
+            |processor| {
+                processor.report_unobserved_macro_prefix_mismatch(
+                    tex_state::token::TracedTokenWord::from_parts(word, origin),
+                    flags,
+                    definition,
+                    name,
+                );
+            },
+        )
     }
 
     /// Existing commands have already crossed a delivery boundary. Keep their

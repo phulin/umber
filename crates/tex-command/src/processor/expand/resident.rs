@@ -63,12 +63,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         {
             return Ok(false);
         }
-        match self.advance_input_boundary(&mut |_, _, _, _, _, _| {
-            Err::<(), _>(CommandError::input_invariant())
-        })? {
-            None => Ok(true),
-            Some(_) => Err(CommandError::input_invariant()),
-        }
+        self.substitute_resident_parameter()?;
+        Ok(true)
     }
 
     /// Selects the physical span once, admits its ordinary prefix in place,
@@ -145,7 +141,32 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             };
             let frame = &mut row.frame;
             if frame.position() >= frame.limit() {
-                return Ok(None);
+                let Some(boundary) = self.command.finish_resident_exhaustion(
+                    &mut self.observer,
+                    &mut self.immediate_write_retirement,
+                ) else {
+                    continue;
+                };
+                interrupt(consumer);
+                match self.finish_input_boundary(
+                    boundary,
+                    &mut |processor, word, origin, suppress, site, kind| {
+                        finish(
+                            consumer,
+                            processor,
+                            word,
+                            origin,
+                            suppress,
+                            site,
+                            kind,
+                            Admission::default(),
+                        )
+                    },
+                )? {
+                    None => continue,
+                    Some(ControlFlow::Continue(result)) => return Ok(Some(result)),
+                    Some(ControlFlow::Break(status)) => return finished(status).map(Some),
+                }
             }
             let (words, kind) = match &row.storage {
                 InputStorage::Source(_) => unreachable!("source loan handled above"),
@@ -232,7 +253,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 match result {
                     Some(ControlFlow::Continue(boundary)) => boundary,
                     Some(ControlFlow::Break(result)) => return Ok(Some(result)),
-                    None => return Ok(None),
+                    None => {
+                        if frame.position() < frame.limit() {
+                            self.substitute_resident_parameter()?;
+                        }
+                        continue;
+                    }
                 }
             } else {
                 let spelling = words
@@ -242,7 +268,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 if word.out_parameter_slot().is_some()
                     && !matches!(kind, crate::fuel::RawDeliveryKind::MacroArgument)
                 {
-                    return Ok(None);
+                    self.substitute_resident_parameter()?;
+                    continue;
                 }
                 frame.advance_resident();
                 (word, spelling.origin(), Admission::default())

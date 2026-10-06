@@ -97,10 +97,12 @@ not allocate a vector merely to publish one already-complete node.
   flush and tracing before returning its continuation. Clean resident relax
   bypasses that entry and only counts its operation and budget. No additional
   effect/readiness flag or post-relax diagnostic poll exists. The
-  first full terminal establishes quiet entry facts for the resident suffix. Macro
-  publication performs no entry preparation. Declining resident admission,
-  input transitions and expansion invalidate the proof before full processor
-  access.
+  first full terminal establishes quiet entry facts for the resident suffix.
+  Declining resident admission ends the physical borrow without clearing those
+  facts. Pure parameterless macro activation, argument replay and ordinary
+  token-row retirement preserve them; contextual tracing/matching, primitive expansion, recovery and
+  cold source work invalidate them before producing demands. Macro publication
+  performs no entry preparation or completion-stage polling.
 
 - `src/main_control/interpreter/box_inputs.rs`: the one native `scan_box`
   operand selection and actual destinations. Direct register handoffs create

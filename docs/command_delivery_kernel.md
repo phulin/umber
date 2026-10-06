@@ -103,9 +103,20 @@ Stored spans borrow the actual state, effects, alignment and host facts once
 alongside the input frame. Their admission callback uses those disjoint loans
 throughout the suffix, without reaching through the full processor per word.
 The loans end before a declined terminal receives full processor access.
-A declined terminal, input transition or expansion invalidates the quiet entry
-proof before full processor access. Consecutive input-preserving terminals reuse
-it within the actual span.
+The physical span borrow and quiet execution-entry facts have different
+lifetimes. A declined word ends the borrow without invalidating those facts.
+Expandable meanings go straight to full expansion after ending the physical borrow;
+they are never offered to a resident terminal consumer. The existing native
+noexpand property supplies that test, including undefined meanings; endcsname
+keeps its actual scanner-delimiter treatment. A live relax key proceeds directly
+to admission before testing expansion properties, so the no-op span pays no
+expansion predicate. The same key reaches its actual consumer. An exhausted token row
+retires in this same reader and selects its parent without another full terminal
+entry. Parameter substitution ends the span and pushes its actual argument row
+under the same charge, preserving execution-entry facts. The former outer
+input-transition adapter is deleted. Source refill, recovery, primitive
+expansion and exceptional delivery still invalidate the proof before their
+actual contextual work. Replay completion returns its existing host boundary.
 An admitted span uses one traversal from its current position, including its
 first word. The caller has charged that word; the traversal charges each next
 word after acceptance. There is no separate first-word admission followed by
@@ -165,9 +176,21 @@ separate range test followed by another decoder. A macro supplies only its name,
 and argument scanning; successful ordinary activation constructs no command.
 Full terminal entry establishes quiet entry facts before admitting the resident
 suffix. The suffix uses that invocation-local proof without rereading reporting,
-tracing, character or effect guards. Declining resident execution, expansion
-and input boundaries invalidate the proof before full processor access.
-There is no macro-publication callback, effect flag or input owner.
+tracing, character or effect guards. TeX82 §§357/390's ordinary token-row
+retirement and §392's parameterless macro activation only change input owners;
+they preserve the invocation-local execution facts after releasing the physical
+span. Simple macro admission selects this path once. The existing consumer's
+entry invalidation runs before contextual macro tracing or matching, where
+§§389/391--400 can actually produce diagnostics or scan additional source.
+One-expansion raw operands still restore their source-creation policy before
+any macro activation. Contextual entry borrows the existing consumer action
+through a callback reference; its type does not specialize the matcher for
+every terminal consumer. The reference is invoked only on the contextual path
+and ends with the synchronous activation call. Actual terminal execution, assignments and group
+restoration retain their existing entry and continuation rules. No cached
+meaning, macro success packet, macro-publication callback, effect flag or input
+owner is added. Errors and resource misses unwind the synchronous loan; full
+checkpoints retain only the existing semantic owners.
 Macro activation returns completion or failure, rather than an
 immediately discarded success boolean; actual prefix diagnostics and input
 publication remain authoritative.
@@ -868,8 +891,9 @@ fuel bookkeeping.
 
 A full processor terminal can scan or replace input, so it runs only after the
 span borrow ends. Expansion, substitution, exhaustion and source transitions
-also release that borrow. Consumer-local facts about a clean no-op entry are
-invalidated at these transitions; meanings are never cached across words.
+also release that borrow. Consumer-local facts about a clean no-op entry survive
+pure parameterless activation and ordinary token retirement; contextual work
+invalidates them. Meanings are never cached across words.
 Observation, suppression and semantic delivery settlement retain their actual
 full delivery path. Main control keeps reporting, tracing and character
 flushing at demanded entry boundaries, then consecutive clean no-ops need no

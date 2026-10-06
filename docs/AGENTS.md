@@ -12,6 +12,8 @@ removing implementation identities from conformance claims.
 
 `command_delivery_kernel.md` specifies frame-owned reader access, the shared
 raw/expanded fetching kernel, observation specialization, and validation.
+Its quiet execution facts survive pure macro activation and token retirement;
+physical span borrows still end before input mutation.
 
 `main_control_dispatch.md` maps the single direct mode/command/prefix engine,
 its scanner/application ownership, and the deletion of eligibility handoffs.

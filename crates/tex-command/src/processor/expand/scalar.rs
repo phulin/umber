@@ -317,6 +317,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         flags,
                         definition,
                         name,
+                        &mut |_| {},
                     ) {
                         Ok(())
                         | Err(

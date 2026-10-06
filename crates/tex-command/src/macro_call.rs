@@ -113,9 +113,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .control_sequence()
             .ok_or_else(|| CommandError::input_invariant())?;
         let call_site = call.origin();
-        self.macro_call_parts(flags, definition, macro_name, call_site, |processor| {
-            processor.report_macro_prefix_mismatch(call)
-        })
+        self.macro_call_parts(
+            flags,
+            definition,
+            macro_name,
+            call_site,
+            |_| {},
+            |processor| processor.report_macro_prefix_mismatch(call),
+        )
     }
 
     #[inline(always)]
@@ -125,6 +130,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         definition: tex_state::DefinitionRef<G>,
         macro_name: tex_state::interner::Symbol,
         call_site: OriginId,
+        before_context: impl FnOnce(&mut Self),
         report_prefix_mismatch: impl FnOnce(&mut Self),
     ) -> Result<(), CommandError> {
         let admitted = self
@@ -159,6 +165,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 (body, elide_empty_replacement)
             }
         };
+        // Simple activation above changes only input ownership. Contextual
+        // tracing and matching can produce diagnostics or consume more source.
+        before_context(self);
         self.match_macro_definition(
             flags,
             definition,

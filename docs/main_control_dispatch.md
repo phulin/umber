@@ -102,12 +102,16 @@ comparing complete preloaded and partitioned output byte for byte.
 The reader retains the actual source or stored span across input-preserving
 terminals. Their live meaning lookup, fuel charge and operation count remain
 per token. Tracing and pending-character guards are established at full entry;
-consecutive clean relax terminals use those facts until expansion, input
-transition or full execution interrupts the span.
+consecutive clean relax terminals use those facts across input-only activation
+and retirement, until contextual work or full execution requires entry again.
 
-Every full consumer releases the actual span and invalidates its entry proof
-before semantic mutation. Expansion and source/effect transitions invalidate
-that proof, including parameter substitution and ordinary resident retirement.
+Every full consumer releases the actual span before semantic mutation.
+Pure parameterless macro activation and ordinary token-row retirement preserve
+quiet execution-entry facts. Expansion meanings bypass resident terminal
+admission; actual contextual expansion and source/effect transitions invalidate
+that proof. Parameter substitution ends the physical loan and pushes its actual
+argument row without clearing execution facts; ordinary Pop retirement selects
+the parent directly. The outer input-transition adapter is deleted.
 Full relax entry is the actual boundary for effects
 produced by those input paths, pending reports, character flushing or command
 tracing. It checks the live World position and recoverable diagnostic demand,

@@ -44,7 +44,8 @@ pub trait NativeWordConsumer<Processor, G, Facts> {
         ControlFlow::Continue(false)
     }
 
-    /// Expansion and input transitions invalidate entry facts.
+    /// Contextual expansion, recovery and cold input work invalidate entry facts.
+    /// Releasing a physical span or activating a simple macro does not.
     fn input_boundary(&mut self) {}
 }
 

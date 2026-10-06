@@ -73,7 +73,6 @@ impl<'state, 'host, G, const LOOKAHEAD: bool>
                 code,
                 codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN
             ) {
-                self.resident_clean = false;
                 return ControlFlow::Continue(false);
             }
             let ch = char::from_u32(operand as u32).expect("admitted native character");
@@ -101,7 +100,6 @@ impl<'state, 'host, G, const LOOKAHEAD: bool>
             };
         }
         if code != codes::RELAX && !resident_group(context, execution, entered_line, code) {
-            self.resident_clean = false;
             return ControlFlow::Continue(false);
         }
         self.completed += 1;

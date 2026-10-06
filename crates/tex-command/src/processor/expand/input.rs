@@ -342,54 +342,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         }
     }
 
-    #[inline(always)]
-    pub(super) fn advance_input_boundary<R>(
-        &mut self,
-        finish: &mut impl FnMut(
-            &mut Self,
-            TokenWord,
-            OriginId,
-            bool,
-            ReadSite,
-            crate::fuel::RawDeliveryKind,
-        ) -> Result<R, CommandError>,
-    ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
-        if self
-            .command
-            .roots
-            .input
-            .levels
-            .current
-            .as_ref()
-            .is_some_and(|row| row.frame.position() >= row.frame.limit())
-        {
-            return match self.command.finish_resident_exhaustion(
-                &mut self.observer,
-                &mut self.immediate_write_retirement,
-            ) {
-                None => Ok(None),
-                Some(boundary) => self.finish_input_boundary(boundary, finish),
-            };
-        }
-        self.advance_parameter_or_end(finish)
-    }
-
     #[cold]
     #[inline(never)]
-    fn advance_parameter_or_end<R>(
-        &mut self,
-        finish: &mut impl FnMut(
-            &mut Self,
-            TokenWord,
-            OriginId,
-            bool,
-            ReadSite,
-            crate::fuel::RawDeliveryKind,
-        ) -> Result<R, CommandError>,
-    ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
-        if self.command.roots.input.levels.current.is_none() {
-            return self.finish_input_boundary(ResidentBoundary::Empty, finish);
-        }
+    pub(super) fn substitute_resident_parameter(&mut self) -> Result<(), CommandError> {
         let levels = &mut self.command.roots.input.levels;
         let row = levels.current.as_mut().expect("current input");
         let frame = &mut row.frame;
@@ -421,7 +376,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.command
             .push_resident_parameter_cursor(slot, region, span, source, &mut self.observer)
             .map_err(|()| CommandError::input_invariant())?;
-        Ok(None)
+        Ok(())
     }
 
     #[cold]

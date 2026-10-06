@@ -116,6 +116,19 @@ Actual cold input owners read that row after the span borrow ends. Parameter
 substitution advances once before pushing; consumed character prefixes return
 before exhaustion/retirement, and MacroArgument words remain raw.
 
+Quiet execution-entry facts outlive physical span borrows across simple macro
+activation, parameter substitution and ordinary Pop retirement. Simple macro admission invokes no
+invalidation; the actual contextual tracing/matching path invalidates before
+its work. Resident retirement selects the parent directly under the existing
+fuel charge. Source cold paths, primitive expansion, recovery and replay
+completion retain their boundaries; no macro success packet or effect poll is
+added. Parameter substitution pushes its actual row directly, without the
+deleted outer transition adapter or a generic completion wrapper. Expanding
+meanings use the existing native noexpand property to bypass resident terminal
+admission, while endcsname remains a scanner delimiter. The resident-terminal
+tests cover nested/empty macros, parameter replay and every operation cut with
+exact fuel, plus contextual matching/tracing as interruption controls.
+
 ## File Map
 
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.
@@ -952,9 +965,12 @@ at the actual print and advance its existing `shown_mode` owner there (TeX82
 §299/§367, with §1370 no-mode during deferred writes). There is no owned prefix
 mailbox, trace-printed flag or tracing preparation before a fetch.
 
-- `src/processor/terminal.rs`: native word consumer contract and borrowed full-processor callback typing. Restricted admission borrows actual spelling and meaning; literal admission is a static consumer capability. It retains actual input spans; full consumers consume their entry proof before semantic mutation, while expansion and source/effect transitions invalidate it at their producers. Pure parameter and resident-retirement transitions retain that invocation-local proof. Full native delivery shares its one scalar selector between expansion classification and terminal consumption; consumers do not reclassify the same terminal meaning. Exceptional delivery derives the selector after its demanded semantic adjustment.
+- `src/processor/terminal.rs`: native word consumer contract and borrowed full-processor callback typing. Restricted admission borrows actual spelling and meaning; literal admission is a static consumer capability. It retains actual input spans; full consumers consume their entry proof before semantic mutation, while contextual expansion and source/effect transitions invalidate it at their producers. Pure simple macro activation and ordinary resident retirement retain that invocation-local proof. Full native delivery shares its one scalar selector between expansion classification and terminal consumption; consumers do not reclassify the same terminal meaning. Exceptional delivery derives the selector after its demanded semantic adjustment.
 
-- `src/processor/expand/tests/resident_terminals.rs`: exact native no-op fuel and budget cuts, full-access exclusion within a span, and actual frame retirement interruptions.
+- `src/processor/expand/tests/resident_terminals.rs`: exact native no-op fuel and
+  budget cuts, full-access exclusion within a span and across pure nested/empty
+  macro activation, argument replay and ordinary retirement, with contextual
+  tracing and expandafter controls.
 
 Native meaning rows contain the final execution key. Expanded delivery passes
 that key to its consumer; character, font, token-list, math-field, filename,
