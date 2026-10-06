@@ -88,6 +88,8 @@ Definition-owned parameter programs expose literal delimiter views only for none
   publication owners. Zero roots tombstone the slot without reusing its key.
   Scope is the meaning level; there is no local allocation namespace,
   promotion memo, group frontier or definition checkpoint tail.
+  Sealed publication owns the complete native macro meaning; immutable format
+  rows select the same empty/simple/matching execution key during loading.
 - `src/definition_arena/body.rs`: Full immutable words/matcher/origin payloads,
   owned cold views and resident macro bodies. Canonical payload accounting is
   charged once at publication and released at the final actual shared drop.
@@ -98,7 +100,7 @@ Definition-owned parameter programs expose literal delimiter views only for none
 - `src/definition_arena/builder.rs`: Build phases, validation/errors, and the
   detached cold builder used directly by memo/import publication batches.
 - `src/definition_arena/tests.rs`: Builder, parameter validation, content,
-  writer, empty/simple/matching classification and publication tests.
+  writer, native empty/simple/matching publication and literal-prefix tests.
 - `src/definition_arena/ownership_tests.rs`: Actual current/history/alias root
   transitions, repeated checkpoint restore, candidate settlement/pruning,
   stale publication failure, full frame/matcher/origin survival and exactly-once
@@ -306,7 +308,8 @@ Definition-owned parameter programs expose literal delimiter views only for none
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning/native.rs`: Two-word native command encoding, direct no-op family classification, complete font
   identity/definition-coordinate projections, direct primitive/character
-  queries and demanded cold decoding. Dispatch keys have no optional wrapper.
+  queries, publication-selected macro execution keys and demanded cold decoding.
+  Dispatch keys have no optional wrapper.
   Scalar flags and character payloads retain their natural packed positions. No
   enum tag, extra registry, identity truncation or ordinary root acquisition.
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed compact

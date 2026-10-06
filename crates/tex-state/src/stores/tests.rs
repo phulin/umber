@@ -3,7 +3,7 @@ use crate::env::AssignmentScope;
 use crate::generation::with_generation;
 use crate::glue::GlueSpec;
 use crate::interner::{Interner, InternerBudget};
-use crate::meaning::{MeaningFlags, MeaningWord, ResolvedMeaning};
+use crate::meaning::{MeaningFlags, ResolvedMeaning};
 use crate::token::{Token, TokenWord};
 
 #[cfg(feature = "profiling")]
@@ -62,7 +62,7 @@ fn generation_ids_install_in_dense_state_without_per_value_owners() {
                 .state()
                 .assign_meaning(
                     symbol.symbol(),
-                    MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                    definition_publication.meaning(MeaningFlags::LONG),
                     AssignmentScope::Global,
                 )
                 .expect("meaning assignment");

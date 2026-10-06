@@ -128,12 +128,11 @@ fn math_delimiter_consumes_one_expanded_command_before_adjacent_source() {
             .allocate_definition(&[], &replacement)
             .expect("delimiter macro definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("delimarg").expect("delimiter macro");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 tex_state::env::AssignmentScope::Global,
             )
             .expect("delimiter macro meaning");
@@ -413,10 +412,7 @@ fn warmed_ordinary_let_reads_only_the_compact_macro_key_without_allocation() {
         universe
             .assign_meaning(
                 source_id,
-                tex_state::MeaningWord::macro_definition(
-                    tex_state::meaning::MeaningFlags::EMPTY,
-                    definition,
-                ),
+                definition_publication.meaning(tex_state::meaning::MeaningFlags::EMPTY),
                 tex_state::AssignmentScope::Global,
             )
             .expect("source meaning");

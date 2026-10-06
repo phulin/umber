@@ -2417,12 +2417,11 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
                 .allocate_definition(&[], &replacement)
                 .expect("fixture macro definition");
             let definition_publication = definition;
-            let definition = definition_publication.reference();
             let name = stores.intern("n").expect("symbol interning");
             admitted!(stores, |context| context
                 .assign_meaning(
                     name.symbol(),
-                    tex_state::MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                    definition_publication.meaning(MeaningFlags::EMPTY),
                     tex_state::AssignmentScope::Global,
                 )
                 .expect("fixture macro assignment"));

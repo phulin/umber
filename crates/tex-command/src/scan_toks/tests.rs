@@ -407,12 +407,11 @@ fn outer_recovery_renders_only_the_collected_balanced_prefix() {
             .allocate_definition(&[], &[])
             .expect("outer macro definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let outer = universe.intern("outermacro").expect("outer macro name");
         universe
             .assign_meaning(
                 outer,
-                MeaningWord::macro_definition(MeaningFlags::OUTER, definition),
+                definition_publication.meaning(MeaningFlags::OUTER),
                 AssignmentScope::Global,
             )
             .expect("outer macro meaning");
@@ -670,12 +669,11 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("macro definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("scanmacro").expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -751,12 +749,11 @@ fn expanded_scan_adopts_unexpanded_child_tokens_without_recursive_expansion() {
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("nested macro definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let nested = universe.intern("unexpandedpayload").expect("nested macro");
         universe
             .assign_meaning(
                 nested,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("nested macro meaning");
@@ -915,12 +912,11 @@ fn expanded_macro_definition_keeps_its_builder_across_nested_macro_retirement() 
             .allocate_definition(&[], &[TokenWord::pack(expansion)])
             .expect("nested macro definition");
         let nested_definition_publication = nested_definition;
-        let nested_definition = nested_definition_publication.reference();
         let nested = universe.intern("nesteddefscan").expect("nested macro name");
         universe
             .assign_meaning(
                 nested,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, nested_definition),
+                nested_definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("nested macro meaning");
@@ -971,7 +967,7 @@ fn expanded_definition_activates_macro_runs_without_temporary_commands() {
                 universe
                     .assign_meaning(
                         symbol,
-                        MeaningWord::macro_definition(MeaningFlags::EMPTY, publication.reference()),
+                        publication.meaning(MeaningFlags::EMPTY),
                         AssignmentScope::Global,
                     )
                     .expect("empty macro");
@@ -1183,12 +1179,11 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
             .allocate_definition(&pack(parameters), &pack(replacement))
             .expect("macro definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern(name).expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");

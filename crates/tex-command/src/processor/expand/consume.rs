@@ -209,26 +209,22 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
                     {
                         let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
-                        let result = if Consumer::RAW_TOKEN {
+                        let contextual = code == MeaningWord::<G>::MATCHING_MACRO_KEY
+                            || processor.macro_activation_needs_context(
+                                code == MeaningWord::<G>::EMPTY_MACRO_KEY,
+                            );
+                        if Consumer::RAW_TOKEN || contextual {
                             terminal.before_action(processor);
+                        }
+                        let result = if Consumer::RAW_TOKEN {
                             processor.with_expansion_depth(|processor| {
                                 processor.activate_read_macro(
-                                    word,
-                                    origin,
-                                    flags,
-                                    definition,
-                                    name,
-                                    &mut |_| {},
+                                    word, origin, code, flags, definition, name, contextual,
                                 )
                             })
                         } else {
                             processor.activate_read_macro(
-                                word,
-                                origin,
-                                flags,
-                                definition,
-                                name,
-                                &mut |processor| terminal.before_action(processor),
+                                word, origin, code, flags, definition, name, contextual,
                             )
                         };
                         if let Err(failure) = result {
@@ -448,23 +444,25 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// invocation facts survive matching; diagnostics need no delivery geometry
     /// or command record, even on prefix failure.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)] // Invocation facts and the actual contextual entry action.
+    #[allow(clippy::too_many_arguments)] // The reader's selected key and actual invocation facts.
     pub(super) fn activate_read_macro(
         &mut self,
         word: tex_state::token::TokenWord,
         origin: tex_state::token::OriginId,
+        key: u64,
         flags: MeaningFlags,
         definition: tex_state::DefinitionRef<G>,
         name: Symbol,
-        before_context: &mut dyn FnMut(&mut Self),
+        contextual: bool,
     ) -> Result<(), CommandError> {
         self.record_macro_expansion();
         self.macro_call_parts(
+            key,
             flags,
             definition,
             name,
             origin,
-            before_context,
+            contextual,
             |processor| {
                 processor.report_unobserved_macro_prefix_mismatch(
                     tex_state::token::TracedTokenWord::from_parts(word, origin),

@@ -126,6 +126,8 @@ fn native_dispatch_preserves_scalar_domain_and_semantic_classification() {
                 255,
                 256,
                 265,
+                MeaningWord::<()>::EMPTY_MACRO_KEY - super::UNEXPANDABLE_CONTROL_BASE - 2,
+                MeaningWord::<()>::EMPTY_MACRO_KEY - super::UNEXPANDABLE_CONTROL_BASE - 1,
                 65_006,
                 65_007,
                 OPERAND_MASK,
@@ -204,7 +206,7 @@ fn macro_meanings_carry_only_generation_typed_definition_ids() {
             | MeaningFlags::OUTER
             | MeaningFlags::PROTECTED
             | MeaningFlags::FROZEN;
-        let word = MeaningWord::macro_definition(flags, definition);
+        let word = definition_publication.meaning(flags);
         assert_eq!(word.resolve(), ResolvedMeaning::Macro { flags, definition });
         assert!(word.suppressed_by_noexpand());
     });

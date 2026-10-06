@@ -15,7 +15,8 @@ use core::marker::PhantomData;
 use core::num::NonZeroU64;
 
 const KEY_SHIFT: u32 = 48;
-const UNKNOWN_KEY: u64 = u16::MAX as u64;
+const MACRO_KEY_BIT: u64 = 1 << 15;
+const UNKNOWN_KEY: u64 = MACRO_KEY_BIT - 1;
 const FONT_SLOT_BITS: u32 = 15;
 const FONT_SLOT_MASK: u64 = (1 << FONT_SLOT_BITS) - 1;
 const _: () = assert!(crate::font::MAX_FONT_COUNT == 1 << FONT_SLOT_BITS);
@@ -46,6 +47,11 @@ impl<G> Eq for MeaningWord<G> {}
 impl<G> MeaningWord<G> {
     /// First native execution key in the contiguous literal-category range.
     pub const CHARACTER_KEY_BASE: u64 = CHAR_CONTROL_BASE;
+
+    /// Native macro keys selected from immutable definition shape at publication.
+    pub const EMPTY_MACRO_KEY: u64 = MACRO_KEY_BIT;
+    pub const SIMPLE_MACRO_KEY: u64 = MACRO_KEY_BIT + 1;
+    pub const MATCHING_MACRO_KEY: u64 = MACRO_KEY_BIT + 2;
 
     pub(crate) const UNDEFINED: Self = Self::scalar(0);
 
@@ -121,10 +127,30 @@ impl<G> MeaningWord<G> {
     }
 
     #[must_use]
-    pub const fn macro_definition(flags: MeaningFlags, definition: DefinitionRef<G>) -> Self {
+    pub(crate) const fn published_macro(
+        flags: MeaningFlags,
+        definition: DefinitionRef<G>,
+        parameter_len: u32,
+        word_len: usize,
+    ) -> Self {
+        let key = if parameter_len != 0 {
+            Self::MATCHING_MACRO_KEY
+        } else if word_len == 0 {
+            Self::EMPTY_MACRO_KEY
+        } else {
+            Self::SIMPLE_MACRO_KEY
+        };
         Self::new(
-            ((OP_MACRO as u64) << KEY_SHIFT) | flags.bits() as u64,
+            (key << KEY_SHIFT) | flags.bits() as u64,
             definition.packed(),
+        )
+    }
+
+    pub(crate) const fn with_macro_flags(self, flags: MeaningFlags) -> Self {
+        assert!(self.is_macro(), "flags require a published macro");
+        Self::new(
+            (self.execution_key() << KEY_SHIFT) | flags.bits() as u64,
+            self.coordinate,
         )
     }
 
@@ -138,7 +164,7 @@ impl<G> MeaningWord<G> {
     #[must_use]
     #[inline(always)]
     pub const fn is_macro(&self) -> bool {
-        self.execution_key() == OP_MACRO as u64
+        self.command & (MACRO_KEY_BIT << KEY_SHIFT) != 0
     }
 
     #[must_use]
@@ -210,7 +236,7 @@ impl<G> MeaningWord<G> {
     #[must_use]
     pub const fn scalar_word(&self) -> Option<u64> {
         let key = self.execution_key();
-        if key == OP_MACRO as u64 || key == OP_FONT as u64 {
+        if self.is_macro() || key == OP_FONT as u64 {
             return None;
         }
         if key == UNKNOWN_KEY {
@@ -315,7 +341,7 @@ impl<G> MeaningWord<G> {
         let meaning = match key {
             key if key == OP_UNDEFINED as u64 => Meaning::Undefined,
             key if key == OP_RELAX as u64 => Meaning::Relax,
-            key if key == OP_MACRO as u64 => return None,
+            _ if self.is_macro() => return None,
             key if key == OP_FONT as u64 => {
                 return match self.font_id() {
                     Some(font) => Some(Meaning::Font(font)),

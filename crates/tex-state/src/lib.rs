@@ -182,9 +182,9 @@ pub use command_context::{
     FontIdentifier, PageNodeSource, ParagraphShapeLine, PenaltyArrayKind, PrepareMagDiagnostic,
 };
 pub use definition_arena::{
-    AdmittedMacroDefinition, DefinitionAllocationError, DefinitionBuildError, DefinitionBuildKey,
-    DefinitionBuildPhase, DefinitionBuildWriter, DefinitionBuilder, DefinitionRef, DefinitionView,
-    DefinitionWords, PublishedDefinition, ResidentMacroBody,
+    DefinitionAllocationError, DefinitionBuildError, DefinitionBuildKey, DefinitionBuildPhase,
+    DefinitionBuildWriter, DefinitionBuilder, DefinitionRef, DefinitionView, DefinitionWords,
+    PublishedDefinition, ResidentMacroBody,
 };
 pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,

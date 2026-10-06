@@ -1,6 +1,5 @@
 use super::{
-    AdmittedMacroDefinition, DefinitionAllocationError, DefinitionBuildError, DefinitionBuildPhase,
-    DefinitionBuilder,
+    DefinitionAllocationError, DefinitionBuildError, DefinitionBuildPhase, DefinitionBuilder,
 };
 use crate::generation::with_generation;
 use crate::token::{Catcode, Token, TokenWord};
@@ -110,34 +109,49 @@ fn aborted_build_publishes_nothing_and_releases_its_lane() {
 }
 
 #[test]
-fn admitted_macro_definition_classifies_simple_matching_and_empty() {
+fn published_meanings_select_simple_matching_and_empty_execution() {
     with_generation(|mut generation| {
         let arena = generation.definitions_mut();
         let empty = direct_definition(arena, &[], &[]);
-        let empty_publication = empty;
-        let empty = empty_publication.reference();
         let simple = direct_definition(arena, &[], &[letter('x')]);
-        let simple_publication = simple;
-        let simple = simple_publication.reference();
         let matching = direct_definition(
             arena,
             &[TokenWord::pack(Token::param(1))],
             &[TokenWord::pack(Token::param(1))],
         );
-        let matching_publication = matching;
-        let matching = matching_publication.reference();
-        assert!(matches!(
-            arena.admit_macro_definition(empty),
-            Some(AdmittedMacroDefinition::SimpleMacro { body: None, .. })
-        ));
-        assert!(matches!(
-            arena.admit_macro_definition(simple),
-            Some(AdmittedMacroDefinition::SimpleMacro { body: Some(_), .. })
-        ));
-        assert!(matches!(
-            arena.admit_macro_definition(matching),
-            Some(AdmittedMacroDefinition::MatchingMacro { body }) if body.parameter_len() == 1
-        ));
+        let prefix = direct_definition(arena, &[letter('p')], &[]);
+        let flags = crate::meaning::MeaningFlags::LONG | crate::meaning::MeaningFlags::OUTER;
+        for (publication, key) in [
+            (&empty, crate::MeaningWord::<()>::EMPTY_MACRO_KEY),
+            (&simple, crate::MeaningWord::<()>::SIMPLE_MACRO_KEY),
+            (&matching, crate::MeaningWord::<()>::MATCHING_MACRO_KEY),
+            (&prefix, crate::MeaningWord::<()>::MATCHING_MACRO_KEY),
+        ] {
+            let meaning = publication.meaning(flags);
+            assert_eq!(meaning.execution_key(), key);
+            assert_eq!(
+                meaning.macro_parts(),
+                Some((flags, publication.reference()))
+            );
+            assert_eq!(meaning.scalar_word(), None);
+            assert_eq!(
+                meaning.resolve(),
+                crate::meaning::ResolvedMeaning::Macro {
+                    flags,
+                    definition: publication.reference(),
+                }
+            );
+            assert!(meaning.is_outer());
+            assert!(meaning.suppressed_by_noexpand());
+            assert_eq!(publication.retain().meaning(flags), meaning);
+        }
+        assert_eq!(
+            arena
+                .admit_macro_body(matching.reference())
+                .expect("body")
+                .parameter_len(),
+            1
+        );
     });
 }
 

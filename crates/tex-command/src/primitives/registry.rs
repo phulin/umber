@@ -269,10 +269,7 @@ fn configure_write_stopper<G>(universe: &mut Universe<G>) {
     let definition = universe
         .allocate_definition(&[], &[])
         .expect("frozen write stopper allocation");
-    universe.register_primitive_word(
-        "endwrite",
-        tex_state::MeaningWord::macro_definition(MeaningFlags::OUTER, definition.reference()),
-    );
+    universe.register_primitive_word("endwrite", definition.meaning(MeaningFlags::OUTER));
 }
 
 fn configure_primitive<G>(universe: &mut Universe<G>, install: bool, name: &str, meaning: Meaning) {

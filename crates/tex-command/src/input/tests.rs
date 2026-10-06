@@ -52,10 +52,7 @@ fn macro_context_uses_the_resident_owner_after_its_defining_group_retires() {
             stores
                 .assign_meaning(
                     name.symbol(),
-                    tex_state::MeaningWord::macro_definition(
-                        tex_state::meaning::MeaningFlags::EMPTY,
-                        definition,
-                    ),
+                    definition_publication.meaning(tex_state::meaning::MeaningFlags::EMPTY),
                     AssignmentScope::Local,
                 )
                 .expect("local meaning owns definition");

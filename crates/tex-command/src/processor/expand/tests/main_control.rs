@@ -35,12 +35,11 @@ fn expandable_main_control_delivery_uses_one_caller_owned_command_slot() {
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("m").expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -101,12 +100,11 @@ fn source_macro_main_control_materializes_only_when_observed() {
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("m").expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -216,10 +214,7 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                         universe
                             .assign_meaning(
                                 symbol,
-                                MeaningWord::macro_definition(
-                                    MeaningFlags::EMPTY,
-                                    publication.reference(),
-                                ),
+                                publication.meaning(MeaningFlags::EMPTY),
                                 AssignmentScope::Global,
                             )
                             .expect("macro meaning");
@@ -360,12 +355,11 @@ fn empty_macro_main_control_reaches_end_without_an_expanded_command() {
     crate::test_harness::with_universe(|universe| {
         let definition = universe.allocate_definition(&[], &[]).expect("definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("empty").expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -534,7 +528,7 @@ fn native_main_control_continues_across_macro_bodies_without_command_records() {
         universe
             .assign_meaning(
                 name,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition.reference()),
+                definition.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");

@@ -816,11 +816,7 @@ impl<'a, G> CommandContext<'a, G> {
         flags: MeaningFlags,
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
-        self.assign_meaning(
-            symbol,
-            crate::MeaningWord::macro_definition(flags, definition.reference()),
-            scope,
-        )?;
+        self.assign_meaning(symbol, definition.meaning(flags), scope)?;
         drop(definition);
         Ok(())
     }
@@ -974,17 +970,6 @@ impl<'a, G> CommandContext<'a, G> {
     /// body owner, including its sealed parameter matcher.
     pub fn admit_macro_body(&self, id: DefinitionRef<G>) -> Option<ResidentMacroBody<G>> {
         self.admitted.admit_macro_body(id)
-    }
-
-    /// Classifies one immutable definition while admitting only the owner an
-    /// activation actually needs. Empty parameterless replacements retain no
-    /// region owner on the ordinary path.
-    #[inline(always)]
-    pub fn admit_macro_definition(
-        &self,
-        id: DefinitionRef<G>,
-    ) -> Option<crate::AdmittedMacroDefinition<G>> {
-        self.admitted.admit_macro_definition(id)
     }
 
     pub fn begin_definition_build(

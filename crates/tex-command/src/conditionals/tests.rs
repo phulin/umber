@@ -209,12 +209,11 @@ fn skipped_macro_body_parameter_enters_its_argument() {
             )
             .expect("macro definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let macro_name = universe.intern("skipmacro").expect("macro name");
         universe
             .assign_meaning(
                 macro_name,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -312,12 +311,11 @@ fn skipped_macro_parameter_preserves_empty_and_forwarded_arguments() {
                 .allocate_definition(&[TokenWord::pack(Token::Param(1))], &replacement)
                 .expect("macro definition");
             let definition_publication = definition;
-            let definition = definition_publication.reference();
             let symbol = universe.intern(name).expect("macro name");
             universe
                 .assign_meaning(
                     symbol,
-                    MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                    definition_publication.meaning(MeaningFlags::EMPTY),
                     AssignmentScope::Global,
                 )
                 .expect("macro meaning");
@@ -1041,38 +1039,23 @@ fn ifx_macro_equality_uses_flags_and_borrowed_token_content() {
         let first_publication = universe
             .allocate_definition(&parameter, &replacement)
             .expect("first definition");
-        let first = tex_state::meaning::MeaningWord::macro_definition(
-            MeaningFlags::LONG,
-            first_publication.reference(),
-        );
+        let first = first_publication.meaning(MeaningFlags::LONG);
         let equal_publication = universe
             .allocate_definition(&parameter, &replacement)
             .expect("equal definition with distinct identity");
-        let equal = tex_state::meaning::MeaningWord::macro_definition(
-            MeaningFlags::LONG,
-            equal_publication.reference(),
-        );
+        let equal = equal_publication.meaning(MeaningFlags::LONG);
         let different_flags_publication = universe
             .allocate_definition(&parameter, &replacement)
             .expect("definition with different flags");
-        let different_flags = tex_state::meaning::MeaningWord::macro_definition(
-            MeaningFlags::EMPTY,
-            different_flags_publication.reference(),
-        );
+        let different_flags = different_flags_publication.meaning(MeaningFlags::EMPTY);
         let different_parameter_publication = universe
             .allocate_definition(&[TokenWord::pack(other('q'))], &replacement)
             .expect("definition with different parameter text");
-        let different_parameter = tex_state::meaning::MeaningWord::macro_definition(
-            MeaningFlags::LONG,
-            different_parameter_publication.reference(),
-        );
+        let different_parameter = different_parameter_publication.meaning(MeaningFlags::LONG);
         let different_replacement_publication = universe
             .allocate_definition(&parameter, &[TokenWord::pack(other('s'))])
             .expect("definition with different replacement text");
-        let different_replacement = tex_state::meaning::MeaningWord::macro_definition(
-            MeaningFlags::LONG,
-            different_replacement_publication.reference(),
-        );
+        let different_replacement = different_replacement_publication.meaning(MeaningFlags::LONG);
 
         let mut command = CommandState::default();
         let mut capabilities = CommandHostCapabilities::default();

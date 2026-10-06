@@ -390,8 +390,11 @@ macro frames and captures. Their cold restore clears the actual transient
 owners while preserving reusable pool capacity. Production main control still
 returns `CurrentCommand`; removing that handoff is a separate unfinished change.
 
-Macro activation uses the admitted definition directly. No intermediate activation
-class is constructed; a contextual check is demanded by parameterless activation
+Macro activation uses the native empty/simple/matching execution key selected
+when the immutable definition is published. There is no invocation-time admitted
+kind product or classification callback. Actual nonempty input and matching
+retain the immutable body; ordinary empty activation does not admit it.
+A contextual check is demanded by parameterless activation
 or an empty replacement whose input row might be elided. The matcher saves only
 the actual prior scanner status. Its installed matching status is already owned
 by live TeX state, and its macro identity remains an invocation fact. Observed

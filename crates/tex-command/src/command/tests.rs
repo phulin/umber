@@ -33,7 +33,7 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                definition_publication.meaning(MeaningFlags::LONG),
                 AssignmentScope::Global,
             )
             .expect("meaning");
@@ -48,7 +48,10 @@ fn packed_meaning_resolution_stays_hot_until_materialization() {
             &context,
         );
         assert_eq!(hot.flags(), MeaningFlags::LONG);
-        assert_eq!(hot.macro_parts(), Some((MeaningFlags::LONG, definition)));
+        assert_eq!(
+            hot.native_meaning().macro_parts(),
+            Some((MeaningFlags::LONG, definition))
+        );
         assert_eq!(
             hot.meaning(),
             ResolvedMeaning::Macro {
@@ -283,7 +286,7 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                definition_publication.meaning(MeaningFlags::LONG),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -334,12 +337,11 @@ fn packed_input_resolution_replaces_the_destination_with_the_new_meaning() {
             )
             .expect("definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("ownedmacro").expect("intern");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -521,11 +523,11 @@ fn direct_delivery_preserves_table_meaning_families_and_active_namespace() {
             ),
             (
                 macro_name,
-                MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                definition_publication.meaning(MeaningFlags::LONG),
             ),
             (
                 macro_alias,
-                MeaningWord::macro_definition(MeaningFlags::LONG, definition),
+                definition_publication.meaning(MeaningFlags::LONG),
             ),
         ] {
             universe

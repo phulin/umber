@@ -114,14 +114,13 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
             )
             .expect("grouped expression definition");
         let grouped_definition_publication = grouped_definition;
-        let grouped_definition = grouped_definition_publication.reference();
         let grouped = universe
             .intern("grouped")
             .expect("grouped expression macro");
         universe
             .assign_meaning(
                 grouped,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, grouped_definition),
+                grouped_definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("grouped expression meaning");

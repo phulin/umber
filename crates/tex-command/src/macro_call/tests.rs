@@ -55,12 +55,11 @@ fn install_macro_with_flags<G>(
         )
         .expect("macro definition");
     let definition_publication = definition;
-    let definition = definition_publication.reference();
     let symbol = universe.intern(name).expect("macro name");
     universe
         .assign_meaning(
             symbol,
-            MeaningWord::macro_definition(flags, definition),
+            definition_publication.meaning(flags),
             AssignmentScope::Global,
         )
         .expect("macro meaning");
@@ -95,12 +94,11 @@ fn install_replacement_macro<G>(
         )
         .expect("macro definition");
     let definition_publication = definition;
-    let definition = definition_publication.reference();
     let symbol = universe.intern(name).expect("macro name");
     universe
         .assign_meaning(
             symbol,
-            MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+            definition_publication.meaning(MeaningFlags::EMPTY),
             AssignmentScope::Global,
         )
         .expect("macro meaning");
@@ -490,12 +488,11 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
             )
             .expect("literal-prefix definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("literalprefix").expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -740,12 +737,11 @@ fn nested_macro_argument_reader_counts_loaded_words_not_exhaustion() {
             )
             .expect("outer definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("outer_argument_span").expect("outer name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("outer meaning");
@@ -867,12 +863,11 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
             )
             .expect("repeated-parameter definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("repeatarg").expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -1124,12 +1119,11 @@ fn parameter_escape_distinguishes_substitution_from_a_literal_hash() {
             )
             .expect("parameter escape definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("parameterescape").expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -1639,12 +1633,11 @@ fn overlapping_delimiter_preserves_source_origins_through_forwarded_arguments() 
             )
             .expect("forwarding definition");
         let outer_definition_publication = outer_definition;
-        let outer_definition = outer_definition_publication.reference();
         let outer = universe.intern("outer").expect("macro name");
         universe
             .assign_meaning(
                 outer,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, outer_definition),
+                outer_definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("forwarding meaning");
@@ -1736,14 +1729,13 @@ fn parameterized_tail_chain_reuses_two_final_regions_and_preserves_forwarded_wor
                 )
                 .expect("tail definition");
             let definition_publication = definition;
-            let definition = definition_publication.reference();
             let symbol = universe
                 .intern(&format!("tailarg{index}"))
                 .expect("tail symbol");
             universe
                 .assign_meaning(
                     symbol,
-                    MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                    definition_publication.meaning(MeaningFlags::EMPTY),
                     AssignmentScope::Global,
                 )
                 .expect("tail meaning");

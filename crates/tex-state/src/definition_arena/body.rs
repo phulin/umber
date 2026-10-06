@@ -161,16 +161,6 @@ pub struct ResidentMacroBody<G> {
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
-/// One immutable macro definition admitted for activation.
-///
-/// A parameterless empty replacement retains no body until an exceptional
-/// observed or recovery path explicitly requests the traditional empty input
-/// row.
-pub enum AdmittedMacroDefinition<G> {
-    SimpleMacro { body: Option<ResidentMacroBody<G>> },
-    MatchingMacro { body: ResidentMacroBody<G> },
-}
-
 impl<G> ResidentMacroBody<G> {
     #[inline(always)]
     pub(super) fn admit(entry: &DefinitionEntry) -> Self {

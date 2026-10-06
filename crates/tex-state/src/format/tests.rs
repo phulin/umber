@@ -896,8 +896,7 @@ fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
             .allocate_definition(&[], &replacement)
             .expect("definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
-        let meaning = MeaningWord::macro_definition(MeaningFlags::LONG, definition);
+        let meaning = definition_publication.meaning(MeaningFlags::LONG);
         universe
             .assign_meaning(alpha, meaning, AssignmentScope::Global)
             .expect("alpha meaning");
@@ -1031,11 +1030,10 @@ fn loaded_format_materializes_only_environment_owned_definitions() {
             .allocate_definition(&[], &retained)
             .expect("retained definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         universe
             .assign_meaning(
                 command,
-                MeaningWord::macro_definition(MeaningFlags::from_bits(0), definition),
+                definition_publication.meaning(MeaningFlags::from_bits(0)),
                 AssignmentScope::Global,
             )
             .expect("retained meaning");
@@ -1095,7 +1093,7 @@ fn format_materialization_rebuilds_definition_contents_and_state_identity() {
         universe
             .assign_meaning(
                 command,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("source meaning");

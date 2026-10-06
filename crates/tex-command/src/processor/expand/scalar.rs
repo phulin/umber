@@ -307,17 +307,22 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.with_expanded_delivery(&mut destination, |processor, destination| {
             match action {
                 ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
-                    let Some((flags, definition)) = meaning.macro_parts() else {
-                        unreachable!("native active macro");
-                    };
+                    let (flags, definition) = meaning
+                        .macro_parts()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    let key = meaning.execution_key();
                     let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
                     match processor.activate_read_macro(
                         spelling.token_word(),
                         origin,
+                        key,
                         flags,
                         definition,
                         name,
-                        &mut |_| {},
+                        key == MeaningWord::<G>::MATCHING_MACRO_KEY
+                            || processor.macro_activation_needs_context(
+                                key == MeaningWord::<G>::EMPTY_MACRO_KEY,
+                            ),
                     ) {
                         Ok(())
                         | Err(

@@ -23,9 +23,7 @@ mod ownership_tests;
 #[path = "definition_arena/tests.rs"]
 mod tests;
 use body::DefinitionEntry;
-pub use body::{
-    AdmittedMacroDefinition, DefinitionRef, DefinitionView, DefinitionWords, ResidentMacroBody,
-};
+pub use body::{DefinitionRef, DefinitionView, DefinitionWords, ResidentMacroBody};
 use build_lane::ActiveDefinitionBuild;
 pub use build_lane::{DefinitionBuildKey, DefinitionBuildWriter};
 pub use builder::{DefinitionBuildError, DefinitionBuildPhase, DefinitionBuilder};
@@ -63,6 +61,21 @@ impl DefinitionBank {
 #[derive(Clone, Default)]
 pub(crate) struct DefinitionRoots(Rc<RefCell<DefinitionBank>>);
 impl DefinitionRoots {
+    pub(crate) fn macro_meaning<G>(
+        &self,
+        flags: crate::meaning::MeaningFlags,
+        definition: DefinitionRef<G>,
+    ) -> Option<crate::MeaningWord<G>> {
+        let bank = self.0.borrow();
+        let entry = bank.entry(definition)?;
+        Some(crate::MeaningWord::published_macro(
+            flags,
+            definition,
+            entry.parameter_len,
+            entry.words.len(),
+        ))
+    }
+
     pub(crate) fn validates_meaning<G>(&self, meaning: crate::meaning::MeaningWord<G>) -> bool {
         meaning
             .macro_parts()
@@ -135,19 +148,24 @@ impl DefinitionRoots {
 /// One newly published definition root. Assignment acquires its cell before this drops.
 #[must_use]
 pub struct PublishedDefinition<G> {
-    reference: DefinitionRef<G>,
+    meaning: crate::MeaningWord<G>,
     roots: DefinitionRoots,
 }
 impl<G> PublishedDefinition<G> {
     #[must_use]
     pub const fn reference(&self) -> DefinitionRef<G> {
-        self.reference
+        self.meaning.macro_parts().expect("published macro").1
+    }
+    /// Complete native meaning, classified when the immutable definition was sealed.
+    #[must_use]
+    pub const fn meaning(&self, flags: crate::meaning::MeaningFlags) -> crate::MeaningWord<G> {
+        self.meaning.with_macro_flags(flags)
     }
     /// Acquires another actual cold owner when publication has multiple destinations.
     pub fn retain(&self) -> Self {
-        self.roots.acquire(self.reference);
+        self.roots.acquire(self.reference());
         Self {
-            reference: self.reference,
+            meaning: self.meaning,
             roots: self.roots.clone(),
         }
     }
@@ -159,7 +177,7 @@ impl<G> core::fmt::Debug for PublishedDefinition<G> {
 }
 impl<G> Drop for PublishedDefinition<G> {
     fn drop(&mut self) {
-        self.roots.release(self.reference);
+        self.roots.release(self.reference());
     }
 }
 
@@ -189,23 +207,6 @@ impl<G> DefinitionArena<G> {
     }
     pub(crate) fn roots(&self) -> DefinitionRoots {
         DefinitionRoots(Rc::clone(&self.bank))
-    }
-    #[inline(always)]
-    pub(crate) fn admit_macro_definition(
-        &self,
-        id: DefinitionRef<G>,
-    ) -> Option<AdmittedMacroDefinition<G>> {
-        let bank = self.bank.borrow();
-        let entry = bank.entry(id)?;
-        if entry.parameter_len == 0 {
-            Some(AdmittedMacroDefinition::SimpleMacro {
-                body: (!entry.words.is_empty()).then(|| ResidentMacroBody::admit(entry)),
-            })
-        } else {
-            Some(AdmittedMacroDefinition::MatchingMacro {
-                body: ResidentMacroBody::admit(entry),
-            })
-        }
     }
     pub(crate) fn admit_macro_body(&self, id: DefinitionRef<G>) -> Option<ResidentMacroBody<G>> {
         Some(ResidentMacroBody::admit(self.bank.borrow().entry(id)?))
@@ -327,13 +328,19 @@ impl<G> DefinitionArena<G> {
 
     fn push_dynamic(&mut self, entry: DefinitionEntry) -> PublishedDefinition<G> {
         let mut bank = self.bank.borrow_mut();
+        let reference = DefinitionRef::new(DYNAMIC_REGION, bank.dynamic.len());
+        let meaning = crate::MeaningWord::published_macro(
+            crate::meaning::MeaningFlags::EMPTY,
+            reference,
+            entry.parameter_len,
+            entry.words.len(),
+        );
         bank.dynamic.push(DynamicDefinition {
             payload: Some(entry),
             roots: 1,
         });
-        let reference = DefinitionRef::new(DYNAMIC_REGION, bank.dynamic.len() - 1);
         PublishedDefinition {
-            reference,
+            meaning,
             roots: self.roots(),
         }
     }

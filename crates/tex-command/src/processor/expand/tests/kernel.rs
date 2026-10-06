@@ -14,12 +14,11 @@ fn install_identity<G>(universe: &mut tex_state::Universe<G>, name: &str, body: 
         )
         .expect("definition");
     let definition_publication = definition;
-    let definition = definition_publication.reference();
     let symbol = universe.intern(name).expect("macro name");
     universe
         .assign_meaning(
             symbol,
-            MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+            definition_publication.meaning(MeaningFlags::EMPTY),
             AssignmentScope::Global,
         )
         .expect("macro meaning");
@@ -260,12 +259,11 @@ fn resumed_replacement_reads_the_live_meaning_after_backup() {
             .allocate_definition(&[], &[TokenWord::pack(variable), TokenWord::pack(variable)])
             .expect("replacement");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let name = universe.intern("twice").expect("macro name");
         universe
             .assign_meaning(
                 name,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro");

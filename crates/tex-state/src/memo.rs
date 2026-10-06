@@ -540,7 +540,7 @@ impl<G> Universe<G> {
             .definitions
             .pop()
             .expect("one published memo definition");
-        Ok((MeaningWord::macro_definition(flags, id.reference()), id))
+        Ok((id.meaning(flags), id))
     }
 
     pub fn import_memo_macro_meaning(

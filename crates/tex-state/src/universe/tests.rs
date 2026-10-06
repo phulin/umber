@@ -167,12 +167,11 @@ fn runtime_checkpoint_fork_moves_the_checkpoint_bank_without_new_payload_owners(
             .allocate_definition(&[], &words)
             .expect("definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let tokens = universe.allocate_token_list(&words).expect("token list");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::from_bits(0), definition),
+                definition_publication.meaning(MeaningFlags::from_bits(0)),
                 AssignmentScope::Global,
             )
             .expect("assign macro");
@@ -378,11 +377,10 @@ fn equivalent_macro_definitions_keep_the_same_core_identity() {
             .allocate_definition(&[], &body)
             .expect("first definition");
         let first_publication = first;
-        let first = first_publication.reference();
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, first),
+                first_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("first meaning");
@@ -407,11 +405,10 @@ fn equivalent_macro_definitions_keep_the_same_core_identity() {
             .allocate_definition(&[], &body)
             .expect("equivalent definition");
         let equivalent_publication = equivalent;
-        let equivalent = equivalent_publication.reference();
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, equivalent),
+                equivalent_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("equivalent meaning");

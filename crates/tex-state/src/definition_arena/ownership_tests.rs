@@ -42,11 +42,7 @@ fn install<G>(
         .expect("publish");
     let reference = publication.reference();
     stores
-        .assign_meaning(
-            target,
-            MeaningWord::macro_definition(MeaningFlags::EMPTY, reference),
-            scope,
-        )
+        .assign_meaning(target, publication.meaning(MeaningFlags::EMPTY), scope)
         .expect("assign");
     reference
 }
@@ -81,7 +77,7 @@ fn replacement_without_checkpoint_reclaims_and_aliases_share_one_charge() {
         let baseline = accounting.words(false);
         let original = install(&mut core, target, 'a', AssignmentScope::Global);
         let original_charge = accounting.words(false);
-        let value = MeaningWord::macro_definition(MeaningFlags::EMPTY, original);
+        let value = *core.state().meaning_word(target).expect("live meaning");
         core.state_mut()
             .assign_meaning(target, value, AssignmentScope::Global)
             .expect("self let");
@@ -131,12 +127,12 @@ fn group_and_checkpoint_keep_distinct_preimages_and_global_alias_keeps_same_key(
             .begin_group(crate::GroupKind::Simple, 1)
             .expect("group");
         let two = install(&mut core, target, 't', AssignmentScope::Local);
+        let value = *core
+            .state()
+            .meaning_word(target)
+            .expect("live local meaning");
         core.state_mut()
-            .assign_meaning(
-                alias,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, two),
-                AssignmentScope::Global,
-            )
+            .assign_meaning(alias, value, AssignmentScope::Global)
             .expect("global local alias");
         assert_eq!(
             (roots(&core, zero), roots(&core, one), roots(&core, two)),
@@ -266,14 +262,11 @@ fn stale_assignment_fails_before_history() {
             .expect("stores")
             .allocate_definition(&[], &[word('b')])
             .expect("publication");
-        let stale = publication.reference();
+        let stale_meaning = publication.meaning(MeaningFlags::EMPTY);
         drop(publication);
         assert_eq!(
-            core.state_mut().assign_meaning(
-                target,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, stale),
-                AssignmentScope::Global
-            ),
+            core.state_mut()
+                .assign_meaning(target, stale_meaning, AssignmentScope::Global),
             Err(crate::StateError::InvalidDefinition)
         );
         assert_eq!(
@@ -331,10 +324,7 @@ fn primitive_registry_and_unwinding_unsave_retire_their_actual_definition_positi
                 .allocate_definition(&[], &[word('a')])
                 .expect("publication");
             let reference = original.reference();
-            universe.register_primitive_word(
-                "frozen",
-                MeaningWord::macro_definition(MeaningFlags::FROZEN, reference),
-            );
+            universe.register_primitive_word("frozen", original.meaning(MeaningFlags::FROZEN));
             drop(original);
             let roots = universe.core.as_ref().expect("core").definition_roots();
             assert_eq!(
@@ -352,7 +342,7 @@ fn primitive_registry_and_unwinding_unsave_retire_their_actual_definition_positi
             universe
                 .assign_meaning(
                     target,
-                    MeaningWord::macro_definition(MeaningFlags::EMPTY, local),
+                    publication.meaning(MeaningFlags::EMPTY),
                     AssignmentScope::Local,
                 )
                 .expect("local assignment");

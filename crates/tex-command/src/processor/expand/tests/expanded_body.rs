@@ -140,12 +140,11 @@ fn nested_expanded_bodies_return_through_the_same_driver() {
             )
             .expect("nested definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("nested").expect("nested name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("nested meaning");
@@ -205,12 +204,11 @@ fn expanded_body_splices_unexpanded_children_without_reentering_delivery() {
             )
             .expect("nested definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("nested").expect("nested name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("nested meaning");

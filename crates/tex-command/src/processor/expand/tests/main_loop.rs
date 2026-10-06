@@ -488,12 +488,11 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("m").expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -550,7 +549,7 @@ fn execution_character_boundaries_expand_without_constructing_commands() {
             universe
                 .assign_meaning(
                     m,
-                    MeaningWord::macro_definition(MeaningFlags::EMPTY, publication.reference()),
+                    publication.meaning(MeaningFlags::EMPTY),
                     AssignmentScope::Global,
                 )
                 .expect("macro meaning");
@@ -561,10 +560,7 @@ fn execution_character_boundaries_expand_without_constructing_commands() {
             universe
                 .assign_meaning(
                     empty,
-                    MeaningWord::macro_definition(
-                        MeaningFlags::EMPTY,
-                        empty_publication.reference(),
-                    ),
+                    empty_publication.meaning(MeaningFlags::EMPTY),
                     AssignmentScope::Global,
                 )
                 .expect("empty macro meaning");

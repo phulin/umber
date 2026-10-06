@@ -174,10 +174,7 @@ fn integer_digits_continue_through_expansion_at_every_fuel_cut() {
                 universe
                     .assign_meaning(
                         name,
-                        tex_state::meaning::MeaningWord::macro_definition(
-                            tex_state::meaning::MeaningFlags::EMPTY,
-                            definition.reference(),
-                        ),
+                        definition.meaning(tex_state::meaning::MeaningFlags::EMPTY),
                         tex_state::AssignmentScope::Global,
                     )
                     .expect("numeric macro");

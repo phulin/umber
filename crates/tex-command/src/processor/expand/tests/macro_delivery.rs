@@ -13,12 +13,11 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("m").expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -162,11 +161,10 @@ fn active_character_empty_macro_retires_replay_before_settling_next_command() {
             .allocate_definition(&[], &[])
             .expect("empty active macro definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         universe
             .assign_meaning(
                 active,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("active macro meaning");
@@ -233,12 +231,11 @@ fn one_hundred_macros_materialize_only_the_final_command() {
             .allocate_definition(&[], &[])
             .expect("empty definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("hotchain").expect("macro name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("macro meaning");
@@ -431,7 +428,7 @@ fn expandafter_retains_native_operands_and_preserves_brace_backup() {
             universe
                 .assign_meaning(
                     symbol,
-                    MeaningWord::macro_definition(MeaningFlags::PROTECTED, publication.reference()),
+                    publication.meaning(MeaningFlags::PROTECTED),
                     AssignmentScope::Global,
                 )
                 .expect("protected empty macro");
@@ -509,7 +506,7 @@ fn native_active_meanings_expand_and_back_without_command_construction() {
             universe
                 .assign_meaning(
                     empty_name,
-                    MeaningWord::macro_definition(MeaningFlags::EMPTY, empty.reference()),
+                    empty.meaning(MeaningFlags::EMPTY),
                     AssignmentScope::Global,
                 )
                 .expect("empty meaning");
@@ -521,7 +518,7 @@ fn native_active_meanings_expand_and_back_without_command_construction() {
                     }
                     .encode(),
                 ),
-                1 => MeaningWord::macro_definition(MeaningFlags::EMPTY, body.reference()),
+                1 => body.meaning(MeaningFlags::EMPTY),
                 _ => MeaningWord::scalar(
                     Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter).encode(),
                 ),

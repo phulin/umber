@@ -106,68 +106,76 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         call: &mut crate::command::CurrentCommand<G>,
     ) -> Result<(), CommandError> {
-        let Some((flags, definition)) = call.macro_parts() else {
-            return Err(CommandError::input_invariant());
-        };
+        let meaning = call.native_meaning();
+        let (flags, definition) = meaning
+            .macro_parts()
+            .ok_or_else(CommandError::input_invariant)?;
+        let key = meaning.execution_key();
+        let contextual = key == tex_state::MeaningWord::<G>::MATCHING_MACRO_KEY
+            || self.macro_activation_needs_context(
+                key == tex_state::MeaningWord::<G>::EMPTY_MACRO_KEY,
+            );
         let macro_name = call
             .control_sequence()
             .ok_or_else(|| CommandError::input_invariant())?;
         let call_site = call.origin();
         self.macro_call_parts(
+            key,
             flags,
             definition,
             macro_name,
             call_site,
-            |_| {},
+            contextual,
             |processor| processor.report_macro_prefix_mismatch(call),
         )
     }
 
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)] // The already-selected key and actual invocation facts.
     pub(crate) fn macro_call_parts(
         &mut self,
+        key: u64,
         flags: MeaningFlags,
-        definition: tex_state::DefinitionRef<G>,
+        definition: DefinitionRef<G>,
         macro_name: tex_state::interner::Symbol,
         call_site: OriginId,
-        before_context: impl FnOnce(&mut Self),
+        contextual: bool,
         report_prefix_mismatch: impl FnOnce(&mut Self),
     ) -> Result<(), CommandError> {
-        let admitted = self
-            .state
-            .admit_macro_definition(definition)
-            .ok_or_else(CommandError::input_invariant)?;
-        let (body, elide_empty_replacement) = match admitted {
-            tex_state::AdmittedMacroDefinition::SimpleMacro { body } => {
-                let exceptional = self.macro_activation_needs_context(body.is_none());
-                #[cfg(test)]
-                record_macro_activation(true, exceptional);
-                if !exceptional {
-                    return self.activate_simple_macro(macro_name, call_site, body);
-                }
-                let body = match body {
-                    Some(body) => body,
-                    None => self
-                        .state
-                        .admit_macro_body(definition)
-                        .ok_or_else(CommandError::input_invariant)?,
+        let (body, elide_empty_replacement) = if key
+            != tex_state::MeaningWord::<G>::MATCHING_MACRO_KEY
+        {
+            #[cfg(test)]
+            record_macro_activation(true, contextual);
+            if !contextual {
+                let body = if key == tex_state::MeaningWord::<G>::EMPTY_MACRO_KEY {
+                    None
+                } else {
+                    Some(
+                        self.state
+                            .admit_macro_body(definition)
+                            .ok_or_else(CommandError::input_invariant)?,
+                    )
                 };
-                (body, false)
+                return self.activate_simple_macro(macro_name, call_site, body);
             }
-            tex_state::AdmittedMacroDefinition::MatchingMacro { body } => {
-                let elide_empty_replacement =
-                    body.is_empty() && !self.macro_activation_needs_context(true);
-                #[cfg(test)]
-                record_macro_activation(
-                    false,
-                    self.macro_activation_needs_context(body.is_empty()),
-                );
-                (body, elide_empty_replacement)
-            }
+            (
+                self.state
+                    .admit_macro_body(definition)
+                    .ok_or_else(CommandError::input_invariant)?,
+                false,
+            )
+        } else {
+            let body = self
+                .state
+                .admit_macro_body(definition)
+                .ok_or_else(CommandError::input_invariant)?;
+            let elide_empty_replacement =
+                body.is_empty() && !self.macro_activation_needs_context(true);
+            #[cfg(test)]
+            record_macro_activation(false, self.macro_activation_needs_context(body.is_empty()));
+            (body, elide_empty_replacement)
         };
-        // Simple activation above changes only input ownership. Contextual
-        // tracing and matching can produce diagnostics or consume more source.
-        before_context(self);
         self.match_macro_definition(
             flags,
             definition,
@@ -362,7 +370,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     #[inline(always)]
-    fn macro_activation_needs_context(&self, replacement_is_empty: bool) -> bool {
+    pub(crate) fn macro_activation_needs_context(&self, replacement_is_empty: bool) -> bool {
         self.command.delivery_mode.requires_persistent_settlement()
             || self.state.int_param(IntParam::TRACING_MACROS) > 0
             || (replacement_is_empty && self.empty_macro_needs_completion_descendant())

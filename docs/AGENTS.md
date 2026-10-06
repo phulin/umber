@@ -76,7 +76,8 @@ and checkpoint invariants for the reader replacement.
 
 `native_meaning_word.md` selects the two-word native command encoding, full
 font and definition identity preservation, ownership boundaries and enum
-deletion; it adds no opcode cache or identity registry.
+deletion, including macro execution keys selected by immutable publication;
+it adds no opcode cache or identity registry.
 
 `minimal_hot_loop.md` maps implemented direct immutable spans, packed meanings,
 frame-owned cursors, counted real roots, the TeX save stack and full aggregate

@@ -14,12 +14,11 @@ fn protected_replay_delivery_writes_the_terminal_macro_into_its_caller_slot() {
                 .allocate_definition(&[], &[TokenWord::pack(replacement)])
                 .expect("definition");
             let definition_publication = definition;
-            let definition = definition_publication.reference();
             let symbol = universe.intern("protected").expect("macro name");
             universe
                 .assign_meaning(
                     symbol,
-                    MeaningWord::macro_definition(MeaningFlags::PROTECTED, definition),
+                    definition_publication.meaning(MeaningFlags::PROTECTED),
                     AssignmentScope::Global,
                 )
                 .expect("macro meaning");
@@ -75,12 +74,11 @@ fn protected_delivery_restarts_terminal_classification_after_macro_expansion() {
             .allocate_definition(&[], &[TokenWord::pack(replacement)])
             .expect("protected definition");
         let protected_definition_publication = protected_definition;
-        let protected_definition = protected_definition_publication.reference();
         let protected_symbol = universe.intern("protected-nested").expect("protected name");
         universe
             .assign_meaning(
                 protected_symbol,
-                MeaningWord::macro_definition(MeaningFlags::PROTECTED, protected_definition),
+                protected_definition_publication.meaning(MeaningFlags::PROTECTED),
                 AssignmentScope::Global,
             )
             .expect("protected meaning");
@@ -90,12 +88,11 @@ fn protected_delivery_restarts_terminal_classification_after_macro_expansion() {
             .allocate_definition(&[], &[TokenWord::pack(protected_token)])
             .expect("outer definition");
         let outer_definition_publication = outer_definition;
-        let outer_definition = outer_definition_publication.reference();
         let outer_symbol = universe.intern("outer-nested").expect("outer name");
         universe
             .assign_meaning(
                 outer_symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, outer_definition),
+                outer_definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("outer meaning");
@@ -140,12 +137,11 @@ fn protected_delivery_does_not_observe_macro_expanded_relax_as_terminal() {
             .allocate_definition(&[], &[TokenWord::pack(relax)])
             .expect("relax definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let symbol = universe.intern("relax-wrapper").expect("wrapper name");
         universe
             .assign_meaning(
                 symbol,
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("wrapper meaning");

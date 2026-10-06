@@ -755,8 +755,9 @@ impl<G> DenseState<G> {
                                 .get(font as usize)
                                 .ok_or("format references an unloaded font")?,
                         ),
-                        FormatMeaning::Macro { flags, definition } => {
-                            MeaningWord::macro_definition(
+                        FormatMeaning::Macro { flags, definition } => self
+                            .definition_roots
+                            .macro_meaning(
                                 crate::meaning::MeaningFlags::from_bits(flags),
                                 definitions
                                     .get(definition as usize)
@@ -764,7 +765,7 @@ impl<G> DenseState<G> {
                                     .flatten()
                                     .ok_or("format macro reference is not live")?,
                             )
-                        }
+                            .ok_or("format macro definition is not live")?,
                     };
                     self.replace_meaning(index, meaning, LEVEL_ONE, 0)
                         .map_err(|_| "format meaning index is out of range")?;

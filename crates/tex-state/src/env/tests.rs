@@ -244,7 +244,6 @@ fn borrowed_meaning_row_copies_only_the_compact_definition_key() {
             .allocate(&[], &[TokenWord::pack(Token::frozen_relax())])
             .expect("definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let mut names = interner();
         let selector = names.intern("borrowed").expect("selector");
         let mut state = DenseState::new().expect("state allocation");
@@ -255,7 +254,7 @@ fn borrowed_meaning_row_copies_only_the_compact_definition_key() {
         state
             .assign_meaning(
                 selector.symbol(),
-                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                definition_publication.meaning(MeaningFlags::EMPTY),
                 AssignmentScope::Global,
             )
             .expect("assign macro");
@@ -304,7 +303,6 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
             .allocate(&[], &[TokenWord::pack(Token::frozen_relax())])
             .expect("definition");
         let definition_publication = definition;
-        let definition = definition_publication.reference();
         let tokens = generation
             .token_lists_mut()
             .allocate(&[TokenWord::pack(Token::frozen_relax())])
@@ -321,7 +319,7 @@ fn checkpoint_rollback_releases_macro_and_token_list_carriers() {
         state
             .assign_meaning(
                 selector.symbol(),
-                MeaningWord::macro_definition(MeaningFlags::from_bits(0), definition),
+                definition_publication.meaning(MeaningFlags::from_bits(0)),
                 AssignmentScope::Global,
             )
             .expect("assign macro");

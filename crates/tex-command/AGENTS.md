@@ -673,7 +673,9 @@ exact fuel, plus contextual matching/tracing as interruption controls.
 - `src/macro_call.rs`, `src/macro_call/arguments.rs`,
   `src/macro_call/diagnostics.rs`, and `src/macro_call/tests.rs`: native macro
   activation, the canonical argument grammar, and actual tracing/recovery
-  diagnostics. The matcher borrows definition-owned parameter patterns and
+  diagnostics. The native meaning selects empty/simple/matching execution at
+  publication; invocation constructs no admitted-kind product or contextual
+  callback. The matcher borrows definition-owned parameter patterns and
   delimiter failure links. Empty delimiters have no borrowed literal view, and calls construct no activation-class product, `MacroPlan` or failure table.
   Ordinary words enter the grammar directly without a command projection;
   actual cold settlement and error backup own the demanded command. One scratch

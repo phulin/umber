@@ -120,10 +120,7 @@ fn pure_macro_input_changes_preserve_entry_facts_and_exact_fuel() {
                             universe
                                 .assign_meaning(
                                     name,
-                                    MeaningWord::macro_definition(
-                                        MeaningFlags::EMPTY,
-                                        definition.reference(),
-                                    ),
+                                    definition.meaning(MeaningFlags::EMPTY),
                                     AssignmentScope::Global,
                                 )
                                 .expect("installed definition");
@@ -229,7 +226,7 @@ fn expandafter_enters_the_expander_before_terminal_admission() {
             universe
                 .assign_meaning(
                     empty,
-                    MeaningWord::macro_definition(MeaningFlags::EMPTY, definition.reference()),
+                    definition.meaning(MeaningFlags::EMPTY),
                     AssignmentScope::Global,
                 )
                 .expect("empty macro");
@@ -475,7 +472,7 @@ fn terminal_selectors_follow_expansion_and_live_redefinition() {
             universe
                 .assign_meaning(
                     name,
-                    MeaningWord::macro_definition(MeaningFlags::EMPTY, definition.reference()),
+                    definition.meaning(MeaningFlags::EMPTY),
                     AssignmentScope::Global,
                 )
                 .expect("macro meaning");

@@ -6,11 +6,8 @@ mod native_meaning;
 pub(crate) use identity::{CommandIdentity, ConvertSelector};
 
 use tex_state::CommandContext;
-use tex_state::DefinitionRef;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{
-    Meaning, MeaningFlags, MeaningWord, ResolvedMeaning, UnexpandablePrimitive,
-};
+use tex_state::meaning::{Meaning, MeaningWord, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 /// Profiling-only proof of how current-command ownership changes.
@@ -342,10 +339,6 @@ impl<G> CurrentCommand<G> {
 
     pub(crate) const fn is_outer(&self) -> bool {
         self.command.is_outer()
-    }
-
-    pub(crate) const fn macro_parts(&self) -> Option<(MeaningFlags, DefinitionRef<G>)> {
-        self.command.macro_parts()
     }
 
     pub(crate) fn convert_end_template_to_endv(&mut self, frozen_endv: Token) {
