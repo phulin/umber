@@ -130,8 +130,23 @@ impl<'state, 'host, G, const LOOKAHEAD: bool>
         // Native delivery never lends an observation record.
         // Fold that actual ownership fact into its continuation.
         let observing = exceptional.is_some() && self.observing;
-        let traced = match dispatch::enter(processor, spelling, meaning, control_sequence, code) {
-            Ok(traced) => traced,
+        let traced = match dispatch::enter(
+            processor,
+            spelling,
+            meaning,
+            control_sequence,
+            code,
+            |processor| {
+                code == codes::RELAX
+                    && processor.has_diagnostic_boundary_since(self.initial_effect_pos)
+            },
+        ) {
+            Ok(ControlFlow::Continue(traced)) => traced,
+            Ok(ControlFlow::Break(())) => {
+                self.completed += 1;
+                *self.completion = Some(Ok(MainControlStep::Continue));
+                return Ok(ControlFlow::Break(()));
+            }
             Err(error) => {
                 *self.completion = Some(Err(error));
                 return Ok(ControlFlow::Break(()));
@@ -139,10 +154,6 @@ impl<'state, 'host, G, const LOOKAHEAD: bool>
         };
         if code == codes::RELAX {
             self.completed += 1;
-            if processor.has_diagnostic_boundary_since(self.initial_effect_pos) {
-                *self.completion = Some(Ok(MainControlStep::Continue));
-                return Ok(ControlFlow::Break(()));
-            }
             if !observing && !LOOKAHEAD && self.completed < self.remaining_operations {
                 self.resident_clean = !traced;
                 return Ok(ControlFlow::Continue(()));

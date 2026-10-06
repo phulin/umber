@@ -14,7 +14,9 @@ pub(super) fn execute<'state, 'host, G>(
     observation_receipts: &mut Option<Vec<MutationRecord>>,
     code: u64,
 ) -> Result<MainControlStep, ExecError> {
-    enter(processor, spelling, meaning, control_sequence, code)?;
+    let _ = enter(processor, spelling, meaning, control_sequence, code, |_| {
+        false
+    })?;
     if code == codes::RELAX {
         return Ok(MainControlStep::Continue);
     }
@@ -38,7 +40,8 @@ pub(super) fn enter<G>(
     meaning: &MeaningWord<G>,
     control_sequence: Option<Symbol>,
     code: u64,
-) -> Result<bool, ExecError> {
+    effect_boundary: impl FnOnce(&Processor<'_, '_, G>) -> bool,
+) -> Result<ControlFlow<(), bool>, ExecError> {
     if processor.has_pending_reports() {
         report_scan(processor)?;
     }
@@ -65,7 +68,12 @@ pub(super) fn enter<G>(
                 .map_err(|error| capture_error(processor, spelling, error))?;
         }
     }
-    Ok(trace::command(processor, code, meaning, control_sequence))
+    let traced = trace::command(processor, code, meaning, control_sequence);
+    Ok(if effect_boundary(processor) {
+        ControlFlow::Break(())
+    } else {
+        ControlFlow::Continue(traced)
+    })
 }
 
 #[inline(always)]

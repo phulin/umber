@@ -229,7 +229,7 @@ fn observed_parameterless_macro_keeps_exceptional_activation_semantics() {
         .with_observer(&mut observer);
         let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
-        assert_eq!(processor.macro_call(&mut call), Ok(true));
+        assert_eq!(processor.macro_call(&mut call), Ok(()));
         let after = super::macro_activation_counters();
         assert_eq!(after.exceptional - before.exceptional, 1);
         assert_eq!(after.simple - before.simple, 0);
@@ -333,7 +333,7 @@ fn empty_delimited_argument_reuses_its_direct_destination_for_the_next_argument(
         );
         let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
-        assert_eq!(processor.macro_call(&mut call), Ok(true));
+        assert_eq!(processor.macro_call(&mut call), Ok(()));
         let (arguments, _) = processor
             .command
             .input
@@ -389,7 +389,7 @@ fn undelimited_argument_keeps_brace_alias_as_one_control_sequence_token() {
         );
         let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
-        assert_eq!(processor.macro_call(&mut call), Ok(true));
+        assert_eq!(processor.macro_call(&mut call), Ok(()));
         assert_eq!(
             active_argument_tokens(processor.command),
             [Token::Cs(opening.symbol())]
@@ -445,7 +445,7 @@ fn successful_macro_calls_admit_resident_replacement_and_argument_regions() {
             );
             let mut call = destination.take().expect("macro command");
 
-            assert_eq!(processor.macro_call(&mut call), Ok(true));
+            assert_eq!(processor.macro_call(&mut call), Ok(()));
 
             let (arguments, replacement) = processor
                 .command
@@ -518,7 +518,7 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
             let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
             let activates = expected;
-            assert_eq!(processor.macro_call(&mut call), Ok(expected));
+            assert_eq!(processor.macro_call(&mut call), Ok(()));
             assert!(processor.command.scratch.is_quiescent());
             assert_eq!(processor.command.input.levels.parameter_count, 0);
             if activates {
@@ -529,6 +529,16 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
                     .innermost_macro_activation()
                     .expect("literal-prefix macro body");
                 assert!(arguments.is_empty());
+            } else {
+                assert!(
+                    processor
+                        .command
+                        .input
+                        .levels
+                        .innermost_macro_activation()
+                        .is_none()
+                );
+                assert_eq!(processor.command.semantic_diagnostics.len(), 1);
             }
         }
     });
@@ -553,7 +563,7 @@ fn failed_macro_call_keeps_the_resident_definition_owner() {
         );
         let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
-        assert_eq!(processor.macro_call(&mut call), Ok(false));
+        assert_eq!(processor.macro_call(&mut call), Ok(()));
         match &call.meaning() {
             tex_state::meaning::ResolvedMeaning::Macro { .. } => {}
             _ => panic!("failed call retains macro meaning"),
@@ -988,7 +998,7 @@ fn outer_group_trim_bounds_macro_trace_and_observation_at_both_ends() {
                 DeliveryStatus::Command
             );
             let mut call = destination.take().expect("macro command");
-            assert_eq!(processor.macro_call(&mut call), Ok(true));
+            assert_eq!(processor.macro_call(&mut call), Ok(()));
         }
         universe
             .world_mut()
@@ -1065,7 +1075,7 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
         );
         let mut call = destination.take().expect("macro command");
 
-        assert!(processor.macro_call(&mut call).expect("macro call"));
+        processor.macro_call(&mut call).expect("macro call");
         assert_eq!(active_argument_tokens(processor.command), [letter('x')]);
         assert_eq!(
             processor
@@ -1199,7 +1209,7 @@ fn delimited_argument_preserves_a_failed_overlapping_prefix() {
         );
         let mut call = destination.take().expect("macro command");
 
-        assert!(processor.macro_call(&mut call).expect("macro call"));
+        processor.macro_call(&mut call).expect("macro call");
         assert_eq!(active_argument_tokens(processor.command), expected);
         for expected_token in expected {
             assert_eq!(
@@ -1280,7 +1290,7 @@ fn delimited_argument_ignores_delimiters_inside_literal_braces() {
         );
         let mut call = destination.take().expect("macro command");
 
-        assert!(processor.macro_call(&mut call).expect("macro call"));
+        processor.macro_call(&mut call).expect("macro call");
         assert_eq!(
             active_argument_tokens(processor.command),
             [
@@ -1339,7 +1349,7 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
             DeliveryStatus::Command
         );
         let mut long_call = destination.take().expect("long macro command");
-        assert_eq!(processor.macro_call(&mut long_call), Ok(true));
+        assert_eq!(processor.macro_call(&mut long_call), Ok(()));
         assert_eq!(active_argument_tokens(processor.command), [paragraph]);
 
         assert_eq!(
@@ -1454,7 +1464,7 @@ fn paragraph_delimiter_prefix_is_not_reclassified_after_commit() {
         );
         let mut call = destination.take().expect("delimited macro command");
 
-        assert_eq!(processor.macro_call(&mut call), Ok(true));
+        assert_eq!(processor.macro_call(&mut call), Ok(()));
         assert_eq!(
             active_argument_tokens(processor.command),
             [paragraph, letter('x')]
@@ -1515,7 +1525,7 @@ fn paragraph_fact_uses_token_identity_not_current_meaning() {
             DeliveryStatus::Command
         );
         let mut alias_call = destination.take().expect("alias argument macro command");
-        assert_eq!(processor.macro_call(&mut alias_call), Ok(true));
+        assert_eq!(processor.macro_call(&mut alias_call), Ok(()));
         assert_eq!(
             processor
                 .get_x_token_into(&mut destination)
@@ -1660,7 +1670,7 @@ fn overlapping_delimiter_preserves_source_origins_through_forwarded_arguments() 
             &mut effects,
         );
         let mut call = crate::test_harness::expect_raw_command(&mut processor);
-        assert!(processor.macro_call(&mut call).expect("outer match"));
+        processor.macro_call(&mut call).expect("outer match");
         let origins: Vec<_> = processor
             .command
             .input

@@ -2,10 +2,10 @@
 
 [Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)
 governs this engine. `tex-command::CurrentCommand` contains its native packed
-`MeaningWord`; `control_code` projects its dispatch family without storing a
-second decoded meaning. Command identity is derived at its actual diagnostic
+`MeaningWord`; its native `execution_key` supplies the dispatch family without
+storing a second decoded meaning. Command identity is derived at its actual diagnostic
 or observer consumer from that packed word and the existing noexpand flag;
-ordinary delivery stores no redundant identity column. `main_control/direct/dispatch.rs` is the one packed
+ordinary delivery stores no redundant identity column. `main_control/interpreter/dispatch.rs` is the one packed
 mode/command switch, including TeX82 §1030's `reswitch`, §1034's horizontal
 character loop, and §1211's prefix loop. Ordinary, observed, tracked,
 diagnostic, nested math/accent/alignment, PDF, and resource consumers enter
@@ -96,6 +96,26 @@ can contain several native commands; removing cold handoffs changes this
 partition without changing replayed state or output. The resource-equivalence
 test requires real discarded work and exact restart/response counts while
 comparing complete preloaded and partitioned output byte for byte.
+
+## No-op entry and effect boundaries
+
+The reader retains the actual source or stored span across input-preserving
+terminals. Their live meaning lookup, fuel charge and operation count remain
+per token. Tracing and pending-character guards are established at full entry;
+consecutive clean relax terminals use those facts until expansion, input
+transition or full execution interrupts the span.
+
+Every full consumer releases the actual span and invalidates its entry proof
+before semantic mutation. Expansion and source/effect transitions invalidate
+that proof, including parameter substitution and ordinary resident retirement.
+Full relax entry is the actual boundary for effects
+produced by those input paths, pending reports, character flushing or command
+tracing. It checks the live World position and recoverable diagnostic demand,
+returning its continuation directly. No additional invocation flag tracks
+possible effects. A clean resident relax bypasses full entry, and its
+continuation only counts the operation and respects its budget. A detected
+boundary still finishes the selected terminal before returning to the host,
+preserving diagnostic and fuel chronology.
 
 ## Native execution owner
 

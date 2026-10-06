@@ -93,8 +93,15 @@ not allocate a vector merely to publish one already-complete node.
   mutable execution owners only when pending characters require a real flush.
   Fetch-role queries borrow actual host facts directly.
   Retained ordinary groups use the actual disjoint state/execution loans; saved records, aftergroup, tracing, math and recovery interrupt that span.
-  Relax continuation reads the live World effect position and recoverable diagnostic demand
-  without a mutable execution-owner callback.
+  Full relax entry handles effects from input/expansion, reporting, character
+  flush and tracing before returning its continuation. Clean resident relax
+  bypasses that entry and only counts its operation and budget. No additional
+  effect/readiness flag or post-relax diagnostic poll exists. The
+  first full terminal establishes quiet entry facts for the resident suffix. Macro
+  publication performs no entry preparation. Declining resident admission,
+  input transitions and expansion invalidate the proof before full processor
+  access.
+
 - `src/main_control/interpreter/box_inputs.rs`: the one native `scan_box`
   operand selection and actual destinations. Direct register handoffs create
   no temporary construction mark; lastbox removal precedes destination

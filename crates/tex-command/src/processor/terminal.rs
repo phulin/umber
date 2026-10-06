@@ -44,8 +44,7 @@ pub trait NativeWordConsumer<Processor, G, Facts> {
         ControlFlow::Continue(false)
     }
 
-    /// Input transitions, expansion and full terminal delivery end any
-    /// input-preserving continuation admitted by the previous terminal.
+    /// Expansion and input transitions invalidate entry facts.
     fn input_boundary(&mut self) {}
 }
 

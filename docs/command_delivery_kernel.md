@@ -103,6 +103,9 @@ Stored spans borrow the actual state, effects, alignment and host facts once
 alongside the input frame. Their admission callback uses those disjoint loans
 throughout the suffix, without reaching through the full processor per word.
 The loans end before a declined terminal receives full processor access.
+A declined terminal, input transition or expansion invalidates the quiet entry
+proof before full processor access. Consecutive input-preserving terminals reuse
+it within the actual span.
 An admitted span uses one traversal from its current position, including its
 first word. The caller has charged that word; the traversal charges each next
 word after acceptance. There is no separate first-word admission followed by
@@ -153,8 +156,21 @@ character consumer. Unexpanded definition bodies append packed words to the
 existing collector while maintaining brace and parameter state. Control
 sequences still resolve live meanings for outer validity; literal characters
 need no meaning lookup. Expanded delivery resolves each interpreted meaning
-once. A macro supplies only its name, origin, flags, and definition to activation
+once. Its execution key stays local through macro/outer eligibility, expansion
+classification and terminal execution. Expansion classification returns only
+the actual action, rather than an action paired with a second derived key.
+The expandable primitive decoder subtracts the native range base and uses its
+one total operand match; out-of-range keys fail that same match, without a
+separate range test followed by another decoder. A macro supplies only its name, origin, flags, and definition to activation
 and argument scanning; successful ordinary activation constructs no command.
+Full terminal entry establishes quiet entry facts before admitting the resident
+suffix. The suffix uses that invocation-local proof without rereading reporting,
+tracing, character or effect guards. Declining resident execution, expansion
+and input boundaries invalidate the proof before full processor access.
+There is no macro-publication callback, effect flag or input owner.
+Macro activation returns completion or failure, rather than an
+immediately discarded success boolean; actual prefix diagnostics and input
+publication remain authoritative.
 
 Observation enters the same kernel through an outlined call selected before
 the reader invocation records expansion depth. The ordinary consumer inlines

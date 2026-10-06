@@ -517,6 +517,57 @@ fn native_terminal_continuation_preserves_the_actual_operation_budget() {
 }
 
 #[test]
+fn relax_returns_entry_and_expansion_effects_before_the_next_assignment() {
+    // Host-boundary ownership test: TeX82 §§299/389/1030 tracing must be
+    // published after the selected relax, before another terminal mutates
+    // state. Macro tracing can produce the demand between two clean no-ops.
+    for (source, setup_operations, expected_completed) in [
+        (
+            br"\def\m{\relax}\tracingmacros=1 \relax\m\count0=9 \relax%".as_slice(),
+            2,
+            2,
+        ),
+        (br"\tracingcommands=1 \relax\count0=9 \relax%", 1, 1),
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, source);
+            for _ in 0..setup_operations {
+                control.advance(stores).expect("install trace setup");
+            }
+            let mut effects = DiagnosticEffects::new();
+            let mut provider = None;
+            let mut completed = 0;
+            assert!(matches!(
+                control
+                    .interpret_chunk(
+                        stores,
+                        &mut effects,
+                        false,
+                        &mut provider,
+                        16,
+                        &mut completed
+                    )
+                    .expect("entry effect boundary"),
+                MainControlStep::Continue
+            ));
+            assert_eq!(completed, expected_completed, "{source:?}");
+            assert_eq!(
+                admitted!(stores, |context| context.count(0).expect("count register")),
+                0,
+                "the assignment must wait for publication of the preceding effects"
+            );
+            run_to_end(&mut control, stores);
+            assert_eq!(
+                admitted!(stores, |context| context.count(0).expect("count register")),
+                9,
+                "the input following the boundary must remain unread"
+            );
+        });
+    }
+}
+
+#[test]
 fn native_terminals_after_text_refresh_delivery_and_preserve_group_restoration() {
     // TeX82 §§1030/1038/1045 and §§1061/1068: terminal dispatch leaves
     // character lookahead before the next fetch, with text owned by its

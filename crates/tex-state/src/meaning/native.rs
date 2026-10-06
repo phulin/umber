@@ -170,12 +170,7 @@ impl<G> MeaningWord<G> {
     #[must_use]
     #[inline(always)]
     pub const fn expandable_primitive(&self) -> Option<ExpandablePrimitive> {
-        let key = self.execution_key();
-        if key >= EXPANDABLE_CONTROL_BASE && key < UNEXPANDABLE_CONTROL_BASE {
-            ExpandablePrimitive::from_operand(key - EXPANDABLE_CONTROL_BASE)
-        } else {
-            None
-        }
+        ExpandablePrimitive::from_execution_key(self.execution_key())
     }
 
     #[must_use]

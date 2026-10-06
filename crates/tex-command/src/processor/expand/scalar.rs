@@ -270,7 +270,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             origin,
         );
         let (meaning, control_sequence) = self.resolve_token_word(spelling.token_word());
-        let action = classify_native_command(spelling.token_word(), &meaning, meaning.is_macro()).0;
+        let action = classify_native_command(
+            spelling.token_word(),
+            meaning.execution_key(),
+            meaning.is_macro(),
+        );
         if self.is_observed()
             || self.command.delivery_mode.requires_persistent_settlement()
             || matches!(

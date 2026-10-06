@@ -416,6 +416,14 @@ pub enum ExpandablePrimitive {
 }
 
 impl ExpandablePrimitive {
+    /// Decode the native execution key directly. Nonexpandable keys map to
+    /// operands absent from this enum, including keys below the range base.
+    #[must_use]
+    #[inline(always)]
+    pub const fn from_execution_key(key: u64) -> Option<Self> {
+        Self::from_operand(key.wrapping_sub(EXPANDABLE_CONTROL_BASE))
+    }
+
     #[must_use]
     pub const fn operand(self) -> u64 {
         self as u64

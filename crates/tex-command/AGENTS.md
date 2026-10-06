@@ -953,7 +953,7 @@ at the actual print and advance its existing `shown_mode` owner there (TeX82
 §299/§367, with §1370 no-mode during deferred writes). There is no owned prefix
 mailbox, trace-printed flag or tracing preparation before a fetch.
 
-- `src/processor/terminal.rs`: native word consumer contract and concrete full-processor callback typing. Restricted admission borrows actual spelling and meaning; literal admission is a static consumer capability. It retains the existing reader span, while full processor access and input transitions invalidate invocation-local readiness. Full native delivery shares its one scalar selector between expansion classification and terminal consumption; consumers do not reclassify the same terminal meaning. Exceptional delivery derives the selector after its demanded semantic adjustment.
+- `src/processor/terminal.rs`: native word consumer contract and concrete full-processor callback typing. Restricted admission borrows actual spelling and meaning; literal admission is a static consumer capability. It retains actual input spans; full consumers consume their entry proof before semantic mutation, while expansion and source/effect transitions invalidate it at their producers. Pure parameter and resident-retirement transitions retain that invocation-local proof. Full native delivery shares its one scalar selector between expansion classification and terminal consumption; consumers do not reclassify the same terminal meaning. Exceptional delivery derives the selector after its demanded semantic adjustment.
 
 - `src/processor/expand/tests/resident_terminals.rs`: exact native no-op fuel and budget cuts, full-access exclusion within a span, and actual frame retirement interruptions.
 
@@ -967,3 +967,13 @@ Resident admission lends only the actual execution key and payload. Literal gram
 Expanded and exceptional delivery uses MeaningWord::execution_key directly, including unknown keys. The raw-derived control_code getter and scalar character forwarding helper are deleted.
 
 Raw consumption selects get_token/get_next name-creation policy statically. Ifx consumes two raw native meanings in one reader invocation, compares identical words directly and compares distinct macro content through the actual definition owner; ordinary operands construct no CurrentCommand or ResolvedMeaning.
+
+Full terminal entry establishes quiet execution facts before resident admission.
+Accepted suffixes reuse that proof without querying reporting, tracing, character
+or effect guards; macro publication performs no admission work.
+Macro activation returns completion or failure; the discarded activation
+success boolean and mapping adapters remain deleted.
+
+Parameter substitution, ordinary resident retirement, source boundaries
+and expansion invalidate quiet execution facts before full processor access; a declined word retains its
+single resolved meaning through that handoff.

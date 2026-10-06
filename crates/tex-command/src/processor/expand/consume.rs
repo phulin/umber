@@ -194,6 +194,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         None => processor.resolve_token_word(word),
                     };
                     processor.record_consumed_word(kind, word.requires_meaning_lookup());
+                    let code = meaning.execution_key();
                     let macro_parts = meaning.macro_parts();
                     let mode = processor.command.delivery_mode;
                     let native = !OBSERVED
@@ -221,9 +222,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                     let native_action;
                     if native {
-                        let (action, code) =
-                            classify_native_command(word, &meaning, macro_parts.is_some());
-                        native_action = action;
+                        native_action = classify_native_command(word, code, macro_parts.is_some());
                         if matches!(site, ReadSite::Source(_))
                             && let Some(location) = processor.pending_diagnostic_location.take()
                         {
@@ -449,7 +448,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 name,
             );
         })
-        .map(|_| ())
     }
 
     /// Existing commands have already crossed a delivery boundary. Keep their

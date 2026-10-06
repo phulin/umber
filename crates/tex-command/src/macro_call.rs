@@ -97,7 +97,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(crate) fn macro_call(
         &mut self,
         call: &mut crate::CurrentCommand<G>,
-    ) -> Result<bool, CommandError> {
+    ) -> Result<(), CommandError> {
         let mut hot = *call;
         self.macro_call_hot(&mut hot)
     }
@@ -105,7 +105,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(crate) fn macro_call_hot(
         &mut self,
         call: &mut crate::command::CurrentCommand<G>,
-    ) -> Result<bool, CommandError> {
+    ) -> Result<(), CommandError> {
         let Some((flags, definition)) = call.macro_parts() else {
             return Err(CommandError::input_invariant());
         };
@@ -114,7 +114,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .ok_or_else(|| CommandError::input_invariant())?;
         let call_site = call.origin();
         self.macro_call_parts(flags, definition, macro_name, call_site, |processor| {
-            processor.report_macro_prefix_mismatch(call);
+            processor.report_macro_prefix_mismatch(call)
         })
     }
 
@@ -126,7 +126,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         macro_name: tex_state::interner::Symbol,
         call_site: OriginId,
         report_prefix_mismatch: impl FnOnce(&mut Self),
-    ) -> Result<bool, CommandError> {
+    ) -> Result<(), CommandError> {
         let admitted = self
             .state
             .admit_macro_definition(definition)
@@ -183,7 +183,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         elide_empty_replacement: bool,
         body: tex_state::ResidentMacroBody<G>,
         report_prefix_mismatch: impl FnOnce(&mut Self),
-    ) -> Result<bool, CommandError> {
+    ) -> Result<(), CommandError> {
         self.trace_macro_invocation(macro_name, &definition);
         // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
@@ -224,7 +224,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Err(CommandError::MacroPrefixMismatch) => {
                     // §391 reports the mismatch while its input context is live.
                     report_prefix_mismatch(self);
-                    return Ok(false);
+                    return Ok(());
                 }
                 Err(error) => return Err(error),
             }
@@ -243,7 +243,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 self.conserve_input_stack()?;
                 self.command
                     .record_empty_matching_macro_activation(parameter_count);
-                return Ok(true);
+                return Ok(());
             }
             self.conserve_input_stack_for_descendant()?;
             let _level =
@@ -287,7 +287,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     },
                 }),
             );
-            Ok(true)
+            Ok(())
         })();
         // Every Result path settles the one local scan and unfinished owner,
         // including failures conserving depleted parents after a complete match.
@@ -390,7 +390,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         macro_name: tex_state::interner::Symbol,
         call_site: OriginId,
         body: Option<tex_state::ResidentMacroBody<G>>,
-    ) -> Result<bool, CommandError> {
+    ) -> Result<(), CommandError> {
         if let Some(body) = body {
             self.conserve_input_stack_for_descendant()?;
             self.command
@@ -405,7 +405,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 slot.set(counters);
             });
         }
-        Ok(true)
+        Ok(())
     }
 
     fn macro_call_scalar(

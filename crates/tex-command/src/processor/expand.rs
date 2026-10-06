@@ -167,40 +167,32 @@ fn expanded_classifications() -> u64 {
 fn classify_hot_command<G>(command: &CurrentCommand<G>) -> ExpandedCommandAction {
     classify_native_command(
         command.spelling_word(),
-        command.native_meaning(),
+        command.native_meaning().execution_key(),
         command.native_meaning().is_macro(),
     )
-    .0
 }
 
 #[inline(always)]
-fn classify_native_command<G>(
+fn classify_native_command(
     spelling: TokenWord,
-    meaning: &tex_state::meaning::MeaningWord<G>,
+    code: u64,
     is_macro: bool,
-) -> (ExpandedCommandAction, u64) {
+) -> ExpandedCommandAction {
     #[cfg(test)]
     EXPANDED_CLASSIFICATIONS.with(|counter| counter.set(counter.get().saturating_add(1)));
     if is_macro {
-        return (
-            ExpandedCommandAction::Expand(ExpansionDispatch::Macro),
-            meaning.execution_key(),
-        );
+        return ExpandedCommandAction::Expand(ExpansionDispatch::Macro);
     }
-    match meaning.expandable_primitive() {
-        Some(ExpandablePrimitive::EndTemplate) => (ExpandedCommandAction::EndTemplate, 0),
-        Some(ExpandablePrimitive::EndCsName) => {
-            (ExpandedCommandAction::Return, meaning.execution_key())
+    match ExpandablePrimitive::from_execution_key(code) {
+        Some(ExpandablePrimitive::EndTemplate) => ExpandedCommandAction::EndTemplate,
+        Some(ExpandablePrimitive::EndCsName) => ExpandedCommandAction::Return,
+        Some(primitive) => ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)),
+        None if code == Meaning::runtime_word_control_code(Meaning::UNDEFINED_WORD)
+            && spelling.out_parameter_slot().is_none() =>
+        {
+            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
         }
-        Some(primitive) => (
-            ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)),
-            0,
-        ),
-        None if meaning.is_undefined() && spelling.out_parameter_slot().is_none() => (
-            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined),
-            0,
-        ),
-        _ => (ExpandedCommandAction::Return, meaning.execution_key()),
+        _ => ExpandedCommandAction::Return,
     }
 }
 
@@ -680,7 +672,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         match action {
             ExpansionDispatch::Macro => {
                 self.record_macro_expansion();
-                if let Err(failure) = self.macro_call_hot(hot_command).map(|_| ()) {
+                if let Err(failure) = self.macro_call_hot(hot_command) {
                     match failure {
                         CommandError::ParagraphInMacroArgument
                         | CommandError::OuterInMacroArgument => {}
@@ -999,7 +991,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         self.record_write_expansion();
                     }
                 }
-                self.with_expansion_depth(|processor| processor.macro_call_hot(command).map(|_| ()))
+                self.with_expansion_depth(|processor| processor.macro_call_hot(command))
             }
             ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
                 self.expand_undefined_hot(command, report_trace)
