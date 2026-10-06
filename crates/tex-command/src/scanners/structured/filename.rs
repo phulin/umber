@@ -16,9 +16,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut grouped = false;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, _, exceptional| {
-                let character = meaning
-                    .scalar_word()
-                    .and_then(Meaning::runtime_word_character);
+                let character = meaning.character();
                 if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
                     return Ok(std::ops::ControlFlow::Continue(()));
                 }
@@ -36,9 +34,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut quoted = false;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, _, exceptional| {
-                let character = meaning
-                    .scalar_word()
-                    .and_then(Meaning::runtime_word_character);
+                let character = meaning.character();
                 match character {
                     Some((_, Catcode::BeginGroup)) if grouped => {}
                     Some(('"', _)) => quoted = !quoted,

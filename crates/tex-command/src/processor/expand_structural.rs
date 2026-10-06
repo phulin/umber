@@ -95,21 +95,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             while !self.is_observed() && self.consume_csname_run(&mut name)? {}
             self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
                 |processor, spelling, meaning, _code, control_sequence, exceptional| {
-                    if let Some(word) = meaning.scalar_word() {
-                        if word == END_CS_NAME_WORD {
-                            completed = true;
-                            return Ok(std::ops::ControlFlow::Break(()));
+                    if *meaning == tex_state::meaning::MeaningWord::scalar(END_CS_NAME_WORD) {
+                        completed = true;
+                        return Ok(std::ops::ControlFlow::Break(()));
+                    }
+                    if control_sequence.is_none()
+                        && let Some((ch, _)) = meaning.character()
+                    {
+                        name.push(ch);
+                        while !processor.is_observed() && processor.consume_csname_run(&mut name)? {
                         }
-                        if control_sequence.is_none()
-                            && let Some((ch, _)) = Meaning::runtime_word_character(word)
-                        {
-                            name.push(ch);
-                            while !processor.is_observed()
-                                && processor.consume_csname_run(&mut name)?
-                            {
-                            }
-                            return Ok(std::ops::ControlFlow::Continue(()));
-                        }
+                        return Ok(std::ops::ControlFlow::Continue(()));
                     }
                     let site = processor.capture_consumed_site(
                         spelling,

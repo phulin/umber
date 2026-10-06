@@ -76,7 +76,7 @@ impl IntegerOperand {
         if self.radix == 0 && self.provenance == OriginId::UNKNOWN {
             self.provenance = spelling.origin();
         }
-        let character = native_character(meaning);
+        let character = meaning.character();
         match self.accept(character, spelling.origin()) {
             ControlFlow::Break(()) => return Ok(ControlFlow::Break(())),
             ControlFlow::Continue(true) => {
@@ -144,9 +144,13 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
         _entered_line: u32,
         _macro_origin: Option<tex_state::token::OriginId>,
         spelling: TracedTokenWord,
-        meaning: &tex_state::meaning::MeaningWord<G>,
+        code: u64,
+        operand: u64,
     ) -> ControlFlow<(), bool> {
-        self.accept(native_character(meaning), spelling.origin())
+        self.accept(
+            tex_state::meaning::MeaningWord::<G>::character_from_parts(code, operand),
+            spelling.origin(),
+        )
     }
 
     #[inline(always)]
@@ -218,15 +222,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             InternalScan::Value(_) => {
                 unreachable!("TeX82 §429 lowers an int_val request to an integer")
             }
-            InternalScan::NotInternal => match scalar_meaning(meaning.resolve()) {
+            InternalScan::NotInternal => match meaning.character() {
                 // TeX's `\` character-code form consumes its following token
                 // through raw delivery: that token supplies a character code,
                 // rather than participating in ordinary expansion.  The
                 // optional following space remains an expanded scanner token.
-                Meaning::CharToken {
-                    ch: '`',
-                    cat: Catcode::Other,
-                } => {
+                Some(('`', Catcode::Other)) => {
                     let (value, optional_space) = self.scan_character_code()?;
                     if optional_space && let Err(error) = self.scan_optional_space() {
                         return Err(error);
@@ -273,7 +274,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut scanned = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, control_sequence, exceptional| {
-                match native_character(meaning) {
+                match meaning.character() {
                     Some((' ' | '+', _)) => {}
                     Some(('-', _)) => negative = !negative,
                     _ => {
@@ -343,10 +344,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // `scan_int` or §448's own `radix:=10; cur_val:=0` owns the
             // numeric part, and the unit scan always follows.
             InternalScan::NotInternal => {
-                let leading_point = is_point_character(native_character(meaning));
+                let leading_point = is_point_character(meaning.character());
                 self.back_consumed_word(spelling, exceptional)?;
                 if leading_point {
-                    self.consume_raw_words::<false, _>(&mut |_, _, _, _| {
+                    self.consume_raw_words::<true, false, _>(&mut |_, _, _, _| {
                         Ok(std::ops::ControlFlow::Break(()))
                     })?;
                     self.scan_dimension_units(0, true, negative, allow_infinite, mu)
@@ -370,7 +371,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut scanned = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, control_sequence, exceptional| {
-                match native_character(meaning) {
+                match meaning.character() {
                     Some((' ' | '+', _)) => {}
                     Some(('-', _)) => negative = !negative,
                     _ => {

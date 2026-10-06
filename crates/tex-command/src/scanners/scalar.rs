@@ -395,7 +395,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let integer = self.scan_integer()?;
         let decimal = is_point_character(self.integer_terminator_character);
         if decimal {
-            self.consume_raw_words::<false, _>(&mut |_, _, _, _| {
+            self.consume_raw_words::<true, false, _>(&mut |_, _, _, _| {
                 Ok(std::ops::ControlFlow::Break(()))
             })?;
         }
@@ -735,7 +735,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     }
 
     fn scan_character_code(&mut self) -> Result<(i32, bool), CommandError> {
-        self.consume_raw_words::<false, _>(&mut |processor, spelling, _, exceptional| {
+        self.consume_raw_words::<true, false, _>(&mut |processor, spelling, _, exceptional| {
             let token = spelling.semantic_token();
             // §442 cancels raw brace accounting before interpreting cur_tok
             // as a character code. Active characters use their spelling too.
@@ -793,7 +793,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         if decimal {
             self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
                 |processor, spelling, meaning, _code, _control_sequence, exceptional| {
-                    match native_character(meaning) {
+                    match meaning.character() {
                         Some((ch, Catcode::Other)) if ch.is_ascii_digit() => {
                             if fraction_len < fraction.len() {
                                 fraction[fraction_len] = ch as u8 - b'0';
@@ -806,7 +806,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         // unit scan with `i` still unread rather than with a
                         // backed-up space in front of it.
                         _ => {
-                            if !matches!(native_character(meaning), Some((_, Catcode::Space))) {
+                            if !matches!(meaning.character(), Some((_, Catcode::Space))) {
                                 processor.back_consumed_word(spelling, exceptional)?;
                             }
                             return Ok(std::ops::ControlFlow::Break(()));
@@ -829,7 +829,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let mut matched = false;
             self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
                 |_, _, meaning, _code, _, _| {
-                    matched = matches!(native_character(meaning), Some(('f', _)));
+                    matched = matches!(meaning.character(), Some(('f', _)));
                     Ok(std::ops::ControlFlow::Break(()))
                 },
             ))?;
@@ -1049,7 +1049,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut unit = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, control_sequence, exceptional| {
-                if matches!(native_character(meaning), Some((_, Catcode::Space))) {
+                if matches!(meaning.character(), Some((_, Catcode::Space))) {
                     return Ok(std::ops::ControlFlow::Continue(()));
                 }
                 // §455 probes at the requested numeric level. Only a range miss
@@ -1098,7 +1098,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn scan_optional_space(&mut self) -> Result<(), CommandError> {
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, _, exceptional| {
-                if !matches!(native_character(meaning), Some((_, Catcode::Space))) {
+                if !matches!(meaning.character(), Some((_, Catcode::Space))) {
                     processor.back_consumed_word(spelling, exceptional)?;
                 }
                 Ok(std::ops::ControlFlow::Break(()))
@@ -1126,7 +1126,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let mut matched = false;
             self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
                 |_, _, meaning, _code, _, _| {
-                    matched = native_character(meaning)
+                    matched = meaning
+                        .character()
                         .is_some_and(|(ch, _)| ch.eq_ignore_ascii_case(&expected));
                     Ok(std::ops::ControlFlow::Break(()))
                 },
@@ -1463,6 +1464,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         level: InternalLevel,
         negative: bool,
     ) -> Result<InternalScan, CommandError> {
+        let classified = scalar_meaning(meaning.resolve());
         // §416 is titled "Fetch a token list or font identifier, provided that
         // |level=tok_val|", and its `level<>tok_val` test runs BEFORE any
         // operand is scanned: the whole branch is `back_error;
@@ -1470,9 +1472,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // would run §415's own `scan_eight_bit_int`, §577's
         // `scan_four_bit_int`, and §415's `back_input; scan_font_ident` on a
         // path tex.web never reaches, consuming tokens TeX leaves in place.
-        if level != InternalLevel::Tokens
-            && is_token_list_or_font_identifier(scalar_meaning(meaning.resolve()))
-        {
+        if level != InternalLevel::Tokens && is_token_list_or_font_identifier(classified) {
             return self.missing_number_internal_result(
                 spelling,
                 meaning,
@@ -1481,7 +1481,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 level,
             );
         }
-        let Some(value) = self.fetch_internal_value(spelling, meaning, exceptional)? else {
+        let Some(value) = self.fetch_internal_value(spelling, classified, exceptional)? else {
             return Ok(InternalScan::NotInternal);
         };
         let Some(value) = self.coerce_internal_value(value, level)? else {
@@ -1506,7 +1506,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // the requesting `scan_int`/`scan_dimen`/`scan_glue` publishes the
         // outer typed result.
         if !matches!(
-            scalar_meaning(meaning.resolve()),
+            classified,
             Meaning::UnexpandablePrimitive(
                 UnexpandablePrimitive::NumExpr
                     | UnexpandablePrimitive::DimExpr
@@ -1552,10 +1552,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     fn fetch_internal_value(
         &mut self,
         spelling: TracedTokenWord,
-        meaning: &tex_state::meaning::MeaningWord<G>,
+        meaning: Meaning,
         exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<Option<InternalValue>, CommandError> {
-        let value = match scalar_meaning(meaning.resolve()) {
+        let value = match meaning {
             // TeX82 `scan_something_internal` owns a register primitive's
             // restricted (`scan_eight_bit_int`) index scan. e-TeX 2.6
             // [26.415], [26.420], and [26.427] replace it with
@@ -2252,8 +2252,3 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
 #[cfg(test)]
 mod tests;
-
-#[inline(always)]
-fn native_character<G>(meaning: &tex_state::meaning::MeaningWord<G>) -> Option<(char, Catcode)> {
-    meaning.character()
-}

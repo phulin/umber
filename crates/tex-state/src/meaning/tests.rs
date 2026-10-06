@@ -140,24 +140,52 @@ fn native_dispatch_preserves_scalar_domain_and_semantic_classification() {
                 assert!(!native.is_font());
                 assert_eq!(native.is_relax(), opcode == super::OP_RELAX);
                 assert_eq!(native.is_undefined(), opcode == super::OP_UNDEFINED);
-                assert_eq!(
-                    native.control_code(),
-                    Meaning::runtime_word_control_code(scalar)
-                );
+                assert!(native.execution_key() <= u16::MAX as u64);
                 assert_eq!(native.is_outer(), scalar == Meaning::END_TEMPLATE_WORD);
+                // Noexpand freezes undefined and expandable control meanings,
+                // including unknown primitive ids, while preserving endcsname.
+                assert_eq!(
+                    native.suppressed_by_noexpand(),
+                    opcode == super::OP_UNDEFINED
+                        || (opcode == super::OP_EXPANDABLE_PRIMITIVE
+                            && ExpandablePrimitive::from_operand(operand)
+                                != Some(ExpandablePrimitive::EndCsName))
+                );
                 let primitive = if opcode == super::OP_EXPANDABLE_PRIMITIVE {
                     ExpandablePrimitive::from_operand(operand)
                 } else {
                     None
                 };
                 assert_eq!(native.expandable_primitive(), primitive);
+                if let Some(primitive) = primitive {
+                    assert_eq!(
+                        native.execution_key(),
+                        Meaning::runtime_word_control_code(
+                            Meaning::ExpandablePrimitive(primitive).encode()
+                        )
+                    );
+                }
                 let primitive = if opcode == super::OP_UNEXPANDABLE_PRIMITIVE {
                     UnexpandablePrimitive::from_operand(operand)
                 } else {
                     None
                 };
                 assert_eq!(native.unexpandable_primitive(), primitive);
+                if let Some(primitive) = primitive {
+                    assert_eq!(
+                        native.execution_key(),
+                        Meaning::runtime_word_control_code(
+                            Meaning::UnexpandablePrimitive(primitive).encode()
+                        )
+                    );
+                }
                 assert_eq!(native.character(), Meaning::runtime_word_character(scalar));
+                if let Some((ch, cat)) = native.character() {
+                    assert_eq!(
+                        native.execution_key(),
+                        Meaning::runtime_word_control_code(Meaning::CharToken { ch, cat }.encode())
+                    );
+                }
             }
         }
     }
@@ -178,6 +206,7 @@ fn macro_meanings_carry_only_generation_typed_definition_ids() {
             | MeaningFlags::FROZEN;
         let word = MeaningWord::macro_definition(flags, definition);
         assert_eq!(word.resolve(), ResolvedMeaning::Macro { flags, definition });
+        assert!(word.suppressed_by_noexpand());
     });
 }
 

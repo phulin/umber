@@ -13,15 +13,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// TeX82 §365's raw token operand, without a command product. Observation
     /// and recovery retain their demanded record inside the canonical reader.
     pub fn get_token_spelling(&mut self) -> Result<Option<TracedTokenWord>, CommandError> {
-        self.consume_raw_words::<false, _>(&mut |_, spelling, _, _| {
+        self.consume_raw_words::<true, false, _>(&mut |_, spelling, _, _| {
             Ok(ControlFlow::Break(spelling))
         })
     }
 
-    /// Runs the actual raw operand consumer in the canonical reader. Meaning
+    /// Runs raw consumption with get_token/get_next name-creation policy. Meaning
     /// is resolved only when requested or needed for outer validity. A command
     /// is borrowed only at an observation, alignment or recovery boundary.
-    pub(crate) fn consume_raw_words<const MEANING: bool, R>(
+    pub(crate) fn consume_raw_words<const CREATE_CS: bool, const MEANING: bool, R>(
         &mut self,
         consume: &mut impl FnMut(
             &mut Self,
@@ -31,17 +31,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         ) -> Result<ControlFlow<R>, CommandError>,
     ) -> Result<Option<R>, CommandError> {
         debug_assert!(!self.create_source_control_sequences);
-        self.create_source_control_sequences = true;
+        self.create_source_control_sequences = CREATE_CS;
         let result = if self.is_observed() {
-            self.consume_raw_words_in::<true, MEANING, R>(consume)
+            self.consume_raw_words_in::<true, CREATE_CS, MEANING, R>(consume)
         } else {
-            self.consume_raw_words_in::<false, MEANING, R>(consume)
+            self.consume_raw_words_in::<false, CREATE_CS, MEANING, R>(consume)
         };
         self.create_source_control_sequences = false;
         result
     }
 
-    fn consume_raw_words_in<const OBSERVED: bool, const MEANING: bool, R>(
+    fn consume_raw_words_in<const OBSERVED: bool, const CREATE_CS: bool, const MEANING: bool, R>(
         &mut self,
         consume: &mut impl FnMut(
             &mut Self,
@@ -50,9 +50,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             Option<&CurrentCommand<G>>,
         ) -> Result<ControlFlow<R>, CommandError>,
     ) -> Result<Option<R>, CommandError> {
-        self.create_source_control_sequences = true;
+        self.create_source_control_sequences = CREATE_CS;
         self.consume_input::<_, _, _>(
-            true,
+            CREATE_CS,
             &mut (),
             false,
             false,
@@ -118,7 +118,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         Some(command.native_meaning()),
                         Some(&command),
                     )?;
-                    processor.create_source_control_sequences = result.is_continue();
+                    processor.create_source_control_sequences = CREATE_CS && result.is_continue();
                     return Ok(result.map_break(Some));
                 }
                 if matches!(site, ReadSite::Source(_))
@@ -147,7 +147,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     meaning.as_ref().map(|(meaning, _)| meaning),
                     None,
                 )?;
-                processor.create_source_control_sequences = result.is_continue();
+                processor.create_source_control_sequences = CREATE_CS && result.is_continue();
                 Ok(result.map_break(Some))
             },
             |status| match status {

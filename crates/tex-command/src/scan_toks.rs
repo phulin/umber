@@ -1091,11 +1091,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut opening = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, _, exceptional| {
-                let character = meaning
-                    .scalar_word()
-                    .and_then(Meaning::runtime_word_character);
+                let character = meaning.character();
                 if matches!(character, Some((_, Catcode::Space)))
-                    || meaning.scalar_word() == Some(Meaning::RELAX_WORD)
+                    || *meaning == tex_state::meaning::MeaningWord::scalar(Meaning::RELAX_WORD)
                 {
                     return Ok(std::ops::ControlFlow::Continue(()));
                 }

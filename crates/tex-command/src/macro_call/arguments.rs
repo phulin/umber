@@ -12,7 +12,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.back_consumed_word(word, command)?;
         self.insert_macro_argument_recovery_par()?;
         self.report_extra_right_brace_argument();
-        self.consume_raw_words::<false, _>(&mut |processor, par, _, command| {
+        self.consume_raw_words::<true, false, _>(&mut |processor, par, _, command| {
             processor
                 .back_consumed_word(par, command)
                 .map(|()| std::ops::ControlFlow::Break(()))
@@ -42,7 +42,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
             }
             let appended = self
-                .consume_raw_words::<false, _>(&mut |processor, word, _, command| {
+                .consume_raw_words::<true, false, _>(&mut |processor, word, _, command| {
                     if command.is_some_and(CurrentCommand::is_outer_recovery_space) {
                         // §23's returned spacer is not linked into the argument.
                         return Ok(std::ops::ControlFlow::Break(false));
@@ -137,7 +137,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
             }
             let completed = self
-                .consume_raw_words::<false, _>(&mut |processor, word, _, command| {
+                .consume_raw_words::<true, false, _>(&mut |processor, word, _, command| {
                     if command.is_some_and(CurrentCommand::is_outer_recovery_space) {
                         return Ok(std::ops::ControlFlow::Break(false));
                     }

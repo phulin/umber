@@ -422,7 +422,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let expected = body
                 .parameter_word(index)
                 .ok_or_else(CommandError::input_invariant)?;
-            let matched = self.consume_raw_words::<false, _>(&mut |_, word, _, _| {
+            let matched = self.consume_raw_words::<true, false, _>(&mut |_, word, _, _| {
                 Ok(std::ops::ControlFlow::Break(word.token_word() == expected))
             })?;
             if matched != Some(true) {

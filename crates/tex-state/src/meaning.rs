@@ -33,21 +33,9 @@ const OP_CHAR_TOKEN: u8 = 20;
 const OP_INTERNAL_INTEGER: u8 = 21;
 const OP_END_V: u8 = 22;
 
-/// Direct command class carried by a validated packed static meaning.
-///
-/// This is intentionally coarser than [`Meaning`]: the hot command loop needs
-/// only TeX's command-class branch, while scanners and execution materialize
-/// the full semantic value at their boundary.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum StaticCommandClass {
-    Undefined,
-    Relax,
-    Character,
-    Expandable,
-    EndV,
-    Unexpandable,
-    Value,
-}
+const CHAR_CONTROL_BASE: u64 = u8::MAX as u64 + 1;
+const EXPANDABLE_CONTROL_BASE: u64 = CHAR_CONTROL_BASE + 16;
+const UNEXPANDABLE_CONTROL_BASE: u64 = EXPANDABLE_CONTROL_BASE + u8::MAX as u64 + 1;
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1126,22 +1114,6 @@ impl RawMeaning {
 }
 
 impl Meaning {
-    /// Classifies a validated runtime word without decoding a [`Meaning`].
-    #[doc(hidden)]
-    #[must_use]
-    #[inline]
-    pub const fn runtime_word_class(word: u64) -> StaticCommandClass {
-        match (word >> OPCODE_SHIFT) as u8 {
-            OP_UNDEFINED => StaticCommandClass::Undefined,
-            OP_RELAX => StaticCommandClass::Relax,
-            OP_CHAR_GIVEN | OP_CHAR_TOKEN => StaticCommandClass::Character,
-            OP_EXPANDABLE_PRIMITIVE => StaticCommandClass::Expandable,
-            OP_END_V => StaticCommandClass::EndV,
-            OP_UNEXPANDABLE_PRIMITIVE => StaticCommandClass::Unexpandable,
-            _ => StaticCommandClass::Value,
-        }
-    }
-
     /// Small TeX main-control family/selector key, without decoding values.
     /// Primitive selectors and literal catcodes distinguish control cases;
     /// register indices, character values, and other scanned operands do not.
@@ -1150,26 +1122,14 @@ impl Meaning {
     #[inline]
     pub const fn runtime_word_control_code(word: u64) -> u64 {
         let opcode = (word >> OPCODE_SHIFT) as u8;
-        // Disjoint native selector ranges let main control use an indexed
-        // switch instead of comparing sparse bit-56 opcode keys. The stored
-        // word and its complete operand/capability remain unchanged.
-        const CHAR_BASE: u64 = u8::MAX as u64 + 1;
-        const EXPANDABLE_BASE: u64 = CHAR_BASE + 16;
-        const UNEXPANDABLE_BASE: u64 = EXPANDABLE_BASE + u8::MAX as u64 + 1;
+        // Publication and compile-time opcode constants share the native
+        // selector vocabulary. Live interpretation reads the stored key.
         match opcode {
-            OP_EXPANDABLE_PRIMITIVE => EXPANDABLE_BASE + (word & OPERAND_MASK),
-            OP_UNEXPANDABLE_PRIMITIVE => UNEXPANDABLE_BASE + (word & OPERAND_MASK),
-            OP_CHAR_TOKEN => CHAR_BASE + (word & 15),
+            OP_EXPANDABLE_PRIMITIVE => EXPANDABLE_CONTROL_BASE + (word & OPERAND_MASK),
+            OP_UNEXPANDABLE_PRIMITIVE => UNEXPANDABLE_CONTROL_BASE + (word & OPERAND_MASK),
+            OP_CHAR_TOKEN => CHAR_CONTROL_BASE + (word & 15),
             _ => opcode as u64,
         }
-    }
-
-    /// Returns the operand of a validated runtime word without semantic decode.
-    #[doc(hidden)]
-    #[must_use]
-    #[inline]
-    pub const fn runtime_word_operand(word: u64) -> u64 {
-        word & OPERAND_MASK
     }
 
     /// Projects a character command without decoding an unrelated meaning.
@@ -1184,7 +1144,7 @@ impl Meaning {
         let operand = word & OPERAND_MASK;
         match (
             char::from_u32((operand >> 4) as u32),
-            catcode_from_raw((operand & 15) as u8),
+            Catcode::from_raw((operand & 15) as u8),
         ) {
             (Some(ch), Some(cat)) => Some((ch, cat)),
             _ => None,
@@ -1288,69 +1248,9 @@ impl Meaning {
     #[must_use]
     #[inline]
     pub(crate) const fn decode_stored(word: u64) -> Self {
-        let op = (word >> OPCODE_SHIFT) as u8;
-        let flags = MeaningFlags::from_bits((word >> FLAGS_SHIFT) as u8);
-        let operand = word & OPERAND_MASK;
-
-        match op {
-            OP_UNDEFINED => Self::Undefined,
-            OP_RELAX => Self::Relax,
-            // Runtime definition coordinates are never decoded from an
-            // unvalidated integer. Cold formats materialize a fresh
-            // generation-local id before constructing a native macro meaning.
-            OP_MACRO => Self::Unknown(RawMeaning { op, flags, operand }),
-            OP_CHAR_GIVEN => match char::from_u32(operand as u32) {
-                Some(ch) => Self::CharGiven(ch),
-                None => Self::Unknown(RawMeaning { op, flags, operand }),
-            },
-            OP_CHAR_TOKEN => {
-                let ch = char::from_u32((operand >> 4) as u32);
-                let cat = catcode_from_raw((operand & 0xF) as u8);
-                match (ch, cat) {
-                    (Some(ch), Some(cat)) => Self::CharToken { ch, cat },
-                    _ => Self::Unknown(RawMeaning { op, flags, operand }),
-                }
-            }
-            OP_MATH_CHAR_GIVEN if operand <= u16::MAX as u64 => Self::MathCharGiven(operand as u16),
-            OP_COUNT_REGISTER if operand <= u16::MAX as u64 => Self::CountRegister(operand as u16),
-            OP_DIMEN_REGISTER if operand <= u16::MAX as u64 => Self::DimenRegister(operand as u16),
-            OP_SKIP_REGISTER if operand <= u16::MAX as u64 => Self::SkipRegister(operand as u16),
-            OP_MUSKIP_REGISTER if operand <= u16::MAX as u64 => {
-                Self::MuskipRegister(operand as u16)
-            }
-            OP_TOKS_REGISTER if operand <= u16::MAX as u64 => Self::ToksRegister(operand as u16),
-            OP_INT_PARAM if operand <= u16::MAX as u64 => Self::IntParam(operand as u16),
-            OP_DIMEN_PARAM if operand <= u16::MAX as u64 => Self::DimenParam(operand as u16),
-            OP_GLUE_PARAM if operand <= u16::MAX as u64 => Self::GlueParam(operand as u16),
-            OP_MU_GLUE_PARAM if operand <= u16::MAX as u64 => Self::MuGlueParam(operand as u16),
-            OP_TOK_PARAM if operand <= u16::MAX as u64 => Self::TokParam(operand as u16),
-            OP_PAGE_DIMENSION if operand <= u8::MAX as u64 => {
-                match PageDimension::from_index(operand as u8) {
-                    Some(dimension) => Self::PageDimension(dimension),
-                    None => Self::Unknown(RawMeaning { op, flags, operand }),
-                }
-            }
-            OP_PAGE_INTEGER if operand <= u8::MAX as u64 => {
-                match PageInteger::from_index(operand as u8) {
-                    Some(integer) => Self::PageInteger(integer),
-                    None => Self::Unknown(RawMeaning { op, flags, operand }),
-                }
-            }
-            OP_INTERNAL_INTEGER => match InternalInteger::from_operand(operand) {
-                Some(integer) => Self::InternalInteger(integer),
-                None => Self::Unknown(RawMeaning { op, flags, operand }),
-            },
-            OP_FONT if operand <= u32::MAX as u64 => Self::Font(FontId::new(operand as u32)),
-            OP_EXPANDABLE_PRIMITIVE => match ExpandablePrimitive::from_operand(operand) {
-                Some(primitive) => Self::ExpandablePrimitive(primitive),
-                None => Self::Unknown(RawMeaning { op, flags, operand }),
-            },
-            OP_END_V if operand == 0 => Self::EndV,
-            OP_UNEXPANDABLE_PRIMITIVE => match UnexpandablePrimitive::from_operand(operand) {
-                Some(primitive) => Self::UnexpandablePrimitive(primitive),
-                None => Self::Unknown(RawMeaning { op, flags, operand }),
-            },
-            _ => Self::Unknown(RawMeaning { op, flags, operand }),
+        match MeaningWord::<()>::scalar(word).static_meaning() {
+            Some(meaning) => meaning,
+            None => panic!("raw words cannot contain native macro coordinates"),
         }
     }
 
@@ -1366,28 +1266,6 @@ impl Meaning {
 const fn pack(op: u8, flags: MeaningFlags, operand: u64) -> u64 {
     assert!(operand <= OPERAND_MASK, "meaning operand exceeds 48 bits");
     ((op as u64) << OPCODE_SHIFT) | ((flags.bits() as u64) << FLAGS_SHIFT) | operand
-}
-
-const fn catcode_from_raw(raw: u8) -> Option<Catcode> {
-    match raw {
-        0 => Some(Catcode::Escape),
-        1 => Some(Catcode::BeginGroup),
-        2 => Some(Catcode::EndGroup),
-        3 => Some(Catcode::MathShift),
-        4 => Some(Catcode::AlignmentTab),
-        5 => Some(Catcode::EndLine),
-        6 => Some(Catcode::Parameter),
-        7 => Some(Catcode::Superscript),
-        8 => Some(Catcode::Subscript),
-        9 => Some(Catcode::Ignored),
-        10 => Some(Catcode::Space),
-        11 => Some(Catcode::Letter),
-        12 => Some(Catcode::Other),
-        13 => Some(Catcode::Active),
-        14 => Some(Catcode::Comment),
-        15 => Some(Catcode::Invalid),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

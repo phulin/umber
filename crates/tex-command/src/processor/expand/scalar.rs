@@ -39,7 +39,8 @@ where
         entered_line: u32,
         macro_origin: Option<tex_state::token::OriginId>,
         spelling: TracedTokenWord,
-        meaning: &MeaningWord<G>,
+        code: u64,
+        operand: u64,
     ) -> ControlFlow<(), bool> {
         self.consume.resident_terminal(
             context,
@@ -49,7 +50,8 @@ where
             entered_line,
             macro_origin,
             spelling,
-            meaning,
+            code,
+            operand,
         )
     }
 
@@ -97,7 +99,7 @@ where
             processor,
             command.spelling(),
             command.native_meaning(),
-            command.native_meaning().control_code(),
+            command.native_meaning().execution_key(),
             command.control_sequence(),
             Some(command),
         )

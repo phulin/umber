@@ -65,10 +65,10 @@ impl<'state, 'host, G, const LOOKAHEAD: bool>
         entered_line: u32,
         macro_origin: Option<tex_state::token::OriginId>,
         spelling: TracedTokenWord,
-        meaning: &tex_state::meaning::MeaningWord<G>,
+        code: u64,
+        operand: u64,
     ) -> ControlFlow<(), bool> {
         if LOOKAHEAD {
-            let code = meaning.control_code();
             if !matches!(
                 code,
                 codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN
@@ -76,15 +76,7 @@ impl<'state, 'host, G, const LOOKAHEAD: bool>
                 self.resident_clean = false;
                 return ControlFlow::Continue(false);
             }
-            let word = meaning.scalar_word().expect("selected scalar character");
-            let ch = if code == codes::CHAR_GIVEN {
-                char::from_u32(Meaning::runtime_word_operand(word) as u32)
-                    .expect("admitted character definition")
-            } else {
-                Meaning::runtime_word_character(word)
-                    .expect("admitted literal character")
-                    .0
-            };
+            let ch = char::from_u32(operand as u32).expect("admitted native character");
             if let Err(error) = characters::append_native_character(
                 context,
                 effects,
@@ -108,26 +100,9 @@ impl<'state, 'host, G, const LOOKAHEAD: bool>
                 ControlFlow::Break(())
             };
         }
-        if !meaning.is_relax() {
-            const BEGIN: u64 =
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginGroup).encode();
-            const END: u64 =
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup).encode();
-            let group = match meaning.scalar_word() {
-                Some(BEGIN) => Some((GroupKind::SemiSimple, true)),
-                Some(END) => Some((GroupKind::SemiSimple, false)),
-                _ => match meaning.character() {
-                    Some((_, Catcode::BeginGroup)) => Some((GroupKind::Simple, true)),
-                    Some((_, Catcode::EndGroup)) => Some((GroupKind::Simple, false)),
-                    _ => None,
-                },
-            };
-            if !group.is_some_and(|(kind, opening)| {
-                resident_group(context, execution, entered_line, kind, opening)
-            }) {
-                self.resident_clean = false;
-                return ControlFlow::Continue(false);
-            }
+        if code != codes::RELAX && !resident_group(context, execution, entered_line, code) {
+            self.resident_clean = false;
+            return ControlFlow::Continue(false);
         }
         self.completed += 1;
         if self.completed == self.remaining_operations {
@@ -263,9 +238,15 @@ fn resident_group<G>(
     context: &mut tex_state::CommandContext<'_, G>,
     execution: &mut ExecutionState<G>,
     entered_line: u32,
-    kind: GroupKind,
-    opening: bool,
+    code: u64,
 ) -> bool {
+    let (kind, opening) = match code {
+        codes::PRIMITIVE_BEGIN_GROUP => (GroupKind::SemiSimple, true),
+        codes::PRIMITIVE_END_GROUP => (GroupKind::SemiSimple, false),
+        codes::CHAR_BEGIN_GROUP => (GroupKind::Simple, true),
+        codes::CHAR_END_GROUP => (GroupKind::Simple, false),
+        _ => return false,
+    };
     if opening
         && kind == GroupKind::Simple
         && (matches!(

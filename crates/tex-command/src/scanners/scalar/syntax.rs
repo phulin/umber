@@ -53,9 +53,12 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
         _entered_line: u32,
         _macro_origin: Option<tex_state::token::OriginId>,
         _spelling: TracedTokenWord,
-        meaning: &MeaningWord<G>,
+        code: u64,
+        operand: u64,
     ) -> ControlFlow<(), bool> {
-        self.accept(native_character(meaning))
+        self.accept(tex_state::meaning::MeaningWord::<G>::character_from_parts(
+            code, operand,
+        ))
     }
 
     #[inline(always)]
@@ -68,7 +71,7 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
         _control_sequence: Option<Symbol>,
         exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<ControlFlow<()>, CommandError> {
-        match self.accept(native_character(meaning)) {
+        match self.accept(meaning.character()) {
             ControlFlow::Continue(true) => Ok(ControlFlow::Continue(())),
             ControlFlow::Break(()) => Ok(ControlFlow::Break(())),
             ControlFlow::Continue(false) => {
@@ -133,11 +136,12 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
         _entered_line: u32,
         _macro_origin: Option<tex_state::token::OriginId>,
         spelling: TracedTokenWord,
-        meaning: &MeaningWord<G>,
+        code: u64,
+        operand: u64,
     ) -> ControlFlow<(), bool> {
         self.accept(
             spelling,
-            native_character(meaning),
+            tex_state::meaning::MeaningWord::<G>::character_from_parts(code, operand),
             spelling.token_word().control_sequence(),
         )
     }
@@ -152,7 +156,7 @@ impl<'state, 'host, G, Facts: crate::CommandHostFacts<G>>
         control_sequence: Option<Symbol>,
         exceptional: Option<&CurrentCommand<G>>,
     ) -> Result<ControlFlow<()>, CommandError> {
-        match self.accept(spelling, native_character(meaning), control_sequence) {
+        match self.accept(spelling, meaning.character(), control_sequence) {
             ControlFlow::Continue(true) => Ok(ControlFlow::Continue(())),
             ControlFlow::Break(()) => Ok(ControlFlow::Break(())),
             ControlFlow::Continue(false) => {

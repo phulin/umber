@@ -4,7 +4,7 @@
 //! never a retained current command or an input cursor.
 
 use tex_state::ids::FontId;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::UnexpandablePrimitive;
 
 use crate::scanners::MathFamilySize;
 use crate::{CommandError, CommandProcessor};
@@ -29,22 +29,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     font = Some(font_id);
                     return Ok(std::ops::ControlFlow::Break(()));
                 }
-                let meaning = meaning
-                    .scalar_word()
-                    .map_or(Meaning::Undefined, Meaning::from_runtime_word);
-                font = Some(match meaning {
-                    Meaning::CharToken {
-                        cat: tex_state::token::Catcode::Space,
-                        ..
-                    } => {
-                        return Ok(std::ops::ControlFlow::Continue(()));
-                    }
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
-                        processor.state.current_font()
-                    }
-                    Meaning::UnexpandablePrimitive(primitive)
-                        if MathFamilySize::of_primitive(primitive).is_some() =>
-                    {
+                if meaning
+                    .character()
+                    .is_some_and(|(_, cat)| cat == tex_state::token::Catcode::Space)
+                {
+                    return Ok(std::ops::ControlFlow::Continue(()));
+                }
+                font = Some(match meaning.unexpandable_primitive() {
+                    Some(UnexpandablePrimitive::Font) => processor.state.current_font(),
+                    Some(primitive) if MathFamilySize::of_primitive(primitive).is_some() => {
                         let size = MathFamilySize::of_primitive(primitive)
                             .expect("guard proves def_family");
                         let family = processor

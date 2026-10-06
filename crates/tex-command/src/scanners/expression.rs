@@ -304,9 +304,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let probe =
                         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
                             |processor, spelling, meaning, _code, _, exceptional| {
-                                let character = meaning
-                                    .scalar_word()
-                                    .and_then(Meaning::runtime_word_character);
+                                let character = meaning.character();
                                 if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
                                     return Ok(std::ops::ControlFlow::Continue(()));
                                 }
@@ -437,9 +435,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut operator = ExpressionOperator::None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, _, exceptional| {
-                let character = meaning
-                    .scalar_word()
-                    .and_then(Meaning::runtime_word_character);
+                let character = meaning.character();
                 if character.is_some_and(|(_, cat)| cat == Catcode::Space) {
                     return Ok(std::ops::ControlFlow::Continue(()));
                 }
@@ -456,7 +452,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             processor.back_consumed_word(spelling, exceptional)?;
                             processor.missing_expression_parenthesis_error()?;
                         }
-                    } else if meaning.scalar_word() != Some(Meaning::RELAX_WORD) {
+                    } else if *meaning
+                        != tex_state::meaning::MeaningWord::scalar(Meaning::RELAX_WORD)
+                    {
                         processor.back_consumed_word(spelling, exceptional)?;
                     }
                 }

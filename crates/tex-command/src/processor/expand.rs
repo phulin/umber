@@ -58,7 +58,8 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G, Facts> {
         _entered_line: u32,
         _macro_origin: Option<tex_state::token::OriginId>,
         _spelling: TracedTokenWord,
-        _meaning: &tex_state::meaning::MeaningWord<G>,
+        _code: u64,
+        _operand: u64,
     ) -> std::ops::ControlFlow<(), bool> {
         std::ops::ControlFlow::Continue(false)
     }
@@ -185,13 +186,13 @@ fn classify_native_command<G>(
     if is_macro {
         return (
             ExpandedCommandAction::Expand(ExpansionDispatch::Macro),
-            meaning.control_code(),
+            meaning.execution_key(),
         );
     }
     match meaning.expandable_primitive() {
         Some(ExpandablePrimitive::EndTemplate) => (ExpandedCommandAction::EndTemplate, 0),
         Some(ExpandablePrimitive::EndCsName) => {
-            (ExpandedCommandAction::Return, meaning.control_code())
+            (ExpandedCommandAction::Return, meaning.execution_key())
         }
         Some(primitive) => (
             ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)),
@@ -201,7 +202,7 @@ fn classify_native_command<G>(
             ExpandedCommandAction::Expand(ExpansionDispatch::Undefined),
             0,
         ),
-        _ => (ExpandedCommandAction::Return, meaning.control_code()),
+        _ => (ExpandedCommandAction::Return, meaning.execution_key()),
     }
 }
 

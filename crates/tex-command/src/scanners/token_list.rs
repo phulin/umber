@@ -26,23 +26,28 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         ),
         CommandError,
     > {
+        const RELAX: u64 = Meaning::runtime_word_control_code(Meaning::RELAX_WORD);
+        const SPACE: u64 =
+            Meaning::runtime_word_control_code(Meaning::char_token_word(' ', Catcode::Space));
+        const BEGIN: u64 =
+            Meaning::runtime_word_control_code(Meaning::char_token_word('{', Catcode::BeginGroup));
+        const TOKS: u64 = Meaning::runtime_word_control_code(
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks).encode(),
+        );
+        const REGISTER: u64 = Meaning::runtime_word_control_code(Meaning::ToksRegister(0).encode());
+        const PARAMETER: u64 = Meaning::runtime_word_control_code(Meaning::TokParam(0).encode());
         self.scan_optional_equals()?;
         let mut value = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, _, exceptional| {
-                let meaning = meaning
-                    .scalar_word()
-                    .map_or(Meaning::Undefined, Meaning::from_runtime_word);
-                let collected = match meaning {
-                    Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    }
-                    | Meaning::Relax => {
+            |processor, spelling, meaning, code, _, exceptional| {
+                let collected = match code {
+                    RELAX => return Ok(std::ops::ControlFlow::Continue(())),
+                    SPACE if meaning.character().is_some() => {
                         return Ok(std::ops::ControlFlow::Continue(()));
                     }
-
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
+                    TOKS if meaning.unexpandable_primitive()
+                        == Some(UnexpandablePrimitive::Toks) =>
+                    {
                         let index = processor.scan_profile_register_index()?;
                         let source = processor
                             .state
@@ -52,7 +57,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         value = Some((None, source));
                         return Ok(std::ops::ControlFlow::Break(()));
                     }
-                    Meaning::ToksRegister(index) => {
+                    REGISTER if meaning.operand() <= u16::MAX as u64 => {
+                        let index = meaning.operand() as u16;
                         let source = processor
                             .state
                             .token_register(index)
@@ -61,7 +67,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         value = Some((None, source));
                         return Ok(std::ops::ControlFlow::Break(()));
                     }
-                    Meaning::TokParam(index) => {
+                    PARAMETER if meaning.operand() <= u16::MAX as u64 => {
+                        let index = meaning.operand() as u16;
                         let source = processor
                             .state
                             .token_parameter(TokParam::new(index))
@@ -69,10 +76,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         value = Some((None, source));
                         return Ok(std::ops::ControlFlow::Break(()));
                     }
-                    Meaning::CharToken {
-                        cat: Catcode::BeginGroup,
-                        ..
-                    } => {
+                    BEGIN if meaning.character().is_some() => {
                         // TeX82 has already delivered the required opening brace to
                         // choose the non-internal branch. Back it up once, then let
                         // `scan_toks` install absorbing status before it redelivers

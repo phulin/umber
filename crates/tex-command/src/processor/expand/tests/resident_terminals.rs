@@ -30,9 +30,10 @@ impl<G>
         _: u32,
         _macro_origin: Option<tex_state::token::OriginId>,
         _: TracedTokenWord,
-        meaning: &MeaningWord<G>,
+        code: u64,
+        _operand: u64,
     ) -> ControlFlow<(), bool> {
-        if meaning.control_code() != Meaning::runtime_word_control_code(Meaning::Relax.encode()) {
+        if code != Meaning::runtime_word_control_code(Meaning::Relax.encode()) {
             self.ready = false;
             return ControlFlow::Continue(false);
         }
@@ -60,10 +61,10 @@ impl<G>
     ) -> Result<ControlFlow<()>, crate::CommandError> {
         assert!(exceptional.is_none());
         assert_eq!(
-            meaning.control_code(),
+            meaning.execution_key(),
             Meaning::runtime_word_control_code(Meaning::Relax.encode())
         );
-        assert_eq!(code, meaning.control_code());
+        assert_eq!(code, meaning.execution_key());
         self.full += 1;
         self.completed += 1;
         self.ready = true;

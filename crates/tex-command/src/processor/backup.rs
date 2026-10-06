@@ -1,6 +1,5 @@
 //! Canonical command backup and replay insertion transitions.
 
-use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, TracedTokenWord};
 
 use crate::command::CurrentCommand;
@@ -46,12 +45,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         outer_horizontal: bool,
     ) -> Result<bool, CommandError> {
-        self.consume_raw_words::<true, _>(&mut |processor, spelling, meaning, exceptional| {
+        self.consume_raw_words::<true, true, _>(&mut |processor, spelling, meaning, exceptional| {
             let shift = outer_horizontal
                 && meaning
                     .expect("math probe requested native meaning")
-                    .scalar_word()
-                    .and_then(Meaning::runtime_word_character)
+                    .character()
                     .is_some_and(|(_, cat)| cat == Catcode::MathShift);
             if !shift {
                 processor.back_consumed_word(spelling, exceptional)?;
@@ -73,8 +71,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, _, exceptional| {
                 shift = meaning
-                    .scalar_word()
-                    .and_then(Meaning::runtime_word_character)
+                    .character()
                     .is_some_and(|(_, cat)| cat == Catcode::MathShift);
                 if !shift {
                     processor.back_consumed_word(spelling, exceptional)?;
@@ -176,7 +173,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         adjustment: &mut super::AlignmentDeliveryAdjustment,
         observed: &mut Option<crate::observation::ObservedToken>,
     ) -> Result<TracedTokenWord, CommandError> {
-        self.consume_raw_words::<false, _>(&mut |processor, spelling, _, command| {
+        self.consume_raw_words::<true, false, _>(&mut |processor, spelling, _, command| {
             *adjustment = command.map_or_else(
                 || AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
                 CurrentCommand::alignment_adjustment,

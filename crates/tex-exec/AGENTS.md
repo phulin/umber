@@ -437,3 +437,12 @@ Existence, shaping and false-boundary tests share one immutable LoadedFont loan;
 source-character suffixes retain that payload across their read-only admission.
 The forwarding glyph entry and OpenTypeShapingScratch compatibility alias are
 deleted; mode owners use HorizontalFlushScratch directly.
+
+Native character dispatch consumes the same execution key selected by expansion
+and reads the character scalar directly from MeaningWord::operand. Letter, other
+and character-definition payloads share that native representation, so glyph
+execution performs no scalar-word reconstruction or second character-kind decode.
+
+Resident no-op, group and glyph execution receives the selected key and payload directly; it does not construct or decode a native meaning record for literal admission.
+
+The outlined resident group function owns its key classification and actual group action; the no-op loop does not inline the group switch.

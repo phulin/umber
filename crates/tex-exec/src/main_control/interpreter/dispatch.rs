@@ -82,17 +82,7 @@ pub(super) fn reswitch<'state, 'host, G>(
 ) -> Result<MainControlStep, ExecError> {
     match code {
         codes::CHAR_LETTER | codes::CHAR_OTHER | codes::CHAR_GIVEN => {
-            let Some(word) = meaning.scalar_word() else {
-                unreachable!("scalar character meaning")
-            };
-            let ch = if code == codes::CHAR_GIVEN {
-                char::from_u32(Meaning::runtime_word_operand(word) as u32)
-                    .expect("admitted character definition")
-            } else {
-                Meaning::runtime_word_character(word)
-                    .expect("admitted literal character")
-                    .0
-            };
+            let ch = char::from_u32(meaning.operand() as u32).expect("admitted native character");
             let origin = processor.active_macro_origin().unwrap_or(spelling.origin());
             let mode = processor.with_execution_owners(|_, _, _, _, _, execution, _, _, _| {
                 execution.modes.current_mode()
@@ -174,10 +164,7 @@ fn capture_error<G>(
 }
 
 fn operand<G>(meaning: &MeaningWord<G>) -> u64 {
-    let Some(word) = meaning.scalar_word() else {
-        unreachable!("selected static operand")
-    };
-    Meaning::runtime_word_operand(word)
+    meaning.operand()
 }
 
 fn math_mode<G>(processor: &mut Processor<'_, '_, G>) -> bool {

@@ -9,8 +9,7 @@ use tex_state::CommandContext;
 use tex_state::DefinitionRef;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{
-    ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord, ResolvedMeaning, StaticCommandClass,
-    UnexpandablePrimitive,
+    Meaning, MeaningFlags, MeaningWord, ResolvedMeaning, UnexpandablePrimitive,
 };
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
@@ -332,17 +331,7 @@ impl<G> CurrentCommand<G> {
     }
 
     pub(crate) fn suppress_expandable(&mut self) {
-        let suppress = self.command.is_macro()
-            || self.command.scalar_word().is_some_and(|word| {
-                match Meaning::runtime_word_class(word) {
-                    StaticCommandClass::Undefined => true,
-                    StaticCommandClass::Expandable => {
-                        ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
-                            != Some(ExpandablePrimitive::EndCsName)
-                    }
-                    _ => false,
-                }
-            });
+        let suppress = self.command.suppressed_by_noexpand();
         if suppress {
             self.command = MeaningWord::scalar(Meaning::RELAX_WORD);
             self.site

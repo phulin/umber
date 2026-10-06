@@ -1,6 +1,5 @@
 use super::*;
 use std::ops::ControlFlow;
-use tex_state::meaning::StaticCommandClass;
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Completes one TeX82 §1151 `scan_math` field.
@@ -79,75 +78,64 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_math_field_episode(&mut self) -> Result<MathFieldEpisode, CommandError> {
         let mut field = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
-            |processor, spelling, meaning, _code, _, exceptional| {
+            |processor, spelling, meaning, code, _, exceptional| {
                 let provenance = StructuredProvenance {
                     primary: spelling.origin(),
                 };
-                if let Some(word) = meaning.scalar_word() {
-                    let character = Meaning::runtime_word_character(word);
-                    if matches!(character, Some((_, Catcode::Space))) || word == Meaning::RELAX_WORD
+                let character = meaning.character();
+                if matches!(character, Some((_, Catcode::Space)))
+                    || *meaning == tex_state::meaning::MeaningWord::scalar(Meaning::RELAX_WORD)
+                {
+                    return Ok(ControlFlow::Continue(()));
+                }
+                let character = match character {
+                    Some((ch, Catcode::Letter | Catcode::Other)) => Some(ch),
+                    _ if code
+                        == Meaning::runtime_word_control_code(Meaning::CharGiven('A').encode()) =>
                     {
+                        Some(
+                            char::from_u32(meaning.operand() as u32)
+                                .expect("validated character-definition meaning"),
+                        )
+                    }
+                    _ => None,
+                };
+                if let Some(ch) = character {
+                    let code = processor.state.mathcode(ch);
+                    if code == 0o100000 {
+                        processor.treat_as_active_character(ch, provenance.primary)?;
                         return Ok(ControlFlow::Continue(()));
                     }
-                    let character = match character {
-                        Some((ch, Catcode::Letter | Catcode::Other)) => Some(ch),
-                        _ if Meaning::runtime_word_control_code(word)
-                            == Meaning::runtime_word_control_code(
-                                Meaning::CharGiven('A').encode(),
-                            ) =>
-                        {
-                            Some(
-                                char::from_u32(Meaning::runtime_word_operand(word) as u32)
-                                    .expect("validated character-definition meaning"),
-                            )
-                        }
-                        _ => None,
+                    field = Some(MathFieldEpisode {
+                        body: MathFieldBody::Character(code as u16),
+                        provenance,
+                    });
+                    return Ok(ControlFlow::Break(()));
+                }
+                if code == Meaning::runtime_word_control_code(Meaning::MathCharGiven(0).encode()) {
+                    field = Some(MathFieldEpisode {
+                        body: MathFieldBody::Character(meaning.operand() as u16),
+                        provenance,
+                    });
+                    return Ok(ControlFlow::Break(()));
+                }
+                if let Some(
+                    primitive @ (UnexpandablePrimitive::Char
+                    | UnexpandablePrimitive::MathChar
+                    | UnexpandablePrimitive::Delimiter),
+                ) = meaning.unexpandable_primitive()
+                {
+                    let kind = match primitive {
+                        UnexpandablePrimitive::Char => MathFieldRestrictedKind::Character,
+                        UnexpandablePrimitive::MathChar => MathFieldRestrictedKind::MathCharacter,
+                        _ => MathFieldRestrictedKind::Delimiter,
                     };
-                    if let Some(ch) = character {
-                        let code = processor.state.mathcode(ch);
-                        if code == 0o100000 {
-                            processor.treat_as_active_character(ch, provenance.primary)?;
-                            return Ok(ControlFlow::Continue(()));
-                        }
-                        field = Some(MathFieldEpisode {
-                            body: MathFieldBody::Character(code as u16),
-                            provenance,
-                        });
-                        return Ok(ControlFlow::Break(()));
-                    }
-                    if Meaning::runtime_word_control_code(word)
-                        == Meaning::runtime_word_control_code(Meaning::MathCharGiven(0).encode())
-                    {
-                        field = Some(MathFieldEpisode {
-                            body: MathFieldBody::Character(
-                                Meaning::runtime_word_operand(word) as u16
-                            ),
-                            provenance,
-                        });
-                        return Ok(ControlFlow::Break(()));
-                    }
-                    if Meaning::runtime_word_class(word) == StaticCommandClass::Unexpandable
-                        && let Some(
-                            primitive @ (UnexpandablePrimitive::Char
-                            | UnexpandablePrimitive::MathChar
-                            | UnexpandablePrimitive::Delimiter),
-                        ) =
-                            UnexpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))
-                    {
-                        let kind = match primitive {
-                            UnexpandablePrimitive::Char => MathFieldRestrictedKind::Character,
-                            UnexpandablePrimitive::MathChar => {
-                                MathFieldRestrictedKind::MathCharacter
-                            }
-                            _ => MathFieldRestrictedKind::Delimiter,
-                        };
-                        field = processor.scan_math_field_restricted(provenance, kind)?;
-                        return Ok(if field.is_some() {
-                            ControlFlow::Break(())
-                        } else {
-                            ControlFlow::Continue(())
-                        });
-                    }
+                    field = processor.scan_math_field_restricted(provenance, kind)?;
+                    return Ok(if field.is_some() {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
+                    });
                 }
                 // §1153 backs up before §403, including a real left brace.
                 processor.back_consumed_word(spelling, exceptional)?;
@@ -255,22 +243,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut delimiter = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, control_sequence, exceptional| {
-                let code = if let Some(word) = meaning.scalar_word() {
-                    match Meaning::runtime_word_character(word) {
-                        Some((_, Catcode::Space)) => return Ok(ControlFlow::Continue(())),
-                        Some((ch, Catcode::Letter | Catcode::Other)) => processor.state.delcode(ch),
-                        _ if word == Meaning::RELAX_WORD => return Ok(ControlFlow::Continue(())),
-                        _ if Meaning::runtime_word_class(word)
-                            == StaticCommandClass::Unexpandable
-                            && UnexpandablePrimitive::from_operand(
-                                Meaning::runtime_word_operand(word),
-                            ) == Some(UnexpandablePrimitive::Delimiter) =>
-                        {
-                            delimiter = Some(processor.scan_delimiter_number()?);
-                            return Ok(ControlFlow::Break(()));
-                        }
-                        _ => -1,
-                    }
+                let code = if let Some((ch, Catcode::Letter | Catcode::Other)) = meaning.character()
+                {
+                    processor.state.delcode(ch)
+                } else if meaning.unexpandable_primitive() == Some(UnexpandablePrimitive::Delimiter)
+                {
+                    delimiter = Some(processor.scan_delimiter_number()?);
+                    return Ok(ControlFlow::Break(()));
                 } else {
                     -1
                 };

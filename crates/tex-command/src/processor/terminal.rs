@@ -38,7 +38,8 @@ pub trait NativeWordConsumer<Processor, G, Facts> {
         _entered_line: u32,
         _macro_origin: Option<tex_state::token::OriginId>,
         _spelling: TracedTokenWord,
-        _meaning: &MeaningWord<G>,
+        _code: u64,
+        _operand: u64,
     ) -> ControlFlow<(), bool> {
         ControlFlow::Continue(false)
     }

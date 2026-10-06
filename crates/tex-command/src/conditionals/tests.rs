@@ -1041,38 +1041,38 @@ fn ifx_macro_equality_uses_flags_and_borrowed_token_content() {
         let first_publication = universe
             .allocate_definition(&parameter, &replacement)
             .expect("first definition");
-        let first = ResolvedMeaning::Macro {
-            flags: MeaningFlags::LONG,
-            definition: first_publication.reference(),
-        };
+        let first = tex_state::meaning::MeaningWord::macro_definition(
+            MeaningFlags::LONG,
+            first_publication.reference(),
+        );
         let equal_publication = universe
             .allocate_definition(&parameter, &replacement)
             .expect("equal definition with distinct identity");
-        let equal = ResolvedMeaning::Macro {
-            flags: MeaningFlags::LONG,
-            definition: equal_publication.reference(),
-        };
+        let equal = tex_state::meaning::MeaningWord::macro_definition(
+            MeaningFlags::LONG,
+            equal_publication.reference(),
+        );
         let different_flags_publication = universe
             .allocate_definition(&parameter, &replacement)
             .expect("definition with different flags");
-        let different_flags = ResolvedMeaning::Macro {
-            flags: MeaningFlags::EMPTY,
-            definition: different_flags_publication.reference(),
-        };
+        let different_flags = tex_state::meaning::MeaningWord::macro_definition(
+            MeaningFlags::EMPTY,
+            different_flags_publication.reference(),
+        );
         let different_parameter_publication = universe
             .allocate_definition(&[TokenWord::pack(other('q'))], &replacement)
             .expect("definition with different parameter text");
-        let different_parameter = ResolvedMeaning::Macro {
-            flags: MeaningFlags::LONG,
-            definition: different_parameter_publication.reference(),
-        };
+        let different_parameter = tex_state::meaning::MeaningWord::macro_definition(
+            MeaningFlags::LONG,
+            different_parameter_publication.reference(),
+        );
         let different_replacement_publication = universe
             .allocate_definition(&parameter, &[TokenWord::pack(other('s'))])
             .expect("definition with different replacement text");
-        let different_replacement = ResolvedMeaning::Macro {
-            flags: MeaningFlags::LONG,
-            definition: different_replacement_publication.reference(),
-        };
+        let different_replacement = tex_state::meaning::MeaningWord::macro_definition(
+            MeaningFlags::LONG,
+            different_replacement_publication.reference(),
+        );
 
         let mut command = CommandState::default();
         let mut capabilities = CommandHostCapabilities::default();
@@ -1090,7 +1090,7 @@ fn ifx_macro_equality_uses_flags_and_borrowed_token_content() {
         assert!(!processor.ifx_meaning_eq(&first, &different_flags));
         assert!(!processor.ifx_meaning_eq(&first, &different_parameter));
         assert!(!processor.ifx_meaning_eq(&first, &different_replacement));
-        let undefined = ResolvedMeaning::Static(Meaning::Undefined);
+        let undefined = tex_state::meaning::MeaningWord::from_static(Meaning::Undefined);
         assert!(!processor.ifx_meaning_eq(&undefined, &first));
         assert!(processor.ifx_meaning_eq(&undefined, &undefined));
     });

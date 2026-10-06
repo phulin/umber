@@ -115,11 +115,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // most one space. Space uses cur_cmd, equals uses cur_tok.
         let mut after_equals = 0;
         let meaning = self
-            .consume_raw_words::<true, _>(&mut |_, spelling, meaning, _| {
+            .consume_raw_words::<true, true, _>(&mut |_, spelling, meaning, _| {
                 let meaning = *meaning.expect("raw meaning requested");
                 let space = meaning
-                    .scalar_word()
-                    .and_then(Meaning::runtime_word_character)
+                    .character()
                     .is_some_and(|(_, cat)| cat == Catcode::Space);
                 if after_equals == 0 {
                     if space {
@@ -156,7 +155,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut observed_spelling = None;
         let first = self.read_backup_operand(&mut adjustment, &mut observed_spelling)?;
         let meaning = self
-            .consume_raw_words::<true, _>(&mut |processor, spelling, meaning, command| {
+            .consume_raw_words::<true, true, _>(&mut |processor, spelling, meaning, command| {
                 let meaning = *meaning.expect("raw meaning requested");
                 processor.back_consumed_word(spelling, command)?;
                 Ok(std::ops::ControlFlow::Break(meaning))

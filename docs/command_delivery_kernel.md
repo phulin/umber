@@ -1,5 +1,50 @@
 # Command delivery kernel
 
+## Authoritative native meanings
+
+The live meaning row stores the actual execution key in the upper sixteen bits
+of its command word and its actual payload in the lower forty-eight bits.
+Characters store their scalar directly; their category belongs to the key.
+Primitive identity belongs to the key rather than a duplicated payload.
+Expansion and execution use that stored key, including the reserved unknown
+key; they do not derive a second selector from the cold raw encoding. Macros
+store flags in the payload and retain their full definition coordinate; fonts
+retain their full namespace and packed serial/slot coordinate. The record stays
+two words, with no derived key column, dispatch descriptor or meaning cache.
+
+Static flag bytes use the otherwise unused scalar coordinate. Raw unknown words
+whose opcode or operand cannot fit this native vocabulary retain their exact
+word behind the reserved unknown key. This is the actual unknown-value domain,
+not a second representation of ordinary commands. Formats, diagnostics and
+semantic hashing reconstruct the canonical raw word when demanded. Semantic
+decoding reads the native key and payload directly; the cold raw-word decoder
+uses that same decoder after publication. Native character, scalar-operand and
+primitive readers consume the authoritative key and payload without reconstruction.
+Resident admission passes the actual execution key and payload as scalars.
+Literal input supplies those scalars directly, without constructing a native
+meaning only to consume it. A declined non-active literal is resolved once
+when full interpretation resumes; control sequences retain their live lookup
+across that boundary. Admission declines unsupported raw values before mutation. Scalar internal scanning decodes its meaning once for its
+pre-operand guard, fetch and typed-result observation. Category conversion uses
+one inline decoder shared with token storage. Resident group execution owns
+its key classification in the actual outlined group function, leaving the
+no-op continuation with only its direct key test and exact accounting.
+
+Meaning publication performs the conversion once. Live redefinition writes that
+same row; group saves, restoration and full checkpoints retain the same native
+record. Raw token storage and macro definitions keep their existing token
+encoding. No input reader, group journal or checkpoint owner is added.
+
+Raw consumption selects TeX's control-sequence creation policy at entry. The
+same reader serves `get_token` operands and `get_next` meaning comparisons.
+`\ifx` retains its first native meaning only until its second raw operand
+arrives. Identical words compare directly; distinct macro definitions compare
+flags and borrowed token content. Different scalar encodings use demanded
+semantic decoding, preserving scalar flags and unknown-value behavior without
+constructing ordinary current commands. Observation and alignment retain their
+actual exceptional records in the same reader. `\noexpand` tests the native
+meaning's suppression property directly, without an intermediate scalar class.
+
 Horizontal glyph admission borrows the current immutable `LoadedFont` payload
 through the existing `CommandContext`. Existence, shaping direction, false
 boundary and classic-metric continuation use that one admitted payload. The
@@ -138,8 +183,8 @@ does. The loop's actual expanded-state fact distinguishes these cases. TeX's
 raw main-loop character lookahead remains its genuine separate fetch label;
 its non-character enters this same expanded loop without redelivery.
 
-Meaning resolution writes the final native `MeaningWord` enum: validated static
-word, macro key/flags, or font capability. Its native tag and operand are
+Meaning resolution reads the final native `MeaningWord`: execution key/payload,
+macro key/flags, or font capability. Its native tag and operand are
 unchanged between the dense row and the delivered command snapshot. Resolution
 stores no derived command class; actual consumers project their class, primitive
 or scalar value only when needed. There is no operand adapter, temporary

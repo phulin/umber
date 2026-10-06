@@ -198,10 +198,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 processor.finish_error_outcome(outcome)?;
                 Ok(std::ops::ControlFlow::Continue(()))
             };
-        if let Some(target) = self.consume_raw_words::<false, _>(&mut consume)? {
+        if let Some(target) = self.consume_raw_words::<true, false, _>(&mut consume)? {
             return Ok(target);
         }
-        self.consume_raw_words::<false, _>(&mut consume)?
+        self.consume_raw_words::<true, false, _>(&mut consume)?
             .ok_or_else(CommandError::input_invariant)
     }
 

@@ -1007,48 +1007,41 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(always)]
     fn compare_ifx_operands(&mut self) -> Result<bool, CommandError> {
         let mut first = None;
-        if self.get_next_into(&mut first)? != crate::DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
-        }
-        let first = first
-            .expect("command status initializes destination")
-            .meaning();
-        let mut second = None;
-        if self.get_next_into(&mut second)? != crate::DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
-        }
-        let second = second
-            .expect("command status initializes destination")
-            .meaning();
-        Ok(self.ifx_meaning_eq(&first, &second))
+        self.consume_raw_words::<false, true, _>(&mut |processor, _, meaning, _| {
+            let meaning = meaning.expect("ifx requests the raw meaning");
+            if let Some(first) = first {
+                Ok(std::ops::ControlFlow::Break(
+                    processor.ifx_meaning_eq(&first, meaning),
+                ))
+            } else {
+                first = Some(*meaning);
+                Ok(std::ops::ControlFlow::Continue(()))
+            }
+        })?
+        .ok_or_else(CommandError::input_invariant)
     }
 
-    /// TeX compares macro meanings by their defining token lists, not by the
-    /// engine's allocation identity for the macro definition. All other
-    /// meanings retain their direct raw-meaning equality.
-    fn ifx_meaning_eq(&self, first: &ResolvedMeaning<G>, second: &ResolvedMeaning<G>) -> bool {
-        let (
-            ResolvedMeaning::Macro {
-                flags: first_flags,
-                definition: first_definition,
-            },
-            ResolvedMeaning::Macro {
-                flags: second_flags,
-                definition: second_definition,
-            },
-        ) = (first, second)
-        else {
-            return first == second;
-        };
-
-        if first_flags != second_flags {
-            return false;
+    /// Identical native meanings need no decoding. Distinct macros compare
+    /// flags and token content; different scalar encodings compare their
+    /// semantic values, including ignored scalar flag bytes.
+    fn ifx_meaning_eq(
+        &self,
+        first: &tex_state::meaning::MeaningWord<G>,
+        second: &tex_state::meaning::MeaningWord<G>,
+    ) -> bool {
+        if first == second {
+            return true;
         }
-        // One definition trivially equals itself; skip the arena read.
-        first_definition == second_definition
-            || self
-                .state
-                .definition_contents_equal(*first_definition, *second_definition)
+        match (first.macro_parts(), second.macro_parts()) {
+            (Some((first_flags, first_definition)), Some((second_flags, second_definition))) => {
+                first_flags == second_flags
+                    && self
+                        .state
+                        .definition_contents_equal(first_definition, second_definition)
+            }
+            (None, None) => first.resolve() == second.resolve(),
+            _ => false,
+        }
     }
 
     /// TeX.web §503's relation lookahead for `\ifnum`/`\ifdim`: fetches the
@@ -1062,9 +1055,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut relation = None;
         self.consume_expanded_words(&mut crate::terminal_consumer::<Self, G, _>(
             |processor, spelling, meaning, _code, control_sequence, exceptional| {
-                let character = meaning
-                    .scalar_word()
-                    .and_then(Meaning::runtime_word_character);
+                let character = meaning.character();
                 relation = Some(match character {
                     Some(('<', _)) => IfRelation::Less,
                     Some(('=', _)) => IfRelation::Equal,

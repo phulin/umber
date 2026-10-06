@@ -6,7 +6,7 @@ use crate::conditionals::{ConditionalDelimiter, ConditionalKind, PassTextStop};
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use std::cell::Cell;
 use std::ops::ControlFlow;
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningWord, StaticCommandClass};
+use tex_state::meaning::{ExpandablePrimitive, MeaningWord};
 use tex_state::token::Catcode;
 
 /// Only an unmatched delimiter completes §494. Other commands have no product.
@@ -39,14 +39,7 @@ fn consume_meaning<G>(
     meaning: &MeaningWord<G>,
     nested: &Cell<u32>,
 ) -> Option<ConditionalDelimiter> {
-    let word = meaning.scalar_word()?;
-    if Meaning::runtime_word_class(word) != StaticCommandClass::Expandable {
-        return None;
-    }
-    consume_conditional(
-        ExpandablePrimitive::from_operand(Meaning::runtime_word_operand(word))?,
-        nested,
-    )
+    consume_conditional(meaning.expandable_primitive()?, nested)
 }
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
@@ -143,12 +136,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         processor.begin_scalar_alignment_v_template(&command)?;
                         return Ok(ControlFlow::Continue(()));
                     }
-                    match command.static_meaning() {
-                        Some(Meaning::ExpandablePrimitive(primitive)) => {
-                            consume_conditional(primitive, &nested)
-                        }
-                        _ => None,
-                    }
+                    command
+                        .expandable_primitive()
+                        .and_then(|primitive| consume_conditional(primitive, &nested))
                 } else {
                     if matches!(site, ReadSite::Source(_))
                         && let Some(location) = processor.pending_diagnostic_location.take()

@@ -74,8 +74,27 @@ pub enum Catcode {
 
 impl Catcode {
     #[must_use]
+    #[inline(always)]
     pub const fn from_raw(raw: u8) -> Option<Self> {
-        catcode_from_raw(raw)
+        match raw {
+            0 => Some(Self::Escape),
+            1 => Some(Self::BeginGroup),
+            2 => Some(Self::EndGroup),
+            3 => Some(Self::MathShift),
+            4 => Some(Self::AlignmentTab),
+            5 => Some(Self::EndLine),
+            6 => Some(Self::Parameter),
+            7 => Some(Self::Superscript),
+            8 => Some(Self::Subscript),
+            9 => Some(Self::Ignored),
+            10 => Some(Self::Space),
+            11 => Some(Self::Letter),
+            12 => Some(Self::Other),
+            13 => Some(Self::Active),
+            14 => Some(Self::Comment),
+            15 => Some(Self::Invalid),
+            _ => None,
+        }
     }
 }
 
@@ -282,7 +301,7 @@ impl TokenWord {
     #[inline(always)]
     pub const fn literal_catcode(self) -> Option<Catcode> {
         if self.0 >> Self::KIND_SHIFT == Self::KIND_CHAR {
-            catcode_from_raw((self.0 & 0xF) as u8)
+            Catcode::from_raw((self.0 & 0xF) as u8)
         } else {
             None
         }
@@ -365,7 +384,7 @@ impl<G> crate::CommandContext<'_, G> {
                     }
                     control_sequence
                 } else {
-                    *target = MeaningWord::scalar(Meaning::char_token_payload_word(payload));
+                    *target = MeaningWord::character_payload(payload);
                     None
                 }
             }
@@ -592,34 +611,12 @@ const ALL_CATCODES: [Catcode; 16] = [
 ];
 
 fn unpack_char_payload(payload: u32) -> Option<Token> {
-    let cat = catcode_from_raw((payload & 0xF) as u8)?;
+    let cat = Catcode::from_raw((payload & 0xF) as u8)?;
     let usv = payload >> TokenWord::CATCODE_BITS;
     Some(Token::Char {
         ch: char::from_u32(usv)?,
         cat,
     })
-}
-
-const fn catcode_from_raw(raw: u8) -> Option<Catcode> {
-    match raw {
-        0 => Some(Catcode::Escape),
-        1 => Some(Catcode::BeginGroup),
-        2 => Some(Catcode::EndGroup),
-        3 => Some(Catcode::MathShift),
-        4 => Some(Catcode::AlignmentTab),
-        5 => Some(Catcode::EndLine),
-        6 => Some(Catcode::Parameter),
-        7 => Some(Catcode::Superscript),
-        8 => Some(Catcode::Subscript),
-        9 => Some(Catcode::Ignored),
-        10 => Some(Catcode::Space),
-        11 => Some(Catcode::Letter),
-        12 => Some(Catcode::Other),
-        13 => Some(Catcode::Active),
-        14 => Some(Catcode::Comment),
-        15 => Some(Catcode::Invalid),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

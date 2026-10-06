@@ -127,7 +127,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .map(|symbol| *state.compact_control_sequence_meaning_word(symbol));
                     let mut admit = {
                         #[inline(always)]
-                        |meaning: &MeaningWord<G>| {
+                        |code: u64, operand: u64| {
                             let admitted = terminal.resident_terminal(
                                 state,
                                 fuel,
@@ -136,7 +136,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 entered_line,
                                 macro_origin,
                                 tex_state::token::TracedTokenWord::from_parts(word, origin),
-                                meaning,
+                                code,
+                                operand,
                             );
                             #[cfg(feature = "profiling")]
                             if !matches!(admitted, ControlFlow::Continue(false)) {
@@ -148,30 +149,32 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             }
                             #[cfg(not(feature = "profiling"))]
                             let _ = (&fuel, kind);
-                            match admitted {
-                                ControlFlow::Break(()) => {
-                                    ControlFlow::Break(DeliveryStatus::Command)
-                                }
-                                ControlFlow::Continue(true) => ControlFlow::Continue(Ok(())),
-                                ControlFlow::Continue(false) => {
-                                    ControlFlow::Continue(Err(Some(*meaning)))
-                                }
-                            }
+                            admitted
                         }
                     };
                     if let Some(meaning) = resolved {
-                        return admit(&meaning);
+                        return match admit(meaning.execution_key(), meaning.operand()) {
+                            ControlFlow::Break(()) => ControlFlow::Break(DeliveryStatus::Command),
+                            ControlFlow::Continue(true) => ControlFlow::Continue(Ok(())),
+                            ControlFlow::Continue(false) => {
+                                ControlFlow::Continue(Err(Some(meaning)))
+                            }
+                        };
                     }
                     if Consumer::RESIDENT_LITERALS
                         && let (Some(cat), Some(ch)) = (word.literal_catcode(), word.literal_char())
                         && cat != tex_state::token::Catcode::Active
                     {
-                        let meaning = MeaningWord::scalar(Meaning::char_token_word(ch, cat));
-                        let result = admit(&meaning);
-                        if !matches!(result, ControlFlow::Continue(Err(_))) {
+                        let admitted =
+                            admit(MeaningWord::<G>::CHARACTER_KEY_BASE + cat as u64, ch as u64);
+                        if !matches!(admitted, ControlFlow::Continue(false)) {
                             alignment.account_literal_catcode(Some(cat));
                         }
-                        return result;
+                        return match admitted {
+                            ControlFlow::Break(()) => ControlFlow::Break(DeliveryStatus::Command),
+                            ControlFlow::Continue(true) => ControlFlow::Continue(Ok(())),
+                            ControlFlow::Continue(false) => ControlFlow::Continue(Err(None)),
+                        };
                     }
                     ControlFlow::Continue(Err(None))
                 }

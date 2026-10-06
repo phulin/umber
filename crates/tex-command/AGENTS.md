@@ -949,3 +949,14 @@ mailbox, trace-printed flag or tracing preparation before a fetch.
 - `src/processor/terminal.rs`: native word consumer contract and concrete full-processor callback typing. Restricted admission borrows actual spelling and meaning; literal admission is a static consumer capability. It retains the existing reader span, while full processor access and input transitions invalidate invocation-local readiness. Full native delivery shares its one scalar selector between expansion classification and terminal consumption; consumers do not reclassify the same terminal meaning. Exceptional delivery derives the selector after its demanded semantic adjustment.
 
 - `src/processor/expand/tests/resident_terminals.rs`: exact native no-op fuel and budget cuts, full-access exclusion within a span, and actual frame retirement interruptions.
+
+Native meaning rows contain the final execution key. Expanded delivery passes
+that key to its consumer; character, font, token-list, math-field, filename,
+conditional-skip and expression consumers avoid raw-word reconstruction for
+classification. Literal admission publishes the native character directly.
+
+Resident admission lends only the actual execution key and payload. Literal grammars consume those scalars directly; no temporary MeaningWord is constructed for an accepted literal. Scalar internal scanning reuses one semantic classification for the pre-operand guard, fetch and typed-result observation.
+
+Expanded and exceptional delivery uses MeaningWord::execution_key directly, including unknown keys. The raw-derived control_code getter and scalar character forwarding helper are deleted.
+
+Raw consumption selects get_token/get_next name-creation policy statically. Ifx consumes two raw native meanings in one reader invocation, compares identical words directly and compares distinct macro content through the actual definition owner; ordinary operands construct no CurrentCommand or ResolvedMeaning.

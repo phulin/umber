@@ -694,3 +694,16 @@ Semantic identity admission checks the actual retained envelopes and active buil
 Glyph consumers borrow the current immutable LoadedFont payload directly through
 CommandContext::loaded_font. The reference admits one existing payload and exposes
 no font store, mutable font state or retained cache.
+
+MeaningWord stores its actual sixteen-bit execution key and native payload in
+the command word. Macro flags, scalar flags and opaque font/definition coordinates
+retain their complete domains in the same two-word record. Only raw unknown
+values use the reserved key. Canonical raw words are reconstructed for format,
+diagnostic or semantic-identity demand; ordinary native operands and characters
+read the authoritative payload directly.
+
+Native semantic decoding reads the stored key and payload directly; the cold raw-word decoder uses that same decoder. Packed literal publication writes the final native meaning without an intermediate canonical meaning word.
+
+Catcode::from_raw owns the single inline category decoder; duplicate token/meaning converters are deleted. MeaningWord exposes only its actual execution key; raw unknown words never project another execution selector.
+
+MeaningWord::suppressed_by_noexpand owns the direct native suppression predicate, including unknown raw expandable values. The obsolete StaticCommandClass enum and scalar class/operand helpers are deleted.
