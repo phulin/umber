@@ -294,7 +294,7 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(!history.contains("pop_resident_project"));
     assert!(expansion.contains("CurrentCommand::write_delivery_into("));
     let source_reader = reader
-        .split("fn advance_source_token<")
+        .split("fn consume_source_input<")
         .nth(1)
         .expect("shared source reader")
         .split("fn advance_source_character_step")

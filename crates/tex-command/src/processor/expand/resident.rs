@@ -2,15 +2,15 @@
 
 use super::ReadSite;
 use crate::input::{InputStorage, InputWords};
-use crate::{CommandError, CommandProcessor};
+use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
 
-/// The borrowed suffix has no full processor callback. Its iterator and
+/// The borrowed span has no full processor callback. Its iterator and
 /// admission temporaries leave the native stack before recursive expansion.
-#[inline(always)]
+#[inline(never)]
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn consume_suffix<Word: Copy, Consumer, R, Admission, const PARAMETERS: bool>(
+fn consume_span<Word: Copy, Consumer, R, Admission, const PARAMETERS: bool>(
     words: &[Word],
     frame: &mut tex_state::packed_input::InputFrame,
     consumer: &mut Consumer,
@@ -40,24 +40,6 @@ fn consume_suffix<Word: Copy, Consumer, R, Admission, const PARAMETERS: bool>(
     Ok(None)
 }
 
-#[inline(never)]
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn consume_suffix_outlined<Word: Copy, Consumer, R, Admission, const PARAMETERS: bool>(
-    words: &[Word],
-    frame: &mut tex_state::packed_input::InputFrame,
-    consumer: &mut Consumer,
-    fuel: &mut crate::fuel::CommandFuel,
-    project: impl Fn(Word) -> (TokenWord, OriginId),
-    admit: &mut impl FnMut(
-        &mut Consumer,
-        &mut crate::fuel::CommandFuel,
-        TokenWord,
-        OriginId,
-    ) -> ControlFlow<R, Result<(), Admission>>,
-) -> Result<Option<ControlFlow<R, (TokenWord, OriginId, Admission)>>, CommandError> {
-    consume_suffix::<_, _, _, _, PARAMETERS>(words, frame, consumer, fuel, project, admit)
-}
-
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Settles a drained frame or a replacement parameter after a bulk scan.
     pub(crate) fn settle_resident_run_boundary(&mut self) -> Result<bool, CommandError> {
@@ -81,10 +63,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         {
             return Ok(false);
         }
-        match self.advance_input_boundary(
-            self.create_source_control_sequences,
-            &mut |_, _, _, _, _, _| Err::<(), _>(CommandError::input_invariant()),
-        )? {
+        match self.advance_input_boundary(&mut |_, _, _, _, _, _| {
+            Err::<(), _>(CommandError::input_invariant())
+        })? {
             None => Ok(true),
             Some(_) => Err(CommandError::input_invariant()),
         }
@@ -94,12 +75,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// and hands boundary scalars straight to the caller's actual consumer.
     /// Only a cold input transition leaves without consuming a word.
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)] // Actual consumer actions and input policies, without an adapter.
     pub(super) fn consume_resident_input<R, Consumer, Admission: Default>(
         &mut self,
+        create_control_sequences: bool,
         consumer: &mut Consumer,
-        outline_suffix: bool,
         glyph_origins: bool,
         retain: &impl Fn(&Consumer, bool, crate::processor::delivery_mode::DeliveryMode) -> bool,
+        interrupt: &mut impl FnMut(&mut Consumer),
         admit: &mut impl FnMut(
             &mut Consumer,
             &mut tex_state::CommandContext<'_, G>,
@@ -125,152 +108,156 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             crate::fuel::RawDeliveryKind,
             Admission,
         ) -> Result<R, CommandError>,
+        finished: &impl Fn(DeliveryStatus) -> Result<R, CommandError>,
     ) -> Result<Option<R>, CommandError> {
-        let macro_origin = if glyph_origins {
-            self.active_macro_origin()
-        } else {
-            None
-        };
-        let levels = &mut self.command.roots.input.levels;
-        let Some(row) = levels.current.as_mut() else {
-            return Ok(None);
-        };
-        let frame = &mut row.frame;
-        if frame.position() >= frame.limit() {
-            return Ok(None);
-        }
-        let suppress = frame.flags().contains(
-            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
-        );
-        let (words, kind) = match &row.storage {
-            InputStorage::Source(_) => return Ok(None),
-            InputStorage::MacroBody(body) => (
-                InputWords::Packed(body.body.definition_words()),
-                crate::fuel::RawDeliveryKind::StoredToken,
-            ),
-            InputStorage::StoredList(list) => (
-                InputWords::Packed(list.words()),
-                crate::fuel::RawDeliveryKind::StoredToken,
-            ),
-            InputStorage::MacroArgument { region, slot } => (
-                levels.arguments.words(*region, *slot - 1),
-                crate::fuel::RawDeliveryKind::MacroArgument,
-            ),
-            InputStorage::List(_) => (
-                InputWords::Traced(&levels.words),
-                crate::fuel::RawDeliveryKind::StoredToken,
-            ),
-        };
-        let (word, origin, admission) = 'span: {
+        loop {
+            if self
+                .command
+                .roots
+                .input
+                .levels
+                .current
+                .as_ref()
+                .is_some_and(|row| matches!(row.storage, InputStorage::Source(_)))
+            {
+                match self.consume_source_input(
+                    create_control_sequences,
+                    consumer,
+                    glyph_origins,
+                    retain,
+                    interrupt,
+                    admit,
+                    finish,
+                    finished,
+                )? {
+                    Some(result) => return Ok(Some(result)),
+                    None => continue,
+                }
+            }
+            let macro_origin = if glyph_origins {
+                self.active_macro_origin()
+            } else {
+                None
+            };
+            let levels = &mut self.command.roots.input.levels;
+            let Some(row) = levels.current.as_mut() else {
+                return Ok(None);
+            };
+            let frame = &mut row.frame;
+            if frame.position() >= frame.limit() {
+                return Ok(None);
+            }
+            let (words, kind) = match &row.storage {
+                InputStorage::Source(_) => unreachable!("source loan handled above"),
+                InputStorage::MacroBody(body) => (
+                    InputWords::Packed(body.body.definition_words()),
+                    crate::fuel::RawDeliveryKind::StoredToken,
+                ),
+                InputStorage::StoredList(list) => (
+                    InputWords::Packed(list.words()),
+                    crate::fuel::RawDeliveryKind::StoredToken,
+                ),
+                InputStorage::MacroArgument { region, slot } => (
+                    levels.arguments.words(*region, *slot - 1),
+                    crate::fuel::RawDeliveryKind::MacroArgument,
+                ),
+                InputStorage::List(_) => (
+                    InputWords::Traced(&levels.words),
+                    crate::fuel::RawDeliveryKind::StoredToken,
+                ),
+            };
+            let suppress = frame.flags().contains(
+                tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+            );
             let start = frame.start() as usize;
             let position = start
                 .checked_add(frame.position() as usize)
                 .ok_or_else(CommandError::input_invariant)?;
-            let spelling = words
-                .get(position)
-                .ok_or_else(CommandError::input_invariant)?;
-            let word = spelling.token_word();
-            let origin = spelling.origin();
-            if word.out_parameter_slot().is_some()
-                && !matches!(kind, crate::fuel::RawDeliveryKind::MacroArgument)
-            {
-                return Ok(None);
-            }
-            frame.advance_resident();
-            if !retain(consumer, suppress, self.command.delivery_mode) {
-                break 'span (word, origin, Admission::default());
-            }
-            let entered_line =
-                u32::try_from(self.command.roots.input.retained_file_line_number).unwrap_or(0);
-            match admit(
-                consumer,
-                self.state,
-                self.fuel,
-                self.diagnostic_effects,
-                &mut self.command.roots.alignment,
-                &mut self.host.facts,
-                entered_line,
-                macro_origin,
-                word,
-                origin,
-                suppress,
-                kind,
-                self.command.delivery_mode,
-            ) {
-                ControlFlow::Continue(Ok(())) => self.fuel.charge()?,
-                ControlFlow::Continue(Err(admission)) => break 'span (word, origin, admission),
-                ControlFlow::Break(result) => return Ok(Some(result)),
-            }
-            let limit = start
-                .checked_add(frame.limit() as usize)
-                .ok_or_else(CommandError::input_invariant)?;
-            let words = words
-                .slice(position + 1..limit)
-                .ok_or_else(CommandError::input_invariant)?;
-            let admit = &mut {
-                #[inline(always)]
-                |consumer: &mut Consumer, fuel: &mut crate::fuel::CommandFuel, word, origin| {
-                    admit(
-                        consumer,
-                        self.state,
-                        fuel,
-                        self.diagnostic_effects,
-                        &mut self.command.roots.alignment,
-                        &mut self.host.facts,
-                        entered_line,
-                        macro_origin,
-                        word,
-                        origin,
-                        suppress,
-                        kind,
-                        self.command.delivery_mode,
-                    )
-                }
-            };
-            // Representation and parameter semantics are selected once for
-            // the suffix. Both traverse the actual frame-owned cursor.
-            macro_rules! consume_words {
-                ($words:expr, $project:expr, $parameters:expr) => {
-                    if outline_suffix {
-                        consume_suffix_outlined::<_, _, _, _, $parameters>(
-                            $words, frame, consumer, self.fuel, $project, admit,
-                        )
-                    } else {
-                        consume_suffix::<_, _, _, _, $parameters>(
-                            $words, frame, consumer, self.fuel, $project, admit,
+            let mode = self.command.delivery_mode;
+            let (word, origin, admission) = if retain(consumer, suppress, mode) {
+                let limit = start
+                    .checked_add(frame.limit() as usize)
+                    .ok_or_else(CommandError::input_invariant)?;
+                let words = words
+                    .slice(position..limit)
+                    .ok_or_else(CommandError::input_invariant)?;
+                let entered_line =
+                    u32::try_from(self.command.roots.input.retained_file_line_number).unwrap_or(0);
+                let state = &mut *self.state;
+                let effects = &mut *self.diagnostic_effects;
+                let alignment = &mut self.command.roots.alignment;
+                let facts = &mut self.host.facts;
+                let admit = &mut {
+                    #[inline(always)]
+                    |consumer: &mut Consumer, fuel: &mut crate::fuel::CommandFuel, word, origin| {
+                        admit(
+                            consumer,
+                            state,
+                            fuel,
+                            effects,
+                            alignment,
+                            facts,
+                            entered_line,
+                            macro_origin,
+                            word,
+                            origin,
+                            suppress,
+                            kind,
+                            mode,
                         )
                     }
                 };
-            }
-            let packed = |word| (word, OriginId::UNKNOWN);
-            let traced =
-                |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin());
-            let result = match (words, kind) {
-                (InputWords::Packed(words), crate::fuel::RawDeliveryKind::MacroArgument) => {
-                    consume_words!(words, packed, false)
+                // The caller charged the first word. The same traversal admits
+                // the whole prefix and charges each next word after acceptance.
+                macro_rules! consume_words {
+                    ($words:expr, $project:expr, $parameters:expr) => {
+                        consume_span::<_, _, _, _, $parameters>(
+                            $words, frame, consumer, self.fuel, $project, admit,
+                        )
+                    };
                 }
-                (InputWords::Packed(words), _) => consume_words!(words, packed, true),
-                (InputWords::Traced(words), crate::fuel::RawDeliveryKind::MacroArgument) => {
-                    consume_words!(words, traced, false)
+                let packed = |word| (word, OriginId::UNKNOWN);
+                let traced =
+                    |word: tex_state::token::TracedTokenWord| (word.token_word(), word.origin());
+                let result = match (words, kind) {
+                    (InputWords::Packed(words), crate::fuel::RawDeliveryKind::MacroArgument) => {
+                        consume_words!(words, packed, false)
+                    }
+                    (InputWords::Packed(words), _) => consume_words!(words, packed, true),
+                    (InputWords::Traced(words), crate::fuel::RawDeliveryKind::MacroArgument) => {
+                        consume_words!(words, traced, false)
+                    }
+                    (InputWords::Traced(words), _) => consume_words!(words, traced, true),
+                }?;
+                match result {
+                    Some(ControlFlow::Continue(boundary)) => boundary,
+                    Some(ControlFlow::Break(result)) => return Ok(Some(result)),
+                    None => return Ok(None),
                 }
-                (InputWords::Traced(words), _) => consume_words!(words, traced, true),
-            }?;
-            match result {
-                Some(ControlFlow::Continue(boundary)) => break 'span boundary,
-                Some(ControlFlow::Break(result)) => return Ok(Some(result)),
-                None => return Ok(None),
-            }
-        };
-        finish(
-            consumer,
-            self,
-            word,
-            origin,
-            suppress,
-            ReadSite::Resident,
-            kind,
-            admission,
-        )
-        .map(Some)
+            } else {
+                let spelling = words
+                    .get(position)
+                    .ok_or_else(CommandError::input_invariant)?;
+                let word = spelling.token_word();
+                if word.out_parameter_slot().is_some()
+                    && !matches!(kind, crate::fuel::RawDeliveryKind::MacroArgument)
+                {
+                    return Ok(None);
+                }
+                frame.advance_resident();
+                (word, spelling.origin(), Admission::default())
+            };
+            return finish(
+                consumer,
+                self,
+                word,
+                origin,
+                suppress,
+                ReadSite::Resident,
+                kind,
+                admission,
+            )
+            .map(Some);
+        }
     }
 }

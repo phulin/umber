@@ -263,13 +263,19 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   storage selection, calling the selected scalar consumer at a boundary. Raw delivery
   uses the same reader with single-word or continuing admission. Directly borrows the exposed semantic
   input frame and advances its existing physical reader. Input frames own
-  cursor state directly. Recursive scanners isolate the borrowed suffix call
-  from full interpretation; main control inlines the identical traversal.
-  Both release its borrow before expansion or execution. Input frames own
+  cursor state directly. Every retained consumer uses one outlined traversal
+  whose loans end before full interpretation. There is no traversal policy
+  flag or inline forwarding wrapper. Input frames own
   reader state across nesting and rollback; delivery has no parallel cached
-  storage tag or reader invalidation protocol. Source-token delivery enters
-  the normal source reader; only refill, exhaustion, and recovery use cold
-  input transitions.
+  storage tag or reader invalidation protocol. Source-token admission retains
+  the actual source slot and its lexer cursor across accepted terminals in the
+  same loop. The outlined source-storage arm keeps its lexical locals out of
+  recursive stored-token reader frames. Only refill, exhaustion, and recovery release that loan for cold
+  input transitions; the scalar source-forwarding reader is deleted.
+  Stored suffix callbacks borrow actual state, effects, alignment and host facts
+  once alongside their input frame; they do not capture the full processor.
+  The admitted span includes its first word in the same traversal; there is no
+  separate scalar admission before suffix admission.
 - Unicode source admission validates immutable backing once. The line cursor
   reads ASCII directly and decodes only the next non-ASCII scalar, retaining
   exact byte/scalar coordinates without revalidating the remaining file.
@@ -286,8 +292,9 @@ before exhaustion/retirement, and MacroArgument words remain raw.
   delivery and exceptional settlement retain one native CurrentCommand slot;
   printed identity and spelling are demanded by their actual consumers.
   Macro chains remain iterative; failure unwinds for host replay.
-- `src/processor/expand/input.rs`: source reads, borrowed source-character
-  admission, and cold line/parameter/recovery transitions. Exhausted resident
+- `src/processor/expand/input.rs`: borrowed source-character admission and
+  cold line/parameter/recovery transitions. Source tokens are delivered under
+  the outlined retained slot loan selected by `resident.rs`. Exhausted resident
   owners retire directly through the reader's inline boundary, with the storage
   owner's pop/release kept out of its frame. Real terminal/template retention
   and replay completion still enter their existing cold handlers.

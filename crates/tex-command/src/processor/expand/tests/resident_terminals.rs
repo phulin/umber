@@ -78,97 +78,127 @@ impl<G>
 
 #[test]
 fn native_resident_noops_keep_the_span_until_the_exact_budget_cut() {
-    for stop in 1..=8 {
-        crate::test_harness::with_universe(|universe| {
-            let relax = install_static(universe, "noop", Meaning::Relax);
-            let mut command = CommandState::default();
-            crate::test_harness::push(&mut command, [relax; 8]);
-            let mut capabilities = CommandHostCapabilities::default();
-            let mut fuel = crate::CommandFuelLedger::new(stop as u64).expect("exact fuel");
-            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
-            let mut context = universe.command_context().expect("context");
-            let mut processor = crate::test_harness::processor(
-                &mut command,
-                &mut context,
-                &mut capabilities,
-                &mut fuel,
-                &mut effects,
-            );
-            let mut consumer = RelaxConsumer {
-                stop,
-                ..RelaxConsumer::default()
-            };
-            assert_eq!(
-                processor
-                    .consume_main_control(&mut consumer)
-                    .expect("budget cut"),
-                crate::DeliveryStatus::Command
-            );
-            assert_eq!(consumer.completed, stop);
-            assert_eq!(
-                consumer.full, 1,
-                "full access occurs only before the clean span"
-            );
-            assert_eq!(consumer.resident, stop - 1);
-            assert_eq!(
-                processor
-                    .command
-                    .roots
-                    .input
-                    .levels
-                    .current
-                    .as_ref()
-                    .expect("actual frame")
-                    .frame
-                    .position() as usize,
-                stop
-            );
-            drop(processor);
-            assert_eq!(fuel.burned(), stop as u64);
-        });
+    for source in [false, true] {
+        for stop in 1..=8 {
+            crate::test_harness::with_universe(|universe| {
+                let relax = install_static(universe, "noop", Meaning::Relax);
+                let mut command = CommandState::default();
+                if source {
+                    let text = "\\noop".repeat(8) + "%";
+                    let source = command
+                        .register_source(crate::SourceRegistration::new(
+                            crate::RegisteredSourceKind::Generated,
+                            text.as_bytes(),
+                        ))
+                        .expect("source registration");
+                    command
+                        .open_registered_source(source)
+                        .expect("source input");
+                } else {
+                    crate::test_harness::push(&mut command, [relax; 8]);
+                }
+                let mut capabilities = CommandHostCapabilities::default();
+                let mut fuel = crate::CommandFuelLedger::new(stop as u64).expect("exact fuel");
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut context = universe.command_context().expect("context");
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut effects,
+                );
+                let mut consumer = RelaxConsumer {
+                    stop,
+                    ..RelaxConsumer::default()
+                };
+                assert_eq!(
+                    processor
+                        .consume_main_control(&mut consumer)
+                        .expect("budget cut"),
+                    crate::DeliveryStatus::Command
+                );
+                assert_eq!(consumer.completed, stop);
+                assert_eq!(
+                    consumer.full, 1,
+                    "full access occurs only before the clean span"
+                );
+                assert_eq!(consumer.resident, stop - 1);
+                assert_eq!(
+                    processor
+                        .command
+                        .roots
+                        .input
+                        .levels
+                        .current
+                        .as_ref()
+                        .expect("actual frame")
+                        .frame
+                        .position() as usize,
+                    stop
+                );
+                drop(processor);
+                assert_eq!(fuel.burned(), stop as u64);
+            });
+        }
     }
 }
 
 #[test]
 fn resident_noop_fuel_exhaustion_leaves_the_next_word_unread() {
-    for limit in 1..8 {
-        crate::test_harness::with_universe(|universe| {
-            let relax = install_static(universe, "noop", Meaning::Relax);
-            let mut command = CommandState::default();
-            crate::test_harness::push(&mut command, [relax; 8]);
-            let mut capabilities = CommandHostCapabilities::default();
-            let mut fuel = crate::CommandFuelLedger::new(limit as u64).expect("bounded fuel");
-            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
-            let mut context = universe.command_context().expect("context");
-            let mut processor = crate::test_harness::processor(
-                &mut command,
-                &mut context,
-                &mut capabilities,
-                &mut fuel,
-                &mut effects,
-            );
-            let mut consumer = RelaxConsumer {
-                stop: 8,
-                ..RelaxConsumer::default()
-            };
-            assert!(processor.consume_main_control(&mut consumer).is_err());
-            assert_eq!(consumer.completed, limit);
-            assert_eq!(
-                processor
-                    .command
-                    .roots
-                    .input
-                    .levels
-                    .current
-                    .as_ref()
-                    .expect("actual frame")
-                    .frame
-                    .position() as usize,
-                limit
-            );
-            drop(processor);
-            assert_eq!(fuel.burned(), limit as u64);
-        });
+    for source in [false, true] {
+        for limit in 1..8 {
+            crate::test_harness::with_universe(|universe| {
+                let relax = install_static(universe, "noop", Meaning::Relax);
+                let mut command = CommandState::default();
+                if source {
+                    let text = "\\noop".repeat(8) + "%";
+                    let source = command
+                        .register_source(crate::SourceRegistration::new(
+                            crate::RegisteredSourceKind::Generated,
+                            text.as_bytes(),
+                        ))
+                        .expect("source registration");
+                    command
+                        .open_registered_source(source)
+                        .expect("source input");
+                } else {
+                    crate::test_harness::push(&mut command, [relax; 8]);
+                }
+                let mut capabilities = CommandHostCapabilities::default();
+                let mut fuel = crate::CommandFuelLedger::new(limit as u64).expect("bounded fuel");
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut context = universe.command_context().expect("context");
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut effects,
+                );
+                let mut consumer = RelaxConsumer {
+                    stop: 8,
+                    ..RelaxConsumer::default()
+                };
+                assert!(processor.consume_main_control(&mut consumer).is_err());
+                assert_eq!(consumer.completed, limit);
+                assert_eq!(
+                    processor
+                        .command
+                        .roots
+                        .input
+                        .levels
+                        .current
+                        .as_ref()
+                        .expect("actual frame")
+                        .frame
+                        .position() as usize,
+                    limit
+                );
+                drop(processor);
+                assert_eq!(fuel.burned(), limit as u64);
+            });
+        }
     }
 }
 

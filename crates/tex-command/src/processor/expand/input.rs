@@ -16,70 +16,161 @@ use tex_state::token::{OriginId, TokenWord};
 const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
-    /// Reads a token from the live source frame; only refill, EOF and recovery
-    /// leave through the cold input-transition handler.
-    #[inline(always)]
-    pub(super) fn advance_source_token<R>(
+    /// The source arm retains its actual lexer/frame loan across accepted
+    /// terminals. Keep lexical and cold-line locals out of recursive stored
+    /// readers; a real source transition retries the same charged token.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)] // Actual consumer actions and input policies, without an adapter.
+    pub(super) fn consume_source_input<R, Consumer, Admission: Default>(
         &mut self,
         create_control_sequences: bool,
+        consumer: &mut Consumer,
+        glyph_origins: bool,
+        retain: &impl Fn(&Consumer, bool, crate::processor::delivery_mode::DeliveryMode) -> bool,
+        interrupt: &mut impl FnMut(&mut Consumer),
+        admit: &mut impl FnMut(
+            &mut Consumer,
+            &mut tex_state::CommandContext<'_, G>,
+            &mut crate::fuel::CommandFuel,
+            &mut tex_state::diagnostic::DiagnosticEffects,
+            &mut crate::processor::alignment::AlignmentDeliveryState<G>,
+            &mut Facts,
+            u32,
+            Option<OriginId>,
+            TokenWord,
+            OriginId,
+            bool,
+            crate::fuel::RawDeliveryKind,
+            crate::processor::delivery_mode::DeliveryMode,
+        ) -> ControlFlow<R, Result<(), Admission>>,
         finish: &mut impl FnMut(
+            &mut Consumer,
             &mut Self,
             TokenWord,
             OriginId,
             bool,
             ReadSite,
             crate::fuel::RawDeliveryKind,
+            Admission,
         ) -> Result<R, CommandError>,
-    ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
-        let command_state = &mut *self.command;
-        let state = &mut *self.state;
-        let profile = command_state.roots.profile;
-        let force_eof_requested = command_state.roots.input.force_eof;
+        finished: &impl Fn(DeliveryStatus) -> Result<R, CommandError>,
+    ) -> Result<Option<R>, CommandError> {
+        let macro_origin = if glyph_origins {
+            self.active_macro_origin()
+        } else {
+            None
+        };
         let InputLevel {
             frame,
             storage: InputStorage::Source(slot),
-        } = command_state
+        } = self
+            .command
             .roots
             .input
             .levels
             .current
             .as_mut()
-            .expect("current source input")
+            .expect("selected source input")
         else {
             return Err(CommandError::input_invariant());
         };
-        let force_eof = slot.force_eof(force_eof_requested);
-
-        match slot
-            .advance(frame, profile, force_eof, state, create_control_sequences)
-            .map_err(|()| CommandError::input_invariant())?
-        {
-            ResidentSourceAdvance::Delivered(word, origin, location) => {
-                let direct_source_line = slot
-                    .cursor
-                    .line
-                    .as_ref()
-                    .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
-                self.pending_diagnostic_location = slot.diagnostic_location(location);
+        let profile = self.command.roots.profile;
+        let force_eof = slot.force_eof(self.command.roots.input.force_eof);
+        let entered_line =
+            u32::try_from(self.command.roots.input.retained_file_line_number).unwrap_or(0);
+        let direct_source_line = slot
+            .cursor
+            .line
+            .as_ref()
+            .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
+        let cold = loop {
+            match slot
+                .advance(
+                    frame,
+                    profile,
+                    force_eof,
+                    self.state,
+                    create_control_sequences,
+                )
+                .map_err(|()| CommandError::input_invariant())?
+            {
+                ResidentSourceAdvance::Delivered(word, origin, location) => {
+                    self.pending_diagnostic_location = slot.diagnostic_location(location);
+                    let admission = if retain(consumer, false, self.command.delivery_mode) {
+                        admit(
+                            consumer,
+                            self.state,
+                            self.fuel,
+                            self.diagnostic_effects,
+                            &mut self.command.roots.alignment,
+                            &mut self.host.facts,
+                            entered_line,
+                            macro_origin,
+                            word,
+                            origin,
+                            false,
+                            crate::fuel::RawDeliveryKind::Source,
+                            self.command.delivery_mode,
+                        )
+                    } else {
+                        ControlFlow::Continue(Err(Admission::default()))
+                    };
+                    match admission {
+                        ControlFlow::Continue(Err(admission)) => {
+                            return finish(
+                                consumer,
+                                self,
+                                word,
+                                origin,
+                                false,
+                                ReadSite::Source(direct_source_line),
+                                crate::fuel::RawDeliveryKind::Source,
+                                admission,
+                            )
+                            .map(Some);
+                        }
+                        admitted => {
+                            if let Some(location) = self.pending_diagnostic_location.take() {
+                                self.command.roots.last_diagnostic_location = Some(location);
+                            }
+                            match admitted {
+                                ControlFlow::Continue(Ok(())) => self.fuel.charge()?,
+                                ControlFlow::Break(result) => return Ok(Some(result)),
+                                ControlFlow::Continue(Err(_)) => unreachable!(),
+                            }
+                        }
+                    }
+                }
+                ResidentSourceAdvance::InvalidCharacter => {
+                    break ResidentBoundary::InvalidCharacter;
+                }
+                ResidentSourceAdvance::NeedLine(identity) => {
+                    break ResidentBoundary::NeedLine(identity);
+                }
+                ResidentSourceAdvance::Exhausted(identity) => {
+                    break ResidentBoundary::SourceExhausted(identity);
+                }
+            }
+        };
+        interrupt(consumer);
+        match self.finish_input_boundary(
+            cold,
+            &mut |processor, word, origin, suppress, site, kind| {
                 finish(
-                    self,
+                    consumer,
+                    processor,
                     word,
                     origin,
-                    false,
-                    ReadSite::Source(direct_source_line),
-                    crate::fuel::RawDeliveryKind::Source,
+                    suppress,
+                    site,
+                    kind,
+                    Admission::default(),
                 )
-                .map(|result| Some(ControlFlow::Continue(result)))
-            }
-            ResidentSourceAdvance::InvalidCharacter => {
-                self.finish_input_boundary(ResidentBoundary::InvalidCharacter, finish)
-            }
-            ResidentSourceAdvance::NeedLine(identity) => {
-                self.finish_input_boundary(ResidentBoundary::NeedLine(identity), finish)
-            }
-            ResidentSourceAdvance::Exhausted(identity) => {
-                self.finish_input_boundary(ResidentBoundary::SourceExhausted(identity), finish)
-            }
+            },
+        )? {
+            Some(ControlFlow::Continue(result)) => Ok(Some(result)),
+            Some(ControlFlow::Break(status)) => finished(status).map(Some),
+            None => Ok(None),
         }
     }
 
@@ -254,7 +345,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(always)]
     pub(super) fn advance_input_boundary<R>(
         &mut self,
-        create_control_sequences: bool,
         finish: &mut impl FnMut(
             &mut Self,
             TokenWord,
@@ -271,10 +361,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .levels
             .current
             .as_ref()
-            .is_some_and(|row| {
-                !matches!(row.storage, InputStorage::Source(_))
-                    && row.frame.position() >= row.frame.limit()
-            })
+            .is_some_and(|row| row.frame.position() >= row.frame.limit())
         {
             return match self.command.finish_resident_exhaustion(
                 &mut self.observer,
@@ -284,14 +371,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Some(boundary) => self.finish_input_boundary(boundary, finish),
             };
         }
-        self.advance_source_or_parameter(create_control_sequences, finish)
+        self.advance_parameter_or_end(finish)
     }
 
     #[cold]
     #[inline(never)]
-    fn advance_source_or_parameter<R>(
+    fn advance_parameter_or_end<R>(
         &mut self,
-        create_control_sequences: bool,
         finish: &mut impl FnMut(
             &mut Self,
             TokenWord,
@@ -301,17 +387,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             crate::fuel::RawDeliveryKind,
         ) -> Result<R, CommandError>,
     ) -> Result<Option<ControlFlow<DeliveryStatus, R>>, CommandError> {
-        let Some(current) = self.command.roots.input.levels.current.as_ref() else {
+        if self.command.roots.input.levels.current.is_none() {
             return self.finish_input_boundary(ResidentBoundary::Empty, finish);
-        };
-        if matches!(
-            current,
-            InputLevel {
-                storage: InputStorage::Source(_),
-                ..
-            }
-        ) {
-            return self.advance_source_token(create_control_sequences, finish);
         }
         let levels = &mut self.command.roots.input.levels;
         let row = levels.current.as_mut().expect("current input");
@@ -349,7 +426,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
     #[cold]
     #[inline(never)]
-    fn finish_input_boundary<R>(
+    pub(super) fn finish_input_boundary<R>(
         &mut self,
         cold: ResidentBoundary,
         finish: &mut impl FnMut(

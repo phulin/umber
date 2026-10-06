@@ -21,7 +21,6 @@ where
     const NATIVE_TERMINAL: bool = true;
     const RESIDENT_TERMINALS: bool = Consume::RESIDENT_TERMINALS;
     const RESIDENT_LITERALS: bool = Consume::RESIDENT_LITERALS;
-    const OUTLINE_RESIDENT_SUFFIX: bool = !MAIN_CONTROL;
 
     #[inline(always)]
     fn resident_ready(&self) -> bool {

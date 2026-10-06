@@ -55,7 +55,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             CREATE_CS,
             &mut (),
             false,
-            false,
             &|_, _, _| false,
             &mut |_| {},
             &mut |_, _, _, _, _, _, _, _, _, _, _, _, _| ControlFlow::Continue(Err(())),
@@ -213,7 +212,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let selected = self.consume_input::<_, _, _>(
                 true,
                 &mut (),
-                false,
                 false,
                 &|_, _, _| false,
                 &mut |_| {},

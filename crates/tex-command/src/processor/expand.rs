@@ -30,8 +30,6 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G, Facts> {
     const NATIVE_TERMINAL: bool = false;
     const RESIDENT_TERMINALS: bool = false;
     const RESIDENT_LITERALS: bool = false;
-    /// Recursive scanners keep suffix temporaries out of their reader frame.
-    const OUTLINE_RESIDENT_SUFFIX: bool = false;
 
     fn native_terminal(
         &mut self,
@@ -316,7 +314,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.create_source_control_sequences,
             &mut (),
             false,
-            false,
             &|_, _, _| false,
             &mut |_| {},
             &mut |_, _, _, _, _, _, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(Err(())),
@@ -372,7 +369,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         &mut self,
         create_control_sequences: bool,
         consumer: &mut Consumer,
-        outline_suffix: bool,
         glyph_origins: bool,
         retain: &impl Fn(&Consumer, bool, super::delivery_mode::DeliveryMode) -> bool,
         interrupt: &mut impl FnMut(&mut Consumer),
@@ -408,10 +404,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.charge_command_action()?;
             let consumed = loop {
                 let resident = self.consume_resident_input(
+                    create_control_sequences,
                     consumer,
-                    outline_suffix,
                     glyph_origins,
                     retain,
+                    interrupt,
                     &mut {
                         #[inline(always)]
                         |consumer,
@@ -446,13 +443,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         }
                     },
                     finish,
+                    &finished,
                 )?;
                 if let Some(result) = resident {
                     break result;
                 }
                 interrupt(consumer);
                 let boundary = self.advance_input_boundary(
-                    create_control_sequences,
                     &mut |processor, word, origin, suppress, site, kind| {
                         finish(
                             consumer,

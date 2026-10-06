@@ -70,7 +70,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.create_source_control_sequences,
             &mut (),
             false,
-            false,
             &|_, suppress, mode| !OBSERVED && !suppress && !mode.requires_persistent_settlement(),
             &mut |_| {},
             &mut |_, state, fuel, _, alignment, _, _, _, word, _, _, kind, _mode| {

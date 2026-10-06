@@ -97,7 +97,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let status = self.consume_input::<_, _, _>(
             self.create_source_control_sequences,
             terminal,
-            Consumer::OUTLINE_RESIDENT_SUFFIX,
             role == ExpandedReaderRole::MainLoopLookahead,
             &|terminal, suppress, mode| {
                 Consumer::RESIDENT_TERMINALS

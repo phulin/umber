@@ -83,6 +83,36 @@ unwind. No raw pointer or independent cursor is introduced to evade those
 boundaries. Ordinary reads retain the physical macro, argument, and replay
 cursors already installed in the frame.
 
+Source token delivery retains the actual source slot and lexer cursor under
+that same input loan. Source entry precedes the stored-span field loans, so
+its lexer and transitions do not share those loans. Its source-storage arm is outlined so lexical admission
+and cold line handling do not enlarge the stored-token reader or recursive
+scanner frames. Storage is selected once at span entry; the source arm then
+borrows that actual frame for its entire accepted prefix. The tokenizer remains the sole authority for spelling,
+catcodes, control-sequence creation, provenance and physical line position.
+An accepted ordinary terminal continues directly to the next source token;
+a declined word releases the loan before full interpretation. Only actual
+refill, invalid-character recovery and exhaustion interrupt the continuation.
+Those paths call the existing cold transition owner and retry the newly
+exposed frame under the already charged token. No scalar source-forwarding
+reader, transition result wrapper or additional cursor remains. Accepted
+tokens update the existing diagnostic location, and fuel is charged before
+each next token while budget cuts leave that next token unread.
+
+Stored spans borrow the actual state, effects, alignment and host facts once
+alongside the input frame. Their admission callback uses those disjoint loans
+throughout the suffix, without reaching through the full processor per word.
+The loans end before a declined terminal receives full processor access.
+An admitted span uses one traversal from its current position, including its
+first word. The caller has charged that word; the traversal charges each next
+word after acceptance. There is no separate first-word admission followed by
+a second suffix admission path. Consumers that require full access read their
+single word directly before releasing the input loan.
+The traversal is one outlined function for all retained consumers. Its actual
+frame, fuel and admission loans have independent register lifetimes from full
+interpretation. There is no inline-versus-outlined policy or forwarding
+wrapper around that traversal.
+
 ## Recoverable command preflight
 
 Some canonical command checks happen before operand scanning and return a
@@ -976,23 +1006,17 @@ integer consumer entry; its unused selector is erased before the call.
 
 ## Input-preserving ordinary groups
 
-The retained reader splits the admitted state into its immutable actual meaning
-rows and a restricted group-state loan, then lends the group loan and host facts
-to its synchronous resident consumer while the input words remain borrowed.
-The group loan borrows the actual journal, lineage counter, integer parameters
-and dependency runtime; it cannot assign or restore meaning rows. These loans
-are disjoint from the authoritative input cursor. This separation lets the
-reader lend an actual live meaning row through group execution. Accepted
-control sequences copy no meaning word; only a decline transfers its actual
-meaning value to full delivery. The two views
-are scoped borrows, with no copied values, new owner or persistent state. They
-are acquired only after resident readiness admits a physical word; cold input
-and full delivery create no unused group loan. Journal admission is checked
-only by actual group operations, so unrelated scanners erase the unused loan. The
-consumer receives the current file line from the actual input header; a span
-cannot cross a line acquisition. The facts type remains statically known, and
-unused loans disappear from scanner specializations. No processor facade,
-command record, additional input owner or checkpoint field is introduced.
+The retained reader lends the actual `CommandContext` and host facts to its
+synchronous resident consumer while the input words remain borrowed from
+their disjoint command owner. Each control sequence reads its live native
+meaning once. Accepted commands use its key and payload; only a decline
+requires the full meaning coordinate for interpretation. There is no
+restricted group-state facade or separate immutable meaning-row view.
+Journal admission belongs only to actual group operations. The consumer
+receives the current file line from the existing input owner; a span cannot
+cross line acquisition. The facts type remains statically known, and unused
+loans disappear from scanner specializations. No command record, additional
+input owner or checkpoint field is introduced.
 
 Once terminal entry has flushed pending characters, published scanner reports
 and checked the live command tracing demand, ordinary group commands can retain
