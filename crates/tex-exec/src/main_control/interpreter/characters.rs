@@ -211,7 +211,7 @@ pub(in crate::main_control) fn append_native_character<G>(
     origin: OriginId,
     etex_extended: bool,
 ) -> Result<(), ExecError> {
-    crate::box_runtime::append_character_with_fuel(
+    execution.main_loop_active = crate::box_runtime::append_character_with_fuel(
         &mut execution.modes,
         context,
         effects,
@@ -220,11 +220,6 @@ pub(in crate::main_control) fn append_native_character<G>(
         etex_extended,
         fuel,
     )?;
-    execution.main_loop_active = u8::try_from(u32::from(ch)).ok().is_some_and(|code| {
-        context
-            .font_char_metrics(context.current_font(), code)
-            .is_some()
-    });
     Ok(())
 }
 

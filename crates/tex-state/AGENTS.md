@@ -690,3 +690,7 @@ Arena, page-region and durable-transition work counters exist only under
 `cfg(test)` or `profiling`. Ordinary owners carry no counter field and execute
 no observation writes. `testing` widens test APIs without enabling these counters.
 Semantic identity admission checks the actual retained envelopes and active builder.
+
+Glyph consumers borrow the current immutable LoadedFont payload directly through
+CommandContext::loaded_font. The reference admits one existing payload and exposes
+no font store, mutable font state or retained cache.

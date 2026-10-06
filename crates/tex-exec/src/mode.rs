@@ -698,7 +698,7 @@ impl ModeListMutation<'_> {
         produce: impl FnOnce(
             &mut CommandContext<'_, G>,
             &[PendingHChar],
-            &mut crate::box_runtime::hmode::OpenTypeShapingScratch,
+            &mut crate::box_runtime::hmode::HorizontalFlushScratch,
             &mut crate::box_runtime::hmode::TfmScratch,
             &mut PageMaterialActiveListBuilder,
         ) -> Result<(), ExecError>,
@@ -1195,7 +1195,7 @@ pub struct PendingHChar {
 #[derive(Default)]
 pub(crate) struct HorizontalModeScratch {
     pending_source: Vec<PendingHChar>,
-    shaping: crate::box_runtime::hmode::OpenTypeShapingScratch,
+    shaping: crate::box_runtime::hmode::HorizontalFlushScratch,
     tfm_work: crate::box_runtime::hmode::TfmScratch,
     work_lent: bool,
 }
@@ -1226,7 +1226,7 @@ impl HorizontalModeScratch {
     fn shaping_and_tfm_work(
         &mut self,
     ) -> (
-        &mut crate::box_runtime::hmode::OpenTypeShapingScratch,
+        &mut crate::box_runtime::hmode::HorizontalFlushScratch,
         &mut crate::box_runtime::hmode::TfmScratch,
     ) {
         self.work_lent = true;

@@ -431,3 +431,9 @@ The native terminal consumer fixes its TeX fetch role with a const parameter at
 reader entry. It stores no duplicate lookahead flag, and clean no-op loops contain
 no glyph-role branch. Raw horizontal lookahead alone requests the span's macro
 invocation origin; other reader roles omit that unused ancestry scan.
+
+Horizontal glyph append returns its actual classic-metric next-fetch decision.
+Existence, shaping and false-boundary tests share one immutable LoadedFont loan;
+source-character suffixes retain that payload across their read-only admission.
+The forwarding glyph entry and OpenTypeShapingScratch compatibility alias are
+deleted; mode owners use HorizontalFlushScratch directly.

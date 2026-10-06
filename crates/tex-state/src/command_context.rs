@@ -2574,6 +2574,11 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
+    pub fn loaded_font(&self, id: crate::ids::FontId) -> &tex_fonts::LoadedFont {
+        self.resident.fonts.get(id)
+    }
+
+    #[must_use]
     pub fn font_char_metrics(
         &self,
         id: crate::ids::FontId,

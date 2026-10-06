@@ -1,5 +1,15 @@
 # Command delivery kernel
 
+Horizontal glyph admission borrows the current immutable `LoadedFont` payload
+through the existing `CommandContext`. Existence, shaping direction, false
+boundary and classic-metric continuation use that one admitted payload. The
+actual append returns its next-fetch decision directly; main control does not
+resolve the same font again afterward. Classic-metric continuation remains
+distinct from Unicode or encoding-map glyph existence. The borrow ends before
+flushes, warnings or state mutation, and enters no checkpoint or retained cache.
+Source-character runs likewise borrow the actual payload once for their accepted
+suffix after any required language or incompatible-run flush.
+
 This design moves command-delivery work to its semantic frequency while keeping
 one canonical input stack and one expansion implementation. Performance evidence
 comes from identical workloads on separate baseline and candidate revisions;

@@ -12,30 +12,6 @@ use tex_state::token::OriginId;
 use crate::mode::{PendingHChar, PendingHRunChar};
 use crate::{ExecError, Mode, ModeNest};
 
-pub(crate) fn append_character_with_fuel<G>(
-    nest: &mut ModeNest,
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut DiagnosticEffects,
-    ch: char,
-    origin: OriginId,
-    etex_extended: bool,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
-    debug_assert!(matches!(
-        nest.current_mode(),
-        Mode::Horizontal | Mode::RestrictedHorizontal
-    ));
-    append_hchar_with_fuel(
-        nest,
-        stores,
-        diagnostic_effects,
-        ch,
-        origin,
-        etex_extended,
-        fuel,
-    )
-}
-
 /// Result of admitting one borrowed source-character suffix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CharacterRunAppend {
@@ -49,7 +25,7 @@ pub(crate) struct CharacterRunAppend {
 fn classify_character_run_candidate<G>(
     run: &tex_command::BorrowedSourceCharacterRun<'_>,
     index: usize,
-    font: FontId,
+    loaded: &tex_fonts::LoadedFont,
     font_is_ltr_shaping: bool,
     false_boundary: Option<u8>,
     stores: &CommandContext<'_, G>,
@@ -94,7 +70,7 @@ fn classify_character_run_candidate<G>(
         return None;
     }
     let is_false_boundary = false_boundary == Some(byte);
-    let has_metrics = stores.font_character_metrics(font, ch).is_some();
+    let has_metrics = loaded.character_metrics(ch).is_some();
     if !has_metrics && !is_false_boundary {
         *continue_run = false;
         *fallback = Some(tex_command::CharacterRunFallback::MissingMetric);
@@ -136,8 +112,11 @@ pub(crate) fn append_character_run_with_fuel<G>(
     ));
     let mode = nest.current_mode();
     let font = stores.current_font();
-    let font_is_ltr_shaping = stores.font_is_left_to_right_shaping(font);
-    let false_boundary = stores.font_false_boundary_char(font);
+    let loaded = stores.loaded_font(font);
+    let font_is_ltr_shaping = loaded
+        .opentype()
+        .is_some_and(|font| font.direction == tex_fonts::WritingDirection::LeftToRight);
+    let false_boundary = loaded.metrics().false_boundary_char();
     let language_changed = mode == Mode::Horizontal
         && current_hyphen_context(stores).0 != nest.current_list().hyphen_language();
     let mut pending_script = if language_changed {
@@ -161,7 +140,7 @@ pub(crate) fn append_character_run_with_fuel<G>(
     let first = classify_character_run_candidate(
         &run,
         0,
-        font,
+        loaded,
         font_is_ltr_shaping,
         false_boundary,
         stores,
@@ -210,6 +189,7 @@ pub(crate) fn append_character_run_with_fuel<G>(
     }
     let mut first = Some((first, first_origin, first_script_option));
     let accepted = {
+        let loaded = stores.loaded_font(font);
         let mut list = nest.current_list_mutation();
         let accepted = list.append_pending_hchars(font, capacity, first_script, |index| {
             if index == 0 {
@@ -218,7 +198,7 @@ pub(crate) fn append_character_run_with_fuel<G>(
                 classify_character_run_candidate(
                     &run,
                     index,
-                    font,
+                    loaded,
                     font_is_ltr_shaping,
                     false_boundary,
                     stores,
@@ -427,7 +407,7 @@ fn prepare_candidate_positions_for_chars<G>(
     chars: &[PendingHChar],
     left: usize,
     right: usize,
-    scratch: &mut OpenTypeShapingScratch,
+    scratch: &mut HorizontalFlushScratch,
 ) {
     // The pending-run owner supplies all of these buffers.  Clearing them at
     // entry also makes every early return leave no logical candidate state
@@ -548,7 +528,7 @@ pub(crate) fn control_space_glue_spec<G>(stores: &CommandContext<'_, G>) -> Glue
     space_skip_or_font_space(stores, 1000).0
 }
 
-pub(crate) fn append_hchar_with_fuel<G>(
+pub(crate) fn append_character_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
@@ -556,15 +536,23 @@ pub(crate) fn append_hchar_with_fuel<G>(
     origin: OriginId,
     etex_extended: bool,
     fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
+) -> Result<bool, ExecError> {
+    debug_assert!(matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ));
     let mode = nest.current_mode();
     fix_hyphen_language_with_fuel(nest, stores, diagnostic_effects, mode, fuel)?;
     let font = stores.current_font();
-    let character_exists = stores.font_character_exists(font, ch);
-    let font_is_ltr_shaping = stores.font_is_left_to_right_shaping(font);
-    let false_boundary_character = font_code(ch)
-        .ok()
-        .is_some_and(|code| stores.font_false_boundary_char(font) == Some(code));
+    let loaded = stores.loaded_font(font);
+    let character_exists = loaded.character_exists(ch);
+    let font_is_ltr_shaping = loaded
+        .opentype()
+        .is_some_and(|font| font.direction == tex_fonts::WritingDirection::LeftToRight);
+    let code = u8::try_from(u32::from(ch)).ok();
+    let false_boundary_character =
+        code.is_some_and(|code| loaded.metrics().false_boundary_char() == Some(code));
+    let continue_run = code.is_some_and(|code| loaded.metrics().character(code).is_some());
     if character_exists || false_boundary_character {
         let script = font_is_ltr_shaping.then(|| tex_fonts::character_script(ch));
         let flush_incompatible_run = nest.current_list().pending_hchars().is_some_and(|pending| {
@@ -591,7 +579,7 @@ pub(crate) fn append_hchar_with_fuel<G>(
         let mut list = nest.current_list_mutation();
         append_pending_hchar(&mut list, font, ch, origin, script);
         update_space_factor(&mut list, stores, ch);
-        return Ok(());
+        return Ok(continue_run);
     }
     flush_pending_hchar_run_with_fuel(
         nest,
@@ -608,7 +596,7 @@ pub(crate) fn append_hchar_with_fuel<G>(
         ch,
         etex_extended,
     );
-    Ok(())
+    Ok(continue_run)
 }
 
 /// TeX82 §1091's `norm_min`, verbatim: `if h<=0 then norm_min:=1 else if
@@ -936,7 +924,7 @@ impl FinalHNodeSink for PageNodeSink<'_> {
 fn shape_open_type_chars_into<G>(
     stores: &mut CommandContext<'_, G>,
     chars: &[crate::mode::PendingHChar],
-    scratch: &mut OpenTypeShapingScratch,
+    scratch: &mut HorizontalFlushScratch,
     sink: &mut impl FinalHNodeSink,
 ) {
     plan_open_type_adjustments(&*stores, chars, scratch);
@@ -970,9 +958,6 @@ pub(crate) struct HorizontalFlushScratch {
     shaping: tex_fonts::ShapingScratch,
 }
 
-/// Compatibility name retained for the existing hmode callers and tests.
-pub(crate) type OpenTypeShapingScratch = HorizontalFlushScratch;
-
 impl HorizontalFlushScratch {
     pub(crate) fn clear(&mut self) {
         self.source_chars.clear();
@@ -994,7 +979,7 @@ impl HorizontalFlushScratch {
 fn plan_open_type_adjustments<G>(
     stores: &CommandContext<'_, G>,
     chars: &[crate::mode::PendingHChar],
-    scratch: &mut OpenTypeShapingScratch,
+    scratch: &mut HorizontalFlushScratch,
 ) {
     scratch.text.clear();
     scratch.byte_starts.clear();
@@ -1175,7 +1160,7 @@ impl OpenTypeSourceNode {
 
 struct OpenTypeSourceWalk<'a> {
     output: &'a mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    shaping: &'a mut OpenTypeShapingScratch,
+    shaping: &'a mut HorizontalFlushScratch,
     saw_run: bool,
     retained_start: usize,
     run_font: Option<FontId>,
@@ -1281,7 +1266,7 @@ impl OpenTypeSourceWalk<'_> {
 pub(crate) fn reshape_open_type_runs_list<G>(
     stores: &mut CommandContext<'_, G>,
     source: tex_state::page_node_arena::PageListId,
-    shaping: &mut OpenTypeShapingScratch,
+    shaping: &mut HorizontalFlushScratch,
 ) -> tex_state::page_node_arena::PageListId {
     shaping.clear();
     let source = stores
