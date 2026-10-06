@@ -32,6 +32,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut Consumer,
             &mut tex_state::CommandContext<'_, G>,
             &mut crate::fuel::CommandFuel,
+            &mut usize,
+            usize,
+            bool,
             &mut tex_state::diagnostic::DiagnosticEffects,
             &mut crate::processor::alignment::AlignmentDeliveryState<G>,
             &mut Facts,
@@ -60,6 +63,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         } else {
             None
         };
+        let input_depth = self.command.roots.input.levels.len();
         let InputLevel {
             frame,
             storage: InputStorage::Source(slot),
@@ -83,6 +87,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .line
             .as_ref()
             .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
+        let mode = self.command.delivery_mode;
+        let readiness = retain(consumer, false, mode);
         let cold = loop {
             match slot
                 .advance(
@@ -96,11 +102,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             {
                 ResidentSourceAdvance::Delivered(word, origin, location) => {
                     self.pending_diagnostic_location = slot.diagnostic_location(location);
-                    let admission = if retain(consumer, false, self.command.delivery_mode) {
+                    let admission = if readiness {
                         admit(
                             consumer,
                             self.state,
                             self.fuel,
+                            &mut self.command.stack_usage.input_stack,
+                            input_depth,
+                            true,
                             self.diagnostic_effects,
                             &mut self.command.roots.alignment,
                             &mut self.host.facts,
@@ -110,7 +119,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             origin,
                             false,
                             crate::fuel::RawDeliveryKind::Source,
-                            self.command.delivery_mode,
+                            mode,
                         )
                     } else {
                         ControlFlow::Continue(Err(Admission::default()))

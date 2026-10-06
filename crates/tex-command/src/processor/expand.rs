@@ -308,7 +308,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             false,
             &|_, _, _| false,
             &mut |_| {},
-            &mut |_, _, _, _, _, _, _, _, _, _, _, _, _| std::ops::ControlFlow::Continue(Err(())),
+            &mut |_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _| {
+                std::ops::ControlFlow::Continue(Err(()))
+            },
             &mut |_, processor, word, origin, suppress, site, kind, _| {
                 processor
                     .finish_delivered_word::<OBSERVED>(
@@ -368,6 +370,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut Consumer,
             &mut tex_state::CommandContext<'_, G>,
             &mut crate::fuel::CommandFuel,
+            &mut usize,
+            usize,
+            bool,
             &mut tex_state::diagnostic::DiagnosticEffects,
             &mut super::alignment::AlignmentDeliveryState<G>,
             &mut Facts,
@@ -406,6 +411,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         |consumer,
                          state,
                          fuel,
+                         input_usage,
+                         input_depth,
+                         frame_live,
                          effects,
                          alignment,
                          facts,
@@ -420,6 +428,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 consumer,
                                 state,
                                 fuel,
+                                input_usage,
+                                input_depth,
+                                frame_live,
                                 effects,
                                 alignment,
                                 facts,

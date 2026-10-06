@@ -6,6 +6,7 @@ use super::{
 };
 use crate::command::CurrentCommand;
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
+use core::cell::Cell;
 use std::ops::ControlFlow;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord};
@@ -74,7 +75,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         role: ExpandedReaderRole,
         terminal: &mut Consumer,
     ) -> Result<DeliveryStatus, CommandError> {
-        let mut expanded = false;
+        let expanded = Cell::new(false);
+        #[cfg(feature = "profiling")]
+        let write_expanding = self.write_expansion_depth != 0;
         let supplied = destination.is_some();
         let initial_status = if STOP_PROTECTED
             && destination.as_ref().is_some_and(|command| {
@@ -90,9 +93,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             if let ControlFlow::Break(()) = terminal.terminal(self, destination, status)? {
                 return Ok(status);
             }
+            if OBSERVED
+                && role != ExpandedReaderRole::Scanner
+                && status == DeliveryStatus::AlignmentEndTemplate
+            {
+                return Ok(status);
+            }
             destination.take();
         } else {
-            expanded = supplied;
+            expanded.set(supplied);
         }
         let status = self.consume_input::<_, _, _>(
             self.create_source_control_sequences,
@@ -100,8 +109,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             role == ExpandedReaderRole::MainLoopLookahead,
             &|terminal, suppress, mode| {
                 Consumer::RESIDENT_TERMINALS
-                    && !OBSERVED
                     && terminal.resident_ready()
+                    && !OBSERVED
                     && !suppress
                     && !mode.requires_persistent_settlement()
             },
@@ -111,6 +120,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 |terminal,
                  state,
                  fuel,
+                 input_usage,
+                 input_depth,
+                 frame_live,
                  effects,
                  alignment,
                  facts,
@@ -124,6 +136,46 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let resolved = word
                         .control_sequence()
                         .map(|symbol| *state.compact_control_sequence_meaning_word(symbol));
+                    if let Some(meaning) = resolved
+                        && !meaning.is_relax()
+                        && meaning.suppressed_by_noexpand()
+                    {
+                        if meaning.execution_key() == MeaningWord::<G>::EMPTY_MACRO_KEY
+                            && frame_live
+                            && !Consumer::RAW_TOKEN
+                            && !(_mode.scanner_active()
+                                && MeaningFlags::from_bits(meaning.operand() as u8)
+                                    .contains(MeaningFlags::OUTER))
+                            && !(STOP_PROTECTED
+                                && MeaningFlags::from_bits(meaning.operand() as u8)
+                                    .contains(MeaningFlags::PROTECTED))
+                            && state.int_param(tex_state::env::banks::IntParam::TRACING_MACROS) <= 0
+                        {
+                            if *input_usage < input_depth {
+                                *input_usage = input_depth;
+                            }
+                            expanded.set(true);
+                            #[cfg(feature = "profiling")]
+                            {
+                                tex_state::measurement::record_hot_core_macro_expansion();
+                                if write_expanding {
+                                    fuel.record_write_expansion();
+                                }
+                                fuel.record_raw_delivery(
+                                    _mode.scanner_active(),
+                                    word.requires_meaning_lookup(),
+                                    kind,
+                                );
+                            }
+                            #[cfg(test)]
+                            crate::macro_call::record_resident_empty_macro();
+                            return terminal
+                                .expanded()
+                                .map_break(|()| DeliveryStatus::Command)
+                                .map_continue(|()| Ok(()));
+                        }
+                        return ControlFlow::Continue(Err(Some(meaning)));
+                    }
                     let mut admit = {
                         #[inline(always)]
                         |code: u64, operand: u64| {
@@ -152,9 +204,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         }
                     };
                     if let Some(meaning) = resolved {
-                        if !meaning.is_relax() && meaning.suppressed_by_noexpand() {
-                            return ControlFlow::Continue(Err(Some(meaning)));
-                        }
                         return match admit(meaning.execution_key(), meaning.operand()) {
                             ControlFlow::Break(()) => ControlFlow::Break(DeliveryStatus::Command),
                             ControlFlow::Continue(true) => ControlFlow::Continue(Ok(())),
@@ -230,7 +279,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         if let Err(failure) = result {
                             terminal.recover(processor, failure)?;
                         }
-                        expanded = true;
+                        expanded.set(true);
                         return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                     }
                     let native_action;
@@ -270,7 +319,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                     return Err(failure);
                                 }
                             }
-                            expanded = true;
+                            expanded.set(true);
                             return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                         }
                         let protected = STOP_PROTECTED
@@ -292,7 +341,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 code,
                                 control_sequence,
                             )?;
-                            expanded = false;
+                            expanded.set(false);
                             return Ok(result.map_break(|()| DeliveryStatus::Command));
                         }
                     } else {
@@ -344,7 +393,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     } else {
                         match terminal.expand(processor, command, action) {
                             Ok(true) => {
-                                expanded = true;
+                                expanded.set(true);
                                 return Ok(terminal
                                     .expanded()
                                     .map_break(|()| DeliveryStatus::Command));
@@ -352,7 +401,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             Ok(false) => {}
                             Err(failure) => {
                                 terminal.recover(processor, failure)?;
-                                expanded = true;
+                                expanded.set(true);
                                 return Ok(terminal
                                     .expanded()
                                     .map_break(|()| DeliveryStatus::Command));
@@ -366,7 +415,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             && let ExpandedCommandAction::Expand(dispatch) = action
                         {
                             processor.execute_expansion_action(command, dispatch)?;
-                            expanded = true;
+                            expanded.set(true);
                             return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                         }
                         if !Consumer::RAW_TOKEN
@@ -385,25 +434,34 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 tex_state::token::OriginId::UNKNOWN,
                             ))?;
                             destination.take();
-                            expanded = true;
+                            expanded.set(true);
                             return Ok(terminal.expanded().map_break(|()| DeliveryStatus::Command));
                         }
                         if Consumer::RAW_TOKEN
                             || (role == ExpandedReaderRole::MainLoopLookahead
-                                && !expanded
+                                && !expanded.get()
                                 && command.is_main_loop_character())
                         {
                             DeliveryStatus::Command
                         } else {
-                            processor
-                                .finish_terminal_expansion::<OBSERVED>(command, action, expanded)
+                            processor.finish_terminal_expansion::<OBSERVED>(
+                                command,
+                                action,
+                                expanded.get(),
+                            )
                         }
                     };
                     match terminal.terminal(processor, destination, terminal_status)? {
                         ControlFlow::Break(()) => Ok(ControlFlow::Break(terminal_status)),
                         ControlFlow::Continue(()) => {
+                            if OBSERVED
+                                && role != ExpandedReaderRole::Scanner
+                                && terminal_status == DeliveryStatus::AlignmentEndTemplate
+                            {
+                                return Ok(ControlFlow::Break(terminal_status));
+                            }
                             destination.take();
-                            expanded = false;
+                            expanded.set(false);
                             Ok(ControlFlow::Continue(()))
                         }
                     }

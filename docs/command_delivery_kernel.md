@@ -83,6 +83,32 @@ unwind. No raw pointer or independent cursor is introduced to evade those
 boundaries. Ordinary reads retain the physical macro, argument, and replay
 cursors already installed in the frame.
 
+### Empty macro continuation
+
+The native empty-macro key proves that neither parameter matching nor a
+replacement input owner exists. The shared expanded reader consumes that word
+inside its physical span when the current stored frame still has a suffix, or
+when its source frame remains outside stored-list conservation. It lends the
+actual input-stack high-water counter and current depth separately from the
+frame; recording the logical activation creates no row or bookkeeping owner.
+The consumed word advances and charges the same fuel as full activation.
+
+The physical borrow reuses the consumer's existing execution entry proof;
+readiness is queried once at physical entry. Empty expansion before that entry
+uses native interpretation without constructing a body or command record.
+No expansion-only selector or special first-word path is retained.
+Macro tracing, outer validity in a scanner, protected scanning,
+observation and suppression require their actual delivery paths. The final word
+of a stored frame releases the borrow before conservation and any replay fence.
+Parameter substitution and source transitions likewise release the actual loan.
+
+The existing call-local expanded-delivery boolean is shared through a `Cell`
+between synchronous admission and full interpretation. This replaces that same
+scalar; it adds no input state, readiness cache, checkpoint field or allocation.
+Profiling records the real expansion and raw delivery at the empty producer.
+The generated ordinary-token loop must retain its entry facts across accepted
+no-ops; compiled code and matched cycles determine any remaining guard cost.
+
 Source token delivery retains the actual source slot and lexer cursor under
 that same input loan. Source entry precedes the stored-span field loans, so
 its lexer and transitions do not share those loans. Its source-storage arm is outlined so lexical admission
@@ -883,6 +909,13 @@ mutates state; a declined word retains that resolved meaning for full delivery.
 There is no special meaning-table or group-state view, copied bank, persistent
 lookup result, or checkpoint-owned slice.
 
+Physical entry selects eligibility and the consumer's existing readiness proof
+once. Admitted consumers enter the typed loop directly. Before that proof
+exists, the canonical native reader expands and delivers words directly.
+There is no expansion-only readiness selector or separate first-word parser.
+The physical admission closure holds the actual disjoint loans by value rather
+than references to local loan variables; it owns no input or checkpoint state.
+
 The reader charges on entry, then charges the next word immediately when an
 admission continues. Cold transitions carry that charge unchanged. A budget
 stop charges no following word, and a fuel failure leaves the next word unread.
@@ -902,6 +935,9 @@ additional effect or recoverable-diagnostic polling.
 The shared reader passes its one consumer explicitly to restricted admission
 and full delivery. There is no interior-mutability bridge, second input owner,
 command construction for admitted words, or command completion cleanup stage.
+Native consumers implement that reader contract directly. The pointer-only
+`ScalarWords` adapter and its scanner/main-control type selector are deleted;
+the reader's actual role owns observed end-template completion.
 
 Machine-code inspection of the x86-64 ordinary release reader confirms that
 the retained no-op back edge contains the live lookup, direct no-op-family
@@ -911,14 +947,10 @@ character flush or diagnostic polling. Full delivery shares one native
 eligibility decision across macro activation and subsequent expansion or
 terminal dispatch; outer classification is demanded only by an active scanner.
 
-On the measured 64-no-op workload, startup/empty-loop-cancelled instructions
-fell from about 180 to 48 per no-op (pinned pdfTeX: 91). Five rotated runs of
-100,000 iterations measured median whole-workload cycles of 126 to 98 per
-no-op, including startup and loop overhead (pdfTeX: 49). Short entries remain
-more expensive: a single no-op rose from 180 to 212 marginal instructions,
-and the two-no-op macro workload rose about 1% in whole-loop instructions.
-The retained span removes repeated work within its admitted prefix; its
-initial admission and full-delivery boundary remain optimization targets.
+Revision-scoped release measurements and remaining regressions live with their
+receipts on Beads `umber2-i0n5.19`. Span admission removes repeated work within
+its ordinary prefix; it does not establish whole-document instruction or cycle
+parity with pdfTeX.
 
 ## Resident numeric syntax
 
@@ -942,11 +974,9 @@ Recursive scanners traverse the selected suffix in a small borrowed reader
 call with no full processor callback. On a declined word it returns the existing spelling,
 origin and resolved-meaning boundary scalars. Its iterator and admission
 temporaries leave the native stack before full interpretation can recursively
-expand an operand. The first word still uses the direct shared-reader entry;
-no second cursor, input owner or checkpoint state is introduced. Main control
-inlines the same suffix traversal, avoiding a call at short no-op entries.
-The existing scanner consumer requests this call boundary statically; no
-runtime reader-role choice is made at span entry.
+expand an operand. Main control and scanners use this same scoped traversal;
+no second cursor, input owner or checkpoint state is introduced. No runtime
+reader-role choice is made at span entry.
 
 The shared restricted reader resolves ordinary control sequences live and,
 for consumers that statically request literals, projects nonactive character

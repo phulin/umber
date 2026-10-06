@@ -93,7 +93,7 @@ grammar. The invocation-time `AdmittedMacroDefinition` product and its forwardin
 APIs are deleted. Scalar diagnostics, detached memo values and format output
 continue to project the canonical macro meaning and flags on demand.
 
-Quiet empty macros can ultimately remain inside the retained reader span when
+Quiet empty macros remain inside the retained reader span when
 the consumed word leaves that actual frame live. A depleted stored row must
 still retire before replacement handoff, including replay completion fences.
 Tracing, observation, protected scanning and outer-token recovery retain their

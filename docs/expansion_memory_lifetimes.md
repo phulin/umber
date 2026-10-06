@@ -394,6 +394,13 @@ Macro activation uses the native empty/simple/matching execution key selected
 when the immutable definition is published. There is no invocation-time admitted
 kind product or classification callback. Actual nonempty input and matching
 retain the immutable body; ordinary empty activation does not admit it.
+Quiet empty expansion with a live frame remains inside the borrowed span, even
+before executor entry. Its actual input high-water loan writes only a new
+maximum. Depleted stored frames still conserve at the real activation boundary;
+tracing, observation, outer validity and protected scanning retain their demands.
+Nonempty simple activation moves its admitted owner straight into the input
+frame; the immediately consumed optional-body product and activation wrapper
+are deleted.
 A contextual check is demanded by parameterless activation
 or an empty replacement whose input row might be elided. The matcher saves only
 the actual prior scanner status. Its installed matching status is already owned

@@ -10,6 +10,8 @@ use tex_state::token::TracedTokenWord;
 /// resident span remains borrowed, with the actual command context, fuel, diagnostic effects and host loans.
 /// Full processor access ends that borrow.
 /// Readiness belongs to this invocation, never to command/checkpoint state.
+/// Continuing restricted admission preserves its entry proof until a real
+/// input boundary or full processor action ends the physical loan.
 pub trait NativeWordConsumer<Processor, G, Facts> {
     const RESIDENT_TERMINALS: bool = false;
     const RESIDENT_LITERALS: bool = false;

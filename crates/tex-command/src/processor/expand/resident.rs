@@ -21,6 +21,7 @@ fn consume_span<Word: Copy, Consumer, R, Admission, const PARAMETERS: bool>(
         &mut crate::fuel::CommandFuel,
         TokenWord,
         OriginId,
+        bool,
     ) -> ControlFlow<R, Result<(), Admission>>,
 ) -> Result<Option<ControlFlow<R, (TokenWord, OriginId, Admission)>>, CommandError> {
     for &packed in words {
@@ -29,7 +30,13 @@ fn consume_span<Word: Copy, Consumer, R, Admission, const PARAMETERS: bool>(
             return Ok(None);
         }
         frame.advance_resident();
-        match admit(consumer, fuel, word, origin) {
+        match admit(
+            consumer,
+            fuel,
+            word,
+            origin,
+            frame.position() < frame.limit(),
+        ) {
             ControlFlow::Continue(Ok(())) => fuel.charge()?,
             ControlFlow::Continue(Err(admission)) => {
                 return Ok(Some(ControlFlow::Continue((word, origin, admission))));
@@ -83,6 +90,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut Consumer,
             &mut tex_state::CommandContext<'_, G>,
             &mut crate::fuel::CommandFuel,
+            &mut usize,
+            usize,
+            bool,
             &mut tex_state::diagnostic::DiagnosticEffects,
             &mut crate::processor::alignment::AlignmentDeliveryState<G>,
             &mut Facts,
@@ -135,6 +145,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             } else {
                 None
             };
+            let input_depth = self.command.roots.input.levels.len();
             let levels = &mut self.command.roots.input.levels;
             let Some(row) = levels.current.as_mut() else {
                 return Ok(None);
@@ -196,25 +207,28 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .ok_or_else(CommandError::input_invariant)?;
             let mode = self.command.delivery_mode;
             let (word, origin, admission) = if retain(consumer, suppress, mode) {
-                let limit = start
-                    .checked_add(frame.limit() as usize)
-                    .ok_or_else(CommandError::input_invariant)?;
-                let words = words
-                    .slice(position..limit)
-                    .ok_or_else(CommandError::input_invariant)?;
                 let entered_line =
                     u32::try_from(self.command.roots.input.retained_file_line_number).unwrap_or(0);
                 let state = &mut *self.state;
                 let effects = &mut *self.diagnostic_effects;
                 let alignment = &mut self.command.roots.alignment;
                 let facts = &mut self.host.facts;
+                let input_usage = &mut self.command.stack_usage.input_stack;
+                let admit_word = &mut *admit;
                 let admit = &mut {
                     #[inline(always)]
-                    |consumer: &mut Consumer, fuel: &mut crate::fuel::CommandFuel, word, origin| {
-                        admit(
+                    move |consumer: &mut Consumer,
+                          fuel: &mut crate::fuel::CommandFuel,
+                          word,
+                          origin,
+                          frame_live| {
+                        admit_word(
                             consumer,
                             state,
                             fuel,
+                            input_usage,
+                            input_depth,
+                            frame_live,
                             effects,
                             alignment,
                             facts,
@@ -228,6 +242,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         )
                     }
                 };
+                let limit = start
+                    .checked_add(frame.limit() as usize)
+                    .ok_or_else(CommandError::input_invariant)?;
+                let words = words
+                    .slice(position..limit)
+                    .ok_or_else(CommandError::input_invariant)?;
                 // The caller charged the first word. The same traversal admits
                 // the whole prefix and charges each next word after acceptance.
                 macro_rules! consume_words {

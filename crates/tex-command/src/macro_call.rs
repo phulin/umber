@@ -25,6 +25,7 @@ struct MacroActivationCounters {
     matching: u64,
     exceptional: u64,
     empty_rows_elided: u64,
+    resident_empty: u64,
 }
 
 #[cfg(test)]
@@ -35,6 +36,7 @@ thread_local! {
             matching: 0,
             exceptional: 0,
             empty_rows_elided: 0,
+            resident_empty: 0,
         }) };
 }
 
@@ -54,6 +56,31 @@ fn record_macro_activation(parameterless: bool, exceptional: bool) {
         } else {
             counters.matching = counters.matching.saturating_add(1);
         }
+        slot.set(counters);
+    });
+}
+
+#[cfg(test)]
+fn record_empty_macro_elision() {
+    MACRO_ACTIVATION_COUNTERS.with(|slot| {
+        let mut counters = slot.get();
+        counters.empty_rows_elided = counters.empty_rows_elided.saturating_add(1);
+        slot.set(counters);
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn resident_empty_macro_count() -> u64 {
+    macro_activation_counters().resident_empty
+}
+
+#[cfg(test)]
+pub(crate) fn record_resident_empty_macro() {
+    record_macro_activation(true, false);
+    record_empty_macro_elision();
+    MACRO_ACTIVATION_COUNTERS.with(|slot| {
+        let mut counters = slot.get();
+        counters.resident_empty = counters.resident_empty.saturating_add(1);
         slot.set(counters);
     });
 }
@@ -148,16 +175,21 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             #[cfg(test)]
             record_macro_activation(true, contextual);
             if !contextual {
-                let body = if key == tex_state::MeaningWord::<G>::EMPTY_MACRO_KEY {
-                    None
+                if key == tex_state::MeaningWord::<G>::EMPTY_MACRO_KEY {
+                    self.conserve_input_stack()?;
+                    self.command.record_empty_macro_activation();
+                    #[cfg(test)]
+                    record_empty_macro_elision();
                 } else {
-                    Some(
-                        self.state
-                            .admit_macro_body(definition)
-                            .ok_or_else(CommandError::input_invariant)?,
-                    )
-                };
-                return self.activate_simple_macro(macro_name, call_site, body);
+                    let body = self
+                        .state
+                        .admit_macro_body(definition)
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.conserve_input_stack_for_descendant()?;
+                    self.command
+                        .push_macro_activation(macro_name, body, None, call_site);
+                }
+                return Ok(());
             }
             (
                 self.state
@@ -393,36 +425,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         && level.stored_is_exhausted() == Some(true))
             })
             .any(|level| level.identity() == owner)
-    }
-
-    /// TeX82 §392's `end_match` branch for an ordinary unobserved macro.
-    ///
-    /// No argument owner or rich command is constructed. The replacement
-    /// owner moves directly into its input row after §390 conservation; an
-    /// empty replacement records the same logical push maximum but exposes no
-    /// immediately exhausted row.
-    #[inline(always)]
-    fn activate_simple_macro(
-        &mut self,
-        macro_name: tex_state::interner::Symbol,
-        call_site: OriginId,
-        body: Option<tex_state::ResidentMacroBody<G>>,
-    ) -> Result<(), CommandError> {
-        if let Some(body) = body {
-            self.conserve_input_stack_for_descendant()?;
-            self.command
-                .push_macro_activation(macro_name, body, None, call_site);
-        } else {
-            self.conserve_input_stack()?;
-            self.command.record_empty_macro_activation();
-            #[cfg(test)]
-            MACRO_ACTIVATION_COUNTERS.with(|slot| {
-                let mut counters = slot.get();
-                counters.empty_rows_elided = counters.empty_rows_elided.saturating_add(1);
-                slot.set(counters);
-            });
-        }
-        Ok(())
     }
 
     fn macro_call_scalar(

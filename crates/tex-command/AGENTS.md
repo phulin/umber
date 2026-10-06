@@ -108,6 +108,9 @@ host facts while the sole reader keeps its actual input slice and cursor. These
 loans exclude input mutation, expansion and substitution; those boundaries release
 the span before full processor access. No restricted meaning/group facade or
 additional processor/input owner is created.
+Native consumers lend their actual reference directly to the reader contract;
+the pointer-only ScalarWords wrapper and its main-control type selector are
+deleted. The reader's role owns observed end-template completion.
 
 Resident input completes directly into its consumer or leaves the authoritative
 row/cursor at a real source, exhaustion or parameter boundary. There is no
@@ -973,6 +976,9 @@ mailbox, trace-printed flag or tracing preparation before a fetch.
   budget cuts, full-access exclusion within a span and across pure nested/empty
   macro activation, argument replay and ordinary retirement, with contextual
   tracing and expandafter controls.
+- `src/processor/expand/tests/empty_macros.rs`: child ownership tests for empty
+  expansion with and without an admitted execution entry, demanded tracing, protected delivery, final stored-word
+  conservation, logical input high-water and unread-word fuel cuts.
 
 Native meaning rows contain the final execution key. Expanded delivery passes
 that key to its consumer; character, font, token-list, math-field, filename,

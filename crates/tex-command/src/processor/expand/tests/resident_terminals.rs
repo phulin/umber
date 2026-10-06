@@ -1,4 +1,7 @@
 //! Input-preserving native terminal admission, exact fuel and interruption.
+#[path = "empty_macros.rs"]
+mod empty_macros;
+
 use super::*;
 use std::ops::ControlFlow;
 
@@ -9,6 +12,7 @@ struct RelaxConsumer {
     full: usize,
     resident: usize,
     ready: bool,
+    readiness_reads: core::cell::Cell<usize>,
 }
 
 impl<G>
@@ -17,6 +21,7 @@ impl<G>
 {
     const RESIDENT_TERMINALS: bool = true;
     fn resident_ready(&self) -> bool {
+        self.readiness_reads.set(self.readiness_reads.get() + 1);
         self.ready
     }
 
@@ -69,6 +74,7 @@ impl<G>
         self.full += 1;
         self.completed += 1;
         self.ready = true;
+        self.readiness_reads.set(0);
         Ok(if self.completed == self.stop {
             ControlFlow::Break(())
         } else {

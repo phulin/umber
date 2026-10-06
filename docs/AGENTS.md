@@ -14,6 +14,8 @@ removing implementation identities from conformance claims.
 raw/expanded fetching kernel, observation specialization, and validation.
 Its quiet execution facts survive pure macro activation and token retirement;
 physical span borrows still end before input mutation.
+Quiet empty macro expansion retains that span before executor entry as well;
+its actual depth/high-water loan creates no input row or additional owner.
 
 `main_control_dispatch.md` maps the single direct mode/command/prefix engine,
 its scanner/application ownership, and the deletion of eligibility handoffs.

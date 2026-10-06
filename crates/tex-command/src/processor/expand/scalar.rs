@@ -7,13 +7,8 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::MeaningWord;
 use tex_state::token::TracedTokenWord;
 
-struct ScalarWords<'a, Consume, const MAIN_CONTROL: bool> {
-    consume: &'a mut Consume,
-}
-
-impl<'state, 'host, G, Facts, Consume, const MAIN_CONTROL: bool>
-    ExpandedReaderConsumer<CommandProcessor<'state, 'host, G, Facts>, G, Facts>
-    for ScalarWords<'_, Consume, MAIN_CONTROL>
+impl<'state, 'host, G, Facts, Consume>
+    ExpandedReaderConsumer<CommandProcessor<'state, 'host, G, Facts>, G, Facts> for &mut Consume
 where
     Facts: crate::CommandHostFacts<G>,
     Consume: NativeWordConsumer<CommandProcessor<'state, 'host, G, Facts>, G, Facts>,
@@ -24,7 +19,7 @@ where
 
     #[inline(always)]
     fn resident_ready(&self) -> bool {
-        self.consume.resident_ready()
+        NativeWordConsumer::resident_ready(*self)
     }
 
     #[inline(always)]
@@ -41,7 +36,8 @@ where
         code: u64,
         operand: u64,
     ) -> ControlFlow<(), bool> {
-        self.consume.resident_terminal(
+        NativeWordConsumer::resident_terminal(
+            *self,
             context,
             fuel,
             effects,
@@ -56,12 +52,12 @@ where
 
     #[inline(always)]
     fn input_boundary(&mut self) {
-        self.consume.input_boundary();
+        NativeWordConsumer::input_boundary(*self);
     }
 
     #[inline(always)]
     fn before_action(&mut self, _processor: &mut CommandProcessor<'state, 'host, G, Facts>) {
-        self.consume.input_boundary();
+        NativeWordConsumer::input_boundary(*self);
     }
 
     #[inline(always)]
@@ -73,8 +69,15 @@ where
         code: u64,
         control_sequence: Option<Symbol>,
     ) -> Result<ControlFlow<()>, CommandError> {
-        self.consume
-            .consume(processor, spelling, meaning, code, control_sequence, None)
+        NativeWordConsumer::consume(
+            *self,
+            processor,
+            spelling,
+            meaning,
+            code,
+            control_sequence,
+            None,
+        )
     }
 
     fn terminal(
@@ -88,13 +91,10 @@ where
             .ok_or_else(CommandError::input_invariant)?;
         if status == DeliveryStatus::AlignmentEndTemplate {
             processor.begin_scalar_alignment_v_template(command)?;
-            return Ok(if MAIN_CONTROL && processor.is_observed() {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            });
+            return Ok(ControlFlow::Continue(()));
         }
-        self.consume.consume(
+        NativeWordConsumer::consume(
+            *self,
             processor,
             command.spelling(),
             command.native_meaning(),
@@ -108,7 +108,7 @@ where
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn consume_expanded_words(
         &mut self,
-        consume: &mut impl NativeWordConsumer<Self, G, Facts>,
+        mut consume: &mut impl NativeWordConsumer<Self, G, Facts>,
     ) -> Result<(), CommandError> {
         let mut destination = None;
         loop {
@@ -116,7 +116,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 &mut destination,
                 None,
                 ExpandedReaderRole::Scanner,
-                &mut ScalarWords::<_, false> { consume },
+                &mut consume,
             )?;
             match result {
                 DeliveryStatus::ReplayCompleted(_) => continue,
@@ -135,14 +135,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// recovery lend their demanded record only during consumption.
     pub fn consume_main_control(
         &mut self,
-        consume: &mut impl NativeWordConsumer<Self, G, Facts>,
+        mut consume: &mut impl NativeWordConsumer<Self, G, Facts>,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut destination = None;
         self.consume_expanded_with_mode::<false, false>(
             &mut destination,
             None,
             ExpandedReaderRole::MainControl,
-            &mut ScalarWords::<_, true> { consume },
+            &mut consume,
         )
         .map(|status| match status {
             DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
@@ -157,14 +157,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// their raw delivery alone, including when observation is requested.
     pub fn consume_main_loop_lookahead(
         &mut self,
-        consume: &mut impl NativeWordConsumer<Self, G, Facts>,
+        mut consume: &mut impl NativeWordConsumer<Self, G, Facts>,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut destination = None;
         self.consume_expanded_with_mode::<false, false>(
             &mut destination,
             None,
             ExpandedReaderRole::MainLoopLookahead,
-            &mut ScalarWords::<_, true> { consume },
+            &mut consume,
         )
         .map(|status| match status {
             DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
@@ -337,14 +337,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 _ => unreachable!("native active expansion"),
             }
+            let mut terminal = crate::terminal_consumer::<Self, G>(&mut consume);
+            let mut terminal = &mut terminal;
             loop {
                 let status = processor.expanded_delivery_loop::<false, false, false, _>(
                     destination,
                     None,
                     ExpandedReaderRole::Scanner,
-                    &mut ScalarWords::<_, false> {
-                        consume: &mut crate::terminal_consumer::<Self, G>(&mut consume),
-                    },
+                    &mut terminal,
                 )?;
                 match status {
                     DeliveryStatus::ReplayCompleted(_) => continue,
