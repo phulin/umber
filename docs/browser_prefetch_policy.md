@@ -6,6 +6,14 @@ selection, dependency closure, and replay escalation. Authored JavaScript owns
 HTTP acquisition, verified object caching, run identity, and transport metrics.
 It never scans TeX source or independently decides predictive candidates.
 
+Literal extraction keeps one forward source cursor. Before each discovered
+control sequence, it checks only the newly crossed interval for an unescaped
+percent and skips that comment through its newline. It never rescans the
+current line prefix. ASCII command names use the source bytes directly;
+Unicode source and hint offsets retain their original byte coordinates.
+Balanced argument parsing returns beyond any comments it consumes, so its
+completed payload joins the same forward cursor without a comment-state cache.
+
 The catalog binding is required to validate a manifest and plan required
 lookups. The prefetch binding is a separate optional capability for standalone
 resolver clients that only need required lookups. A resolver constructed before

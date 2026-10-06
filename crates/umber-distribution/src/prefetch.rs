@@ -147,34 +147,28 @@ pub fn extract_literal_hints(source: &str, limits: LiteralHintLimits) -> Vec<Lit
         let Some(relative) = source[index..].find('\\') else {
             break;
         };
-        index += relative;
-        let slash = index;
-        if in_comment(source, slash) {
-            index = source[index..]
+        let slash = index + relative;
+        if let Some((offset, _)) = source[index..slash]
+            .match_indices('%')
+            .find(|(offset, _)| !escaped(source, index + offset))
+        {
+            let comment = index + offset;
+            index = source[comment..]
                 .find('\n')
-                .map_or(source.len(), |offset| index + offset);
+                .map_or(source.len(), |offset| comment + offset);
             continue;
         }
-        index += 1;
-        let Some(command_start) = source.get(index..).and_then(|tail| {
-            tail.chars()
-                .next()
-                .filter(|character| character.is_ascii_alphabetic())
-                .map(|_| index)
-        }) else {
-            continue;
-        };
-        while index < source.len()
-            && source[index..]
-                .chars()
-                .next()
-                .is_some_and(|character| character.is_ascii_alphabetic())
+        index = slash + 1;
+        let command_start = index;
+        while source
+            .as_bytes()
+            .get(index)
+            .is_some_and(u8::is_ascii_alphabetic)
         {
-            index += source[index..]
-                .chars()
-                .next()
-                .expect("checked command character")
-                .len_utf8();
+            index += 1;
+        }
+        if index == command_start {
+            continue;
         }
         let command = &source[command_start..index];
         let kind = match command {
@@ -428,17 +422,6 @@ fn escaped(source: &str, index: usize) -> bool {
         backslashes += 1;
     }
     backslashes % 2 == 1
-}
-
-fn in_comment(source: &str, index: usize) -> bool {
-    let line_start = source[..index].rfind('\n').map_or(0, |offset| offset + 1);
-    let mut percent = None;
-    for position in line_start..index {
-        if source.as_bytes()[position] == b'%' && !escaped(source, position) {
-            percent = Some(position);
-        }
-    }
-    percent.is_some()
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

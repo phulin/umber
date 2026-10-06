@@ -28,6 +28,9 @@ strict, host-neutral contract for immutable distribution manifests.
   closure, and retained-region escalation policy. Native and WASM adapters must
   call this policy rather than grow independent predictors; it never performs
   I/O or declares engine readiness.
+  Literal extraction advances one source cursor and checks only newly crossed
+  text for comments. Do not reintroduce per-command line-prefix rescanning or
+  a second comment-position cache.
 
 ## Validation
 

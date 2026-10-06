@@ -55,6 +55,51 @@ fn literal_hints_ignore_comments_and_expand_package_lists_only() {
 }
 
 #[test]
+fn literal_hints_preserve_comment_escapes_and_unicode_byte_offsets() {
+    let mut source = String::from("λ");
+    source.push_str(&r"\relax".repeat(256));
+    source.push_str(r"\%\input{escaped-one}\\%\input{hidden}");
+    source.push('\n');
+    source.push('雪');
+    source.push_str(r"\input{visible-next}\%\input{escaped-three}%\input{hidden-again}");
+    source.push('\n');
+    source.push_str(r"\input{after-comment}");
+    let hints = extract_literal_hints(&source, LiteralHintLimits::default());
+    let expected = [
+        "escaped-one",
+        "visible-next",
+        "escaped-three",
+        "after-comment",
+    ];
+    assert_eq!(hints.len(), expected.len());
+    for (hint, name) in hints.iter().zip(expected) {
+        assert_eq!(hint.name, name);
+        assert_eq!(hint.kind, LiteralHintKind::Input);
+        assert_eq!(
+            hint.byte_offset,
+            source
+                .find(&format!(r"\input{{{name}}}"))
+                .expect("expected input command in fixture")
+        );
+    }
+}
+
+#[test]
+fn literal_hints_resume_after_comments_in_balanced_arguments() {
+    let source = r"\usepackage[option=% \input{hidden-in-option}
+continued]{visible-package}% \input{hidden-after-argument}
+\input{visible-input}";
+    let hints = extract_literal_hints(source, LiteralHintLimits::default());
+    assert_eq!(
+        hints
+            .iter()
+            .map(|hint| hint.name.as_str())
+            .collect::<Vec<_>>(),
+        ["visible-package", "visible-input"]
+    );
+}
+
+#[test]
 fn literal_hint_normalization_uses_kind_defaults_only_for_final_components() {
     let cases = [
         (LiteralHintKind::DocumentClass, "article", "article.cls"),
