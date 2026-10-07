@@ -46,6 +46,7 @@ default-members = [
 ]
 exclude = [
   "tools/fixturegen",
+  "tools/flat-machine-prototype",
   "tools/texlive-wasm-publish",
 ]
 resolver = "3"

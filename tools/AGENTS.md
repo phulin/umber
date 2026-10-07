@@ -97,6 +97,14 @@ distribution from selected format closures, runtime TeX/TFM objects, and an
 exact curated WOFF2/mapping/license catalog. It does not mutate or filter the
 schema-3 production snapshot in place.
 
+`tools/flat-machine-prototype` is the standalone, dependency-free measurement
+prototype for `docs/radical_hot_loop.md`. It has its own `[workspace]` and is
+excluded from the root workspace; build it with `cargo build --profile fat` in
+its directory. Its binary takes `CASE ITERS [--verify]`, where `--verify`
+checks a checkpoint restore and replay. `measure.py` reports marginal
+instructions per case with the `scripts/interp-microbench.py` method. It is
+evidence for a design decision, not engine code: nothing may depend on it.
+
 `tools/parity-harness` is the shared Rust library and opt-in CLI for end-to-end DVI conformance. Oracle-presence-conditional Story, Gentle, TRIP, and e-TRIP tests use its default library for final artifact comparison against gitignored, locally generated `tests/corpus/e2e` DVI files, without compiling live reference execution. Its fixture path stages manifest inputs and calls an in-process Umber runner supplied by the Cargo test; it never launches the Umber binary. The `reference-tools` feature composes fixturegen-owned reference execution with Umber execution; it owns no second reference runner or publication path. Canonical publication belongs to `fixturegen --reference-dvi`. Comparison uses `test-support` to normalize only DVI preamble comments, requires byte-identical final DVI, and writes automatic bundles under `target/conformance-triage/` or the CLI-selected triage directory.
 
 `tools/parity-harness/src/trip_triage.rs` owns the compact TRIP-specific v1
