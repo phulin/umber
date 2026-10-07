@@ -673,7 +673,7 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
         if let Some(token) = self
             .command
             .take_afterassignment(self.state)
-            .map_err(|_| CommandError::input_invariant())?
+            .map_err(|_| crate::CommandFailure::input_invariant())?
         {
             self.back_input_token(token)?;
         }

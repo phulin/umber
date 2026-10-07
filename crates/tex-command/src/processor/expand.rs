@@ -99,9 +99,10 @@ pub(crate) trait ExpandedReaderConsumer<Processor, G, Facts> {
         _processor: &mut Processor,
         failure: CommandError,
     ) -> Result<(), CommandError> {
-        match failure {
-            CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument => Ok(()),
-            failure => Err(failure),
+        match failure.kind {
+            crate::CommandErrorKind::ParagraphInMacroArgument
+            | crate::CommandErrorKind::OuterInMacroArgument => Ok(()),
+            _ => Err(failure),
         }
     }
 }
@@ -586,7 +587,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             )
         };
         match result {
-            Ok(DeliveryStatus::End) => Err(CommandError::input_invariant()),
+            Ok(DeliveryStatus::End) => Err(crate::CommandFailure::input_invariant()),
             Ok(_) => Ok(()),
             Err(failure) => self.fail_hot_expanded_delivery(
                 &mut destination,
@@ -637,7 +638,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return self.fail_hot_expanded_delivery(
                 destination,
                 depth,
-                CommandError::input_invariant(),
+                crate::CommandFailure::input_invariant(),
             );
         };
         self.command.transient.active_expansion_depth = active_depth;
@@ -685,10 +686,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             ExpansionDispatch::Macro => {
                 self.record_macro_expansion();
                 if let Err(failure) = self.macro_call_hot(hot_command) {
-                    match failure {
-                        CommandError::ParagraphInMacroArgument
-                        | CommandError::OuterInMacroArgument => {}
-                        failure => return Err(failure),
+                    match failure.kind {
+                        crate::CommandErrorKind::ParagraphInMacroArgument
+                        | crate::CommandErrorKind::OuterInMacroArgument => {}
+                        _ => return Err(failure),
                     }
                 }
             }
@@ -696,7 +697,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 self.expand_undefined_hot(hot_command, true)?;
             }
             ExpansionDispatch::Primitive(_) => {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
         }
         Ok(())
@@ -765,7 +766,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination
                         .take()
-                        .ok_or_else(CommandError::input_invariant)?;
+                        .ok_or_else(crate::CommandFailure::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
                     continue;
                 }
@@ -776,7 +777,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
             let command = destination
                 .as_ref()
-                .ok_or_else(CommandError::input_invariant)?;
+                .ok_or_else(crate::CommandFailure::input_invariant)?;
             let stop = matches!(
                 &command.meaning(),
                 ResolvedMeaning::Static(Meaning::Undefined)
@@ -796,7 +797,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination
                         .take()
-                        .ok_or_else(CommandError::input_invariant)?;
+                        .ok_or_else(crate::CommandFailure::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
                 }
             }
@@ -886,7 +887,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination
                         .take()
-                        .ok_or_else(CommandError::input_invariant)?;
+                        .ok_or_else(crate::CommandFailure::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
                 }
                 DeliveryStatus::AlignmentClosingBrace => return Ok(DeliveryStatus::Command),
@@ -907,7 +908,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination
                         .take()
-                        .ok_or_else(CommandError::input_invariant)?;
+                        .ok_or_else(crate::CommandFailure::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
                 }
                 DeliveryStatus::AlignmentClosingBrace => return Ok(DeliveryStatus::Command),
@@ -929,7 +930,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination
                         .take()
-                        .ok_or_else(CommandError::input_invariant)?;
+                        .ok_or_else(crate::CommandFailure::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
                 }
                 DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
@@ -965,7 +966,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<(), CommandError> {
         let mut command = destination
             .take()
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         let action = classify_hot_command(&command);
         let result = self.expand_delivered_action(&mut command, action, report_trace);
         if result.is_err() {
@@ -988,7 +989,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         report_trace: bool,
     ) -> Result<(), CommandError> {
         match action {
-            ExpandedCommandAction::Return => Err(CommandError::input_invariant()),
+            ExpandedCommandAction::Return => Err(crate::CommandFailure::input_invariant()),
             ExpandedCommandAction::EndTemplate => self.expand_primitive(
                 ExpandablePrimitive::EndTemplate,
                 command.spelling(),
@@ -1109,7 +1110,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination
                         .take()
-                        .ok_or_else(CommandError::input_invariant)?;
+                        .ok_or_else(crate::CommandFailure::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
                     // The intercepted delimiter has been consumed by the
                     // alignment transition. The next x-token starts with a
@@ -1246,7 +1247,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 DeliveryStatus::AlignmentEndTemplate => {
                     let command = destination
                         .take()
-                        .ok_or_else(CommandError::input_invariant)?;
+                        .ok_or_else(crate::CommandFailure::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
                 }
                 DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
@@ -1433,7 +1434,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let result = self.expand_conditional_primitive(kind, false);
         if result
             .as_ref()
-            .is_err_and(CommandError::is_resource_suspension)
+            .is_err_and(|error| error.is_resource_suspension())
         {
             let error = result.expect_err("matched resource need");
             self.command

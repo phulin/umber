@@ -16,6 +16,12 @@ without copying that reader for each scanner closure. The single-command
 consumer still returns directly. Observation and protection modes remain
 static, and all input ownership and unwind rules below still apply.
 
+[Cold command failures](cold_command_failures.md) defines the error owner:
+one pointer to the actual failure facts, allocated only after failure. First
+source annotation updates that owner directly. The typed resource need/cause
+packet retains its allocation through execution and session transfer. No error
+owner or annotation wrapper is constructed during successful expansion.
+
 ## Current source and target differences
 
 | Area                  | Current owner/path                                                                                                                                                        | Required lifetime and remaining work                                                                                                                                                                                                                                                                                                                                                                     |
@@ -105,8 +111,8 @@ meaning decoding is demand-local. Scanner token publication preflights the
 whole real request before allocating any native destination. It consumes that
 request into the same typed shape with native owner fields, without a rooted
 adapter, promotion receipt, phase placeholder, or universal operation value.
-Diagnostic and nested consumers use the same direct engine and scratch
-settlement as ordinary execution.
+Diagnostic and nested consumers use the same direct engine and actual scratch
+ownership boundaries as ordinary execution.
 
 ## Scanner cleanup and direct construction
 

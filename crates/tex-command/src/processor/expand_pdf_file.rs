@@ -153,7 +153,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         provider_settled = true;
                     }
                     Some(crate::ResourceInstallOutcome::Declined) => {
-                        return Err(CommandError::MissingInputProbe(Box::new(request.clone())));
+                        return Err(crate::CommandFailure::new(
+                            crate::CommandErrorKind::MissingInputProbe(request.clone()),
+                        ));
                     }
                     None => {}
                     Some(crate::ResourceInstallOutcome::Failed(_)) => {
@@ -175,12 +177,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                     return Ok(None);
                 }
-                return Err(CommandError::MissingInputProbe(Box::new(request.clone())));
+                return Err(crate::CommandFailure::new(
+                    crate::CommandErrorKind::MissingInputProbe(request.clone()),
+                ));
             };
             let actual = self
                 .state
                 .with_input_read_state(|input| retained.actual_use(input))
-                .map_err(|_| CommandError::input_invariant())?;
+                .map_err(|_| crate::CommandFailure::input_invariant())?;
             let Some(actual) = actual else {
                 self.host.invalidate_input_probe_resource(&request.name);
                 continue;
@@ -189,7 +193,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let dependencies = retained.dependencies_for_actual_use(&actual);
                 self.state
                     .record_input_dependencies(&dependencies)
-                    .map_err(|_| CommandError::input_invariant())?;
+                    .map_err(|_| crate::CommandFailure::input_invariant())?;
             }
             return Ok(Some(actual));
         }
@@ -199,7 +203,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let dependencies = self.host.input_probe_dependencies(name);
         self.state
             .record_input_dependencies(&dependencies)
-            .map_err(|_| CommandError::input_invariant())
+            .map_err(|_| crate::CommandFailure::input_invariant())
     }
 
     fn pdftex_file_range_diagnostic(&mut self, kind: &str, value: i32) {

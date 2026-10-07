@@ -160,7 +160,7 @@ fn skipped_resident_run_stops_before_the_over_budget_word() {
             );
             assert!(matches!(
                 processor.consume_skipped_text(),
-                Err(crate::CommandError::FuelExhausted(_))
+                Err(error) if matches!(error.kind, crate::CommandErrorKind::FuelExhausted(_))
             ));
             let row @ crate::input::InputLevel {
                 storage:

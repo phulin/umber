@@ -52,7 +52,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn expand_string(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let mut destination = None;
         match self.get_token_with_normal_scanner_status_into(&mut destination)? {
-            DeliveryStatus::End => return Err(CommandError::input_invariant()),
+            DeliveryStatus::End => return Err(crate::CommandFailure::input_invariant()),
             DeliveryStatus::Command => {}
             _ => unreachable!("ordinary token delivery returns only commands"),
         }
@@ -69,7 +69,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(super) fn expand_meaning(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let mut destination = None;
         match self.get_token_with_normal_scanner_status_into(&mut destination)? {
-            DeliveryStatus::End => return Err(CommandError::input_invariant()),
+            DeliveryStatus::End => return Err(crate::CommandFailure::input_invariant()),
             DeliveryStatus::Command => {}
             _ => unreachable!("ordinary token delivery returns only commands"),
         }
@@ -202,10 +202,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let side = match primitive {
             ExpandablePrimitive::LeftMarginKern => tex_state::node::MarginKernSide::Left,
             ExpandablePrimitive::RightMarginKern => tex_state::node::MarginKernSide::Right,
-            _ => return Err(CommandError::input_invariant()),
+            _ => return Err(crate::CommandFailure::input_invariant()),
         };
         let Some(amount) = self.state.box_margin_kern(index, side) else {
-            return Err(CommandError::pdf_navigation(
+            return Err(crate::CommandFailure::pdf_navigation(
                 "pdfTeX error (marginkern): a non-empty hbox expected",
             ));
         };

@@ -17,9 +17,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .back_consumed_word(par, command)
                 .map(|()| std::ops::ControlFlow::Break(()))
         })?
-        .ok_or(CommandError::ParagraphInMacroArgument)?;
+        .ok_or_else(|| {
+            crate::CommandFailure::new(crate::CommandErrorKind::ParagraphInMacroArgument)
+        })?;
         self.report_paragraph_ended_before_complete(&[]);
-        Err(CommandError::ParagraphInMacroArgument)
+        Err(crate::CommandFailure::new(
+            crate::CommandErrorKind::ParagraphInMacroArgument,
+        ))
     }
 
     pub(super) fn scan_undelimited_argument(
@@ -56,7 +60,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .levels
                             .arguments
                             .match_words(tokens)
-                            .map_err(|_| CommandError::input_invariant())?
+                            .map_err(|_| crate::CommandFailure::input_invariant())?
                             .next()
                             .is_some()
                         {
@@ -66,14 +70,16 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .levels
                                 .arguments
                                 .match_words(tokens)
-                                .map_err(|_| CommandError::input_invariant())?
+                                .map_err(|_| crate::CommandFailure::input_invariant())?
                                 .collect::<Vec<_>>();
                             processor.set_runaway_partial(
                                 crate::processor::RUNAWAY_SCAN_DIAGNOSTIC,
                                 &partial,
                             );
                         }
-                        return Err(CommandError::OuterInMacroArgument);
+                        return Err(crate::CommandFailure::new(
+                            crate::CommandErrorKind::OuterInMacroArgument,
+                        ));
                     }
                     let catcode = word.token_word().literal_catcode();
                     if tokens.brace_depth() == 0 {
@@ -97,10 +103,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     input
                         .arguments
                         .append_from_input(tokens, word, input.rows.last(), false)
-                        .map_err(|_| CommandError::input_invariant())?;
+                        .map_err(|_| crate::CommandFailure::input_invariant())?;
                     Ok(std::ops::ControlFlow::Break(true))
                 })?
-                .ok_or(CommandError::ParagraphInMacroArgument)?;
+                .ok_or_else(|| {
+                    crate::CommandFailure::new(crate::CommandErrorKind::ParagraphInMacroArgument)
+                })?;
             if appended && tokens.brace_depth() == 0 {
                 return Ok(());
             }
@@ -127,7 +135,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .levels
                     .arguments
                     .delimiter_prefix_len(tokens)
-                    .map_err(|_| CommandError::input_invariant())?
+                    .map_err(|_| crate::CommandFailure::input_invariant())?
                     == 0
             {
                 let stop_word = delimiter.words()[0];
@@ -150,7 +158,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .levels
                             .arguments
                             .match_words(tokens)
-                            .map_err(|_| CommandError::input_invariant())?
+                            .map_err(|_| crate::CommandFailure::input_invariant())?
                             .collect::<Vec<_>>();
                         partial.extend(
                             processor
@@ -159,13 +167,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .levels
                                 .arguments
                                 .delimiter_prefix_words(tokens)
-                                .map_err(|_| CommandError::input_invariant())?,
+                                .map_err(|_| crate::CommandFailure::input_invariant())?,
                         );
                         processor.set_runaway_partial(
                             crate::processor::RUNAWAY_SCAN_DIAGNOSTIC,
                             &partial,
                         );
-                        return Err(CommandError::OuterInMacroArgument);
+                        return Err(crate::CommandFailure::new(
+                            crate::CommandErrorKind::OuterInMacroArgument,
+                        ));
                     }
 
                     let spelling = word.token_word();
@@ -175,7 +185,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .levels
                         .arguments
                         .delimiter_prefix_len(tokens)
-                        .map_err(|_| CommandError::input_invariant())?;
+                        .map_err(|_| crate::CommandFailure::input_invariant())?;
                     if tokens.brace_depth() == 0
                         && prefix_len < delimiter.words().len()
                         && spelling == delimiter.words()[prefix_len]
@@ -194,7 +204,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                     .levels
                                     .arguments
                                     .truncate_delimiter_suffix(tokens)
-                                    .map_err(|_| CommandError::input_invariant())?;
+                                    .map_err(|_| crate::CommandFailure::input_invariant())?;
                             }
                             return Ok(std::ops::ControlFlow::Break(true));
                         }
@@ -202,7 +212,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         input
                             .arguments
                             .append_from_input(tokens, word, input.rows.last(), true)
-                            .map_err(|_| CommandError::input_invariant())?;
+                            .map_err(|_| crate::CommandFailure::input_invariant())?;
                         return Ok(std::ops::ControlFlow::Break(false));
                     }
 
@@ -225,7 +235,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                     .levels
                                     .arguments
                                     .delimiter_prefix_word(tokens, index)
-                                    .map_err(|_| CommandError::input_invariant())?;
+                                    .map_err(|_| crate::CommandFailure::input_invariant())?;
                                 observe!(
                                     processor,
                                     CommandObservation::TokenList(TokenListRecord {
@@ -242,7 +252,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .levels
                             .arguments
                             .reveal_delimiter_words(tokens, committed as u32)
-                            .map_err(|_| CommandError::input_invariant())?;
+                            .map_err(|_| crate::CommandFailure::input_invariant())?;
                         if retained != 0 {
                             // The current spelling is the final word of the retained
                             // suffix. It is unpublished until the next mismatch or
@@ -251,7 +261,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             input
                                 .arguments
                                 .append_from_input(tokens, word, input.rows.last(), true)
-                                .map_err(|_| CommandError::input_invariant())?;
+                                .map_err(|_| crate::CommandFailure::input_invariant())?;
                             return Ok(std::ops::ControlFlow::Break(false));
                         }
                     }
@@ -277,10 +287,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     input
                         .arguments
                         .append_from_input(tokens, word, input.rows.last(), false)
-                        .map_err(|_| CommandError::input_invariant())?;
+                        .map_err(|_| crate::CommandFailure::input_invariant())?;
                     Ok(std::ops::ControlFlow::Break(false))
                 })?
-                .ok_or(CommandError::ParagraphInMacroArgument)?;
+                .ok_or_else(|| {
+                    crate::CommandFailure::new(crate::CommandErrorKind::ParagraphInMacroArgument)
+                })?;
             if completed {
                 return Ok(());
             }
@@ -330,12 +342,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .arguments
                         .match_words(buffer)
                         .map(|words| words.collect::<Vec<_>>())
-                        .map_err(|_| CommandError::input_invariant())
+                        .map_err(|_| crate::CommandFailure::input_invariant())
                 })
                 .transpose()?
                 .unwrap_or_default();
             self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
-            return Err(CommandError::ParagraphInMacroArgument);
+            return Err(crate::CommandFailure::new(
+                crate::CommandErrorKind::ParagraphInMacroArgument,
+            ));
         }
         if (Some(word.token_word()) == paragraph_token) && !flags.contains(MeaningFlags::LONG) {
             // TeX82 §394 reports this through `back_error` while the macro
@@ -354,12 +368,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .arguments
                         .match_words(buffer)
                         .map(|words| words.collect::<Vec<_>>())
-                        .map_err(|_| CommandError::input_invariant())
+                        .map_err(|_| crate::CommandFailure::input_invariant())
                 })
                 .transpose()?
                 .unwrap_or_default();
             self.report_paragraph_ended_before_complete(&partial);
-            return Err(CommandError::ParagraphInMacroArgument);
+            return Err(crate::CommandFailure::new(
+                crate::CommandErrorKind::ParagraphInMacroArgument,
+            ));
         }
         Ok(())
     }

@@ -157,7 +157,9 @@ pub(in crate::main_control) fn execute_delete_last<G>(
                 state
                     .render_diagnostic_context(context, stores)
                     .map_err(|_| {
-                        ExecError::Command(tex_command::CommandError::StaleDiagnosticContext)
+                        ExecError::Command(tex_command::CommandFailure::new(
+                            tex_command::CommandErrorKind::StaleDiagnosticContext,
+                        ))
                     })
             },
             modes,

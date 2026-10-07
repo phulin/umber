@@ -331,7 +331,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 },
                 |status| match status {
                     DeliveryStatus::ReplayCompleted(_) => Ok(ControlFlow::Break(false)),
-                    _ => Err(CommandError::input_invariant()),
+                    _ => Err(crate::CommandFailure::input_invariant()),
                 },
             )?;
             if selected {

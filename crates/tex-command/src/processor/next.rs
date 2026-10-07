@@ -54,7 +54,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 if delimiter {
                     let command = destination
                         .take()
-                        .ok_or_else(CommandError::input_invariant)?;
+                        .ok_or_else(crate::CommandFailure::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
                     Ok(None)
                 } else {

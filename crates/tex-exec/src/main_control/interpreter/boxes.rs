@@ -355,7 +355,9 @@ pub(super) fn unbox<G>(
                 command
                     .render_diagnostic_context(coordinate, context)
                     .map_err(|_| {
-                        ExecError::Command(tex_command::CommandError::StaleDiagnosticContext)
+                        ExecError::Command(tex_command::CommandFailure::new(
+                            tex_command::CommandErrorKind::StaleDiagnosticContext,
+                        ))
                     })
             },
         )

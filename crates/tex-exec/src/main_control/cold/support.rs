@@ -1514,42 +1514,40 @@ pub(in crate::main_control) fn font_identifier_for_definition<G>(
     }
 }
 
-/// Reports TeX82 §433-§437's `print_err`/`help2`/`int_error` recovery text.
-///
-/// The recovery itself belongs to the restricted scan (`tex_command`'s
-/// `RestrictedIntegerClass`); only the terminal report is a stomach-side
-/// effect, because the command core owns no `World` text sink.
-/// Converts a command-core failure into its `ExecError` counterpart,
-/// preserving the originating `CommandError` variant and message. Only
-/// `MissingInput` and `PdfNavigation` map onto dedicated `ExecError` variants
-/// shared with other producers; every other variant is carried through
-/// verbatim via `ExecError::Command` so it names itself instead of collapsing
-/// into a generic `MissingToken`. This match is written one arm per variant
-/// (no wildcard) so adding a new `CommandError` variant fails to compile here
-/// until it is explicitly handled.
+/// Transfers the actual command failure or its dedicated executor payload.
+/// Ordinary failures retain their pointer owner and first source origin;
+/// resource failures retain the same typed need/cause allocation. Exhaustive
+/// kind handling keeps new failures from silently becoming generic errors.
 pub(in crate::main_control) fn command_error(error: CommandError) -> ExecError {
-    match error {
-        CommandError::AtOrigin(annotated) => {
-            command_error(annotated.error).capture_command_origin(annotated.origin)
-        }
-        CommandError::MissingInput(input) => ExecError::MissingInput {
+    let origin = error.origin;
+    let result = match error.kind {
+        tex_command::CommandErrorKind::MissingInput(input) => ExecError::MissingInput {
             name: input.name,
             original_name: input.original_name,
         },
-        CommandError::MissingInputProbe(request) => {
-            ExecError::MissingInputProbe { request: *request }
+        tex_command::CommandErrorKind::MissingInputProbe(request) => {
+            ExecError::MissingInputProbe { request }
         }
-        CommandError::ResourceFailure(resource) => ExecError::ResourceFailure(resource),
-        CommandError::PdfNavigation(message) => ExecError::PdfNavigation(*message),
+        tex_command::CommandErrorKind::ResourceFailure(resource) => {
+            ExecError::ResourceFailure(resource)
+        }
+        tex_command::CommandErrorKind::PdfNavigation(message) => ExecError::PdfNavigation(message),
         // §93 `succumb` is not a command failure to be re-described; it keeps
         // its own identity all the way up to the driver.
-        CommandError::Fatal(fatal) => ExecError::Fatal(*fatal),
-        CommandError::FuelExhausted(_)
-        | CommandError::InputInvariant(_)
-        | CommandError::StaleDiagnosticContext
-        | CommandError::MacroPrefixMismatch
-        | CommandError::ParagraphInMacroArgument
-        | CommandError::OuterInMacroArgument
-        | CommandError::UnsupportedExpandablePrimitive(_) => ExecError::Command(error),
+        tex_command::CommandErrorKind::Fatal(fatal) => ExecError::Fatal(fatal),
+        tex_command::CommandErrorKind::FuelExhausted(_)
+        | tex_command::CommandErrorKind::InputInvariant(_)
+        | tex_command::CommandErrorKind::StaleDiagnosticContext
+        | tex_command::CommandErrorKind::MacroPrefixMismatch
+        | tex_command::CommandErrorKind::ParagraphInMacroArgument
+        | tex_command::CommandErrorKind::OuterInMacroArgument
+        | tex_command::CommandErrorKind::UnsupportedExpandablePrimitive(_) => {
+            ExecError::Command(error)
+        }
+    };
+    if let Some(origin) = origin {
+        result.capture_command_origin(origin)
+    } else {
+        result
     }
 }

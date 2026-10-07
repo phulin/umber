@@ -68,6 +68,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Ok(std::ops::ControlFlow::Break(()))
             },
         ))?;
-        font.ok_or_else(CommandError::input_invariant)
+        font.ok_or_else(crate::CommandFailure::input_invariant)
     }
 }

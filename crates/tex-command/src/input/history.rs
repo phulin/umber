@@ -1017,7 +1017,7 @@ impl<G> crate::CommandState<G> {
                         frame.position() as usize..frame.position() as usize + bound,
                         &mut admission,
                     )
-                    .map_err(|_| crate::CommandError::input_invariant())?;
+                    .map_err(|_| crate::CommandFailure::input_invariant())?;
                 let parameter_next = count < bound && span[count].out_parameter_slot().is_some();
                 (count, parameter_next)
             }
@@ -1036,7 +1036,7 @@ impl<G> crate::CommandState<G> {
                         start..start + bound,
                         &mut admission,
                     )
-                    .map_err(|_| crate::CommandError::input_invariant())?;
+                    .map_err(|_| crate::CommandFailure::input_invariant())?;
                 (count, false)
             }
             super::InputStorage::List(_) | super::InputStorage::StoredList(_) => {
@@ -1054,7 +1054,7 @@ impl<G> crate::CommandState<G> {
         // and fuel settle as one atomic scalar run.
         row.frame
             .advance_resident_run(consumed)
-            .ok_or_else(crate::CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         let exhausted = row.frame.position() >= row.frame.limit();
         // TeX82 §347 counts the run's interior braces in `align_state`; no
         // alignment is active when the admission accepts braces.

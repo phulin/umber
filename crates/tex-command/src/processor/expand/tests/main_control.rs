@@ -296,7 +296,9 @@ fn end_template_preserves_raw_and_expanded_reader_boundaries_at_fuel_cuts() {
                             processor.get_x_token_into(&mut destination)
                         };
                         if fuel_cut {
-                            assert!(matches!(result, Err(crate::CommandError::FuelExhausted(_))));
+                            assert!(
+                                matches!(result, Err(error) if matches!(error.kind, crate::CommandErrorKind::FuelExhausted(_)))
+                            );
                             assert!(destination.is_none());
                             assert!(!native_endv);
                         } else {

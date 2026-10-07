@@ -104,7 +104,9 @@ fn nested_readers(
             assert_eq!(processor.expansion_depth, 0);
             match result {
                 Ok(()) => false,
-                Err(crate::CommandError::FuelExhausted(_)) => true,
+                Err(error) if matches!(error.kind, crate::CommandErrorKind::FuelExhausted(_)) => {
+                    true
+                }
                 Err(error) => panic!("unexpected delivery error: {error:?}"),
             }
         } else {
@@ -131,7 +133,9 @@ fn nested_readers(
                         };
                         output.push(ch);
                     }
-                    Err(crate::CommandError::FuelExhausted(_)) => {
+                    Err(error)
+                        if matches!(error.kind, crate::CommandErrorKind::FuelExhausted(_)) =>
+                    {
                         assert!(destination.is_none());
                         assert_eq!(processor.command.transient.active_expansion_depth, 0);
                         assert_eq!(processor.expansion_depth, 0);
@@ -406,7 +410,9 @@ fn reused_raw_destination_is_cleared_at_eof_and_fuel_failure() {
             }
             let result = processor.raw_next_hot(&mut destination);
             if limit == 2 {
-                assert!(matches!(result, Err(crate::CommandError::FuelExhausted(_))));
+                assert!(
+                    matches!(result, Err(error) if matches!(error.kind, crate::CommandErrorKind::FuelExhausted(_)))
+                );
             } else {
                 assert_eq!(result.expect("EOF"), crate::DeliveryStatus::End);
             }
@@ -501,7 +507,9 @@ fn native_main_lookahead_preserves_mixed_expansion_and_observed_fuel_cuts() {
             };
             let exhausted = match result {
                 Ok(crate::DeliveryStatus::End) => false,
-                Err(crate::CommandError::FuelExhausted(_)) => true,
+                Err(error) if matches!(error.kind, crate::CommandErrorKind::FuelExhausted(_)) => {
+                    true
+                }
                 result => panic!("unexpected lookahead boundary: {result:?}"),
             };
             assert_eq!(processor.command.transient.active_expansion_depth, 0);

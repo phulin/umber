@@ -172,7 +172,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Ok(std::ops::ControlFlow::Break(()))
             },
         ))?;
-        value.ok_or_else(CommandError::input_invariant)
+        value.ok_or_else(crate::CommandFailure::input_invariant)
     }
 }
 

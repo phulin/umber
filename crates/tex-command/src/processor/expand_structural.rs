@@ -131,7 +131,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             if completed {
                 Ok(name)
             } else {
-                Err(CommandError::input_invariant())
+                Err(crate::CommandFailure::input_invariant())
             }
         })();
         if let Ok(name) = &result {

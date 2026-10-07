@@ -1,6 +1,6 @@
 use super::{RecordingObserver, install_static, letter, other};
 use crate::processor::expansion_depth::EXPANSION_DEPTH_LIMIT;
-use crate::{CommandError, CommandFuelLedger, CommandHostCapabilities, CommandState, FatalError};
+use crate::{CommandFuelLedger, CommandHostCapabilities, CommandState, FatalError};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::token::Token;
 
@@ -145,8 +145,8 @@ fn check(family: Family, depth: usize, parent_depth: u32, should_overflow: bool,
         if should_overflow {
             assert!(
                 matches!(
-                    failure.as_ref(),
-                    Some(CommandError::Fatal(fatal)) if matches!(**fatal, FatalError::CapacityExceeded {
+                    failure.as_ref().map(|failure| &failure.kind),
+                    Some(crate::CommandErrorKind::Fatal(fatal)) if matches!(*fatal, FatalError::CapacityExceeded {
                         resource: "expansion depth",
                         amount: 10_000,
                     })
@@ -317,7 +317,7 @@ fn failed_nested_operand_scan_restores_shared_expansion_capacity() {
             let mut destination = None;
             assert!(matches!(
                 processor.get_x_token_into(&mut destination),
-                Err(CommandError::FuelExhausted(_))
+                Err(error) if matches!(error.kind, crate::CommandErrorKind::FuelExhausted(_))
             ));
             assert!(destination.is_none());
             assert_eq!(processor.expansion_depth, 0);

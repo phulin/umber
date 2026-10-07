@@ -92,13 +92,13 @@ impl<G, Facts: crate::CommandHostFacts<G>>
         processor: &mut CommandProcessor<'_, '_, G, Facts>,
         failure: CommandError,
     ) -> Result<(), CommandError> {
-        match failure {
-            CommandError::ParagraphInMacroArgument => Ok(()),
-            CommandError::OuterInMacroArgument => {
+        match failure.kind {
+            crate::CommandErrorKind::ParagraphInMacroArgument => Ok(()),
+            crate::CommandErrorKind::OuterInMacroArgument => {
                 processor.resume_scanner_episode_after_recovery(self.episode);
                 Ok(())
             }
-            failure => Err(failure),
+            _ => Err(failure),
         }
     }
 

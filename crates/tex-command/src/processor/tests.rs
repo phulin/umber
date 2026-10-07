@@ -724,7 +724,7 @@ fn failed_raw_delivery_clears_its_partially_written_final_slot() {
 
         assert!(matches!(
             processor.get_next_into(&mut destination),
-            Err(crate::CommandError::InputInvariant(_))
+            Err(error) if matches!(error.kind, crate::CommandErrorKind::InputInvariant(_))
         ));
         assert!(destination.is_none());
     });

@@ -150,7 +150,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 UnexpandablePrimitive::PdfNames => Kind::Names,
                 UnexpandablePrimitive::PdfTrailer => Kind::Trailer,
                 UnexpandablePrimitive::PdfTrailerId => Kind::TrailerId,
-                _ => return Err(CommandError::input_invariant()),
+                _ => return Err(crate::CommandFailure::input_invariant()),
             };
             let text = self.scan_pdf_navigation_text()?;
             (kind, text)
@@ -166,7 +166,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     text,
                 })?;
             let PendingPdfActionOwner::DocumentFragment { kind, text } = owner else {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             };
             return Ok(PdfDocumentFragmentRequest {
                 kind,

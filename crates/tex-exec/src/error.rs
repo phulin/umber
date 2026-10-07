@@ -392,7 +392,10 @@ impl ExecError {
     pub fn as_fatal(&self) -> Option<FatalError> {
         match self {
             Self::Fatal(fatal) => Some(*fatal),
-            Self::Command(CommandError::Fatal(fatal)) => Some(**fatal),
+            Self::Command(error) => match &error.kind {
+                tex_command::CommandErrorKind::Fatal(fatal) => Some(*fatal),
+                _ => None,
+            },
             Self::Captured { error, .. } => error.as_fatal(),
             _ => None,
         }

@@ -47,7 +47,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.write_expansion_depth = self
             .write_expansion_depth
             .checked_add(1)
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let result = self.expand_write_text_inner(tokens);
         self.write_expansion_depth -= 1;
         result
@@ -74,7 +74,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let endwrite = self
             .state
             .primitive_token("endwrite")
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let right_brace = Token::Char {
             ch: '}',
             cat: Catcode::EndGroup,
@@ -88,7 +88,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .command
                 .attempt
                 .token_words(&tokens)
-                .map_err(|_| CommandError::input_invariant())?
+                .map_err(|_| crate::CommandFailure::input_invariant())?
                 .len();
             if self
                 .state
@@ -104,7 +104,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .command
                     .attempt
                     .token_words(&tokens)
-                    .map_err(|_| CommandError::input_invariant())?;
+                    .map_err(|_| crate::CommandFailure::input_invariant())?;
                 for word in words.iter() {
                     crate::processor::expand_render::append_token_list_token_text(
                         self.state,
@@ -127,12 +127,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .command
                 .push_attempt_list_level(
                     tokens,
-                    u32::try_from(write_words).map_err(|_| CommandError::input_invariant())?,
+                    u32::try_from(write_words)
+                        .map_err(|_| crate::CommandFailure::input_invariant())?,
                     TokenBehavior::Ordinary,
                     RetirementBehavior::Pop,
                     ReplayTrace::Stored(StoredReplayReason::Write),
                 )
-                .map_err(|_| CommandError::input_invariant())?;
+                .map_err(|_| crate::CommandFailure::input_invariant())?;
             // TeX82 §§323 and 1370 trace the named write_text list at
             // begin_token_list, before the opening-brace insertion and expanded
             // scan_toks can report an error.
@@ -154,7 +155,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .command
             .attempt
             .token_words(&expanded)
-            .map_err(|_| CommandError::input_invariant())?
+            .map_err(|_| crate::CommandFailure::input_invariant())?
             .len();
         // TeX82 §1370 keeps the source list, expanded result, live command
         // buffers, and three artificial tokens until the stopper is read.
@@ -166,11 +167,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         );
         let mut destination = None;
         if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         let mut stopper = destination
             .take()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let unbalanced =
             self.outer_recovered_while_absorbing || stopper.spelling().semantic_token() != endwrite;
         self.outer_recovered_while_absorbing = false;
@@ -180,11 +181,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let error_context = unbalanced.then(|| self.command.output_open_context(self.state));
         while stopper.spelling().semantic_token() != endwrite {
             if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
             stopper = destination
                 .take()
-                .ok_or_else(|| CommandError::input_invariant())?;
+                .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         }
         self.retire_delivery_level()?;
         if unbalanced {

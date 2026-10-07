@@ -163,7 +163,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let start = frame.start() as usize;
             let position = start
                 .checked_add(frame.position() as usize)
-                .ok_or_else(CommandError::input_invariant)?;
+                .ok_or_else(crate::CommandFailure::input_invariant)?;
             let mode = self.command.delivery_mode;
             let (word, origin, admission) = if retain(consumer, suppress, mode) {
                 let entered_line =
@@ -177,10 +177,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let admit_word = &mut *admit;
                 let limit = start
                     .checked_add(frame.limit() as usize)
-                    .ok_or_else(CommandError::input_invariant)?;
+                    .ok_or_else(crate::CommandFailure::input_invariant)?;
                 let words = words
                     .slice(position..limit)
-                    .ok_or_else(CommandError::input_invariant)?;
+                    .ok_or_else(crate::CommandFailure::input_invariant)?;
                 // The caller charged the first word. The same traversal admits
                 // the whole prefix and charges each next word after acceptance.
                 macro_rules! consume_words {
@@ -249,7 +249,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             } else {
                 let spelling = words
                     .get(position)
-                    .ok_or_else(CommandError::input_invariant)?;
+                    .ok_or_else(crate::CommandFailure::input_invariant)?;
                 let word = spelling.token_word();
                 if word.out_parameter_slot().is_some()
                     && !matches!(kind, crate::fuel::RawDeliveryKind::MacroArgument)

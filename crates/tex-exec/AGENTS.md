@@ -234,6 +234,9 @@ not allocate a vector merely to publish one already-complete node.
   dimension evidence through one short-lived `CommandContext` before rendering.
   Hot execution reporters accept an admitted `CommandContext` plus the detached
   `ExecutionDiagnosticContext`; focused tests pin routing and context rendering.
+  Command failures transfer their original pointer owner; dedicated resource
+  failures transfer the same typed need/cause allocation. First-origin
+  annotation is applied once at the actual executor boundary.
   `ExecError::Fatal` is TeX82 §81's non-local exit and only main control may
   catch it.
 - `src/align/`: source-free alignment completion, packaging, and width

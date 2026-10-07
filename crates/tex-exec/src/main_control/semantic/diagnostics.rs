@@ -20,7 +20,9 @@ pub(in crate::main_control) fn execute_set_interaction_mode<G>(
                     stores,
                 )
                 .map_err(|_| {
-                    ExecError::Command(tex_command::CommandError::StaleDiagnosticContext)
+                    ExecError::Command(tex_command::CommandFailure::new(
+                        tex_command::CommandErrorKind::StaleDiagnosticContext,
+                    ))
                 })?;
             crate::diagnostics::report_bad_interaction_mode_with_context(
                 stores, effects, value, context,

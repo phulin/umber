@@ -76,7 +76,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .last_mut()
             .expect("selected source input")
         else {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         };
         let profile = self.command.roots.profile;
         let force_eof = slot.force_eof(self.command.roots.input.force_eof);
@@ -98,7 +98,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     self.state,
                     create_control_sequences,
                 )
-                .map_err(|()| CommandError::input_invariant())?
+                .map_err(|()| crate::CommandFailure::input_invariant())?
             {
                 ResidentSourceAdvance::Delivered(word, origin, location) => {
                     self.pending_diagnostic_location = slot.diagnostic_location(location);
@@ -211,7 +211,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .last_mut()
             .expect("current source input")
         else {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         };
         if !command_state.delivery_mode.allows_character_run()
             || state.int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS) > 1
@@ -221,7 +221,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
 
         if let Some(mut run) = slot
             .borrow_character_run()
-            .map_err(|()| CommandError::input_invariant())?
+            .map_err(|()| crate::CommandFailure::input_invariant())?
         {
             let available = usize::try_from(fuel.remaining())
                 .unwrap_or(usize::MAX)
@@ -240,10 +240,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 execution,
                 MainCharacterInput::Borrowed(run),
             );
-            let count =
-                usize::try_from(admission.count()).map_err(|_| CommandError::input_invariant())?;
+            let count = usize::try_from(admission.count())
+                .map_err(|_| crate::CommandFailure::input_invariant())?;
             if count > run_len {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
             if count == 0 && admission.needs_scalar_fallback() {
                 // A lexically accepted byte with missing metrics retains the
@@ -252,7 +252,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let byte = *run
                     .bytes()
                     .first()
-                    .ok_or_else(CommandError::input_invariant)?;
+                    .ok_or_else(crate::CommandFailure::input_invariant)?;
                 let ch = char::from(byte);
                 let origin = run.origin(0);
                 fuel.charge()?;
@@ -270,7 +270,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     return Ok(Some(0));
                 }
                 slot.commit_character_run(frame, 1)
-                    .map_err(|()| CommandError::input_invariant())?;
+                    .map_err(|()| crate::CommandFailure::input_invariant())?;
                 if let Some(location) = slot.current_diagnostic_location() {
                     command_state.set_last_diagnostic_location(Some(location));
                 }
@@ -286,10 +286,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 return Ok(Some(0));
             }
             if count != 0 {
-                let count = u32::try_from(count).map_err(|_| CommandError::input_invariant())?;
+                let count =
+                    u32::try_from(count).map_err(|_| crate::CommandFailure::input_invariant())?;
                 fuel.charge_run(count)?;
                 slot.commit_character_run(frame, usize::try_from(count).expect("u32 fits usize"))
-                    .map_err(|()| CommandError::input_invariant())?;
+                    .map_err(|()| crate::CommandFailure::input_invariant())?;
                 if let Some(location) = slot.current_diagnostic_location() {
                     command_state.set_last_diagnostic_location(Some(location));
                 }
@@ -315,7 +316,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .continue_run()
                     && remaining != 0)
             })
-            .map_err(|()| CommandError::input_invariant())?;
+            .map_err(|()| crate::CommandFailure::input_invariant())?;
         match run {
             ResidentSourceCharacterRun::Unavailable => Ok(None),
             ResidentSourceCharacterRun::Consumed { count } => {
@@ -369,10 +370,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
             crate::input::InputStorage::MacroArgument { .. } => None,
         }
-        .ok_or_else(CommandError::input_invariant)?;
+        .ok_or_else(crate::CommandFailure::input_invariant)?;
         let slot = word
             .out_parameter_slot()
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         let (region, span) = match &row.storage {
             crate::input::InputStorage::MacroBody(body) => (
                 body.argument_region,
@@ -384,7 +385,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         frame.advance_resident();
         self.command
             .push_resident_parameter_cursor(slot, region, span, source, &mut self.observer)
-            .map_err(|()| CommandError::input_invariant())?;
+            .map_err(|()| crate::CommandFailure::input_invariant())?;
         Ok(())
     }
 
@@ -461,7 +462,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .filter(|level| !matches!(level.storage, InputStorage::Source(_)))
                     .is_some_and(|cursor| cursor.identity() == identity)
                 {
-                    return Err(CommandError::input_invariant());
+                    return Err(crate::CommandFailure::input_invariant());
                 }
                 let handoff = self.retire_input_top(identity)?;
                 match handoff {

@@ -72,14 +72,14 @@ impl From<PrepareMagDiagnostic> for DimensionDiagnostic {
     }
 }
 
-/// The Rust call site that raised an [`CommandError::InputInvariant`].
+/// The Rust call site that raised a [`CommandErrorKind::InputInvariant`].
 ///
 /// `InputInvariant` is a shared sentinel used by dozens of call sites across
 /// `tex-command`'s scanners, conditionals, and macro machinery (see
 /// `docs/testing_infrastructure.md`'s note on diagnosing a canonical
 /// divergence): the variant alone does not pin which one fired. Capturing the
 /// constructing call site with `#[track_caller]` gives every future
-/// `CommandError::InputInvariant` an immediate, precise origin without
+/// `CommandErrorKind::InputInvariant` an immediate, precise origin without
 /// per-caller plumbing. Equality intentionally ignores the captured site so
 /// existing structural comparisons against this variant are unaffected.
 #[derive(Clone, Copy)]
@@ -127,19 +127,22 @@ pub struct ResourceFailureDiagnostic {
     pub failure: crate::ResourceFailure,
 }
 
-/// One actual command failure and its cold source annotation.
+/// One cold failure owner; successful command calls carry no payload.
+pub type CommandError = Box<CommandFailure>;
+
+/// Actual failure facts, allocated only when an operation fails.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CommandErrorOrigin {
-    pub error: CommandError,
-    pub origin: OriginId,
+pub struct CommandFailure {
+    pub kind: CommandErrorKind,
+    pub origin: Option<OriginId>,
 }
 
-/// A command-core operation could not preserve its input-state invariant.
+/// The typed reason a command-core operation failed.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommandError {
+pub enum CommandErrorKind {
     /// The command-owned resource ledger cannot fund another canonical
     /// delivery action.
-    FuelExhausted(Box<FuelExhaustion>),
+    FuelExhausted(FuelExhaustion),
     /// A stale or malformed input-level transition was observed.
     InputInvariant(InputInvariantOrigin),
     /// A captured diagnostic context no longer names the live input.
@@ -152,34 +155,30 @@ pub enum CommandError {
     OuterInMacroArgument,
     /// The installed input capability has no immutable backing for a
     /// requested logical filename.
-    MissingInput(Box<MissingInputDiagnostic>),
+    MissingInput(MissingInputDiagnostic),
     /// A non-opening file enquiry has no retained bytes or authoritative
     /// absence yet and requests a typed host probe.
-    MissingInputProbe(Box<crate::FileEnquiryRequest>),
+    MissingInputProbe(crate::FileEnquiryRequest),
     /// A synchronous resource provider failed while resolving a typed need.
     /// The original need and owned cause remain intact so the executor does
     /// not misclassify a real failure as an authoritative absence.
     ResourceFailure(Box<ResourceFailureDiagnostic>),
-    /// An otherwise-originless command failure annotated by the expandable
-    /// delivery which triggered it. Typed resource needs deliberately remain
-    /// unwrapped so the host can replay them.
-    AtOrigin(Box<CommandErrorOrigin>),
     /// This expansion slice has not installed the primitive's canonical
     /// scalar handler yet.
     UnsupportedExpandablePrimitive(tex_state::meaning::ExpandablePrimitive),
     /// A pdfTeX navigation scanner rejected an action, identifier, or view.
-    PdfNavigation(Box<&'static str>),
+    PdfNavigation(&'static str),
     /// TeX82 §93 `succumb`: the job is over. This is not a recoverable command
     /// failure; it is §81 `jump_out` unwinding to the driver, which latches the
     /// terminal state and ends the job.
-    Fatal(Box<crate::FatalError>),
+    Fatal(crate::FatalError),
 }
 
 impl From<tex_state::print::JumpOut> for CommandError {
     /// Carries §81's non-local exit from the processor-owned interaction
     /// transition to the driver.
     fn from(jump: tex_state::print::JumpOut) -> Self {
-        Self::fatal(jump.into())
+        CommandFailure::fatal(jump.into())
     }
 }
 
@@ -189,14 +188,20 @@ impl From<crate::execution_scratch::ScratchError> for CommandError {
     }
 }
 
-impl CommandError {
+impl CommandFailure {
+    #[cold]
+    #[must_use]
+    pub fn new(kind: CommandErrorKind) -> CommandError {
+        Box::new(Self { kind, origin: None })
+    }
+
     #[cold]
     pub(crate) fn fuel_exhausted(
         limit: u64,
         burned: u64,
         work: crate::CommandWorkCounters,
-    ) -> Self {
-        Self::FuelExhausted(Box::new(FuelExhaustion {
+    ) -> CommandError {
+        Self::new(CommandErrorKind::FuelExhausted(FuelExhaustion {
             limit,
             burned,
             work,
@@ -204,8 +209,8 @@ impl CommandError {
     }
 
     #[cold]
-    pub(crate) fn missing_input(name: String, original_name: String) -> Self {
-        Self::MissingInput(Box::new(MissingInputDiagnostic {
+    pub(crate) fn missing_input(name: String, original_name: String) -> CommandError {
+        Self::new(CommandErrorKind::MissingInput(MissingInputDiagnostic {
             name,
             original_name,
         }))
@@ -215,56 +220,55 @@ impl CommandError {
     pub(crate) fn resource_failure(
         need: crate::ResourceNeed,
         failure: crate::ResourceFailure,
-    ) -> Self {
-        Self::ResourceFailure(Box::new(ResourceFailureDiagnostic { need, failure }))
+    ) -> CommandError {
+        Self::new(CommandErrorKind::ResourceFailure(Box::new(
+            ResourceFailureDiagnostic { need, failure },
+        )))
     }
 
     #[cold]
-    pub(crate) fn pdf_navigation(message: &'static str) -> Self {
-        Self::PdfNavigation(Box::new(message))
+    pub(crate) fn pdf_navigation(message: &'static str) -> CommandError {
+        Self::new(CommandErrorKind::PdfNavigation(message))
     }
 
     #[cold]
-    pub(crate) fn fatal(fatal: crate::FatalError) -> Self {
-        Self::Fatal(Box::new(fatal))
+    pub(crate) fn fatal(fatal: crate::FatalError) -> CommandError {
+        Self::new(CommandErrorKind::Fatal(fatal))
     }
 
-    /// Constructs [`CommandError::InputInvariant`], capturing the Rust
-    /// call site that raised it so a canonical divergence names its true
-    /// origin instead of the shared, otherwise-unresolvable sentinel.
+    /// Captures the exact constructing Rust call site at the failure boundary.
+    #[cold]
     #[track_caller]
-    pub(crate) fn input_invariant() -> Self {
-        Self::InputInvariant(InputInvariantOrigin(Location::caller()))
+    pub(crate) fn input_invariant() -> CommandError {
+        Self::new(CommandErrorKind::InputInvariant(InputInvariantOrigin(
+            Location::caller(),
+        )))
     }
 
     pub(crate) const fn is_resource_suspension(&self) -> bool {
-        matches!(self, Self::MissingInput(_) | Self::MissingInputProbe(_))
+        matches!(
+            self.kind,
+            CommandErrorKind::MissingInput(_) | CommandErrorKind::MissingInputProbe(_)
+        )
     }
 
-    pub(crate) fn at_origin_unless_resource(self, origin: OriginId) -> Self {
-        if matches!(
-            self,
-            Self::MissingInput(_) | Self::MissingInputProbe(_) | Self::AtOrigin(_)
-        ) {
-            self
-        } else {
-            Self::AtOrigin(Box::new(CommandErrorOrigin {
-                error: self,
-                origin,
-            }))
+    pub(crate) fn at_origin_unless_resource(mut self: Box<Self>, origin: OriginId) -> CommandError {
+        if self.origin.is_none() && !self.is_resource_suspension() {
+            self.origin = Some(origin);
         }
+        self
     }
 }
 
-impl std::fmt::Display for CommandError {
+impl std::fmt::Display for CommandFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::FuelExhausted(fuel) => {
+        match &self.kind {
+            CommandErrorKind::FuelExhausted(fuel) => {
                 let FuelExhaustion {
                     limit,
                     burned,
                     work,
-                } = fuel.as_ref();
+                } = fuel;
                 write!(
                     formatter,
                     "canonical command fuel exhausted after {burned} actions (limit {limit}); command work: fuel_charges={} token_frame_steps={} expanded_deliveries={} meaning_lookups={} scanner_tokens={} write_expansions={}",
@@ -286,78 +290,50 @@ impl std::fmt::Display for CommandError {
                 )?;
                 Ok(())
             }
-            Self::InputInvariant(origin) => {
+            CommandErrorKind::InputInvariant(origin) => {
                 write!(
                     formatter,
                     "command input-state invariant failed (at {origin})"
                 )
             }
-            Self::StaleDiagnosticContext => {
+            CommandErrorKind::StaleDiagnosticContext => {
                 formatter.write_str("diagnostic context is no longer current")
             }
-            Self::MacroPrefixMismatch => {
+            CommandErrorKind::MacroPrefixMismatch => {
                 formatter.write_str("macro invocation does not match its definition")
             }
-            Self::ParagraphInMacroArgument => {
+            CommandErrorKind::ParagraphInMacroArgument => {
                 formatter.write_str("paragraph ended before macro argument was complete")
             }
-            Self::OuterInMacroArgument => {
+            CommandErrorKind::OuterInMacroArgument => {
                 formatter.write_str("outer token found while scanning macro argument")
             }
-            Self::MissingInput(input) => {
+            CommandErrorKind::MissingInput(input) => {
                 write!(formatter, "input source `{}` is unavailable", input.name)
             }
-            Self::MissingInputProbe(request) => {
+            CommandErrorKind::MissingInputProbe(request) => {
                 write!(formatter, "input enquiry `{}` is unresolved", request.name)
             }
-            Self::ResourceFailure(resource) => {
+            CommandErrorKind::ResourceFailure(resource) => {
                 write!(
                     formatter,
                     "resource resolution failed: {}",
                     resource.failure
                 )
             }
-            Self::AtOrigin(annotated) => std::fmt::Display::fmt(&annotated.error, formatter),
-            Self::UnsupportedExpandablePrimitive(primitive) => {
+            CommandErrorKind::UnsupportedExpandablePrimitive(primitive) => {
                 write!(
                     formatter,
                     "expandable primitive {primitive:?} is not installed"
                 )
             }
-            Self::PdfNavigation(message) => formatter.write_str(message),
-            Self::Fatal(fatal) => write!(formatter, "irrecoverable error: {fatal}"),
+            CommandErrorKind::PdfNavigation(message) => formatter.write_str(message),
+            CommandErrorKind::Fatal(fatal) => write!(formatter, "irrecoverable error: {fatal}"),
         }
     }
 }
 
-impl std::error::Error for CommandError {}
+impl std::error::Error for CommandFailure {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dimension_diagnostic_conversion_and_units_are_canonical_values() {
-        assert_eq!(
-            DimensionDiagnostic::from(DimensionError::TooLarge),
-            DimensionDiagnostic::TooLarge
-        );
-        assert_eq!(
-            DimensionDiagnostic::IllegalUnit {
-                inserted: InsertedUnit::Mu,
-            }
-            .to_string(),
-            "Illegal unit of measure (mu inserted)"
-        );
-        assert_eq!(
-            DimensionDiagnostic::from(PrepareMagDiagnostic::IncompatibleMagnification {
-                attempted: 1200,
-                retained: 1000,
-            }),
-            DimensionDiagnostic::IncompatibleMagnification {
-                attempted: 1200,
-                retained: 1000,
-            }
-        );
-    }
-}
+mod tests;

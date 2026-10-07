@@ -8,7 +8,7 @@ fn exact_limit_funds_exactly_that_many_actions() {
     assert!(fuel.charge().is_ok());
     assert_eq!(
         fuel.charge(),
-        Err(crate::CommandError::fuel_exhausted(
+        Err(crate::CommandFailure::fuel_exhausted(
             3,
             3,
             CommandWorkCounters {
@@ -32,7 +32,7 @@ fn authority_scale_limits_publish_exact_terminal_counts() {
         }
         assert_eq!(
             fuel.charge(),
-            Err(crate::CommandError::fuel_exhausted(
+            Err(crate::CommandFailure::fuel_exhausted(
                 limit,
                 limit,
                 CommandWorkCounters {

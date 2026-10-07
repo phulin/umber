@@ -47,7 +47,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 PdfActionScalarPhase::ThreadKeyword => {
                     let result = self.scan_keyword("thread");
                     if !result? {
-                        return Err(CommandError::pdf_navigation(
+                        return Err(crate::CommandFailure::pdf_navigation(
                             "pdfTeX error (ext1): action type missing",
                         ));
                     }
@@ -59,7 +59,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     if result? {
                         let _ = progress
                             .goto
-                            .ok_or_else(|| CommandError::input_invariant())?;
+                            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
                         progress.file = Some(self.scan_pdf_action_owned_text()?.tokens);
                     }
                     progress.phase = PdfActionScalarPhase::StructureKeyword;
@@ -69,9 +69,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     if result? {
                         let goto = progress
                             .goto
-                            .ok_or_else(|| CommandError::input_invariant())?;
+                            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
                         if !goto {
-                            return Err(CommandError::pdf_navigation(
+                            return Err(crate::CommandFailure::pdf_navigation(
                                 "pdfTeX error (ext1): only GoTo action can be used with `struct'",
                             ));
                         }
@@ -92,7 +92,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     if result? {
                         let _ = progress
                             .goto
-                            .ok_or_else(|| CommandError::input_invariant())?;
+                            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
                         progress.structure = Some(PdfActionIdentifier::Name(
                             self.scan_pdf_action_owned_text()?.tokens,
                         ));
@@ -104,7 +104,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 PdfActionScalarPhase::StructureNumberKeyword => {
                     let result = self.scan_keyword("num");
                     if !result? {
-                        return Err(CommandError::pdf_navigation(
+                        return Err(crate::CommandFailure::pdf_navigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
                     }
@@ -123,9 +123,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     if result? {
                         if !progress
                             .goto
-                            .ok_or_else(|| CommandError::input_invariant())?
+                            .ok_or_else(|| crate::CommandFailure::input_invariant())?
                         {
-                            return Err(CommandError::pdf_navigation(
+                            return Err(crate::CommandFailure::pdf_navigation(
                                 "pdfTeX error (ext1): only GoTo action can be used with `page'",
                             ));
                         }
@@ -139,7 +139,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let number = Self::finish_pdf_positive(result?.value, "page number", false)?;
                     let _ = progress
                         .goto
-                        .ok_or_else(|| CommandError::input_invariant())?;
+                        .ok_or_else(|| crate::CommandFailure::input_invariant())?;
                     let view = self.scan_pdf_action_owned_text()?.tokens;
                     progress.target = Some(PdfActionTarget::Page { number, view });
                     progress.phase = PdfActionScalarPhase::NewWindowKeyword;
@@ -149,7 +149,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     if result? {
                         let _ = progress
                             .goto
-                            .ok_or_else(|| CommandError::input_invariant())?;
+                            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
                         let name = self.scan_pdf_action_owned_text()?.tokens;
                         progress.target = Some(PdfActionTarget::Destination(
                             PdfActionIdentifier::Name(name),
@@ -162,15 +162,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 PdfActionScalarPhase::NumberKeyword => {
                     let result = self.scan_keyword("num");
                     if !result? {
-                        return Err(CommandError::pdf_navigation(
+                        return Err(crate::CommandFailure::pdf_navigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
                     }
                     let goto = progress
                         .goto
-                        .ok_or_else(|| CommandError::input_invariant())?;
+                        .ok_or_else(|| crate::CommandFailure::input_invariant())?;
                     if goto && progress.file.is_some() {
-                        return Err(CommandError::pdf_navigation(
+                        return Err(crate::CommandFailure::pdf_navigation(
                             "pdfTeX error (ext1): `goto' option cannot be used with both `file' and `num'",
                         ));
                     }
@@ -216,9 +216,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<(PendingPdfActionOwner, PdfActionSpec), CommandError> {
         let goto = progress
             .goto
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         if window != tex_state::PdfActionWindow::Unspecified && (!goto || progress.file.is_none()) {
-            return Err(CommandError::pdf_navigation(
+            return Err(crate::CommandFailure::pdf_navigation(
                 "pdfTeX error (ext1): `newwindow'/`nonewwindow' must be used with `goto' and `file' option",
             ));
         }
@@ -227,7 +227,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             structure: progress.structure,
             target: progress
                 .target
-                .ok_or_else(|| CommandError::input_invariant())?,
+                .ok_or_else(|| crate::CommandFailure::input_invariant())?,
             window,
         };
         Ok((

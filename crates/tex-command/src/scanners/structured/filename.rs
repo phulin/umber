@@ -28,7 +28,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Ok(std::ops::ControlFlow::Break(()))
             },
         ))?;
-        let primary = primary.ok_or_else(CommandError::input_invariant)?;
+        let primary = primary.ok_or_else(crate::CommandFailure::input_invariant)?;
         let mut components = FileNameComponents::default();
         let mut character_count = 0;
         let mut quoted = false;
@@ -47,7 +47,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     Some((ch, _)) => {
                         character_count += 1;
                         if character_count > FILE_NAME_POOL_CAPACITY {
-                            return Err(CommandError::fatal(crate::FatalError::overflow(
+                            return Err(crate::CommandFailure::fatal(crate::FatalError::overflow(
                                 "pool size",
                                 FILE_NAME_POOL_CAPACITY as i32,
                             )));
@@ -58,7 +58,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         processor.back_consumed_word(spelling, exceptional)?;
                         return Ok(std::ops::ControlFlow::Break(()));
                     }
-                    _ => return Err(CommandError::input_invariant()),
+                    _ => return Err(crate::CommandFailure::input_invariant()),
                 }
                 Ok(std::ops::ControlFlow::Continue(()))
             },
@@ -143,7 +143,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                     .record_input_dependencies(
                                         &self.host.input_unavailable_dependencies(&attempted_name),
                                     )
-                                    .map_err(|_| CommandError::input_invariant())?;
+                                    .map_err(|_| crate::CommandFailure::input_invariant())?;
                             }
                         } else {
                             unresolved = true;
@@ -154,7 +154,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let actual = self
                         .state
                         .with_input_read_state(|input| retained.actual_use(input))
-                        .map_err(|_| CommandError::input_invariant())?;
+                        .map_err(|_| crate::CommandFailure::input_invariant())?;
                     let Some(actual) = actual else {
                         // A generated-only retained answer lost its current
                         // output on rollback. Remove only this positive entry
@@ -166,7 +166,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         let dependencies = retained.dependencies_for_actual_use(&actual);
                         self.state
                             .record_input_dependencies(&dependencies)
-                            .map_err(|_| CommandError::input_invariant())?;
+                            .map_err(|_| crate::CommandFailure::input_invariant())?;
                     }
                     break Some((actual, provider_settled));
                 };
@@ -196,7 +196,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let source = self
                     .command
                     .register_source(registration)
-                    .map_err(|_| CommandError::input_invariant())?;
+                    .map_err(|_| crate::CommandFailure::input_invariant())?;
                 // e-TeX 2.6 [23.328]'s `grp_stack[in_open]:=cur_boundary;
                 // if_stack[in_open]:=cond_ptr`, recorded for `\tracingnesting`'s
                 // `file_warning` at this level's eventual `end_file_reading`.
@@ -204,7 +204,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let (_, framing_name) = self
                     .command
                     .open_registered_file_with_depths(source, open_depths)
-                    .map_err(|_| CommandError::input_invariant())?;
+                    .map_err(|_| crate::CommandFailure::input_invariant())?;
                 if let Some(name) = framing_name {
                     self.print_file_open(&name);
                 }
@@ -227,7 +227,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
             if unresolved {
                 self.command.retain_pending_input_open(retry_file_name);
-                return Err(CommandError::missing_input(packed_name, original_name));
+                return Err(crate::CommandFailure::missing_input(
+                    packed_name,
+                    original_name,
+                ));
             }
             file_name = self.prompt_for_input_file_name(&file_name)?;
         }
@@ -254,9 +257,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let mut report = self.state.print_err("Emergency stop");
             report.help(&[help]).context(context);
             report.succumb();
-            return Err(CommandError::fatal(crate::FatalError::emergency_stop(
-                "job aborted, file error in nonstop mode",
-            )));
+            return Err(crate::CommandFailure::fatal(
+                crate::FatalError::emergency_stop("job aborted, file error in nonstop mode"),
+            ));
         }
 
         let Some(line) = self
@@ -267,7 +270,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let mut report = self.state.print_err("Emergency stop");
             report.help(&[help]).context(context);
             report.succumb();
-            return Err(CommandError::fatal(crate::FatalError::emergency_stop(help)));
+            return Err(crate::CommandFailure::fatal(
+                crate::FatalError::emergency_stop(help),
+            ));
         };
         self.file_name_from_terminal_line(&line)
     }
@@ -289,7 +294,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
             character_count += 1;
             if character_count > FILE_NAME_POOL_CAPACITY {
-                return Err(CommandError::fatal(crate::FatalError::overflow(
+                return Err(crate::CommandFailure::fatal(crate::FatalError::overflow(
                     "pool size",
                     FILE_NAME_POOL_CAPACITY as i32,
                 )));
@@ -322,13 +327,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 return Ok(DeliveryStatus::End);
             }
             if delivery != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
             if !matches!(
                 static_meaning(
                     destination
                         .as_ref()
-                        .ok_or_else(|| CommandError::input_invariant())?
+                        .ok_or_else(|| crate::CommandFailure::input_invariant())?
                         .meaning()
                 ),
                 Some(

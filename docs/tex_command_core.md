@@ -11,6 +11,11 @@ Input, macro, group, conditional, alignment, and expression stacks remain
 TeX-semantic state and are not resource-retry storage. No command-owned
 scanner, expansion, caller, output, or resume state crosses that boundary.
 
+[Cold command failures](cold_command_failures.md) defines `CommandError` as the
+pointer owner of actual typed failure facts and first-origin annotation. Success
+carries no error-union payload; resource replay transfers its original typed
+need/cause packet.
+
 ## 1. Purpose
 
 Umber implements one `tex-command` command-processing subsystem whose semantic
@@ -873,7 +878,7 @@ terminator, backing up a non-character terminator, or reaching end of input.
 `open_registered_input` composes that scan with the borrow-scoped
 registered-input capability, then registers
 and opens the immutable source through `CommandState`. An unresolved backing
-is the typed `CommandError::MissingInput` suspension. After the retained host
+is the typed `CommandErrorKind::MissingInput` suspension. After the retained host
 binds an authoritative negative response, the same live processor owns TeX82
 §530's missing-file text and input context: scroll/error-stop reads a
 replacement filename through `CommandContext::input_ln` and retries the

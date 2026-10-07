@@ -528,7 +528,7 @@ impl<G> CommandState<G> {
 
     pub(crate) fn begin_file_name(&mut self) -> Result<(), crate::CommandError> {
         if self.name_in_progress {
-            return Err(crate::CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         self.name_in_progress = true;
         Ok(())

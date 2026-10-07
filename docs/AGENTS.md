@@ -3,6 +3,9 @@
 `terminal_callback_ownership.md` defines borrowed full-access callbacks sharing
 one compiled reader, with concrete resident consumers and existing checkpoints.
 
+`cold_command_failures.md` defines pointer-owned command failures, direct typed
+payloads, first-origin annotation and payload-free successful unit returns.
+
 `font_identity_lookup.md` defines immutable generated-font lookup, its
 rollback-coupled derived index, and the current realized-font identity API.
 

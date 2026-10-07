@@ -113,7 +113,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         loop {
             let mut command = None;
             if self.request_expanded_token(&mut command)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
             let command = command.expect("command delivery initializes destination");
             let character = match static_meaning(command.meaning()) {

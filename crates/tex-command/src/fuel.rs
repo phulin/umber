@@ -204,7 +204,7 @@ impl CommandFuel {
     #[inline(never)]
     fn exhausted_error(&self) -> crate::CommandError {
         let work = self.work();
-        crate::CommandError::fuel_exhausted(self.limit, work.fuel_charges, work)
+        crate::CommandFailure::fuel_exhausted(self.limit, work.fuel_charges, work)
     }
 
     /// Commits the exact work produced by one resolved raw delivery.

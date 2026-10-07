@@ -705,7 +705,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Ok(std::ops::ControlFlow::Break(()))
             },
         ))?;
-        scanned.ok_or_else(CommandError::input_invariant)
+        scanned.ok_or_else(crate::CommandFailure::input_invariant)
     }
 
     /// Runs TeX82 §465's `scan_something_internal(tok_val,false)` on a target
@@ -834,7 +834,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 },
             ))?;
             if !matched {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
             (self.scan_infinite_unit_from_fil()?, None)
         } else {
@@ -1133,7 +1133,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 },
             ))?;
             if !matched {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
         }
         self.scan_infinite_unit(Order::Fil)

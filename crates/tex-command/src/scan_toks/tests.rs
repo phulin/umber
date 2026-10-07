@@ -1118,7 +1118,9 @@ fn direct_definition_collection_matches_observed_recovery_at_every_fuel_cut() {
                         .map(|word| word.semantic_token())
                         .collect::<Vec<_>>(),
                 ),
-                Err(crate::CommandError::FuelExhausted(_)) => None,
+                Err(error) if matches!(error.kind, crate::CommandErrorKind::FuelExhausted(_)) => {
+                    None
+                }
                 Err(error) => panic!("unexpected scan failure: {error:?}"),
             };
             assert!(matches!(
@@ -1250,7 +1252,9 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
             let mut destination = None;
             match processor.get_x_token_into(&mut destination) {
                 Ok(_) => {}
-                Err(crate::CommandError::FuelExhausted(_)) => return None,
+                Err(error) if matches!(error.kind, crate::CommandErrorKind::FuelExhausted(_)) => {
+                    return None;
+                }
                 Err(error) => panic!("unexpected expansion failure: {error:?}"),
             }
             let result =
@@ -1265,7 +1269,9 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
                         .map(|word| word.semantic_token())
                         .collect::<Vec<_>>(),
                 ),
-                Err(crate::CommandError::FuelExhausted(_)) => None,
+                Err(error) if matches!(error.kind, crate::CommandErrorKind::FuelExhausted(_)) => {
+                    None
+                }
                 Err(error) => panic!("unexpected scan failure: {error:?}"),
             };
             Some((

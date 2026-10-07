@@ -15,7 +15,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         match self.next_non_blank_non_relax_x_token_into(&mut destination)? {
             DeliveryStatus::End => Ok(None),
             DeliveryStatus::Command => Ok(destination),
-            _ => Err(CommandError::input_invariant()),
+            _ => Err(crate::CommandFailure::input_invariant()),
         }
     }
 }

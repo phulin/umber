@@ -47,7 +47,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.scan_toks_buffers(crate::scan_toks::ScanToksMode::CaseShift { uppercase })?;
         let replay = scanned
             .replay_input()
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         let level = self.command.push_token_level(
             replay,
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
@@ -101,7 +101,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             self.scan_toks_buffers(ScanToksMode::MacroDefinitionFor { expanded, target })?;
         let definition = scanned
             .definition()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         Ok(ScannedMacroDefinition { target, definition })
     }
 
@@ -140,7 +140,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 Ok(ControlFlow::Break(meaning))
             })?
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         Ok((target, meaning))
     }
 
@@ -160,7 +160,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 processor.back_consumed_word(spelling, command)?;
                 Ok(std::ops::ControlFlow::Break(meaning))
             })?
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         self.back_retained_word(
             first,
             adjustment,

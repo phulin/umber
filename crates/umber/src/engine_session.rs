@@ -3596,9 +3596,9 @@ mod tests {
         for error in [&unobserved_error, &observed_error] {
             assert!(matches!(
                 error,
-                SessionError::Execution(tex_exec::ExecError::Command(
-                    tex_command::CommandError::FuelExhausted(fuel)
-                )) if fuel.limit == 19 && fuel.burned == 19
+                SessionError::Execution(tex_exec::ExecError::Command(failure))
+                    if matches!(&failure.kind, tex_command::CommandErrorKind::FuelExhausted(fuel)
+                        if fuel.limit == 19 && fuel.burned == 19)
             ));
         }
         assert_eq!(unobserved_burned, 19);

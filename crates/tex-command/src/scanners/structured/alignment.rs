@@ -12,12 +12,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .builders
             .iter()
             .find(|live| live.identity == builder.0)
-            .ok_or_else(|| CommandError::input_invariant())?
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?
             .tokens;
         self.command
             .attempt
             .push_buffer_token(&live_tokens, spelling)
-            .map_err(|_| CommandError::input_invariant())
+            .map_err(|_| crate::CommandFailure::input_invariant())
     }
 
     pub(crate) fn abort_alignment_preamble(
@@ -30,14 +30,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .transient
             .builders
             .pop()
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         if live.identity != pending.builder.0 {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         self.command
             .attempt
             .discard_token_buffer(live.tokens)
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         Ok(())
     }
     /// Runs TeX82 §774 `init_align`'s `scan_spec(align_group,false)`: §645's
@@ -71,11 +71,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut destination = None;
         loop {
             if self.request_expanded_token(&mut destination)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
             let opening = destination
                 .take()
-                .ok_or_else(|| CommandError::input_invariant())?;
+                .ok_or_else(|| crate::CommandFailure::input_invariant())?;
             match static_meaning(opening.meaning()) {
                 Some(Meaning::CharToken {
                     cat: Catcode::Space,
@@ -84,7 +84,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)) => {
                     self.command
                         .prepare_alignment_cell_lookahead()
-                        .map_err(|_| CommandError::input_invariant())?;
+                        .map_err(|_| crate::CommandFailure::input_invariant())?;
                     return Ok(AlignmentCellOpening::Omit);
                 }
                 _ => {
@@ -104,10 +104,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<AlignmentCellOpening, CommandError> {
         self.command
             .prepare_alignment_cell_lookahead()
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         let lookahead = self
             .next_alignment_lookahead()?
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         {
             if matches!(
                 static_meaning(lookahead.command().meaning()),
@@ -139,7 +139,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn begin_alignment_peek(&mut self) -> Result<(), CommandError> {
         self.command
             .prepare_alignment_cell_lookahead()
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         self.observe_alignment_peek_sentinel();
         Ok(())
     }
@@ -164,11 +164,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .command
                 .alignment
                 .active_alignment
-                .ok_or_else(|| CommandError::input_invariant())?;
+                .ok_or_else(|| crate::CommandFailure::input_invariant())?;
             self.command
                 .alignment
                 .set_preamble_phase(alignment)
-                .map_err(|_| CommandError::input_invariant())?;
+                .map_err(|_| crate::CommandFailure::input_invariant())?;
             let builder = TokenBuilderId(self.command.transient.next_builder_identity);
             self.command.transient.next_builder_identity =
                 self.command.transient.next_builder_identity.wrapping_add(1);
@@ -176,7 +176,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .command
                 .attempt
                 .allocate_token_buffer()
-                .map_err(|_| CommandError::input_invariant())?;
+                .map_err(|_| crate::CommandFailure::input_invariant())?;
             self.command
                 .transient
                 .builders
@@ -220,12 +220,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .command
                     .attempt
                     .allocate_token_buffer()
-                    .map_err(|_| CommandError::input_invariant())?,
+                    .map_err(|_| crate::CommandFailure::input_invariant())?,
                 v_template: self
                     .command
                     .attempt
                     .allocate_token_buffer()
-                    .map_err(|_| CommandError::input_invariant())?,
+                    .map_err(|_| crate::CommandFailure::input_invariant())?,
                 phase: AlignmentPreamblePhase::UTemplate,
                 scalar_scan: None,
                 _generation: PhantomData,
@@ -275,14 +275,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let command = match self.get_preamble_token(&mut destination) {
                 Ok(DeliveryStatus::Command) => destination
                     .take()
-                    .ok_or_else(|| CommandError::input_invariant())?,
+                    .ok_or_else(|| crate::CommandFailure::input_invariant())?,
                 Ok(DeliveryStatus::End) => {
                     self.abort_alignment_preamble(pending)?;
-                    return Err(CommandError::input_invariant());
+                    return Err(crate::CommandFailure::input_invariant());
                 }
                 Ok(_) => {
                     self.abort_alignment_preamble(pending)?;
-                    return Err(CommandError::input_invariant());
+                    return Err(crate::CommandFailure::input_invariant());
                 }
                 Err(error) if error.is_resource_suspension() => {
                     self.abort_alignment_preamble(pending)?;
@@ -324,7 +324,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .command
                                 .attempt
                                 .token_buffer(&pending.u_template)
-                                .map_err(|_| CommandError::input_invariant())?
+                                .map_err(|_| crate::CommandFailure::input_invariant())?
                                 .is_empty()
                             && pending.repeat_start.is_none()
                         {
@@ -367,13 +367,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .command
                         .attempt
                         .token_buffer(&pending.u_template)
-                        .map_err(|_| CommandError::input_invariant())?
+                        .map_err(|_| crate::CommandFailure::input_invariant())?
                         .is_empty()
                     {
                         self.command
                             .attempt
                             .push_buffer_token(&pending.u_template, command.spelling())
-                            .map_err(|_| CommandError::input_invariant())?;
+                            .map_err(|_| crate::CommandFailure::input_invariant())?;
                         self.push_alignment_live_token(pending.builder, command.spelling())?;
                     }
                 }
@@ -392,12 +392,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .command
                             .attempt
                             .finish_token_buffer(pending.u_template)
-                            .map_err(|_| CommandError::input_invariant())?;
+                            .map_err(|_| crate::CommandFailure::input_invariant())?;
                         let v_template = self
                             .command
                             .attempt
                             .finish_token_buffer(pending.v_template)
-                            .map_err(|_| CommandError::input_invariant())?;
+                            .map_err(|_| crate::CommandFailure::input_invariant())?;
                         pending.columns.push(AlignmentCellTemplates {
                             u_template: Some(u_template),
                             v_template,
@@ -410,12 +410,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             .command
                             .attempt
                             .allocate_token_buffer()
-                            .map_err(|_| CommandError::input_invariant())?;
+                            .map_err(|_| crate::CommandFailure::input_invariant())?;
                         pending.v_template = self
                             .command
                             .attempt
                             .allocate_token_buffer()
-                            .map_err(|_| CommandError::input_invariant())?;
+                            .map_err(|_| crate::CommandFailure::input_invariant())?;
                         pending.phase = AlignmentPreamblePhase::UTemplate;
                         continue;
                     }
@@ -445,7 +445,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     self.command
                         .attempt
                         .push_buffer_token(&pending.v_template, command.spelling())
-                        .map_err(|_| CommandError::input_invariant())?;
+                        .map_err(|_| crate::CommandFailure::input_invariant())?;
                     self.push_alignment_live_token(pending.builder, command.spelling())?;
                 }
             }
@@ -461,7 +461,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     repeat_start: pending.repeat_start,
                 },
             )
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         observe!(
             self,
             crate::CommandObservation::Alignment(crate::AlignmentRecord {
@@ -483,14 +483,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .transient
             .builders
             .pop()
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         if live.identity != pending.builder.0 {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         self.command
             .attempt
             .discard_token_buffer(live.tokens)
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         Ok(())
     }
 
@@ -509,7 +509,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(DeliveryStatus::End);
         }
         if delivery != DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         while destination.as_ref().is_some_and(|command| {
             matches!(
@@ -521,7 +521,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             match self.get_token_into(destination)? {
                 DeliveryStatus::End => return Ok(DeliveryStatus::End),
                 DeliveryStatus::Command => {}
-                _ => return Err(CommandError::input_invariant()),
+                _ => return Err(crate::CommandFailure::input_invariant()),
             }
             if destination
                 .as_ref()
@@ -531,7 +531,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 match self.continue_preamble_after_span_expansion(destination)? {
                     DeliveryStatus::End => return Ok(DeliveryStatus::End),
                     DeliveryStatus::Command => {}
-                    _ => return Err(CommandError::input_invariant()),
+                    _ => return Err(crate::CommandFailure::input_invariant()),
                 }
             }
         }

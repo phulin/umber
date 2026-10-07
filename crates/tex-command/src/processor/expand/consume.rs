@@ -257,7 +257,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         && let Some((flags, definition)) = macro_parts
                         && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
                     {
-                        let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
+                        let name =
+                            control_sequence.ok_or_else(crate::CommandFailure::input_invariant)?;
                         let contextual = code == MeaningWord::<G>::MATCHING_MACRO_KEY
                             || processor.macro_activation_needs_context(
                                 code == MeaningWord::<G>::EMPTY_MACRO_KEY,

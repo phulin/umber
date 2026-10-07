@@ -70,7 +70,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         ExpandablePrimitive::EndTemplate
                     ))
                 ) {
-                    return Err(CommandError::input_invariant());
+                    return Err(crate::CommandFailure::input_invariant());
                 }
                 (
                     Self::saved_alignment_delimiter(&delimiter)?,
@@ -80,7 +80,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 )
             }
             AlignmentDeliveryEvent::ClosingBrace(_) => {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
         };
         self.start_alignment_v_template(alignment, saved_delimiter, delimiter_line)
@@ -95,7 +95,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .command
             .alignment
             .active_v_template_level(alignment)
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         let mut found = false;
         for level in self.command.input.levels.rows.iter().rev() {
             // TeX82 §1131 walks downward only while `state=token_list` and
@@ -114,9 +114,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
         }
         if !found {
-            return Err(CommandError::fatal(crate::FatalError::emergency_stop(
-                "(interwoven alignment preambles are not allowed)",
-            )));
+            return Err(crate::CommandFailure::fatal(
+                crate::FatalError::emergency_stop(
+                    "(interwoven alignment preambles are not allowed)",
+                ),
+            ));
         }
         Ok(())
     }
@@ -131,13 +133,15 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // proof: another preamble may leave the expected exhausted frame in
         // place while its brace sentinel is interwoven with the active cell.
         if self.command.alignment.align_state < 500_000 {
-            return Err(CommandError::fatal(crate::FatalError::emergency_stop(
-                "(interwoven alignment preambles are not allowed)",
-            )));
+            return Err(crate::CommandFailure::fatal(
+                crate::FatalError::emergency_stop(
+                    "(interwoven alignment preambles are not allowed)",
+                ),
+            ));
         }
         self.command
             .finish_alignment_cell_after_input_proof(alignment)
-            .map_err(|_| CommandError::input_invariant())
+            .map_err(|_| crate::CommandFailure::input_invariant())
     }
     /// TeX82 §1090 consults the live brace count before paragraph closure.
     pub fn alignment_brace_state(&self) -> i32 {
@@ -158,7 +162,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 crate::processor::alignment::AlignmentDelimiter::Cr
                 | crate::processor::alignment::AlignmentDelimiter::CrCr,
             ) => Ok(crate::AlignmentCellDelimiter::Row),
-            _ => Err(CommandError::input_invariant()),
+            _ => Err(crate::CommandFailure::input_invariant()),
         }
     }
     /// TeX82 saves this typed outcome in `extra_info(cur_align)` for
@@ -172,7 +176,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<(), CommandError> {
         self.command
             .begin_alignment_v_template(self.state, alignment, saved_delimiter, delimiter_line)
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         if let Some(input) = self
             .command
             .alignment_v_template_push_observation(alignment)
@@ -207,7 +211,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .command
             .alignment
             .active_alignment
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let delimiter = Self::saved_alignment_delimiter(command)?;
         let delimiter_line = command
             .direct_source_line_number()

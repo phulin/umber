@@ -88,7 +88,7 @@ where
     ) -> Result<ControlFlow<()>, CommandError> {
         let command = destination
             .as_ref()
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         if status == DeliveryStatus::AlignmentEndTemplate {
             processor.begin_scalar_alignment_v_template(command)?;
             return Ok(ControlFlow::Continue(()));
@@ -309,9 +309,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
                     let (flags, definition) = meaning
                         .macro_parts()
-                        .ok_or_else(CommandError::input_invariant)?;
+                        .ok_or_else(crate::CommandFailure::input_invariant)?;
                     let key = meaning.execution_key();
-                    let name = control_sequence.ok_or_else(CommandError::input_invariant)?;
+                    let name =
+                        control_sequence.ok_or_else(crate::CommandFailure::input_invariant)?;
                     match processor.activate_read_macro(
                         spelling.token_word(),
                         origin,
@@ -324,11 +325,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 key == MeaningWord::<G>::EMPTY_MACRO_KEY,
                             ),
                     ) {
-                        Ok(())
-                        | Err(
-                            CommandError::ParagraphInMacroArgument
-                            | CommandError::OuterInMacroArgument,
-                        ) => {}
+                        Ok(()) => {}
+                        Err(failure)
+                            if matches!(
+                                failure.kind,
+                                crate::CommandErrorKind::ParagraphInMacroArgument
+                                    | crate::CommandErrorKind::OuterInMacroArgument
+                            ) => {}
                         Err(failure) => return Err(failure),
                     }
                 }

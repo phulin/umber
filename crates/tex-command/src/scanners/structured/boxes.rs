@@ -60,11 +60,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn scan_show(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
         let mut destination = None;
         if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         let command = destination
             .take()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let token = command.spelling().semantic_token();
         let content = match token {
             Token::Cs(_)
@@ -306,6 +306,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Ok(std::ops::ControlFlow::Break(()))
             },
         ))?;
-        packing.ok_or_else(CommandError::input_invariant)
+        packing.ok_or_else(crate::CommandFailure::input_invariant)
     }
 }

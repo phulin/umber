@@ -88,7 +88,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         };
         if result
             .as_ref()
-            .is_err_and(CommandError::is_resource_suspension)
+            .is_err_and(|error| error.is_resource_suspension())
         {
             let error = result.expect_err("matched resource need");
             self.command
@@ -198,7 +198,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             ExpandablePrimitive::PdfPrimitive => {
                 let mut destination = None;
                 match self.get_next_into(&mut destination)? {
-                    DeliveryStatus::End => return Err(CommandError::input_invariant()),
+                    DeliveryStatus::End => return Err(crate::CommandFailure::input_invariant()),
                     DeliveryStatus::Command => {}
                     _ => unreachable!("ordinary raw delivery returns only commands"),
                 }
@@ -226,15 +226,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             | ExpandablePrimitive::SplitBotMarks => self.expand_mark_class(primitive),
             ExpandablePrimitive::ETeXVersion
             | ExpandablePrimitive::IfPdfPrimitive
-            | ExpandablePrimitive::PdfEscapeName => {
-                Err(CommandError::UnsupportedExpandablePrimitive(primitive))
-            }
-            ExpandablePrimitive::EndCsName => Err(CommandError::input_invariant()),
+            | ExpandablePrimitive::PdfEscapeName => Err(crate::CommandFailure::new(
+                crate::CommandErrorKind::UnsupportedExpandablePrimitive(primitive),
+            )),
+            ExpandablePrimitive::EndCsName => Err(crate::CommandFailure::input_invariant()),
             ExpandablePrimitive::Unless
             | ExpandablePrimitive::Else
             | ExpandablePrimitive::Or
-            | ExpandablePrimitive::Fi => Err(CommandError::input_invariant()),
-            _ => Err(CommandError::UnsupportedExpandablePrimitive(primitive)),
+            | ExpandablePrimitive::Fi => Err(crate::CommandFailure::input_invariant()),
+            _ => Err(crate::CommandFailure::new(
+                crate::CommandErrorKind::UnsupportedExpandablePrimitive(primitive),
+            )),
         }
     }
 }

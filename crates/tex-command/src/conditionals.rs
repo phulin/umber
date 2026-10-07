@@ -522,7 +522,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .conditions
             .frame(condition)
             .cloned()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         self.trace_conditional_enter(&frame);
         self.observe_condition("push", &frame, None);
         Ok(condition)
@@ -667,11 +667,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub(crate) fn expand_unless_compact(&mut self) -> Result<(), CommandError> {
         let mut next = None;
         match self.raw_next_hot(&mut next)? {
-            crate::DeliveryStatus::End => return Err(CommandError::input_invariant()),
+            crate::DeliveryStatus::End => return Err(crate::CommandFailure::input_invariant()),
             crate::DeliveryStatus::Command => {}
-            _ => return Err(CommandError::input_invariant()),
+            _ => return Err(crate::CommandFailure::input_invariant()),
         }
-        let next = next.take().ok_or_else(|| CommandError::input_invariant())?;
+        let next = next
+            .take()
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let kind = next
             .expandable_primitive()
             .and_then(ConditionalKind::from_primitive);
@@ -723,7 +725,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .conditions
             .frame(condition)
             .cloned()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let branch = if result { "true" } else { "false" };
         self.trace_boolean_result(branch);
         self.observe_condition("branch", &evaluating, Some(branch));
@@ -734,13 +736,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .conditions
             .change_if_limit(condition, IfLimit::Else)
             .then_some(())
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let frame = self
             .command
             .conditions
             .frame(condition)
             .cloned()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         self.observe_condition("limit", &frame, None);
         Ok(())
     }
@@ -782,13 +784,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .conditions
                 .change_if_limit(condition, IfLimit::Or)
                 .then_some(())
-                .ok_or_else(|| CommandError::input_invariant())?;
+                .ok_or_else(|| crate::CommandFailure::input_invariant())?;
             let frame = self
                 .command
                 .conditions
                 .frame(condition)
                 .cloned()
-                .ok_or_else(|| CommandError::input_invariant())?;
+                .ok_or_else(|| crate::CommandFailure::input_invariant())?;
             self.observe_condition("limit", &frame, None);
             self.observe_condition("branch", &frame, Some("case"));
         }
@@ -876,7 +878,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             ConditionalKind::IfPdfPrimitive => {
                 let mut operand = None;
                 if self.get_next_into(&mut operand)? != crate::DeliveryStatus::Command {
-                    return Err(CommandError::input_invariant());
+                    return Err(crate::CommandFailure::input_invariant());
                 }
                 let operand = operand.expect("command status initializes destination");
                 let Some(symbol) = operand.control_sequence() else {
@@ -914,7 +916,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let status = self.get_next_into(&mut operand);
         self.finish_scanner_episode(episode);
         if status? != crate::DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         Ok(operand
             .expect("command status initializes destination")
@@ -972,7 +974,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         destination: &mut Option<crate::CurrentCommand<G>>,
     ) -> Result<(), CommandError> {
         if self.request_expanded_token(destination)? != crate::DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         Ok(())
     }
@@ -1018,7 +1020,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Ok(std::ops::ControlFlow::Continue(()))
             }
         })?
-        .ok_or_else(CommandError::input_invariant)
+        .ok_or_else(crate::CommandFailure::input_invariant)
     }
 
     /// Identical native meanings need no decoding. Distinct macros compare
@@ -1084,7 +1086,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 Ok(std::ops::ControlFlow::Break(()))
             },
         ))?;
-        relation.ok_or_else(CommandError::input_invariant)
+        relation.ok_or_else(crate::CommandFailure::input_invariant)
     }
 
     fn record_bad_number(&mut self) {
@@ -1129,7 +1131,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .command
                         .conditions
                         .pop()
-                        .ok_or_else(|| CommandError::input_invariant())?;
+                        .ok_or_else(|| crate::CommandFailure::input_invariant())?;
                     self.observe_condition("pop", &frame, None);
                 }
                 continue;
@@ -1166,7 +1168,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         .command
                         .conditions
                         .pop()
-                        .ok_or_else(|| CommandError::input_invariant())?;
+                        .ok_or_else(|| crate::CommandFailure::input_invariant())?;
                     self.observe_condition("pop", &frame, None);
                 }
                 continue;
@@ -1195,7 +1197,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .command
                 .conditions
                 .pop()
-                .ok_or_else(|| CommandError::input_invariant())?;
+                .ok_or_else(|| crate::CommandFailure::input_invariant())?;
             self.observe_condition("pop", &frame, None);
             return Ok(());
         }
@@ -1203,13 +1205,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .conditions
             .change_if_limit(condition, IfLimit::Fi)
             .then_some(())
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let frame = self
             .command
             .conditions
             .frame(condition)
             .cloned()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         self.observe_condition("limit", &frame, None);
         Ok(())
     }
@@ -1226,7 +1228,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             ExpandablePrimitive::Else => ConditionalDelimiter::Else,
             ExpandablePrimitive::Or => ConditionalDelimiter::Or,
             ExpandablePrimitive::Fi => ConditionalDelimiter::Fi,
-            _ => return Err(CommandError::input_invariant()),
+            _ => return Err(crate::CommandFailure::input_invariant()),
         };
         let Some(frame) = self.command.conditions.current().cloned() else {
             let site = self.capture_spelled_diagnostic_site(
@@ -1288,7 +1290,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .command
             .conditions
             .pop()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         self.observe_condition("pop", &popped, None);
         Ok(())
     }
@@ -1625,7 +1627,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.command
             .conditions
             .limit(condition)
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
 
         self.consume_skipped_text()
     }

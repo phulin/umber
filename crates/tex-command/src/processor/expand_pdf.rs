@@ -74,7 +74,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let object = u32::try_from(scan?.value).ok();
         let id = object.and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok());
         let Some(id) = id.filter(|id| self.state.pdf_external_image(*id).is_some()) else {
-            return Err(CommandError::pdf_navigation(
+            return Err(crate::CommandFailure::pdf_navigation(
                 "pdfTeX error (ext1): cannot find referenced object.",
             ));
         };
@@ -88,7 +88,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .ok()
             .and_then(|index| metadata.bbox_coordinate(index))
         else {
-            return Err(CommandError::pdf_navigation(
+            return Err(crate::CommandFailure::pdf_navigation(
                 "pdfTeX error (pdfximagebbox): invalid parameter.",
             ));
         };
@@ -111,7 +111,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let scan = self.scan_integer();
         let page = scan?.value;
         if page <= 0 {
-            return Err(CommandError::pdf_navigation(
+            return Err(crate::CommandFailure::pdf_navigation(
                 "pdfTeX error (pageref): invalid page number",
             ));
         }

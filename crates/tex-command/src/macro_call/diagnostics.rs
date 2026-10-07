@@ -51,11 +51,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .map_or(Ok('#'), |index| {
                 match body
                     .parameter_word(index)
-                    .ok_or_else(CommandError::input_invariant)?
+                    .ok_or_else(crate::CommandFailure::input_invariant)?
                     .semantic_token()
                 {
                     Token::Char { ch, .. } => Ok(ch),
-                    _ => Err(CommandError::input_invariant()),
+                    _ => Err(crate::CommandFailure::input_invariant()),
                 }
             })?;
         let mut text = format!("{marker}{}<-", parameter + 1);

@@ -185,7 +185,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
             Ok(std::ops::ControlFlow::Break(spelling))
         })?
-        .ok_or_else(CommandError::input_invariant)
+        .ok_or_else(crate::CommandFailure::input_invariant)
     }
 
     /// Backs a real token retained across another operand read. Only its
@@ -358,7 +358,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 tex_state::GroupUnsaveEvent::AfterGroup(_) => {}
             })
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         if let Some(identity) = linked {
             command.input.levels.finish_aftergroup_links(identity);
         }

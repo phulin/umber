@@ -55,7 +55,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 true,
             )?)
         } else {
-            return Err(CommandError::pdf_navigation(
+            return Err(crate::CommandFailure::pdf_navigation(
                 "pdfTeX error (ext4): thread identifier type missing",
             ));
         };
@@ -85,7 +85,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             UnexpandablePrimitive::PdfDest => PdfNavigationScalarPhase::DestinationStructure,
             UnexpandablePrimitive::PdfEndLink => return Ok(Request::EndLink),
             UnexpandablePrimitive::PdfEndThread => return Ok(Request::EndThread),
-            _ => return Err(CommandError::input_invariant()),
+            _ => return Err(crate::CommandFailure::input_invariant()),
         };
         self.scan_pdf_navigation_scalar(PdfNavigationScalarProgress {
             primitive,
@@ -212,7 +212,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             | UnexpandablePrimitive::PdfStartThread => {
                                 progress.phase = PdfNavigationScalarPhase::AttributeKeyword;
                             }
-                            _ => return Err(CommandError::input_invariant()),
+                            _ => return Err(crate::CommandFailure::input_invariant()),
                         }
                     }
                 }
@@ -245,7 +245,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 attributes,
                             } = owner
                             else {
-                                return Err(CommandError::input_invariant());
+                                return Err(crate::CommandFailure::input_invariant());
                             };
                             return Ok(PdfNavigationRequest::StartLink(PdfStartLinkRequest {
                                 dimensions,
@@ -262,7 +262,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                     attributes: progress.attributes,
                                 })?;
                             let PendingPdfActionOwner::Outline { attributes } = owner else {
-                                return Err(CommandError::input_invariant());
+                                return Err(crate::CommandFailure::input_invariant());
                             };
                             return self.finish_pdf_outline(attributes, action);
                         }
@@ -277,7 +277,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 progress.attributes,
                             );
                         }
-                        _ => return Err(CommandError::input_invariant()),
+                        _ => return Err(crate::CommandFailure::input_invariant()),
                     }
                 }
                 PdfNavigationScalarPhase::DestinationStructure => {
@@ -310,7 +310,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 PdfNavigationScalarPhase::DestinationNumber => {
                     let result = self.scan_keyword("num");
                     if !result? {
-                        return Err(CommandError::pdf_navigation(
+                        return Err(crate::CommandFailure::pdf_navigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
                     }
@@ -343,7 +343,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let result = self.scan_integer();
                     let zoom = result?.value;
                     if zoom > 1_073_741_823 {
-                        return Err(CommandError::pdf_navigation(
+                        return Err(crate::CommandFailure::pdf_navigation(
                             "pdfTeX error (ext1): number too big",
                         ));
                     }
@@ -404,7 +404,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                             );
                         }
                     } else if progress.phase == PdfNavigationScalarPhase::DestinationFit {
-                        return Err(CommandError::pdf_navigation(
+                        return Err(crate::CommandFailure::pdf_navigation(
                             "pdfTeX error (ext1): destination type missing",
                         ));
                     } else {
@@ -424,7 +424,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             structure: progress.structure,
             identifier: progress
                 .identifier
-                .ok_or_else(|| CommandError::input_invariant())?,
+                .ok_or_else(|| crate::CommandFailure::input_invariant())?,
             kind,
         }))
     }
@@ -435,14 +435,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         bounded_by_halfword: bool,
     ) -> Result<u32, CommandError> {
         if value <= 0 {
-            return Err(CommandError::pdf_navigation(match kind {
+            return Err(crate::CommandFailure::pdf_navigation(match kind {
                 "struct identifier" => "pdfTeX error (ext1): struct identifier must be positive",
                 "page number" => "pdfTeX error (ext1): page number must be positive",
                 _ => "pdfTeX error (ext1): num identifier must be positive",
             }));
         }
         if bounded_by_halfword && value > 1_073_741_823 {
-            return Err(CommandError::pdf_navigation(
+            return Err(crate::CommandFailure::pdf_navigation(
                 "pdfTeX error (ext1): number too big",
             ));
         }

@@ -85,8 +85,8 @@ mod test_harness;
 
 pub use command::CurrentCommand;
 pub use error::{
-    CommandError, CommandErrorOrigin, DimensionDiagnostic, FuelExhaustion, InsertedUnit,
-    MissingInputDiagnostic, ResourceFailureDiagnostic,
+    CommandError, CommandErrorKind, CommandFailure, DimensionDiagnostic, FuelExhaustion,
+    InsertedUnit, MissingInputDiagnostic, ResourceFailureDiagnostic,
 };
 pub use fatal::{FATAL_SEVERITY, FatalError};
 pub use fuel::{

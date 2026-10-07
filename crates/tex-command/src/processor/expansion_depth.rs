@@ -32,6 +32,6 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             i32::try_from(EXPANSION_DEPTH_LIMIT).expect("expansion depth fits i32"),
         );
         self.observe(CommandObservation::Diagnostic(fatal.record()));
-        CommandError::fatal(fatal)
+        crate::CommandFailure::fatal(fatal)
     }
 }

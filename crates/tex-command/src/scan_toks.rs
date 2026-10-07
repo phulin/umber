@@ -428,14 +428,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .map_err(attempt_command_error)?;
                 collector
                     .prepare_token_buffers(writer)
-                    .map_err(|()| CommandError::input_invariant())?;
+                    .map_err(|()| crate::CommandFailure::input_invariant())?;
             }
             (ScanToksGrammar::General, ScanToksDestination::ReplayInput { transform }) => {
                 let start = u32::try_from(self.command.roots.input.pending_insertions.len())
-                    .map_err(|_| CommandError::input_invariant())?;
+                    .map_err(|_| crate::CommandFailure::input_invariant())?;
                 collector
                     .prepare_replay_input(start, transform, observed)
-                    .map_err(|()| CommandError::input_invariant())?;
+                    .map_err(|()| crate::CommandFailure::input_invariant())?;
             }
             (ScanToksGrammar::MacroDefinition, ScanToksDestination::Definition) => {
                 let definition = self
@@ -444,14 +444,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .map_err(definition_allocation_command_error)?;
                 collector
                     .prepare_definition(definition)
-                    .map_err(|()| CommandError::input_invariant())?;
+                    .map_err(|()| crate::CommandFailure::input_invariant())?;
             }
             (
                 ScanToksGrammar::MacroDefinition,
                 ScanToksDestination::Attempt | ScanToksDestination::ReplayInput { .. },
             )
             | (ScanToksGrammar::General, ScanToksDestination::Definition) => {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
         };
         #[cfg(test)]
@@ -478,7 +478,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let phase = match collector.phase() {
             TokenCollectorPhase::Parameter => tex_state::DefinitionBuildPhase::OpenParameters,
             TokenCollectorPhase::Replacement => tex_state::DefinitionBuildPhase::OpenReplacement,
-            TokenCollectorPhase::Complete => return Err(CommandError::input_invariant()),
+            TokenCollectorPhase::Complete => return Err(crate::CommandFailure::input_invariant()),
         };
         let writer = self
             .state
@@ -486,7 +486,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .map_err(definition_build_command_error)?;
         collector
             .install_definition_writer(writer)
-            .map_err(|()| CommandError::input_invariant())
+            .map_err(|()| crate::CommandFailure::input_invariant())
     }
 
     /// Returns an episode writer to the semantic owner before any suspension,
@@ -532,7 +532,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<(), CommandError> {
         let phase = collector.phase();
         if phase == TokenCollectorPhase::Complete {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         let result: Result<(), CommandError> = match collector.destination_mut() {
             TokenCollectorDestination::TokenBuffers { writer, .. } => self
@@ -543,12 +543,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             TokenCollectorDestination::Definition { .. } => match phase {
                 TokenCollectorPhase::Parameter => collector
                     .definition_writer_mut()
-                    .ok_or_else(CommandError::input_invariant)?
+                    .ok_or_else(crate::CommandFailure::input_invariant)?
                     .push_parameter(word.token_word())
                     .map_err(definition_build_command_error),
                 TokenCollectorPhase::Replacement => collector
                     .definition_writer_mut()
-                    .ok_or_else(CommandError::input_invariant)?
+                    .ok_or_else(crate::CommandFailure::input_invariant)?
                     .push_replacement(word.token_word())
                     .map_err(definition_build_command_error),
                 TokenCollectorPhase::Complete => unreachable!(),
@@ -611,20 +611,20 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         collector: &mut TokenCollector<G>,
     ) -> Result<(), CommandError> {
         if collector.phase() != TokenCollectorPhase::Parameter {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         match collector.destination_mut() {
             TokenCollectorDestination::TokenBuffers { .. } => {}
             TokenCollectorDestination::Definition { .. } => collector
                 .definition_writer_mut()
-                .ok_or_else(CommandError::input_invariant)?
+                .ok_or_else(crate::CommandFailure::input_invariant)?
                 .finish_parameters()
                 .map_err(definition_build_command_error)?,
             TokenCollectorDestination::ReplayInput { .. } => {}
         }
         collector
             .begin_replacement()
-            .map_err(|()| CommandError::input_invariant())?;
+            .map_err(|()| crate::CommandFailure::input_invariant())?;
         #[cfg(test)]
         {
             self.command.token_collector_path_counters.phase_transitions += 1;
@@ -638,7 +638,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         origin: OriginId,
     ) -> Result<ScannedToksStorage<G>, CommandError> {
         if collector.phase() != TokenCollectorPhase::Replacement {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         let expected_definition = match collector.destination() {
             TokenCollectorDestination::Definition { definition } => Some(*definition),
@@ -656,7 +656,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             TokenCollectorDestination::Definition { .. } => {
                 let writer = collector
                     .take_definition_writer()
-                    .ok_or_else(CommandError::input_invariant)?;
+                    .ok_or_else(crate::CommandFailure::input_invariant)?;
                 let mut writer = writer;
                 writer.set_origin(origin);
                 let released = self
@@ -664,7 +664,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .release_definition_build_writer(writer)
                     .map_err(definition_build_command_error)?;
                 if Some(released) != expected_definition {
-                    return Err(CommandError::input_invariant());
+                    return Err(crate::CommandFailure::input_invariant());
                 }
                 let definition = self
                     .state
@@ -676,13 +676,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let len = self.command.roots.input.pending_insertions.len() - *start as usize;
                 ScannedToksStorage::PendingInsertion {
                     start: *start,
-                    len: u32::try_from(len).map_err(|_| CommandError::input_invariant())?,
+                    len: u32::try_from(len)
+                        .map_err(|_| crate::CommandFailure::input_invariant())?,
                 }
             }
         };
         collector
             .complete()
-            .map_err(|()| CommandError::input_invariant())?;
+            .map_err(|()| crate::CommandFailure::input_invariant())?;
         #[cfg(test)]
         {
             self.command.token_collector_path_counters.settlements += 1;
@@ -695,11 +696,13 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         scanned: &ScannedToksBuffers<G>,
     ) -> Result<ScannedWords<'_, G>, CommandError> {
         match &scanned.storage {
-            ScannedToksStorage::Tokens { .. } => Err(CommandError::input_invariant()),
+            ScannedToksStorage::Tokens { .. } => Err(crate::CommandFailure::input_invariant()),
             ScannedToksStorage::Definition(definition) => Ok(ScannedWords::DefinitionParameter(
                 self.state.definition(definition.reference()),
             )),
-            ScannedToksStorage::PendingInsertion { .. } => Err(CommandError::input_invariant()),
+            ScannedToksStorage::PendingInsertion { .. } => {
+                Err(crate::CommandFailure::input_invariant())
+            }
         }
     }
 
@@ -725,7 +728,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     .pending_insertions
                     .get(start..start + *len as usize)
                     .map(ScannedWords::Pending)
-                    .ok_or_else(CommandError::input_invariant)
+                    .ok_or_else(crate::CommandFailure::input_invariant)
             }
         }
     }
@@ -752,7 +755,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             replacement: replacement_text,
         } = result.storage
         else {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         };
         Ok(ScannedToks {
             replacement_text,
@@ -960,7 +963,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             ..
         }) = self.command.semantic_diagnostics.get_mut(diagnostic_index)
         else {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         };
         runaway.partial = partial;
         Ok(())
@@ -1004,7 +1007,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         let mut opening = None;
                         let status = self.get_token_into(&mut opening)?;
                         if status != crate::DeliveryStatus::Command {
-                            return Err(CommandError::input_invariant());
+                            return Err(crate::CommandFailure::input_invariant());
                         }
                         let opening = opening.expect("command status initializes destination");
                         if !matches!(
@@ -1014,7 +1017,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 ..
                             })
                         ) {
-                            return Err(CommandError::input_invariant());
+                            return Err(crate::CommandFailure::input_invariant());
                         }
                         self.observe_expanded_delivery(&opening);
                         self.finish_scan_toks_parameters(collector)?;
@@ -1099,7 +1102,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 })
             },
         ))?;
-        opening.ok_or_else(CommandError::input_invariant)
+        opening.ok_or_else(crate::CommandFailure::input_invariant)
     }
 
     /// Consume an already-selected word through the same §403 grammar.
@@ -1155,7 +1158,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut destination = None;
         loop {
             if self.get_token_into(&mut destination)? != crate::DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
             let command = destination
                 .take()
@@ -1218,7 +1221,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 continue;
             }
             if self.get_token_into(&mut destination)? != crate::DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
             let follower = destination
                 .take()
@@ -1361,12 +1364,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     highest: highest_parameter,
                     target,
                 })
-                .map_err(|()| CommandError::input_invariant())?;
+                .map_err(|()| crate::CommandFailure::input_invariant())?;
             return Ok(false);
         }
         if collector
             .settle_balanced_brace(token)
-            .map_err(|()| CommandError::input_invariant())?
+            .map_err(|()| crate::CommandFailure::input_invariant())?
         {
             #[cfg(test)]
             {
@@ -1493,7 +1496,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             },
         ))?;
         if !operand_read {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         let Some(value) = value else {
             return Ok(false);
@@ -1578,7 +1581,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             TokenCollectorDestination::Definition { .. } => {
                 let writer = collector
                     .definition_writer_mut()
-                    .ok_or_else(CommandError::input_invariant)?;
+                    .ok_or_else(crate::CommandFailure::input_invariant)?;
                 for word in words.iter() {
                     writer
                         .push_replacement(word.token_word())
@@ -1599,7 +1602,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 ..
             } => {
                 if *transform != ReplayWordTransform::Identity {
-                    return Err(CommandError::input_invariant());
+                    return Err(crate::CommandFailure::input_invariant());
                 }
                 if let Some(observed_source) = observed_source {
                     observed_source.extend(words.iter().map(|&word| self.observed_token(word)));
@@ -1635,7 +1638,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             collector.destination(),
             TokenCollectorDestination::ReplayInput { .. }
         ) {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         let mut observed = Vec::new();
         self.splice_scan_toks_tokens(collector, scanned.replacement_text, &mut observed)?;
@@ -1716,7 +1719,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // header into the final ordered entry and never promotes or copies an
         // attempt-local list.
         let ScannedToksStorage::PendingInsertion { start, .. } = scanned.storage else {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         };
         let first = self
             .command
@@ -1794,11 +1797,14 @@ fn reset_runaway_render_count() {
 
 pub(crate) fn attempt_command_error(error: AttemptError) -> CommandError {
     match error {
-        AttemptError::CapacityOverflow | AttemptError::AllocationFailed => CommandError::fatal(
-            crate::FatalError::overflow("scanner token storage", i32::MAX),
-        ),
+        AttemptError::CapacityOverflow | AttemptError::AllocationFailed => {
+            crate::CommandFailure::fatal(crate::FatalError::overflow(
+                "scanner token storage",
+                i32::MAX,
+            ))
+        }
         AttemptError::ForeignAttempt | AttemptError::InvalidCoordinate => {
-            CommandError::input_invariant()
+            crate::CommandFailure::input_invariant()
         }
     }
 }
@@ -1809,9 +1815,11 @@ fn definition_allocation_command_error(
     match error {
         tex_state::DefinitionAllocationError::AllocationFailed
         | tex_state::DefinitionAllocationError::CapacityOverflow => {
-            CommandError::fatal(crate::FatalError::overflow("definition arena", i32::MAX))
+            crate::CommandFailure::fatal(crate::FatalError::overflow("definition arena", i32::MAX))
         }
-        tex_state::DefinitionAllocationError::InvalidDefinition => CommandError::input_invariant(),
+        tex_state::DefinitionAllocationError::InvalidDefinition => {
+            crate::CommandFailure::input_invariant()
+        }
     }
 }
 
@@ -1819,21 +1827,23 @@ fn definition_build_command_error(error: tex_state::DefinitionBuildError) -> Com
     match error {
         tex_state::DefinitionBuildError::AllocationFailed
         | tex_state::DefinitionBuildError::CapacityOverflow => {
-            CommandError::fatal(crate::FatalError::overflow("definition arena", i32::MAX))
+            crate::CommandFailure::fatal(crate::FatalError::overflow("definition arena", i32::MAX))
         }
         tex_state::DefinitionBuildError::InvalidPhase
-        | tex_state::DefinitionBuildError::InvalidProgram(_) => CommandError::input_invariant(),
+        | tex_state::DefinitionBuildError::InvalidProgram(_) => {
+            crate::CommandFailure::input_invariant()
+        }
     }
 }
 
 pub(crate) fn scratch_command_error(error: crate::execution_scratch::ScratchError) -> CommandError {
     match error {
         crate::execution_scratch::ScratchError::CapacityOverflow
-        | crate::execution_scratch::ScratchError::AllocationFailed => CommandError::fatal(
+        | crate::execution_scratch::ScratchError::AllocationFailed => crate::CommandFailure::fatal(
             crate::FatalError::overflow("scanner continuation storage", i32::MAX),
         ),
         crate::execution_scratch::ScratchError::InvalidCoordinate => {
-            CommandError::input_invariant()
+            crate::CommandFailure::input_invariant()
         }
     }
 }
@@ -1904,7 +1914,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             // the sole publication owner keeps it live until assignment.
             match self.finish_scan_toks_collector(&mut collector, OriginId::UNKNOWN)? {
                 ScannedToksStorage::Definition(definition) => Ok(definition),
-                _ => Err(CommandError::input_invariant()),
+                _ => Err(crate::CommandFailure::input_invariant()),
             }
         })();
         let cleanup = if result.is_err() {
@@ -1972,7 +1982,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let level = self
             .command
             .begin_read_line()
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         observe!(
             self,
             CommandObservation::Input(InputRecord {
@@ -1987,7 +1997,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let (line, file_ended, name_class) = self.acquire_read_line(slot, target, prompt_number)?;
         self.command
             .finish_read_line(level, name_class, line.into_bytes())
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         if file_ended && !raw_catcodes && self.command.alignment.align_state != TEMPLATE_ALIGN_STATE
         {
             // TeX82 §486 reports the live `def_ref` before `limit:=0` makes
@@ -2050,7 +2060,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 break;
             }
             if status != crate::DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
+                return Err(crate::CommandFailure::input_invariant());
             }
             let command = destination
                 .take()
@@ -2104,7 +2114,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .expect("command status initializes destination");
                         }
                         crate::DeliveryStatus::End => break,
-                        _ => return Err(CommandError::input_invariant()),
+                        _ => return Err(crate::CommandFailure::input_invariant()),
                     }
                 }
                 self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
@@ -2155,11 +2165,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         collector: &TokenCollector<G>,
     ) -> Result<Vec<TracedTokenWord>, CommandError> {
         if collector.phase() != TokenCollectorPhase::Replacement {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         let writer = collector
             .definition_writer()
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         Ok(writer
             .replacement_words()
             .iter()
@@ -2197,9 +2207,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         // prompt_input("") else begin wake_up_terminal; print_ln; sprint_cs(r);
         // prompt_input("="); n:=-1; end else fatal_error(...)`.
         if !self.state.interaction_permits_terminal_input() {
-            return Err(CommandError::fatal(crate::FatalError::emergency_stop(
-                "job aborted, file error in nonstop mode",
-            )));
+            return Err(crate::CommandFailure::fatal(
+                crate::FatalError::emergency_stop("job aborted, file error in nonstop mode"),
+            ));
         }
         let source = if *prompt_number < 0 {
             CommandLineSource::Terminal { prompt: "" }
@@ -2210,7 +2220,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let line = self
             .state
             .input_ln(source)
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         Ok((line, false, crate::input::SourceNameClass::Terminal))
     }
 }

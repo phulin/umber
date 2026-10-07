@@ -97,29 +97,29 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .command
             .attempt
             .allocate_token_buffer()
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         let mut destination = None;
         loop {
             match self.get_x_or_protected_with_replay_completion_into(&mut destination)? {
                 DeliveryStatus::Command => {
                     let command = destination
                         .take()
-                        .ok_or_else(|| CommandError::input_invariant())?;
+                        .ok_or_else(|| crate::CommandFailure::input_invariant())?;
                     self.command
                         .attempt
                         .push_buffer_token(&expanded, command.spelling())
-                        .map_err(|_| CommandError::input_invariant())?;
+                        .map_err(|_| crate::CommandFailure::input_invariant())?;
                 }
                 DeliveryStatus::ReplayCompleted(completed) if completed == episode => break,
                 DeliveryStatus::ReplayCompleted(_) => continue,
-                DeliveryStatus::End => return Err(CommandError::input_invariant()),
-                _ => return Err(CommandError::input_invariant()),
+                DeliveryStatus::End => return Err(crate::CommandFailure::input_invariant()),
+                _ => return Err(crate::CommandFailure::input_invariant()),
             }
         }
         self.command
             .attempt
             .finish_token_buffer(expanded)
-            .map_err(|_| CommandError::input_invariant())
+            .map_err(|_| crate::CommandFailure::input_invariant())
     }
 
     /// The raw spelling selects the actual definition cell.
@@ -201,7 +201,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(target);
         }
         self.consume_raw_words::<true, false, _>(&mut consume)?
-            .ok_or_else(CommandError::input_invariant)
+            .ok_or_else(crate::CommandFailure::input_invariant)
     }
 
     /// Scans TeX82 §1224's complete `\\chardef` or `\\mathchardef` operand.

@@ -83,8 +83,7 @@ with their real consumers.
 
 Executor-facing scalar scans return their actual typed product or error. Generic
 scalar result unions, publication frames and projection/status APIs are absent.
-Nested scalar calls return their actual value or error directly. Large command
-error payloads are boxed when raised; no scalar call frame, status handoff or
+Nested scalar calls return their actual value or error directly. Command errors own one pointer-sized cold failure record when raised; no scalar call frame, status handoff or
 optional error slot is constructed for successful scans.
 
 Expansion continues inside the shared reader until its actual consumer returns
@@ -396,11 +395,12 @@ exact fuel, plus contextual matching/tracing as interruption controls.
   volume from the singular command-work ledger, so the resident loop does not
   maintain a parallel ownership census. Genuine backup copies remain separately
   counted because they are not implied by the raw-delivery vector.
-- `src/error.rs`: compact native command failure identities. Fuel work,
-  filenames, resource failure and source annotation each have one cold payload
-  owner allocated only when raised; resource packets move through executor and
-  session without repacking. It also owns the shared dimension-scanner recovery
-  diagnostic vocabulary for the sole canonical scanners.
+- `src/error.rs` and `src/error/tests.rs`: pointer-owned cold command failures.
+  Successful calls carry no error-union payload. Actual fuel, filename, caller
+  and first-origin facts share the failure owner; recursive annotation and
+  redundant payload boxes are deleted. Typed resource packets move through
+  executor and session without repacking. Focused tests cover failure ownership,
+  annotation and the shared canonical dimension-scanner diagnostic vocabulary.
 - `src/fuel.rs` and `src/fuel/tests.rs`: checked finite command-work limits,
   one exact remaining-budget countdown, profiling-only non-fuel work
   counters, terminal/publication-time consumed-fuel and raw-frame derivation

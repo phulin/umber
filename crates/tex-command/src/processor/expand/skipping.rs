@@ -170,7 +170,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             },
             |status| match status {
                 DeliveryStatus::ReplayCompleted(_) => Ok(ControlFlow::Continue(())),
-                DeliveryStatus::End => Err(CommandError::input_invariant()),
+                DeliveryStatus::End => Err(crate::CommandFailure::input_invariant()),
                 _ => unreachable!("raw input transitions return only EOF or replay completion"),
             },
         )

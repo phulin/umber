@@ -224,7 +224,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     #[inline(always)]
     pub fn scan_keyword(&mut self, keyword: &str) -> Result<bool, CommandError> {
         if !keyword.is_ascii() || keyword.len() > KEYWORD_PREFIX_INLINE_CAPACITY {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         if keyword.is_empty() {
             return Ok(true);

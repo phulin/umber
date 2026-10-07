@@ -1371,7 +1371,9 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
         let mut short_call = destination.take().expect("short macro command");
         assert_eq!(
             processor.macro_call(&mut short_call),
-            Err(crate::CommandError::ParagraphInMacroArgument)
+            Err(crate::CommandFailure::new(
+                crate::CommandErrorKind::ParagraphInMacroArgument
+            ))
         );
         assert_eq!(
             processor.command.input.levels.arguments.captured_word_len(),
@@ -1412,7 +1414,9 @@ fn extra_right_brace_recovery_keeps_inserted_paragraph_ahead_of_backed_closer() 
 
         assert_eq!(
             processor.macro_call(&mut call),
-            Err(crate::CommandError::ParagraphInMacroArgument)
+            Err(crate::CommandFailure::new(
+                crate::CommandErrorKind::ParagraphInMacroArgument
+            ))
         );
         for expected in [paragraph, closer] {
             assert_eq!(
@@ -1547,7 +1551,9 @@ fn paragraph_fact_uses_token_identity_not_current_meaning() {
             .expect("paragraph argument macro command");
         assert_eq!(
             processor.macro_call(&mut paragraph_call),
-            Err(crate::CommandError::ParagraphInMacroArgument)
+            Err(crate::CommandFailure::new(
+                crate::CommandErrorKind::ParagraphInMacroArgument
+            ))
         );
     });
 }

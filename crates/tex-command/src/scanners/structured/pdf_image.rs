@@ -160,14 +160,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                                 .command
                                 .attempt
                                 .token_words(&tokens)
-                                .map_err(|_| CommandError::input_invariant())?
+                                .map_err(|_| crate::CommandFailure::input_invariant())?
                                 .iter()
                                 .map(|word| word.semantic_token())
                                 .collect::<Vec<_>>();
                             self.command
                                 .attempt
                                 .discard_token_list(tokens)
-                                .map_err(|_| CommandError::input_invariant())?;
+                                .map_err(|_| crate::CommandFailure::input_invariant())?;
                             PdfImagePageSelection::Named(
                                 crate::processor::expand_render::token_slice_string_text(
                                     self.state, &semantic,

@@ -71,11 +71,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let top = self
             .command
             .top_input_level_identity()
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         match self.retire_input_top(top)? {
             RetirementHandoff::Continue | RetirementHandoff::Completed(_) => Ok(()),
             RetirementHandoff::Stop | RetirementHandoff::EndV => {
-                Err(CommandError::input_invariant())
+                Err(crate::CommandFailure::input_invariant())
             }
         }
     }
@@ -93,7 +93,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             RetirementHandoff::Continue
             | RetirementHandoff::Completed(_)
             | RetirementHandoff::Stop
-            | RetirementHandoff::EndV => Err(CommandError::input_invariant()),
+            | RetirementHandoff::EndV => Err(crate::CommandFailure::input_invariant()),
         }
     }
     pub(crate) fn retire_exhausted_through(
@@ -104,7 +104,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             let top = self
                 .command
                 .top_input_level_identity()
-                .ok_or_else(|| CommandError::input_invariant())?;
+                .ok_or_else(|| crate::CommandFailure::input_invariant())?;
             if top < level {
                 return Ok(());
             }
@@ -112,7 +112,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             match self.retire_input_top(top)? {
                 RetirementHandoff::Continue | RetirementHandoff::Completed(_) => {}
                 RetirementHandoff::Stop | RetirementHandoff::EndV => {
-                    return Err(CommandError::input_invariant());
+                    return Err(crate::CommandFailure::input_invariant());
                 }
             }
             if reached {
@@ -139,7 +139,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     retired = retired.saturating_add(1);
                 }
                 RetirementHandoff::Stop | RetirementHandoff::EndV => {
-                    return Err(CommandError::input_invariant());
+                    return Err(crate::CommandFailure::input_invariant());
                 }
             }
         }
@@ -232,7 +232,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 }
                 match self.get_token_into(&mut discarded)? {
                     super::DeliveryStatus::End => {
-                        return Err(CommandError::input_invariant());
+                        return Err(crate::CommandFailure::input_invariant());
                     }
                     super::DeliveryStatus::Command => discarded = None,
                     _ => unreachable!("ordinary token delivery returns only commands"),
@@ -287,7 +287,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         match self.retire_input_top(row.identity())? {
             RetirementHandoff::Continue => Ok(()),
             RetirementHandoff::Stop | RetirementHandoff::EndV | RetirementHandoff::Completed(_) => {
-                Err(CommandError::input_invariant())
+                Err(crate::CommandFailure::input_invariant())
             }
         }
     }
@@ -315,7 +315,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     ) -> Result<SourceExhaustionStatus, CommandError> {
         self.command
             .register_exhausted_source_backings(self.state, identity)
-            .map_err(|()| CommandError::input_invariant())?;
+            .map_err(|()| crate::CommandFailure::input_invariant())?;
         if let Some(level) = self.command.begin_pending_every_eof(self.state, identity) {
             self.observe(CommandObservation::Input(InputRecord {
                 transition: InputTransition::Push,
@@ -337,7 +337,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 ) if source.identity() == identity => self
                     .command
                     .output_retiring_source_context(source, self.state),
-                _ => return Err(CommandError::input_invariant()),
+                _ => return Err(crate::CommandFailure::input_invariant()),
             };
             self.pending_file_warning_context = Some((identity, context));
         }
@@ -348,7 +348,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let _ = self.recover_runaway_eof()?;
                 Ok(SourceExhaustionStatus::Continue)
             }
-            RetirementHandoff::EndV => Err(CommandError::input_invariant()),
+            RetirementHandoff::EndV => Err(crate::CommandFailure::input_invariant()),
         }
     }
     fn acquire_source_line_with_pending(
@@ -365,11 +365,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 firm,
                 pending_acquired_line,
             )
-            .map_err(|()| CommandError::input_invariant())
+            .map_err(|()| crate::CommandFailure::input_invariant())
     }
     pub(crate) fn prepare_started_input(&mut self) -> Result<crate::PhysicalLine, CommandError> {
         self.acquire_source_line_with_pending(true, true)?
-            .ok_or_else(CommandError::input_invariant)
+            .ok_or_else(crate::CommandFailure::input_invariant)
     }
     /// Retires the validated top input row and returns only the scalar phase
     /// the caller's existing delivery loop must advance to. The caller-owned
@@ -387,7 +387,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let retirement = self
             .command
             .retire_exhausted_input_with_file_warning(identity, file_warning_boundary)
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         let action = retirement.action;
         let file_warning_boundary = retirement.file_warning_boundary;
         let closes_file_frame = retirement.closes_file_frame;
@@ -565,7 +565,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     }
                 }
                 RetirementHandoff::Stop | RetirementHandoff::EndV => {
-                    return Err(CommandError::input_invariant());
+                    return Err(crate::CommandFailure::input_invariant());
                 }
             }
         }

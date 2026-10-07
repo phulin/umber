@@ -214,7 +214,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .command
             .alignment
             .correct_unbalanced_delimiter()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let recovery_name = match recovery {
             Token::Char {
                 cat: Catcode::BeginGroup,
@@ -224,7 +224,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 cat: Catcode::EndGroup,
                 ..
             } => "missing_right_brace",
-            _ => return Err(CommandError::input_invariant()),
+            _ => return Err(crate::CommandFailure::input_invariant()),
         };
         self.observe_unbalanced_delimiter_correction(recovery_name, previous);
         let level = self.command.push_token_level(
@@ -253,7 +253,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         event: AlignmentDeliveryEvent<G>,
     ) -> Result<(), CommandError> {
         let AlignmentDeliveryEvent::ClosingBrace(command) = event else {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         };
         if !matches!(
             command.meaning(),
@@ -262,7 +262,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 ..
             })
         ) {
-            return Err(CommandError::input_invariant());
+            return Err(crate::CommandFailure::input_invariant());
         }
         // The brace arrived by replaying the next-cell opener backup. §325's
         // stack-conservation loop retires that exhausted backup before §1132
@@ -271,7 +271,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let frozen_cr = self
             .state
             .primitive_token("cr")
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let level = self.command.push_token_level(
             transient_replay([TracedTokenWord::pack(frozen_cr, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
@@ -329,7 +329,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 tex_state::print::ErrorRecoveryRequest::Insert(line) => {
                     self.command
                         .open_error_insert_line(line.into_bytes())
-                        .map_err(|_| CommandError::input_invariant())?;
+                        .map_err(|_| crate::CommandFailure::input_invariant())?;
                     return Ok(());
                 }
             }
@@ -369,7 +369,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             Token::Cs(
                 self.state
                     .symbol("par")
-                    .ok_or_else(|| CommandError::input_invariant())?,
+                    .ok_or_else(|| crate::CommandFailure::input_invariant())?,
             ),
             OriginId::UNKNOWN,
         );
@@ -409,7 +409,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let par = Token::Cs(
             self.state
                 .symbol("par")
-                .ok_or_else(|| CommandError::input_invariant())?,
+                .ok_or_else(|| crate::CommandFailure::input_invariant())?,
         );
         let level = self.command.push_token_level(
             transient_replay([TracedTokenWord::pack(par, OriginId::UNKNOWN)]),
@@ -560,7 +560,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     pub fn frozen_primitive_token(&self, name: &str) -> Result<Token, CommandError> {
         self.state
             .primitive_token(name)
-            .ok_or_else(|| CommandError::input_invariant())
+            .ok_or_else(|| crate::CommandFailure::input_invariant())
     }
     /// Composes the report §82 renders after the caller backs up its operand.
     ///

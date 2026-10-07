@@ -49,14 +49,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 scantokens_numeric_name(tracing_scantokens),
                 open_depths,
             )
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         if let Some(name) = framing_name {
             self.print_file_open(&name);
         }
         let source = self
             .command
             .active_source_snapshot()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         // e-TeX 2.6 etex.ch §53a assigns `name=19` while
         // `\tracingscantokens>0`, and `name=18` otherwise. TeX82 §48's
         // initial character strings render those names as `^^S` and `^^R`.
@@ -126,7 +126,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         self.command
             .end_current_source_after_current_line()
             .then_some(())
-            .ok_or_else(|| CommandError::input_invariant())
+            .ok_or_else(|| crate::CommandFailure::input_invariant())
     }
 }
 

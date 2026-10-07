@@ -136,7 +136,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let meaning = call.native_meaning();
         let (flags, definition) = meaning
             .macro_parts()
-            .ok_or_else(CommandError::input_invariant)?;
+            .ok_or_else(crate::CommandFailure::input_invariant)?;
         let key = meaning.execution_key();
         let contextual = key == tex_state::MeaningWord::<G>::MATCHING_MACRO_KEY
             || self.macro_activation_needs_context(
@@ -144,7 +144,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             );
         let macro_name = call
             .control_sequence()
-            .ok_or_else(|| CommandError::input_invariant())?;
+            .ok_or_else(|| crate::CommandFailure::input_invariant())?;
         let call_site = call.origin();
         self.macro_call_parts(
             key,
@@ -184,7 +184,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     let body = self
                         .state
                         .admit_macro_body(definition)
-                        .ok_or_else(CommandError::input_invariant)?;
+                        .ok_or_else(crate::CommandFailure::input_invariant)?;
                     self.conserve_input_stack_for_descendant()?;
                     self.command
                         .push_macro_activation(macro_name, body, None, call_site);
@@ -194,14 +194,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             (
                 self.state
                     .admit_macro_body(definition)
-                    .ok_or_else(CommandError::input_invariant)?,
+                    .ok_or_else(crate::CommandFailure::input_invariant)?,
                 false,
             )
         } else {
             let body = self
                 .state
                 .admit_macro_body(definition)
-                .ok_or_else(CommandError::input_invariant)?;
+                .ok_or_else(crate::CommandFailure::input_invariant)?;
             let elide_empty_replacement =
                 body.is_empty() && !self.macro_activation_needs_context(true);
             #[cfg(test)]
@@ -249,7 +249,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let mut matching = (parameter_count != 0)
             .then(|| self.command.input.levels.arguments.begin_match())
             .transpose()
-            .map_err(|_| CommandError::input_invariant())?;
+            .map_err(|_| crate::CommandFailure::input_invariant())?;
         let prior_status = if needs_matching {
             let status = ScannerStatus::Matching(MatchingContext { macro_name });
             let prior = self.command.begin_scanner_status(status);
@@ -270,7 +270,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             };
             match scanned_arguments {
                 Ok(()) => {}
-                Err(CommandError::MacroPrefixMismatch) => {
+                Err(failure)
+                    if matches!(failure.kind, crate::CommandErrorKind::MacroPrefixMismatch) =>
+                {
                     // §391 reports the mismatch while its input context is live.
                     report_prefix_mismatch(self);
                     return Ok(());
@@ -439,7 +441,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         for index in 0..leading_end {
             let expected = body
                 .parameter_word(index)
-                .ok_or_else(CommandError::input_invariant)?;
+                .ok_or_else(crate::CommandFailure::input_invariant)?;
             let matched = self.consume_raw_words::<true, false, _>(&mut |_, word, _, _| {
                 Ok(std::ops::ControlFlow::Break(word.token_word() == expected))
             })?;
@@ -450,7 +452,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 // frozen `\par` to this same mismatch test; only §394's
                 // argument writer turns that recovery into an aborted
                 // argument scan.
-                return Err(CommandError::MacroPrefixMismatch);
+                return Err(crate::CommandFailure::new(
+                    crate::CommandErrorKind::MacroPrefixMismatch,
+                ));
             }
         }
         // TeX82 §394 corrects the final matched left brace in a `#{`
@@ -463,7 +467,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             && leading_end != 0
             && is_begin_group(
                 body.parameter_word(leading_end - 1)
-                    .ok_or_else(CommandError::input_invariant)?,
+                    .ok_or_else(crate::CommandFailure::input_invariant)?,
             )
         {
             self.undo_delimiter_begin_group_delivery();
@@ -473,7 +477,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         for parameter in 0..parameter_count {
             let matching = matching
                 .as_deref_mut()
-                .ok_or_else(CommandError::input_invariant)?;
+                .ok_or_else(crate::CommandFailure::input_invariant)?;
             let delimiter = body
                 .parameter_pattern()
                 .delimiter(parameter, body.parameter_words());
@@ -488,7 +492,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 .levels
                 .arguments
                 .publish_argument(matching, argument)
-                .map_err(|_| CommandError::input_invariant())?;
+                .map_err(|_| crate::CommandFailure::input_invariant())?;
             if self.state.int_param(IntParam::TRACING_MACROS) > 0 {
                 self.trace_macro_argument(body, parameter, matching)?;
             }

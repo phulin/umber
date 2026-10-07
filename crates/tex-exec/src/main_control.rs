@@ -3341,8 +3341,10 @@ fn operation_termination(step: MainControlStep, fatal: Option<FatalError>) -> Op
 fn execution_error_is_fuel(error: &ExecError) -> bool {
     match error {
         ExecError::Captured { error, .. } => execution_error_is_fuel(error),
-        ExecError::CumulativeFuelExceeded { .. }
-        | ExecError::Command(CommandError::FuelExhausted(_)) => true,
+        ExecError::CumulativeFuelExceeded { .. } => true,
+        ExecError::Command(error) => {
+            matches!(error.kind, tex_command::CommandErrorKind::FuelExhausted(_))
+        }
         _ => false,
     }
 }
