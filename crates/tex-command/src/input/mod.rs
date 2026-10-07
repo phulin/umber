@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
 mod active;
+mod admission;
 mod arguments;
 mod history;
 mod levels;
@@ -17,6 +18,11 @@ mod words;
 mod tests;
 
 pub(crate) use active::InputStack;
+pub(crate) use admission::{
+    PackedTokenSpanSource, PendingInsertion, TokenSources, backed_up_replay, semantic_replay,
+    transient_replay,
+};
+use admission::{replay_flags, replay_kind};
 pub(crate) use arguments::{
     ArgumentArena, ArgumentCursor, ArgumentRegionId, ArgumentValue, MatchedArguments,
 };
@@ -29,10 +35,8 @@ pub(crate) use history::{
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputStorage, MacroBodyCursor,
-    PackedInputFrame, PackedTokenOwnership, PackedTokenSpanSource, PendingInsertion, ReplayTrace,
-    RetirementBehavior, SourceOpenDepths, SourceRetirement, SourceSlot, StoredReplayReason,
-    TokenBehavior, TokenSources, backed_up_replay, packed_token_frame, semantic_replay,
-    transient_replay,
+    PackedInputFrame, PackedTokenOwnership, ReplayTrace, RetirementBehavior, SourceOpenDepths,
+    SourceRetirement, SourceSlot, StoredReplayReason, TokenBehavior,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor, SourceOffsetMap};
 #[cfg(test)]
@@ -397,7 +401,7 @@ pub(crate) fn tracked_input_projection<G>(
                 }
                 if !matches!(
                     row.storage,
-                    InputStorage::List(_) | InputStorage::StoredList(_)
+                    InputStorage::List { .. } | InputStorage::StoredList { .. }
                 ) {
                     return None;
                 }
@@ -651,8 +655,8 @@ impl<G> InputState<G> {
                             return true;
                         }
                     }
-                    InputStorage::List(_)
-                    | InputStorage::StoredList(_)
+                    InputStorage::List { .. }
+                    | InputStorage::StoredList { .. }
                     | InputStorage::MacroArgument { .. } => {
                         if Self::token_context_level(stores, &self.levels, row, current, widths)
                             .is_some()
@@ -729,8 +733,8 @@ impl<G> InputState<G> {
                 InputStorage::MacroBody(body) => {
                     Self::macro_body_context_level(stores, &self.levels, row, body, widths)
                 }
-                InputStorage::List(_)
-                | InputStorage::StoredList(_)
+                InputStorage::List { .. }
+                | InputStorage::StoredList { .. }
                 | InputStorage::MacroArgument { .. } => Self::token_context_level(
                     stores,
                     &self.levels,

@@ -358,16 +358,17 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let levels = &mut self.command.roots.input.levels;
         let row = levels.rows.last_mut().expect("current input");
         let frame = &mut row.frame;
-        let position = frame.start() as usize + frame.position() as usize;
+        let position = frame.position() as usize;
         let word = match &row.storage {
             InputStorage::Source(_) => None,
-            crate::input::InputStorage::MacroBody(body) => {
-                body.body.definition_words().get(position).copied()
+            crate::input::InputStorage::MacroBody(body) => body.body.word_at(frame.position()),
+            crate::input::InputStorage::StoredList { list, .. } => {
+                list.words().get(position).copied()
             }
-            crate::input::InputStorage::StoredList(list) => list.words().get(position).copied(),
-            crate::input::InputStorage::List(_) => {
-                levels.words.get(position).map(|word| word.token_word())
-            }
+            crate::input::InputStorage::List { start, .. } => levels
+                .words
+                .get(*start as usize + position)
+                .map(|word| word.token_word()),
             crate::input::InputStorage::MacroArgument { .. } => None,
         }
         .ok_or_else(crate::CommandFailure::input_invariant)?;

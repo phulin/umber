@@ -18,9 +18,9 @@ fn undelimited_admission_completes_on_its_sole_token_or_closing_brace() {
         // TeX82 §392: a sole ordinary token is the whole argument.
         let mut run = admission();
         let mut writer = cursor();
-        assert!(run.admits(letter('x'), &mut writer));
+        assert!(run.admits(letter('x'), letter('x').literal_catcode(), &mut writer));
         assert!(
-            !run.admits(letter('y'), &mut writer),
+            !run.admits(letter('y'), letter('y').literal_catcode(), &mut writer),
             "the argument is already complete"
         );
 
@@ -29,26 +29,34 @@ fn undelimited_admission_completes_on_its_sole_token_or_closing_brace() {
         let mut run = admission();
         let mut writer = cursor();
         for word in [open, open, letter('a'), close, letter('b'), close] {
-            assert!(run.admits(word, &mut writer));
+            assert!(run.admits(word, word.literal_catcode(), &mut writer));
         }
         assert!(
-            !run.admits(letter('c'), &mut writer),
+            !run.admits(letter('c'), letter('c').literal_catcode(), &mut writer),
             "the argument is already complete"
         );
         assert_eq!(run.brace_delta(), 0);
 
         // §393's skipped leading space and §395's stray closing brace stay
         // with the scalar matcher.
-        assert!(!admission().admits(char_word(' ', Catcode::Space), &mut cursor()));
-        assert!(!admission().admits(close, &mut cursor()));
+        assert!(!admission().admits(
+            char_word(' ', Catcode::Space),
+            char_word(' ', Catcode::Space).literal_catcode(),
+            &mut cursor()
+        ));
+        assert!(!admission().admits(close, close.literal_catcode(), &mut cursor()));
 
         // An interior run resumes inside the group and still completes it.
         let mut writer = cursor();
         let mut run = admission();
-        assert!(run.admits(open, &mut writer));
+        assert!(run.admits(open, open.literal_catcode(), &mut writer));
         let mut run = admission();
-        assert!(run.admits(char_word(' ', Catcode::Space), &mut writer));
-        assert!(run.admits(close, &mut writer));
-        assert!(!run.admits(letter('d'), &mut writer));
+        assert!(run.admits(
+            char_word(' ', Catcode::Space),
+            char_word(' ', Catcode::Space).literal_catcode(),
+            &mut writer
+        ));
+        assert!(run.admits(close, close.literal_catcode(), &mut writer));
+        assert!(!run.admits(letter('d'), letter('d').literal_catcode(), &mut writer));
     });
 }

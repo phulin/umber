@@ -1221,7 +1221,7 @@ impl<G> CommandState<G> {
         let retained_v_template = |level: &InputLevel<G>| {
             level.identity() == v_level
                 && matches!(
-                    level.frame.kind(),
+                    level.kind(),
                     tex_state::packed_input::InputFrameKind::AlignmentVTemplate
                         | tex_state::packed_input::InputFrameKind::OmitTemplate
                 )
@@ -1236,9 +1236,7 @@ impl<G> CommandState<G> {
         let exhausted_backed_up_endv = matches!(
             top,
             row @ crate::input::InputLevel {
-                storage: crate::input::InputStorage::List(
-                    crate::input::PackedTokenOwnership::BackedUp
-                ),
+                storage: crate::input::InputStorage::List { ownership: crate::input::PackedTokenOwnership::BackedUp, .. },
                 ..
             } if matches!(row.behavior(), TokenBehavior::BackedUp(_))
                 && row.frame.position() >= row.frame.limit()
@@ -1737,8 +1735,8 @@ impl<G> CommandState<G> {
             }
             | InputLevel {
                 storage:
-                    InputStorage::List(_)
-                    | InputStorage::StoredList(_)
+                    InputStorage::List { .. }
+                    | InputStorage::StoredList { .. }
                     | InputStorage::MacroBody(_)
                     | InputStorage::MacroArgument { .. },
                 ..
@@ -1763,8 +1761,8 @@ impl<G> CommandState<G> {
                 } => Some(level),
                 InputLevel {
                     storage:
-                        InputStorage::List(_)
-                        | InputStorage::StoredList(_)
+                        InputStorage::List { .. }
+                        | InputStorage::StoredList { .. }
                         | InputStorage::MacroBody(_)
                         | InputStorage::MacroArgument { .. },
                     ..
@@ -2008,8 +2006,8 @@ impl<G> CommandState<G> {
                     ),
                     InputLevel {
                         storage:
-                            InputStorage::List(_)
-                            | InputStorage::StoredList(_)
+                            InputStorage::List { .. }
+                            | InputStorage::StoredList { .. }
                             | InputStorage::MacroBody(_)
                             | InputStorage::MacroArgument { .. },
                         ..

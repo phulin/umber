@@ -598,7 +598,7 @@ impl<G> InputStack<G> {
         }
         match &row.storage {
             super::InputStorage::Source(_) => None,
-            super::InputStorage::StoredList(list) => {
+            super::InputStorage::StoredList { list, .. } => {
                 Some(tex_state::token::TracedTokenWord::from_parts(
                     list.word_at(index as usize)?,
                     tex_state::token::OriginId::UNKNOWN,
@@ -613,10 +613,9 @@ impl<G> InputStack<G> {
             super::InputStorage::MacroArgument { region, slot } => {
                 self.arguments.words(*region, *slot - 1).get(index as usize)
             }
-            super::InputStorage::List(_) => self
-                .words
-                .get(row.frame.start() as usize + index as usize)
-                .copied(),
+            super::InputStorage::List { start, .. } => {
+                self.words.get(*start as usize + index as usize).copied()
+            }
         }
     }
 
@@ -625,29 +624,37 @@ impl<G> InputStack<G> {
         identity: super::InputLevelId,
         word: tex_state::token::TracedTokenWord,
     ) {
-        let row @ super::InputLevel {
-            storage: super::InputStorage::List(super::PackedTokenOwnership::BackedUp),
+        let row = self.rows.last_mut().expect("aftergroup backup exists");
+        let super::InputStorage::List {
+            ownership: super::PackedTokenOwnership::BackedUp,
+            start,
             ..
-        } = self.rows.last_mut().expect("aftergroup backup exists")
+        } = &row.storage
         else {
             unreachable!("aftergroup backup is token input")
         };
+        let start = *start as usize;
         assert_eq!(row.identity(), identity);
-        assert_eq!(row.frame.absolute_limit(), self.words.len());
+        assert_eq!(start + row.frame.limit() as usize, self.words.len());
         self.words.push(word);
         row.frame.extend_undelivered_tokens(1);
     }
 
     pub(crate) fn finish_aftergroup_links(&mut self, identity: super::InputLevelId) {
         let row @ super::InputLevel {
-            storage: super::InputStorage::List(super::PackedTokenOwnership::BackedUp),
+            storage:
+                super::InputStorage::List {
+                    ownership: super::PackedTokenOwnership::BackedUp,
+                    start,
+                    ..
+                },
             ..
         } = self.rows.last().expect("aftergroup backup exists")
         else {
             unreachable!("aftergroup backup is token input")
         };
         assert_eq!(row.identity(), identity);
-        self.words[row.frame.start() as usize..row.frame.absolute_limit()].reverse();
+        self.words[*start as usize..*start as usize + row.frame.limit() as usize].reverse();
     }
 
     /// The innermost macro activation's argument words and replacement.
@@ -731,8 +738,8 @@ impl<G> InputStack<G> {
             Some(
                 row @ InputLevel {
                     storage:
-                        InputStorage::List(_)
-                        | InputStorage::StoredList(_)
+                        InputStorage::List { .. }
+                        | InputStorage::StoredList { .. }
                         | InputStorage::MacroBody(_)
                         | InputStorage::MacroArgument { .. },
                     ..
@@ -994,12 +1001,8 @@ impl<G> crate::CommandState<G> {
                 ),
             });
         }
-        // Suppression restricts the same admission cursor in place.
-        if frame.flags().contains(
-            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
-        ) {
-            admission.restrict_to_characters();
-        }
+        // Only native bodies and parameter spans enter this grammar. Their
+        // storage has no noexpand treatment; replay lists return below.
         let available = fuel.remaining().min(u64::from(u32::MAX)) as usize;
         let (count, parameter_next) = match &row.storage {
             InputStorage::Source(_) => return Ok(ResidentRun::default()),
@@ -1039,7 +1042,7 @@ impl<G> crate::CommandState<G> {
                     .map_err(|_| crate::CommandFailure::input_invariant())?;
                 (count, false)
             }
-            super::InputStorage::List(_) | super::InputStorage::StoredList(_) => {
+            super::InputStorage::List { .. } | super::InputStorage::StoredList { .. } => {
                 return Ok(ResidentRun::default());
             }
         };
@@ -1097,15 +1100,7 @@ impl<G> crate::CommandState<G> {
             .stack_usage
             .input_stack
             .max(self.roots.input.levels.rows.len());
-        let mut frame = super::packed_token_frame(
-            identity,
-            0,
-            span as usize,
-            &super::TokenBehavior::Parameter,
-            super::RetirementBehavior::Pop,
-            &super::ReplayTrace::MacroParameter { slot },
-        );
-        frame.set_source_context(active_source);
+        let frame = super::PackedInputFrame::tokens(identity.0, span as usize, active_source);
         self.roots.input.levels.push(super::InputLevel {
             frame,
             storage: super::InputStorage::MacroArgument { slot, region },
@@ -1292,9 +1287,6 @@ impl<G> InputStack<G> {
             return false;
         };
         cursor.set_retirement(super::RetirementBehavior::AwaitingVTemplateRetirement);
-        cursor
-            .frame
-            .add_flags(tex_state::packed_input::InputFrameFlags::RETAIN_AT_END);
         true
     }
 
@@ -1366,8 +1358,8 @@ impl<G> InputStack<G> {
         if let Some(
             row @ InputLevel {
                 storage:
-                    InputStorage::List(_)
-                    | InputStorage::StoredList(_)
+                    InputStorage::List { .. }
+                    | InputStorage::StoredList { .. }
                     | InputStorage::MacroBody(_)
                     | InputStorage::MacroArgument { .. },
                 ..
@@ -1399,10 +1391,10 @@ impl<G> InputStack<G> {
     ) {
         match &row.storage {
             InputStorage::Source(_) => {}
-            super::InputStorage::List(_) => {
-                words.truncate(row.frame.start() as usize);
+            super::InputStorage::List { start, .. } => {
+                words.truncate(*start as usize);
             }
-            super::InputStorage::StoredList(_) => {}
+            super::InputStorage::StoredList { .. } => {}
             super::InputStorage::MacroBody(body) => {
                 if let Some(region) = body.argument_region {
                     *parameter_count -= arguments.argument_count(region);

@@ -164,8 +164,8 @@ fn skipped_resident_run_stops_before_the_over_budget_word() {
             ));
             let row @ crate::input::InputLevel {
                 storage:
-                    crate::input::InputStorage::List(_)
-                    | crate::input::InputStorage::StoredList(_)
+                    crate::input::InputStorage::List { .. }
+                    | crate::input::InputStorage::StoredList { .. }
                     | crate::input::InputStorage::MacroBody(_)
                     | crate::input::InputStorage::MacroArgument { .. },
                 ..

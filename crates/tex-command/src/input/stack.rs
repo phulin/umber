@@ -330,10 +330,12 @@ impl<G> CommandState<G> {
                 let InputLevel { frame, storage } = level;
                 let owned = match storage {
                     InputStorage::Source(_) => 0,
-                    InputStorage::List(
-                        super::PackedTokenOwnership::Transient
-                        | super::PackedTokenOwnership::BackedUp,
-                    ) => frame.limit(),
+                    InputStorage::List {
+                        ownership:
+                            super::PackedTokenOwnership::Transient
+                            | super::PackedTokenOwnership::BackedUp,
+                        ..
+                    } => frame.limit(),
                     // The activation's live argument spans; its parameter text and
                     // replacement stand for TeX's shared definition list.
                     InputStorage::MacroBody(body) => body
@@ -341,8 +343,11 @@ impl<G> CommandState<G> {
                         .iter()
                         .map(|span| span.len() as usize)
                         .sum::<usize>() as u32,
-                    InputStorage::StoredList(_) => 0,
-                    InputStorage::List(super::PackedTokenOwnership::Stored)
+                    InputStorage::StoredList { .. } => 0,
+                    InputStorage::List {
+                        ownership: super::PackedTokenOwnership::Stored,
+                        ..
+                    }
                     | InputStorage::MacroArgument { .. } => 0,
                 };
                 words.saturating_add(owned as usize)
@@ -380,16 +385,7 @@ impl<G> CommandState<G> {
             None
         };
         let body_len = body.len();
-        let replacement_start = body.parameter_len() as u32;
-        let mut frame = super::packed_token_frame(
-            identity,
-            replacement_start,
-            body_len,
-            &TokenBehavior::Ordinary,
-            RetirementBehavior::Pop,
-            &ReplayTrace::MacroReplacement,
-        );
-        frame.set_source_context(source);
+        let frame = super::PackedInputFrame::tokens(identity.0, body_len, source);
         self.push_input_level(InputLevel {
             frame,
             storage: InputStorage::MacroBody(super::MacroBodyCursor {
@@ -436,27 +432,20 @@ impl<G> CommandState<G> {
         let identity = self.allocate_input_level_identity();
         let input = &mut self.roots.input;
         let words = &mut input.levels.words;
-        let start = words.len();
-        let storage = source.admit(
+        let kind = super::replay_kind(&behavior, &trace);
+        let flags = super::replay_flags(&behavior, retirement);
+        let level = source.admit(
             words,
             super::TokenSources {
                 attempt: &mut self.attempt,
                 pending_insertions: &mut input.pending_insertions,
             },
+            identity,
+            source_context,
+            kind,
+            flags,
         );
-        let len = match &storage {
-            InputStorage::StoredList(list) => list.words().len(),
-            _ => words.len() - start,
-        };
-        let frame_start = if matches!(storage, InputStorage::StoredList(_)) {
-            0
-        } else {
-            start as u32
-        };
-        let mut frame =
-            super::packed_token_frame(identity, frame_start, len, &behavior, retirement, &trace);
-        frame.set_source_context(source_context);
-        self.push_input_level(InputLevel { frame, storage });
+        self.push_input_level(level);
         identity
     }
 
@@ -583,8 +572,8 @@ impl<G> CommandState<G> {
 
         let row @ InputLevel {
             storage:
-                InputStorage::List(_)
-                | InputStorage::StoredList(_)
+                InputStorage::List { .. }
+                | InputStorage::StoredList { .. }
                 | InputStorage::MacroBody(_)
                 | InputStorage::MacroArgument { .. },
             ..
@@ -691,8 +680,8 @@ impl<G> CommandState<G> {
         }
         let row @ InputLevel {
             storage:
-                InputStorage::List(_)
-                | InputStorage::StoredList(_)
+                InputStorage::List { .. }
+                | InputStorage::StoredList { .. }
                 | InputStorage::MacroBody(_)
                 | InputStorage::MacroArgument { .. },
             ..
@@ -750,8 +739,8 @@ impl<G> CommandState<G> {
             .find_map(|level| match level {
                 InputLevel {
                     storage:
-                        InputStorage::List(_)
-                        | InputStorage::StoredList(_)
+                        InputStorage::List { .. }
+                        | InputStorage::StoredList { .. }
                         | InputStorage::MacroBody(_)
                         | InputStorage::MacroArgument { .. },
                     ..

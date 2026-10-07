@@ -7,97 +7,15 @@
 
 use tex_state::interner::Symbol;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
-#[cfg(test)]
-use tex_state::token::Token;
-use tex_state::token::{OriginId, TokenWord, TracedTokenWord};
+use tex_state::token::{OriginId, TracedTokenWord};
 
 use super::source::{SourceCursor, SourceNameClass};
-use crate::attempt::AttemptTokenListId;
 
 /// Stable identity for one live input level.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct InputLevelId(pub(crate) u64);
 
 pub(crate) use tex_state::packed_input::InputFrame as PackedInputFrame;
-
-#[inline]
-fn packed_frame_kind(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputFrameKind {
-    // TeX82 §789 gives both an ordinary v-part and `omit_template` the
-    // `v_template` token behavior. The trace is the sole distinction that
-    // must survive packing so retirement can report which list actually ran.
-    if matches!(
-        (behavior, trace),
-        (TokenBehavior::VTemplate, ReplayTrace::OmitTemplate)
-    ) {
-        return InputFrameKind::OmitTemplate;
-    }
-    match behavior {
-        TokenBehavior::Parameter => InputFrameKind::Parameter,
-        TokenBehavior::UTemplate => InputFrameKind::AlignmentUTemplate,
-        TokenBehavior::VTemplate => InputFrameKind::AlignmentVTemplate,
-        TokenBehavior::BackedUp(_) => InputFrameKind::BackedUp,
-        TokenBehavior::Recovery => InputFrameKind::Recovery,
-        TokenBehavior::Ordinary => match trace {
-            ReplayTrace::Inserted => InputFrameKind::Inserted,
-            ReplayTrace::Transient(TransientReplayReason::ExpandedTokenList) => {
-                InputFrameKind::ExpandedTokenList
-            }
-            ReplayTrace::Stored(reason) => match reason {
-                StoredReplayReason::OutputRoutine => InputFrameKind::OutputRoutine,
-                StoredReplayReason::EveryPar => InputFrameKind::EveryPar,
-                StoredReplayReason::EveryMath => InputFrameKind::EveryMath,
-                StoredReplayReason::EveryDisplay => InputFrameKind::EveryDisplay,
-                StoredReplayReason::EveryHBox => InputFrameKind::EveryHBox,
-                StoredReplayReason::EveryVBox => InputFrameKind::EveryVBox,
-                StoredReplayReason::EveryJob => InputFrameKind::EveryJob,
-                StoredReplayReason::EveryCr => InputFrameKind::EveryCr,
-                StoredReplayReason::EveryEof => InputFrameKind::EveryEof,
-                StoredReplayReason::Mark => InputFrameKind::Mark,
-                StoredReplayReason::Write => InputFrameKind::Write,
-                StoredReplayReason::Discretionary => InputFrameKind::UmberReplay,
-            },
-            ReplayTrace::MacroReplacement => InputFrameKind::Macro,
-            ReplayTrace::MacroParameter { .. } => InputFrameKind::Parameter,
-            ReplayTrace::BackedUp => InputFrameKind::BackedUp,
-            ReplayTrace::UTemplate => InputFrameKind::AlignmentUTemplate,
-            ReplayTrace::VTemplate => InputFrameKind::AlignmentVTemplate,
-            ReplayTrace::OmitTemplate => InputFrameKind::OmitTemplate,
-        },
-    }
-}
-
-/// Packs a token-list frame reading `len` stack words from `start`.
-#[inline]
-pub(crate) fn packed_token_frame(
-    identity: InputLevelId,
-    start: u32,
-    len: usize,
-    behavior: &TokenBehavior,
-    retirement: RetirementBehavior,
-    trace: &ReplayTrace,
-) -> PackedInputFrame {
-    let mut flags = match behavior {
-        TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence) => {
-            InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE
-        }
-        _ => InputFrameFlags::empty(),
-    };
-    flags = flags.union(match retirement {
-        RetirementBehavior::StopAtEnd => InputFrameFlags::STOP_AT_END,
-        RetirementBehavior::RetainExhaustedVTemplate => InputFrameFlags::RETAIN_AT_END,
-        RetirementBehavior::AwaitingVTemplateRetirement => {
-            InputFrameFlags::RETAIN_AT_END.union(InputFrameFlags::AWAITING_V_TEMPLATE_RETIREMENT)
-        }
-        RetirementBehavior::Pop => InputFrameFlags::empty(),
-    });
-    PackedInputFrame::tokens(
-        identity.0,
-        start,
-        len,
-        packed_frame_kind(behavior, trace),
-        flags,
-    )
-}
 
 /// One authoritative input frame and its actual backing owner.
 #[derive(Debug, Eq, Hash, PartialEq)]
@@ -231,10 +149,19 @@ impl<G> MacroBodyCursor<G> {
 pub(crate) enum InputStorage<G> {
     /// Sole owner of variable external source state.
     Source(Box<SourceSlot<G>>),
-    /// Owns `[frame.start(), frame.start() + frame.limit())`.
-    List(PackedTokenOwnership),
+    /// Owns the final span of the shared transient word vector.
+    List {
+        start: u32,
+        ownership: PackedTokenOwnership,
+        kind: InputFrameKind,
+        flags: InputFrameFlags,
+    },
     /// Reads one generation-durable immutable list without materializing it.
-    StoredList(tex_state::TokenListId<G>),
+    StoredList {
+        list: tex_state::TokenListId<G>,
+        kind: InputFrameKind,
+        flags: InputFrameFlags,
+    },
     /// Owns its activation region and its argument spans.
     MacroBody(MacroBodyCursor<G>),
     /// Borrows one argument span of the enclosing macro activation, which
@@ -246,6 +173,24 @@ pub(crate) enum InputStorage<G> {
 }
 
 impl<G> InputLevel<G> {
+    #[inline(always)]
+    pub(crate) fn kind(&self) -> InputFrameKind {
+        match &self.storage {
+            InputStorage::Source(_) => InputFrameKind::Source,
+            InputStorage::MacroBody(_) => InputFrameKind::Macro,
+            InputStorage::MacroArgument { .. } => InputFrameKind::Parameter,
+            InputStorage::List { kind, .. } | InputStorage::StoredList { kind, .. } => *kind,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn flags(&self) -> InputFrameFlags {
+        match &self.storage {
+            InputStorage::List { flags, .. } | InputStorage::StoredList { flags, .. } => *flags,
+            _ => InputFrameFlags::empty(),
+        }
+    }
+
     pub(crate) fn identity(&self) -> InputLevelId {
         InputLevelId(self.frame.identity())
     }
@@ -255,7 +200,7 @@ impl<G> InputLevel<G> {
     }
 
     pub(crate) fn behavior(&self) -> TokenBehavior {
-        match self.frame.kind() {
+        match self.kind() {
             InputFrameKind::Parameter => TokenBehavior::Parameter,
             InputFrameKind::AlignmentUTemplate => TokenBehavior::UTemplate,
             InputFrameKind::AlignmentVTemplate | InputFrameKind::OmitTemplate => {
@@ -263,7 +208,6 @@ impl<G> InputLevel<G> {
             }
             InputFrameKind::BackedUp => TokenBehavior::BackedUp(
                 if self
-                    .frame
                     .flags()
                     .contains(InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE)
                 {
@@ -293,7 +237,7 @@ impl<G> InputLevel<G> {
     }
 
     pub(crate) fn retirement(&self) -> RetirementBehavior {
-        let flags = self.frame.flags();
+        let flags = self.flags();
         if flags.contains(InputFrameFlags::AWAITING_V_TEMPLATE_RETIREMENT) {
             RetirementBehavior::AwaitingVTemplateRetirement
         } else if flags.contains(InputFrameFlags::RETAIN_AT_END) {
@@ -309,7 +253,7 @@ impl<G> InputLevel<G> {
         let retirement_flags = InputFrameFlags::STOP_AT_END
             .union(InputFrameFlags::RETAIN_AT_END)
             .union(InputFrameFlags::AWAITING_V_TEMPLATE_RETIREMENT);
-        let mut flags = self.frame.flags().without(retirement_flags);
+        let mut flags = self.flags().without(retirement_flags);
         flags = flags.union(match retirement {
             RetirementBehavior::Pop => InputFrameFlags::empty(),
             RetirementBehavior::StopAtEnd => InputFrameFlags::STOP_AT_END,
@@ -317,11 +261,15 @@ impl<G> InputLevel<G> {
             RetirementBehavior::AwaitingVTemplateRetirement => InputFrameFlags::RETAIN_AT_END
                 .union(InputFrameFlags::AWAITING_V_TEMPLATE_RETIREMENT),
         });
-        self.frame.set_flags(flags);
+        match &mut self.storage {
+            InputStorage::List { flags: saved, .. }
+            | InputStorage::StoredList { flags: saved, .. } => *saved = flags,
+            _ => unreachable!("only replay lists change retirement treatment"),
+        }
     }
 
     pub(crate) fn trace(&self) -> Option<ReplayTrace> {
-        Some(match self.frame.kind() {
+        Some(match self.kind() {
             InputFrameKind::Parameter => ReplayTrace::MacroParameter {
                 slot: match self.storage {
                     InputStorage::MacroArgument { slot, .. } => slot,
@@ -376,8 +324,22 @@ impl<G> InputLevel<G> {
                 InputStorage::Source(slot) => {
                     InputStorage::Source(Box::new(slot.checkpoint_copy()))
                 }
-                InputStorage::List(ownership) => InputStorage::List(*ownership),
-                InputStorage::StoredList(list) => InputStorage::StoredList(list.clone()),
+                InputStorage::List {
+                    start,
+                    ownership,
+                    kind,
+                    flags,
+                } => InputStorage::List {
+                    start: *start,
+                    ownership: *ownership,
+                    kind: *kind,
+                    flags: *flags,
+                },
+                InputStorage::StoredList { list, kind, flags } => InputStorage::StoredList {
+                    list: list.clone(),
+                    kind: *kind,
+                    flags: *flags,
+                },
                 InputStorage::MacroBody(_) | InputStorage::MacroArgument { .. } => {
                     unreachable!("named checkpoints exclude macro input")
                 }
@@ -410,172 +372,6 @@ pub(crate) enum PackedTokenOwnership {
     Transient,
     /// `back_input` owns freshly allocated cells plus source replay metadata.
     BackedUp,
-}
-
-/// Appends an immutable semantic replay span when a copied transient sink is required.
-#[inline]
-pub(crate) fn push_untraced_words(words: &mut Vec<TracedTokenWord>, list: &[TokenWord]) {
-    words.extend(
-        list.iter()
-            .map(|&word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN)),
-    );
-}
-
-/// Storage a token-list source may copy its words from.
-pub(crate) struct TokenSources<'a, G> {
-    pub(crate) attempt: &'a mut crate::attempt::AttemptArena<G>,
-    pub(crate) pending_insertions: &'a mut Vec<TracedTokenWord>,
-}
-
-/// A source of words for one new token-list level.
-pub(crate) trait PackedTokenSpanSource<G> {
-    /// Admits the level's words or immutable span and names its owner.
-    fn admit(
-        self,
-        words: &mut Vec<TracedTokenWord>,
-        sources: TokenSources<'_, G>,
-    ) -> InputStorage<G>;
-}
-
-/// The escaping inserted list `scan_toks` collected at the end of
-/// [`super::InputState::pending_insertions`], from `start` on.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct PendingInsertion {
-    pub(crate) start: u32,
-}
-
-impl<G> PackedTokenSpanSource<G> for PendingInsertion {
-    fn admit(
-        self,
-        words: &mut Vec<TracedTokenWord>,
-        sources: TokenSources<'_, G>,
-    ) -> InputStorage<G> {
-        let start = self.start as usize;
-        words.extend_from_slice(&sources.pending_insertions[start..]);
-        sources.pending_insertions.truncate(start);
-        InputStorage::List(PackedTokenOwnership::Transient)
-    }
-}
-
-impl<G> PackedTokenSpanSource<G> for tex_state::TokenListView<G> {
-    #[inline]
-    fn admit(self, _: &mut Vec<TracedTokenWord>, _: TokenSources<'_, G>) -> InputStorage<G> {
-        InputStorage::StoredList(self.into_id())
-    }
-}
-
-impl<G> PackedTokenSpanSource<G> for AttemptTokenListId {
-    fn admit(
-        self,
-        words: &mut Vec<TracedTokenWord>,
-        sources: TokenSources<'_, G>,
-    ) -> InputStorage<G> {
-        words.extend(
-            sources
-                .attempt
-                .token_words(&self)
-                .expect("admitted attempt list")
-                .iter()
-                .copied(),
-        );
-        sources
-            .attempt
-            .discard_token_list(self)
-            .expect("admitted attempt list consumed");
-        InputStorage::List(PackedTokenOwnership::Stored)
-    }
-}
-
-impl<G> PackedTokenSpanSource<G> for TracedTokenWord {
-    #[inline]
-    fn admit(self, words: &mut Vec<TracedTokenWord>, _: TokenSources<'_, G>) -> InputStorage<G> {
-        words.push(self);
-        InputStorage::List(PackedTokenOwnership::BackedUp)
-    }
-}
-
-pub(crate) struct TracedReplaySeed<I> {
-    tokens: I,
-    ownership: PackedTokenOwnership,
-}
-impl<G, I: Iterator<Item = TracedTokenWord>> PackedTokenSpanSource<G> for TracedReplaySeed<I> {
-    fn admit(self, words: &mut Vec<TracedTokenWord>, _: TokenSources<'_, G>) -> InputStorage<G> {
-        words.extend(self.tokens);
-        InputStorage::List(self.ownership)
-    }
-}
-
-pub(crate) struct SemanticReplaySeed<'a> {
-    words: &'a [TokenWord],
-}
-impl<G> PackedTokenSpanSource<G> for SemanticReplaySeed<'_> {
-    fn admit(self, words: &mut Vec<TracedTokenWord>, _: TokenSources<'_, G>) -> InputStorage<G> {
-        push_untraced_words(words, self.words);
-        InputStorage::List(PackedTokenOwnership::Stored)
-    }
-}
-
-pub(crate) struct BackedReplaySeed<I> {
-    tokens: I,
-}
-impl<G, I: Iterator<Item = BackedUpToken>> PackedTokenSpanSource<G> for BackedReplaySeed<I> {
-    fn admit(self, words: &mut Vec<TracedTokenWord>, _: TokenSources<'_, G>) -> InputStorage<G> {
-        words.extend(self.tokens.map(|token| token.spelling));
-        InputStorage::List(PackedTokenOwnership::BackedUp)
-    }
-}
-
-#[cfg(test)] // The direct packed-span admission test uses this slice adapter.
-pub(crate) struct StoredReplaySeed<'a, I> {
-    tokens: &'a [Token],
-    origins: I,
-}
-#[cfg(test)]
-impl<G, I: Iterator<Item = OriginId>> PackedTokenSpanSource<G> for StoredReplaySeed<'_, I> {
-    fn admit(
-        mut self,
-        words: &mut Vec<TracedTokenWord>,
-        _: TokenSources<'_, G>,
-    ) -> InputStorage<G> {
-        words.extend(self.tokens.iter().map(|&token| {
-            TracedTokenWord::pack(token, self.origins.next().unwrap_or(OriginId::UNKNOWN))
-        }));
-        InputStorage::List(PackedTokenOwnership::Stored)
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn stored_replay(
-    tokens: &[Token],
-    origins: impl IntoIterator<Item = OriginId>,
-) -> StoredReplaySeed<'_, impl Iterator<Item = OriginId>> {
-    StoredReplaySeed {
-        tokens,
-        origins: origins.into_iter(),
-    }
-}
-
-pub(crate) fn semantic_replay(words: &[TokenWord]) -> SemanticReplaySeed<'_> {
-    SemanticReplaySeed { words }
-}
-
-/// One bounded insertion or scanner result.
-pub(crate) fn transient_replay(
-    tokens: impl IntoIterator<Item = TracedTokenWord>,
-) -> TracedReplaySeed<impl Iterator<Item = TracedTokenWord>> {
-    TracedReplaySeed {
-        tokens: tokens.into_iter(),
-        ownership: PackedTokenOwnership::Transient,
-    }
-}
-
-/// Commands restored by `back_input` or a matched keyword prefix.
-pub(crate) fn backed_up_replay(
-    tokens: impl IntoIterator<Item = BackedUpToken>,
-) -> BackedReplaySeed<impl Iterator<Item = BackedUpToken>> {
-    BackedReplaySeed {
-        tokens: tokens.into_iter(),
-    }
 }
 
 /// One restored command spelling with its stable packed origin coordinate.

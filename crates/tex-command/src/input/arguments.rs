@@ -452,18 +452,11 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
         range: core::ops::Range<usize>,
         admission: &mut ArgumentRunAdmission<'_, '_, G, SCANNING>,
     ) -> Result<usize, ScratchError> {
-        let mut count = 0;
-        for word in arena
+        let words = arena
             .words(source, slot)
             .slice(range.clone())
-            .ok_or(ScratchError::InvalidCoordinate)?
-            .iter()
-        {
-            if !admission.admits(word.token_word(), self) {
-                break;
-            }
-            count += 1;
-        }
+            .ok_or(ScratchError::InvalidCoordinate)?;
+        let count = self.capture_plain_span(words, admission);
         if count != 0 {
             arena.extend_region(self.region, source, slot, range.start as u32, count as u32)?;
         }
@@ -479,13 +472,9 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
         if self.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let mut count = 0;
-        for &word in &body.replacement_from(range.start as u32)[..range.len()] {
-            if !admission.admits(word, self) {
-                break;
-            }
-            count += 1;
-        }
+        let words =
+            super::InputWords::Packed(&body.replacement_from(range.start as u32)[..range.len()]);
+        let count = self.capture_plain_span(words, admission);
         if count != 0 {
             arena.extend_definition(self.region, body, range.start as u32, count as u32)?;
         }
@@ -506,6 +495,60 @@ pub(crate) struct ArgumentCursor {
 }
 
 impl ArgumentCursor {
+    #[inline(always)]
+    fn capture_plain_span<G, const SCANNING: bool>(
+        &mut self,
+        words: super::InputWords<'_>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G, SCANNING>,
+    ) -> usize {
+        macro_rules! capture {
+            ($words:expr, $project:expr) => {{
+                let words = $words;
+                let mut count = 0;
+                loop {
+                    let (word, category) = if self.brace_depth() != 0 {
+                        loop {
+                            let Some(&packed) = words.get(count) else {
+                                return count;
+                            };
+                            let word: tex_state::token::TokenWord = $project(packed);
+                            let category = word.literal_catcode();
+                            if matches!(
+                                category,
+                                Some(
+                                    tex_state::token::Catcode::Space
+                                        | tex_state::token::Catcode::Letter
+                                        | tex_state::token::Catcode::Other
+                                )
+                            ) {
+                                count += 1;
+                            } else {
+                                break (word, category);
+                            }
+                        }
+                    } else {
+                        let Some(&packed) = words.get(count) else {
+                            return count;
+                        };
+                        let word: tex_state::token::TokenWord = $project(packed);
+                        (word, word.literal_catcode())
+                    };
+                    if !admission.admits(word, category, self) {
+                        return count;
+                    }
+                    count += 1;
+                }
+            }};
+        }
+        match words {
+            super::InputWords::Packed(words) => capture!(words, |word| word),
+            super::InputWords::Traced(words) => {
+                capture!(words, |word: tex_state::token::TracedTokenWord| word
+                    .token_word())
+            }
+        }
+    }
+
     pub(crate) const fn brace_depth(&self) -> u32 {
         self.cursor.brace_depth()
     }

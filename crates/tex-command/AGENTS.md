@@ -147,6 +147,8 @@ exact fuel, plus contextual matching/tracing as interruption controls.
   the host replays from a full checkpoint.
 - `src/execution_scratch.rs`, `src/execution_scratch/tests.rs`: reusable
   bounded expression frames and admission/sinks for ordinary resident runs.
+  Its grammar accepts one local category classification from each caller;
+  no second spelling classification is needed at a special boundary.
   Outer admission reads the actual native meaning; its separate command-target
   probe adapter is deleted.
   Definition and csname collectors consume those runs directly. One stack-local admission cursor transfers into the resident reader; suppression restricts it in place without copying its configuration. Admission
@@ -155,6 +157,9 @@ exact fuel, plus contextual matching/tracing as interruption controls.
   no duplicate scan depth, macro argument payload, or publication capability.
 - `src/input/arguments.rs`, `src/input/arguments/tests.rs`: final macro
   `ArgumentArena`, with one reusable vector per simultaneous invocation. Up to four immutable definition words write directly to the final pool without acquiring a source owner; larger spans retain their actual source. Scalar capture queries the source row only for an actual retained span and updates the actual arena range directly.
+  Grouped ordinary space/letter/other spans retain their actual writer depth
+  across words; special boundaries classify once and re-enter the full grammar.
+  Packed/traced storage is selected once without a copied span or configuration.
   Scalar matchers write directly to this arena while borrowing the actual input row; the per-word input-stack forwarding method is deleted.
   Each region holds at most nine final ranges; call-local `MatchedArguments` transfers only its owner coordinate, and `ArgumentCursor`
   holds brace/group facts and the unpublished delimiter suffix. Publication
@@ -464,11 +469,16 @@ exact fuel, plus contextual matching/tracing as interruption controls.
   tests. A cursor with no loaded line returns `NeedLine`; physical acquisition
   belongs to the singular input-top owner and never receives a backing registry
   through the ordinary token path.
-- `src/input/levels.rs`, `src/input/levels/tests.rs`: input rows and admission
-  from actual traced words, stored-list owners and scratch-list owners, plus
-  genuine replay iterators. No general source enum or duplicate admitted extent
-  is constructed. The common packed frame owns identity, source context, start, position,
-  limit, kind, and delivery/retirement flags. `StoredList` owns its immutable
+- `src/input/admission.rs`: direct word-source admission into final replay
+  rows, with their actual extent, shared-vector offset, allocation treatment,
+  kind and flags. Transient offsets and cursors use bounded `u32` coordinates; admission
+  establishes the bound directly, without a conversion-result enum. The intermediate storage-union result and subsequent length
+  classification are deleted; one-word backup sets its real length directly.
+- `src/input/levels.rs`, `src/input/levels/tests.rs`: input rows, native payload
+  ownership and focused replay geometry/semantic tests. The common frame owns
+  only identity, source context, relative position and limit. Replay storage
+  owns genuine list kind/flags and transient offsets; source, macro and
+  argument kinds derive from their actual storage variant. `StoredList` owns its immutable
   `TokenListId`; `MacroBody` owns its `ResidentMacroBody`, invocation facts, and
   transient argument coordinates. Both read retained spans without activation
   copies. Insertions, backups, and attempt lists use the

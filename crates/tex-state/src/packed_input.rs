@@ -1,8 +1,8 @@
 //! Fixed-size live input-frame coordinates shared with `tex-command`.
 //!
-//! The frame stores only scalar cursors and classification bits. Token and
-//! source owners remain in the command input stack, so this value can be
-//! copied into bounded operation marks without retaining any payload.
+//! The frame stores identity, relative cursors and source attribution. Actual
+//! command storage owns replay classification and payloads, so this value can
+//! be copied into bounded operation marks without retaining any payload.
 
 /// Semantic class of one input frame.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -107,13 +107,9 @@ impl SourceContext {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InputFrame {
     identity: u64,
-    /// First word of a token frame's list in the input token stack.
-    start: u32,
     position: u32,
     limit: u32,
     source: Option<SourceContext>,
-    kind: InputFrameKind,
-    flags: InputFrameFlags,
 }
 
 impl InputFrame {
@@ -121,56 +117,26 @@ impl InputFrame {
     pub const fn source(identity: u64, source: SourceContext) -> Self {
         Self {
             identity,
-            start: 0,
             position: 0,
             limit: u32::MAX,
             source: Some(source),
-            kind: InputFrameKind::Source,
-            flags: InputFrameFlags::empty(),
         }
     }
 
     #[must_use]
     #[inline] // inline the checked leaf initializer into the final input row
-    pub fn tokens(
-        identity: u64,
-        start: u32,
-        len: usize,
-        kind: InputFrameKind,
-        flags: InputFrameFlags,
-    ) -> Self {
+    pub fn tokens(identity: u64, len: usize, source: Option<SourceContext>) -> Self {
         Self {
             identity,
-            start,
             position: 0,
             limit: u32::try_from(len).expect("input frame length exceeds u32"),
-            source: None,
-            kind,
-            flags,
+            source,
         }
     }
 
     #[must_use]
     pub const fn identity(self) -> u64 {
         self.identity
-    }
-
-    /// First word of a token frame's list in the input token stack.
-    #[must_use]
-    pub const fn start(self) -> u32 {
-        self.start
-    }
-
-    /// The token-stack index of the next word a token frame delivers.
-    #[must_use]
-    pub const fn absolute_position(self) -> usize {
-        self.start as usize + self.position as usize
-    }
-
-    /// The token-stack index one past a token frame's last word.
-    #[must_use]
-    pub const fn absolute_limit(self) -> usize {
-        self.start as usize + self.limit as usize
     }
 
     #[must_use]
@@ -181,28 +147,6 @@ impl InputFrame {
     #[must_use]
     pub const fn limit(self) -> u32 {
         self.limit
-    }
-
-    #[must_use]
-    pub const fn kind(self) -> InputFrameKind {
-        self.kind
-    }
-
-    #[must_use]
-    pub const fn flags(self) -> InputFrameFlags {
-        self.flags
-    }
-
-    pub const fn set_flags(&mut self, flags: InputFrameFlags) {
-        self.flags = flags;
-    }
-
-    #[must_use]
-    pub const fn source_id(self) -> Option<crate::SourceId> {
-        match self.source {
-            Some(source) => Some(source.source()),
-            None => None,
-        }
     }
 
     #[must_use]
@@ -266,9 +210,5 @@ impl InputFrame {
         let consumed = self.position;
         self.position = end;
         Some(consumed)
-    }
-
-    pub const fn add_flags(&mut self, flags: InputFrameFlags) {
-        self.flags = self.flags.union(flags);
     }
 }

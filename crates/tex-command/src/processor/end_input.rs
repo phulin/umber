@@ -207,7 +207,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let levels_above_are_depleted_backups =
             (output_index + 1..levels.rows.len()).all(|index| {
                 matches!(
-                    levels.rows.get(index).expect("admitted input").frame.kind(),
+                    levels.rows.get(index).expect("admitted input").kind(),
                     tex_state::packed_input::InputFrameKind::BackedUp
                 ) && levels.pending_token_word(index).is_none()
             });
@@ -256,8 +256,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let Some(
             row @ InputLevel {
                 storage:
-                    InputStorage::List(_)
-                    | InputStorage::StoredList(_)
+                    InputStorage::List { .. }
+                    | InputStorage::StoredList { .. }
                     | InputStorage::MacroBody(_)
                     | InputStorage::MacroArgument { .. },
                 ..
@@ -268,7 +268,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         };
         if !matches!(
             row.storage,
-            crate::input::InputStorage::List(_) | crate::input::InputStorage::StoredList(_)
+            crate::input::InputStorage::List { .. } | crate::input::InputStorage::StoredList { .. }
         ) || !matches!(row.behavior(), TokenBehavior::BackedUp(_))
             || levels.pending_token_word(levels.rows.len() - 1).is_some()
             || !matches!(
@@ -497,14 +497,14 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             Some(
                 level @ row @ InputLevel {
                     storage:
-                        InputStorage::List(_)
-                        | InputStorage::StoredList(_)
+                        InputStorage::List { .. }
+                        | InputStorage::StoredList { .. }
                         | InputStorage::MacroBody(_)
                         | InputStorage::MacroArgument { .. },
                     ..
                 },
             ) if !matches!(
-                row.frame.kind(),
+                row.kind(),
                 tex_state::packed_input::InputFrameKind::AlignmentVTemplate
                     | tex_state::packed_input::InputFrameKind::OmitTemplate
             ) && level.stored_is_exhausted() == Some(true) =>
@@ -513,8 +513,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
             Some(InputLevel {
                 storage:
-                    InputStorage::List(_)
-                    | InputStorage::StoredList(_)
+                    InputStorage::List { .. }
+                    | InputStorage::StoredList { .. }
                     | InputStorage::MacroBody(_)
                     | InputStorage::MacroArgument { .. },
                 ..

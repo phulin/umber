@@ -352,8 +352,8 @@ impl<G> ArgumentArena<G> {
         if let Some(
             row @ super::super::InputLevel {
                 storage:
-                    super::super::InputStorage::List(_)
-                    | super::super::InputStorage::StoredList(_)
+                    super::super::InputStorage::List { .. }
+                    | super::super::InputStorage::StoredList { .. }
                     | super::super::InputStorage::MacroBody(_)
                     | super::super::InputStorage::MacroArgument { .. },
                 ..

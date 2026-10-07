@@ -138,29 +138,33 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                     Some(ControlFlow::Break(status)) => return finished(status).map(Some),
                 }
             }
-            let (words, kind) = match &row.storage {
+            let (words, kind, start, suppress) = match &row.storage {
                 InputStorage::Source(_) => unreachable!("source loan handled above"),
                 InputStorage::MacroBody(body) => (
                     InputWords::Packed(body.body.definition_words()),
                     crate::fuel::RawDeliveryKind::StoredToken,
+                    body.body.parameter_len(),
+                    false,
                 ),
-                InputStorage::StoredList(list) => (
+                InputStorage::StoredList { list, flags, .. } => (
                     InputWords::Packed(list.words()),
                     crate::fuel::RawDeliveryKind::StoredToken,
+                    0,
+                    flags.contains(tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
                 ),
                 InputStorage::MacroArgument { region, slot } => (
                     levels.arguments.words(*region, *slot - 1),
                     crate::fuel::RawDeliveryKind::MacroArgument,
+                    0,
+                    false,
                 ),
-                InputStorage::List(_) => (
+                InputStorage::List { start, flags, .. } => (
                     InputWords::Traced(&levels.words),
                     crate::fuel::RawDeliveryKind::StoredToken,
+                    *start as usize,
+                    flags.contains(tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
                 ),
             };
-            let suppress = frame.flags().contains(
-                tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
-            );
-            let start = frame.start() as usize;
             let position = start
                 .checked_add(frame.position() as usize)
                 .ok_or_else(crate::CommandFailure::input_invariant)?;

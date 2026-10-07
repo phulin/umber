@@ -146,7 +146,7 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
             .ok_or(ScratchError::InvalidCoordinate)?;
         let mut count = 0;
         for word in words.iter() {
-            if !admission.admits(word.token_word(), self) {
+            if !admission.admits(word.token_word(), word.token_word().literal_catcode(), self) {
                 break;
             }
             self.writer
@@ -166,7 +166,7 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
     ) -> Result<usize, ScratchError> {
         let mut count = 0;
         for &word in &body.replacement_from(range.start as u32)[..range.len()] {
-            if !admission.admits(word, self) {
+            if !admission.admits(word, word.literal_catcode(), self) {
                 break;
             }
             self.writer
@@ -219,7 +219,7 @@ impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
             .ok_or(ScratchError::InvalidCoordinate)?;
         let mut count = 0;
         for word in words.iter() {
-            if !admission.admits(word.token_word(), self) {
+            if !admission.admits(word.token_word(), word.token_word().literal_catcode(), self) {
                 break;
             }
             self.push(word.token_word())?;
@@ -237,7 +237,7 @@ impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
     ) -> Result<usize, ScratchError> {
         let mut count = 0;
         for &word in &body.replacement_from(range.start as u32)[..range.len()] {
-            if !admission.admits(word, self) {
+            if !admission.admits(word, word.literal_catcode(), self) {
                 break;
             }
             self.push(word)?;
@@ -311,6 +311,7 @@ impl<'a, 'admission, G, const SCANNING: bool> ArgumentRunAdmission<'a, 'admissio
     pub(crate) fn admits<Sink: PlainRunSink<G>>(
         &mut self,
         word: TokenWord,
+        category: Option<Catcode>,
         sink: &mut Sink,
     ) -> bool {
         let depth = sink.brace_depth();
@@ -320,7 +321,7 @@ impl<'a, 'admission, G, const SCANNING: bool> ArgumentRunAdmission<'a, 'admissio
             return false;
         }
         let mut delta = 0;
-        let admitted = match word.literal_catcode() {
+        let admitted = match category {
             Some(Catcode::BeginGroup) if self.state.is_some() => {
                 delta = 1;
                 true

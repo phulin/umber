@@ -263,8 +263,10 @@ Definition-owned parameter programs expose literal delimiter views only for none
 - `src/ids.rs`: Opaque snapshot and font handles retained outside the deleted runtime-value ownership substrate.
 - `src/input.rs`: Storage-independent input policy, replay-kind, alignment
   phase, and source-id vocabulary shared with the command-owned input stack.
-- `src/packed_input.rs`: Fixed-width packed input-frame metadata and flags;
-  token/source replay payload ownership remains in `tex-command`. Its resident
+- `src/packed_input.rs`: compact common input identity, relative cursor, limit
+  and source attribution, plus input/replay vocabulary. The frame's duplicate
+  kind/flags and list-offset columns are deleted; actual replay storage owns
+  those facts in `tex-command`. Its resident
   advance consumes the safe storage read that already proved the admitted
   position, avoiding a second delivery-time bounds decision.
 - `src/interner.rs`: Bounded append-only session epoch for control-sequence

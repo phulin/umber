@@ -22,6 +22,11 @@ source annotation updates that owner directly. The typed resource need/cause
 packet retains its allocation through execution and session transfer. No error
 owner or annotation wrapper is constructed during successful expansion.
 
+[Compact native input rows](compact_native_input_rows.md) defines their cursor
+and storage contract. Source attribution remains with each frame; only actual
+replay owners store list kind, flags and shared-vector offsets. Macro and
+argument geometry indexes their real replacement/argument slices directly.
+
 ## Current source and target differences
 
 | Area                  | Current owner/path                                                                                                                                                        | Required lifetime and remaining work                                                                                                                                                                                                                                                                                                                                                                     |
