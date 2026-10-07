@@ -207,6 +207,13 @@ pub(super) struct ExecutionState<G> {
 }
 
 impl<G> ExecutionState<G> {
+    #[inline]
+    pub(super) fn page_region_succession_ready(&self) -> bool {
+        self.page_region_succession_pending
+            && self.boxes.active_boxes.is_empty()
+            && !self.modes.retains_page_node_handles()
+    }
+
     pub(super) fn with_modes(modes: ModeNest) -> Self {
         Self {
             pure_memo: Arc::default(),

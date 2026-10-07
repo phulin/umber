@@ -231,3 +231,38 @@ fn page_succession_waits_for_empty_box_construction_owners() {
         });
     }
 }
+
+#[test]
+fn blocked_page_succession_keeps_empty_box_body_in_the_command_loop() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\hbox{\global\count0=1 \global\count1=2 \kern1pt}\end",
+        );
+        control.advance(stores).expect("open actual construction");
+        control.execution.page_region_succession_pending = true;
+
+        // A request that cannot rotate this live construction must not end
+        // the native reader after each assignment. The box close itself is
+        // the real host boundary, once its construction authority is gone.
+        let mut completed = 0;
+        control
+            .interpret_chunk(
+                stores,
+                &mut DiagnosticEffects::new(),
+                false,
+                &mut None,
+                128,
+                &mut completed,
+            )
+            .expect("consume the box body through its actual closing boundary");
+        assert_eq!(stores.count(0).expect("first assignment"), 1);
+        assert_eq!(stores.count(1).expect("second assignment"), 2);
+        assert!(control.execution.boxes.active_boxes.is_empty());
+        run_to_end(&mut control, stores);
+        assert!(stores.copy_box_to_page(0).is_some());
+        let terminal = terminal_text(stores);
+        assert!(!terminal.contains("! "), "{terminal}");
+    });
+}

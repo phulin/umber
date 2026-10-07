@@ -188,8 +188,7 @@ impl<'state, 'host, G, const LOOKAHEAD: bool>
                         || execution.paragraph_checkpoint_cut
                         || execution.prepared_shipout.is_some()
                         || execution.prepared_pdf_form.is_some()
-                        || (execution.page_region_succession_pending
-                            && !execution.modes.retains_page_node_handles())
+                        || execution.page_region_succession_ready()
                         || (!execution.boxes.output_routine_active
                             && (context.page_fire_up().is_some()
                                 || context.page_builder_resume_after_output_pending())),

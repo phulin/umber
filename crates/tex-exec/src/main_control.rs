@@ -681,10 +681,7 @@ impl<G> MainControl<G> {
     }
 
     fn finish_pending_page_region_succession(&mut self, stores: &mut Universe<G>) {
-        if !self.execution.page_region_succession_pending
-            || !self.execution.boxes.active_boxes.is_empty()
-            || self.execution.modes.retains_page_node_handles()
-        {
+        if !self.execution.page_region_succession_ready() {
             return;
         }
         self.prepare_page_region_succession(stores)

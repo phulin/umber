@@ -106,9 +106,11 @@ transfer returns the original mark before changing either lane.
 
 Page succession also waits for the actual active box stack to empty. An open
 box owns its construction boundary even before it publishes a node, so empty
-mode lists alone do not authorize retiring or advancing its region. This cold
-boundary reads the existing stack length; it adds no root registry or hot-loop
-bookkeeping. TeX82 §§1086/1089 and pdfTeX's corresponding `box_end`/`package`
+mode lists alone do not authorize retiring or advancing its region. The execution
+owner supplies one live eligibility query to the interpreter continuation and the
+cold succession boundary. A blocked request cannot interrupt the reader merely
+to retry the same ineligible transition. The query reads existing owners; it adds
+no root registry, cached readiness, or hot-loop bookkeeping. TeX82 §§1086/1089 and pdfTeX's corresponding `box_end`/`package`
 keep that construction live until the box is packaged into its destination.
 
 A move of the entire envelope transfers that envelope directly. Splitting at

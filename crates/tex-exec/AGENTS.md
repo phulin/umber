@@ -468,7 +468,9 @@ setbox still leaves the body head unread after its actual optional-equals scan.
 group ownership, case/category-independent keyword behavior, failed-prefix
 recovery, brace aliases, tracing and everybox mode ordering. Empty
 constructions retain their actual region authority; page succession checks
-the existing box stack before retiring a rootless predecessor.
+the existing box stack before retiring a rootless predecessor. The interpreter
+and cold boundary share the execution owner's live eligibility query; blocked
+succession cannot repeatedly interrupt empty box-body commands.
 
 Full-access word callbacks in native operand grammars lend a synchronous
 `dyn FnMut` through `terminal_consumer`; their closure types no longer
