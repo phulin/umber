@@ -959,6 +959,11 @@ retains the real write-text scan and sentinel expansion; the former
 `ImmediateExtension` request union and command reconstruction scanner are deleted.
 
 Resident grammars and the native interpreter use concrete consumers. Full-processor callbacks borrow one erased synchronous callback type so their closure types do not clone the expanded reader.
+Raw operand callbacks remain concrete so immediate spelling/compare returns
+can simplify at their caller. Spelling-only raw reads skip meaning resolution
+outside active scanner validation; actual alignment, suppression, recovery and
+observation still resolve their needed meaning. No unused ordinary meaning loan
+is delivered.
 `consume_main_source_characters` lends the actual source suffix to the live
 horizontal builder with explicit operation and fuel bounds. It shares the
 canonical source cursor and constructs no ordinary command or token list.

@@ -60,29 +60,27 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             &mut |_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _| ControlFlow::Continue(Err(())),
             &mut |_, processor, word, origin, suppress, site, kind, _| {
                 let literal = word.literal_catcode();
-                let mut meaning = None;
-                let mut lookup = false;
-                let outer =
-                    if literal.is_some_and(|cat| cat != Catcode::Active) && !OBSERVED && !MEANING {
-                        false
-                    } else {
-                        let (resolved, control_sequence) = processor.resolve_token_word(word);
-                        lookup = word.requires_meaning_lookup();
-                        let outer = resolved.is_outer();
-                        meaning = Some((resolved, control_sequence));
-                        outer
-                    };
-                processor.record_consumed_word(kind, lookup);
-                let exceptional = OBSERVED
+                let mode = processor.command.delivery_mode;
+                let mut exceptional = OBSERVED
                     || processor.outer_recovered_while_matching
                     || processor.eof_recovered_while_matching
-                    || processor
-                        .command
-                        .delivery_mode
-                        .requires_semantic_settlement(suppress, outer);
+                    || mode.requires_semantic_settlement(suppress, false);
+                let validate_outer =
+                    mode.scanner_active() && !literal.is_some_and(|cat| cat != Catcode::Active);
+                let meaning = if MEANING || exceptional || validate_outer {
+                    let (resolved, control_sequence) = processor.resolve_token_word(word);
+                    exceptional |= mode.scanner_active() && resolved.is_outer();
+                    Some((resolved, control_sequence))
+                } else {
+                    None
+                };
+                processor.record_consumed_word(
+                    kind,
+                    meaning.is_some() && word.requires_meaning_lookup(),
+                );
                 if exceptional {
                     let (meaning, control_sequence) =
-                        meaning.unwrap_or_else(|| processor.resolve_token_word(word));
+                        meaning.expect("exceptional raw delivery resolved its meaning");
                     let mut command = CurrentCommand::from_delivered_parts(
                         word,
                         origin,
@@ -143,7 +141,11 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let result = consume(
                     processor,
                     TracedTokenWord::from_parts(word, origin),
-                    meaning.as_ref().map(|(meaning, _)| meaning),
+                    if MEANING {
+                        meaning.as_ref().map(|(meaning, _)| meaning)
+                    } else {
+                        None
+                    },
                     None,
                 )?;
                 processor.create_source_control_sequences = CREATE_CS && result.is_continue();

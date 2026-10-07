@@ -305,6 +305,71 @@ fn resumed_replacement_reads_the_live_meaning_after_backup() {
 }
 
 #[test]
+fn raw_spelling_preserves_outer_token_and_later_live_meaning() {
+    for observed in [false, true] {
+        crate::test_harness::with_universe(|universe| {
+            let definition = universe.allocate_definition(&[], &[]).expect("definition");
+            let name = universe.intern("outer-raw").expect("macro name");
+            universe
+                .assign_meaning(
+                    name,
+                    definition.meaning(MeaningFlags::OUTER),
+                    AssignmentScope::Global,
+                )
+                .expect("outer macro");
+            let token = Token::Cs(name.symbol());
+            let mut command = CommandState::default();
+            crate::test_harness::push(&mut command, [token]);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut observer = RecordingObserver::default();
+            let mut context = universe.command_context().expect("context");
+            let processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut processor = if observed {
+                processor.with_observer(&mut observer)
+            } else {
+                processor
+            };
+            #[cfg(feature = "profiling")]
+            let before = tex_state::meaning::direct_command_delivery_counters();
+            let spelling = processor
+                .get_token_spelling()
+                .expect("outer is legal outside scanners")
+                .expect("raw token");
+            assert_eq!(spelling.semantic_token(), token);
+            #[cfg(feature = "profiling")]
+            assert_eq!(
+                tex_state::meaning::direct_command_delivery_counters().dense_row_accesses
+                    - before.dense_row_accesses,
+                u64::from(observed),
+                "spelling-only delivery needs no meaning lookup; observation needs one",
+            );
+            processor.back_input_token(spelling).expect("backup");
+            processor
+                .state
+                .assign_meaning(
+                    name.symbol(),
+                    MeaningWord::from_static(Meaning::CharGiven('B')),
+                    AssignmentScope::Global,
+                )
+                .expect("redefine backed-up token");
+            assert_eq!(
+                crate::test_harness::expect_expanded_command(&mut processor).meaning(),
+                Meaning::CharGiven('B'),
+            );
+            assert!(processor.command.semantic_diagnostics.is_empty());
+        });
+    }
+}
+
+#[test]
 fn reused_raw_destination_is_cleared_at_eof_and_fuel_failure() {
     for limit in [2, 3] {
         crate::test_harness::with_universe(|universe| {

@@ -24,6 +24,20 @@ at full-access terminal delivery. Its immutable word/meaning loans end when
 the callback returns. Native interpreter and resident grammar consumers do
 not use this erased callback entry.
 
+Raw operand callbacks remain concrete. Unlike expanded terminals, many raw
+callers immediately return a single spelling or compare one compulsory token;
+their callback and return branch must remain available for caller simplification.
+The raw reader delivers a meaning loan only when requested or when the actual
+exceptional delivery already owns one. Ordinary spelling-only reads outside an
+active scanner do not resolve a meaning just to test outerness: no outer
+restriction applies there. Matching and other active scanners still validate
+live outer meanings. Alignment, suppression, recovery and observation resolve
+their demanded meaning at the actual exceptional delivery boundary.
+
+This is the same synchronous raw reader and the same control-sequence creation
+scope. No retained callback, meaning cache, fast-path owner or completion stage
+is introduced.
+
 ## Nested scans and checkpoints
 
 The callback borrow belongs to its synchronous scanner call. Nested scans
