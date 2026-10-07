@@ -1,5 +1,10 @@
 # Docs Guidance
 
+`radical_hot_loop.md` proposes the flat machine: `u32` tokens, one `u64` eqtb
+with epoch/level metadata, one token memory, compact frames, a LIFO argument
+bank, first-touch checkpoint undo and in-band halts. It records the
+measurements of its prototype in `tools/flat-machine-prototype`.
+
 `terminal_callback_ownership.md` defines borrowed full-access callbacks sharing
 one compiled reader, with concrete resident consumers and existing checkpoints.
 
