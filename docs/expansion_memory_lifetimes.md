@@ -530,6 +530,12 @@ that fact. Reporting, tracing, character flushing and observation still use
 their actual full delivery/entry boundaries. Fuel charges precede each frame
 advance, including the word that ends an operation budget.
 
+The selected storage loan traverses that suffix directly. Its separately
+outlined span function and temporary borrowed-reference closure are deleted;
+packed and traced projections share the same lexical traversal body. The
+frame, iterator and admission scalars leave scope before any full-access
+callback, with no additional owner or persistent reader state.
+
 The resident reader borrows immutable live meaning rows separately from the
 actual journal, lineage and dependency bookkeeping. Its terminal consumer borrows
 that restricted group authority and statically typed host facts disjoint from

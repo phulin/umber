@@ -6,47 +6,6 @@ use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
 
-/// The borrowed span has no full processor callback. Its iterator and
-/// admission temporaries leave the native stack before recursive expansion.
-#[inline(never)]
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn consume_span<Word: Copy, Consumer, R, Admission, const PARAMETERS: bool>(
-    words: &[Word],
-    frame: &mut tex_state::packed_input::InputFrame,
-    consumer: &mut Consumer,
-    fuel: &mut crate::fuel::CommandFuel,
-    project: impl Fn(Word) -> (TokenWord, OriginId),
-    admit: &mut impl FnMut(
-        &mut Consumer,
-        &mut crate::fuel::CommandFuel,
-        TokenWord,
-        OriginId,
-        bool,
-    ) -> ControlFlow<R, Result<(), Admission>>,
-) -> Result<Option<ControlFlow<R, (TokenWord, OriginId, Admission)>>, CommandError> {
-    for &packed in words {
-        let (word, origin) = project(packed);
-        if PARAMETERS && word.out_parameter_slot().is_some() {
-            return Ok(None);
-        }
-        frame.advance_resident();
-        match admit(
-            consumer,
-            fuel,
-            word,
-            origin,
-            frame.position() < frame.limit(),
-        ) {
-            ControlFlow::Continue(Ok(())) => fuel.charge()?,
-            ControlFlow::Continue(Err(admission)) => {
-                return Ok(Some(ControlFlow::Continue((word, origin, admission))));
-            }
-            ControlFlow::Break(result) => return Ok(Some(ControlFlow::Break(result))),
-        }
-    }
-    Ok(None)
-}
-
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// Settles a drained frame or a replacement parameter after a bulk scan.
     pub(crate) fn settle_resident_run_boundary(&mut self) -> Result<bool, CommandError> {
@@ -210,38 +169,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 let entered_line =
                     u32::try_from(self.command.roots.input.retained_file_line_number).unwrap_or(0);
                 let state = &mut *self.state;
+                let fuel = &mut *self.fuel;
                 let effects = &mut *self.diagnostic_effects;
                 let alignment = &mut self.command.roots.alignment;
                 let facts = &mut self.host.facts;
                 let input_usage = &mut self.command.stack_usage.input_stack;
                 let admit_word = &mut *admit;
-                let admit = &mut {
-                    #[inline(always)]
-                    move |consumer: &mut Consumer,
-                          fuel: &mut crate::fuel::CommandFuel,
-                          word,
-                          origin,
-                          frame_live| {
-                        admit_word(
-                            consumer,
-                            state,
-                            fuel,
-                            input_usage,
-                            input_depth,
-                            frame_live,
-                            effects,
-                            alignment,
-                            facts,
-                            entered_line,
-                            macro_origin,
-                            word,
-                            origin,
-                            suppress,
-                            kind,
-                            mode,
-                        )
-                    }
-                };
                 let limit = start
                     .checked_add(frame.limit() as usize)
                     .ok_or_else(CommandError::input_invariant)?;
@@ -252,9 +185,43 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                 // the whole prefix and charges each next word after acceptance.
                 macro_rules! consume_words {
                     ($words:expr, $project:expr, $parameters:expr) => {
-                        consume_span::<_, _, _, _, $parameters>(
-                            $words, frame, consumer, self.fuel, $project, admit,
-                        )
+                        'span: {
+                            let mut words = $words.iter();
+                            while let Some(&packed) = words.next() {
+                                let (word, origin) = $project(packed);
+                                if $parameters && word.out_parameter_slot().is_some() {
+                                    break 'span None;
+                                }
+                                frame.advance_resident();
+                                match admit_word(
+                                    consumer,
+                                    state,
+                                    fuel,
+                                    input_usage,
+                                    input_depth,
+                                    !words.as_slice().is_empty(),
+                                    effects,
+                                    alignment,
+                                    facts,
+                                    entered_line,
+                                    macro_origin,
+                                    word,
+                                    origin,
+                                    suppress,
+                                    kind,
+                                    mode,
+                                ) {
+                                    ControlFlow::Continue(Ok(())) => fuel.charge()?,
+                                    ControlFlow::Continue(Err(admission)) => {
+                                        break 'span Some((word, origin, admission));
+                                    }
+                                    ControlFlow::Break(result) => {
+                                        return Ok(Some(result));
+                                    }
+                                }
+                            }
+                            None
+                        }
                     };
                 }
                 let packed = |word| (word, OriginId::UNKNOWN);
@@ -269,10 +236,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         consume_words!(words, traced, false)
                     }
                     (InputWords::Traced(words), _) => consume_words!(words, traced, true),
-                }?;
+                };
                 match result {
-                    Some(ControlFlow::Continue(boundary)) => boundary,
-                    Some(ControlFlow::Break(result)) => return Ok(Some(result)),
+                    Some(boundary) => boundary,
                     None => {
                         if frame.position() < frame.limit() {
                             self.substitute_resident_parameter()?;

@@ -282,9 +282,10 @@ exact fuel, plus contextual matching/tracing as interruption controls.
   storage selection, calling the selected scalar consumer at a boundary. Raw delivery
   uses the same reader with single-word or continuing admission. Directly borrows the exposed semantic
   input frame and advances its existing physical reader. Input frames own
-  cursor state directly. Every retained consumer uses one outlined traversal
-  whose loans end before full interpretation. There is no traversal policy
-  flag or inline forwarding wrapper. Input frames own
+  cursor state directly. The selected storage loan traverses its words directly;
+  the separately outlined span function and borrowed-reference closure adapter
+  are deleted. Its loans end before full interpretation. There is no traversal
+  policy flag or forwarding wrapper. Input frames own
   reader state across nesting and rollback; delivery has no parallel cached
   storage tag or reader invalidation protocol. Source-token admission retains
   the actual source slot and its lexer cursor across accepted terminals in the
@@ -331,13 +332,11 @@ exact fuel, plus contextual matching/tracing as interruption controls.
   invocation facts without a command or delivery geometry. Resolution returns
   only demanded control-sequence identity; literal and lookup facts stay in
   the original input word. Raw command construction returns no metadata.
-- `src/processor/expand/skipping.rs`: TeX82 §494's continuing raw consumer.
-  Source and resident words update actual brace/conditional nesting directly;
-  only an unmatched delimiter completes the skip. Ordinary skipped words have
-  no command or effect product. Observation, suppression, outer recovery and
-  alignment construct their demanded command inside this same consumer.
-  The shared reader reserves fuel across cold transitions and charges each
-  additional resident word before advancing the authoritative frame.
+- `src/processor/expand/skipping.rs`: TeX82 §494's completing raw consumer on
+  the same reader, classifying native conditional and delimiter keys directly.
+  Its admitted per-word grammar is inlined; the discarded primitive/kind
+  conversion and its outlined call are removed. Live outer validation,
+  observed/recovered meanings, nesting, alignment and fuel remain canonical.
 - `src/processor/expand/primitive.rs`: the sole primitive expansion engine from
   native opcode, traced invocation spelling and control-sequence identity. It
   retains capacity and resource unwind, outlines real conditional/nonconditional

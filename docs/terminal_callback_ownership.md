@@ -38,6 +38,40 @@ This is the same synchronous raw reader and the same control-sequence creation
 scope. No retained callback, meaning cache, fast-path owner or completion stage
 is introduced.
 
+## Resident traversal placement
+
+A short parameterless macro retains its actual immutable body and installs one
+input row. Its two terminal words need no full-processor callback. The dense
+activation measurement, with identical terminal streams, nevertheless finds
+about 634 native instructions per child activation against 216 in the pinned
+pdfTeX oracle. Sampling places most work in the enclosing main-control reader
+and its separately outlined resident span call. The reader constructs a
+closure borrowing its disjoint owners on every span entry, spills those
+references for the call, then decodes the returned boundary before continuing.
+
+The physical word traversal belongs directly inside the selected storage loan.
+Remove the separately outlined `consume_span` function and its closure adapter.
+One local traversal body admits words through the existing concrete consumer;
+packed and traced storage use their actual projections of that same body.
+Ordinary acceptance advances the final frame and charges the next word in
+place. A parameter marker or exhaustion returns to the existing input
+transition; a declined word releases the same lexical loan before the
+full-access callback. Macro activation, scanning and execution still occur
+only after that borrow ends.
+
+The admitted slice already ends at the frame limit. Its iterator's remaining
+suffix therefore supplies the exact `frame_live` fact after each word, with
+no second frame-limit read. Fuel is borrowed once with the other disjoint
+owners. Each accepted word still advances the actual frame before admission;
+no copied cursor or deferred position write is introduced.
+
+This deletes a call boundary and its temporary reference packet. It creates no
+second reader, retained cursor, macro frame, callback owner or completion
+phase. The word iterator and admission scalars have lexical scope inside the
+loan. Check generated stack size and recursive expansion tests as well as
+instruction and cycle measurements: compiler spills can survive removal of
+the source-level function, and larger enclosing code can lose performance.
+
 ## Nested scans and checkpoints
 
 The callback borrow belongs to its synchronous scanner call. Nested scans

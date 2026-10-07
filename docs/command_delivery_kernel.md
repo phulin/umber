@@ -991,13 +991,16 @@ inserted zero, rather than storing a diagnostic site for immediate consumption
 after reading stops. Full numeric entry stays out of line so its recovery
 temporaries do not enlarge the recursive reader frame.
 
-Recursive scanners traverse the selected suffix in a small borrowed reader
-call with no full processor callback. On a declined word it returns the existing spelling,
-origin and resolved-meaning boundary scalars. Its iterator and admission
-temporaries leave the native stack before full interpretation can recursively
-expand an operand. Main control and scanners use this same scoped traversal;
-no second cursor, input owner or checkpoint state is introduced. No runtime
-reader-role choice is made at span entry.
+Recursive scanners and main control traverse the selected suffix directly in
+its storage loan, with no full processor callback. On a declined word the
+loan yields the existing spelling, origin and resolved-meaning boundary
+scalars. Its iterator and admission temporaries leave lexical scope before
+full interpretation can recursively expand an operand. The separately
+outlined span function and closure borrowing disjoint reader owners are
+deleted; the concrete grammar runs inside the selected loan. No second
+cursor, input owner, checkpoint state or reader-role choice is introduced.
+Generated recursive stack frames and the explicit native-stack tests must
+validate this placement as well as instruction and cycle measurements.
 
 The shared restricted reader resolves ordinary control sequences live and,
 for consumers that statically request literals, projects nonactive character
@@ -1036,9 +1039,33 @@ source/expansion transition, rejects restricted admission for observation,
 alignment or suppressed expansion, and handles recovery through full delivery.
 
 The restricted meaning-admission closure stays inline in each consumer's
-specialization. Recursive scanners keep their existing small outlined suffix
-call, but its per-token grammar runs inside that suffix; it must not call a
-second closure for each admitted token.
+specialization and runs inside that same loan; it must not call a second
+closure for each admitted token.
+
+## Direct conditional-skip grammar
+
+The completing skip consumer needs only two facts from a live meaning: whether
+it opens a nested conditional, or names an unmatched `\fi`, `\else` or
+`\or`. It classifies the actual native execution key directly. Conditional
+key ranges use their symbolic primitive endpoints; no primitive or
+`ConditionalKind` value is constructed and then discarded. The same
+classification consumes the settled native meaning on observed or recovery
+paths. Saturating nested opens and the exact nested `\fi` decrement remain
+TeX grammar state, with no new stack or cached classification.
+
+The admitted skip grammar belongs inside the reader's selected storage loan.
+Its concrete admission closure is inlined there; an out-of-line call for each
+ordinary word adds no semantic boundary. Live outer validation, including the
+frozen end-template's outer meaning, precedes classification. Literal brace
+accounting and exact fuel remain on the shared reader. Active characters,
+outer recovery, alignment, suppression and observation still enter full
+delivery after that input loan ends.
+
+This removes the per-word admission and unused kind-conversion calls. It does
+not change conditional evaluation, introduce another skipper or weaken a
+boundary. Inspect generated loops for per-word calls, code growth and stack
+changes, then validate document instructions and cycles together. Removing a
+call or reducing instructions alone does not establish a speedup.
 
 ## One terminal classification
 

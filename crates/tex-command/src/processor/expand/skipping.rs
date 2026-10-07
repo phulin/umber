@@ -2,27 +2,45 @@
 
 use super::ReadSite;
 use crate::command::CurrentCommand;
-use crate::conditionals::{ConditionalDelimiter, ConditionalKind, PassTextStop};
+use crate::conditionals::{ConditionalDelimiter, PassTextStop};
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use std::cell::Cell;
 use std::ops::ControlFlow;
-use tex_state::meaning::{ExpandablePrimitive, MeaningWord};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningWord};
 use tex_state::token::Catcode;
+
+const fn primitive_key(primitive: ExpandablePrimitive) -> u64 {
+    MeaningWord::<()>::from_static(Meaning::ExpandablePrimitive(primitive)).execution_key()
+}
+
+const IF_TRUE: u64 = primitive_key(ExpandablePrimitive::IfTrue);
+const IF_EOF: u64 = primitive_key(ExpandablePrimitive::IfEof);
+const IF_DEFINED: u64 = primitive_key(ExpandablePrimitive::IfDefined);
+const IF_FONT_CHAR: u64 = primitive_key(ExpandablePrimitive::IfFontChar);
+const IF_IN_CSNAME: u64 = primitive_key(ExpandablePrimitive::IfInCsName);
+const IF_PDF_PRIMITIVE: u64 = primitive_key(ExpandablePrimitive::IfPdfPrimitive);
+const IF_PDF_ABS_DIM: u64 = primitive_key(ExpandablePrimitive::IfPdfAbsDim);
+const FI: u64 = primitive_key(ExpandablePrimitive::Fi);
+const ELSE: u64 = primitive_key(ExpandablePrimitive::Else);
+const OR: u64 = primitive_key(ExpandablePrimitive::Or);
 
 /// Only an unmatched delimiter completes §494. Other commands have no product.
 #[inline(always)]
-fn consume_conditional(
-    primitive: ExpandablePrimitive,
+fn consume_meaning<G>(
+    meaning: &MeaningWord<G>,
     nested: &Cell<u32>,
 ) -> Option<ConditionalDelimiter> {
-    if ConditionalKind::from_primitive(primitive).is_some() {
-        nested.set(nested.get().saturating_add(1));
-        return None;
-    }
-    let delimiter = match primitive {
-        ExpandablePrimitive::Fi => ConditionalDelimiter::Fi,
-        ExpandablePrimitive::Else => ConditionalDelimiter::Else,
-        ExpandablePrimitive::Or => ConditionalDelimiter::Or,
+    let delimiter = match meaning.execution_key() {
+        IF_TRUE..=IF_EOF
+        | IF_DEFINED..=IF_FONT_CHAR
+        | IF_PDF_PRIMITIVE..=IF_PDF_ABS_DIM
+        | IF_IN_CSNAME => {
+            nested.set(nested.get().saturating_add(1));
+            return None;
+        }
+        FI => ConditionalDelimiter::Fi,
+        ELSE => ConditionalDelimiter::Else,
+        OR => ConditionalDelimiter::Or,
         _ => return None,
     };
     if nested.get() == 0 {
@@ -32,14 +50,6 @@ fn consume_conditional(
         nested.set(nested.get() - 1);
     }
     None
-}
-
-#[inline(always)]
-fn consume_meaning<G>(
-    meaning: &MeaningWord<G>,
-    nested: &Cell<u32>,
-) -> Option<ConditionalDelimiter> {
-    consume_conditional(meaning.expandable_primitive()?, nested)
 }
 
 impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
@@ -72,26 +82,29 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             false,
             &|_, suppress, mode| !OBSERVED && !suppress && !mode.requires_persistent_settlement(),
             &mut |_| {},
-            &mut |_, state, fuel, _, _, _, _, alignment, _, _, _, word, _, _, kind, _mode| {
-                let literal = word.literal_catcode();
-                let stop = if literal.is_some_and(|cat| cat != Catcode::Active) {
-                    None
-                } else {
-                    let Some(symbol) = word.control_sequence() else {
-                        return ControlFlow::Continue(Err(()));
+            &mut {
+                #[inline(always)]
+                |_, state, fuel, _, _, _, _, alignment, _, _, _, word, _, _, kind, _mode| {
+                    let literal = word.literal_catcode();
+                    let stop = if literal.is_some_and(|cat| cat != Catcode::Active) {
+                        None
+                    } else {
+                        let Some(symbol) = word.control_sequence() else {
+                            return ControlFlow::Continue(Err(()));
+                        };
+                        let meaning = *state.compact_control_sequence_meaning_word(symbol);
+                        if meaning.is_outer() {
+                            return ControlFlow::Continue(Err(()));
+                        }
+                        consume_meaning(&meaning, &nested)
                     };
-                    let meaning = *state.compact_control_sequence_meaning_word(symbol);
-                    if meaning.is_outer() {
-                        return ControlFlow::Continue(Err(()));
-                    }
-                    consume_meaning(&meaning, &nested)
-                };
-                alignment.account_literal_catcode(literal);
-                #[cfg(feature = "profiling")]
-                fuel.record_raw_run(_mode.scanner_active(), kind, 1);
-                #[cfg(not(feature = "profiling"))]
-                let _ = (fuel, kind);
-                stop.map_or(ControlFlow::Continue(Ok(())), ControlFlow::Break)
+                    alignment.account_literal_catcode(literal);
+                    #[cfg(feature = "profiling")]
+                    fuel.record_raw_run(_mode.scanner_active(), kind, 1);
+                    #[cfg(not(feature = "profiling"))]
+                    let _ = (fuel, kind);
+                    stop.map_or(ControlFlow::Continue(Ok(())), ControlFlow::Break)
+                }
             },
             &mut |_, processor, word, origin, suppress, site, kind, _| {
                 let literal = word.literal_catcode();
@@ -135,9 +148,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         processor.begin_scalar_alignment_v_template(&command)?;
                         return Ok(ControlFlow::Continue(()));
                     }
-                    command
-                        .expandable_primitive()
-                        .and_then(|primitive| consume_conditional(primitive, &nested))
+                    consume_meaning(command.native_meaning(), &nested)
                 } else {
                     if matches!(site, ReadSite::Source(_))
                         && let Some(location) = processor.pending_diagnostic_location.take()
