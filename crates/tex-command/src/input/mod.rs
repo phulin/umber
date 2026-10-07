@@ -401,7 +401,9 @@ pub(crate) fn tracked_input_projection<G>(
                 }
                 if !matches!(
                     row.storage,
-                    InputStorage::List { .. } | InputStorage::StoredList { .. }
+                    InputStorage::Word { .. }
+                        | InputStorage::List { .. }
+                        | InputStorage::StoredList { .. }
                 ) {
                     return None;
                 }
@@ -655,7 +657,8 @@ impl<G> InputState<G> {
                             return true;
                         }
                     }
-                    InputStorage::List { .. }
+                    InputStorage::Word { .. }
+                    | InputStorage::List { .. }
                     | InputStorage::StoredList { .. }
                     | InputStorage::MacroArgument { .. } => {
                         if Self::token_context_level(stores, &self.levels, row, current, widths)
@@ -733,7 +736,8 @@ impl<G> InputState<G> {
                 InputStorage::MacroBody(body) => {
                     Self::macro_body_context_level(stores, &self.levels, row, body, widths)
                 }
-                InputStorage::List { .. }
+                InputStorage::Word { .. }
+                | InputStorage::List { .. }
                 | InputStorage::StoredList { .. }
                 | InputStorage::MacroArgument { .. } => Self::token_context_level(
                     stores,

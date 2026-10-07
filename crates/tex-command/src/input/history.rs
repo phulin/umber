@@ -530,7 +530,7 @@ impl<G> InputStack<G> {
     /// Copies a quiescent stack for a checkpoint capture.
     ///
     /// Quiescence excludes macro bodies and arguments, so the live parameter
-    /// count is zero and every token row is a plain list.
+    /// count is zero and every token row owns replay spelling.
     pub(crate) fn checkpoint_copy(&self) -> Self {
         debug_assert!(self.arguments.is_empty());
         debug_assert_eq!(self.parameter_count, 0);
@@ -598,6 +598,7 @@ impl<G> InputStack<G> {
         }
         match &row.storage {
             super::InputStorage::Source(_) => None,
+            super::InputStorage::Word { word, .. } => (index == 0).then_some(*word),
             super::InputStorage::StoredList { list, .. } => {
                 Some(tex_state::token::TracedTokenWord::from_parts(
                     list.word_at(index as usize)?,
@@ -738,7 +739,8 @@ impl<G> InputStack<G> {
             Some(
                 row @ InputLevel {
                     storage:
-                        InputStorage::List { .. }
+                        InputStorage::Word { .. }
+                        | InputStorage::List { .. }
                         | InputStorage::StoredList { .. }
                         | InputStorage::MacroBody(_)
                         | InputStorage::MacroArgument { .. },
@@ -1042,7 +1044,9 @@ impl<G> crate::CommandState<G> {
                     .map_err(|_| crate::CommandFailure::input_invariant())?;
                 (count, false)
             }
-            super::InputStorage::List { .. } | super::InputStorage::StoredList { .. } => {
+            super::InputStorage::Word { .. }
+            | super::InputStorage::List { .. }
+            | super::InputStorage::StoredList { .. } => {
                 return Ok(ResidentRun::default());
             }
         };
@@ -1358,7 +1362,8 @@ impl<G> InputStack<G> {
         if let Some(
             row @ InputLevel {
                 storage:
-                    InputStorage::List { .. }
+                    InputStorage::Word { .. }
+                    | InputStorage::List { .. }
                     | InputStorage::StoredList { .. }
                     | InputStorage::MacroBody(_)
                     | InputStorage::MacroArgument { .. },
@@ -1394,7 +1399,7 @@ impl<G> InputStack<G> {
             super::InputStorage::List { start, .. } => {
                 words.truncate(*start as usize);
             }
-            super::InputStorage::StoredList { .. } => {}
+            super::InputStorage::Word { .. } | super::InputStorage::StoredList { .. } => {}
             super::InputStorage::MacroBody(body) => {
                 if let Some(region) = body.argument_region {
                     *parameter_count -= arguments.argument_count(region);

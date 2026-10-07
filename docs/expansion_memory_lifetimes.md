@@ -1,5 +1,10 @@
 # Expansion memory lifetimes
 
+Individual input replay words are owned directly by their authoritative row;
+they have no transient-vector offset, append or truncation obligation.
+The sole reader borrows that spelling and capture copies the same scalar owner.
+Explicitly linkable e-TeX aftergroup input keeps its actual vector span.
+
 Status: current source map, 2026-10-02.
 
 [Full checkpoints and TeX group ownership](aggregate_checkpoint_contract.md)

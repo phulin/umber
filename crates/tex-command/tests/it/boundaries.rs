@@ -325,7 +325,21 @@ fn macro_stack_conservation_reads_only_admitted_cursor_bounds() {
         .and_then(|tail| tail.split("/// Names the tex.web").next())
         .expect("locate stack-conservation transition");
 
-    assert!(conservation.contains("level.stored_is_exhausted()"));
+    let depletion = conservation
+        .split("fn depleted_input_top(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn drain_depleted_input(").next())
+        .expect("locate native cursor-bound admission");
+    let cursor_check = depletion
+        .find("row.frame.position() < row.frame.limit()")
+        .expect("conservation reads the authoritative cursor bounds");
+    let classification = depletion
+        .find("match &row.storage")
+        .expect("exhausted owner selects its treatment");
+    assert!(
+        cursor_check < classification,
+        "live rows must return before replay classification"
+    );
     assert_eq!(conservation.matches("cursor.is_exhausted()").count(), 0);
     assert!(!conservation.contains("stored_indexed_token_at_cold"));
     assert!(!conservation.contains("cursor.token_at("));

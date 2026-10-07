@@ -10,6 +10,9 @@ payloads, first-origin annotation and payload-free successful unit returns.
 geometry, replay-owned flags/offsets, preserved source attribution and direct
 capture/retirement contract.
 
+`inline_input_words.md` defines row-owned individual replay spelling, the sole
+reader/checkpoint projections and the distinct linkable aftergroup contract.
+
 `font_identity_lookup.md` defines immutable generated-font lookup, its
 rollback-coupled derived index, and the current realized-font identity API.
 

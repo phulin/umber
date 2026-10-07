@@ -140,6 +140,12 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             }
             let (words, kind, start, suppress) = match &row.storage {
                 InputStorage::Source(_) => unreachable!("source loan handled above"),
+                InputStorage::Word { word, flags, .. } => (
+                    InputWords::Traced(std::slice::from_ref(word)),
+                    crate::fuel::RawDeliveryKind::StoredToken,
+                    0,
+                    flags.contains(tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE),
+                ),
                 InputStorage::MacroBody(body) => (
                     InputWords::Packed(body.body.definition_words()),
                     crate::fuel::RawDeliveryKind::StoredToken,

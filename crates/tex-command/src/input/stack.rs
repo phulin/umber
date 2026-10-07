@@ -330,6 +330,7 @@ impl<G> CommandState<G> {
                 let InputLevel { frame, storage } = level;
                 let owned = match storage {
                     InputStorage::Source(_) => 0,
+                    InputStorage::Word { .. } => frame.limit(),
                     InputStorage::List {
                         ownership:
                             super::PackedTokenOwnership::Transient
@@ -572,7 +573,8 @@ impl<G> CommandState<G> {
 
         let row @ InputLevel {
             storage:
-                InputStorage::List { .. }
+                InputStorage::Word { .. }
+                | InputStorage::List { .. }
                 | InputStorage::StoredList { .. }
                 | InputStorage::MacroBody(_)
                 | InputStorage::MacroArgument { .. },
@@ -680,7 +682,8 @@ impl<G> CommandState<G> {
         }
         let row @ InputLevel {
             storage:
-                InputStorage::List { .. }
+                InputStorage::Word { .. }
+                | InputStorage::List { .. }
                 | InputStorage::StoredList { .. }
                 | InputStorage::MacroBody(_)
                 | InputStorage::MacroArgument { .. },
@@ -739,7 +742,8 @@ impl<G> CommandState<G> {
             .find_map(|level| match level {
                 InputLevel {
                     storage:
-                        InputStorage::List { .. }
+                        InputStorage::Word { .. }
+                        | InputStorage::List { .. }
                         | InputStorage::StoredList { .. }
                         | InputStorage::MacroBody(_)
                         | InputStorage::MacroArgument { .. },

@@ -320,7 +320,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
                         Some(
                             row @ crate::input::InputLevel {
                                 storage:
-                                    crate::input::InputStorage::List { .. }
+                                    crate::input::InputStorage::Word { .. }
+                                    | crate::input::InputStorage::List { .. }
                                     | crate::input::InputStorage::StoredList { .. }
                                     | crate::input::InputStorage::MacroBody(_)
                                     | crate::input::InputStorage::MacroArgument { .. },
@@ -421,7 +422,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             .levels.rows.iter()
             .rev()
             .take_while(|level| {
-                matches!(level, row @ crate::input::InputLevel { storage: crate::input::InputStorage::List { .. } | crate::input::InputStorage::StoredList { .. } | crate::input::InputStorage::MacroBody(_) | crate::input::InputStorage::MacroArgument { .. }, .. }
+                matches!(level, row @ crate::input::InputLevel { storage: crate::input::InputStorage::Word { .. } | crate::input::InputStorage::List { .. } | crate::input::InputStorage::StoredList { .. } | crate::input::InputStorage::MacroBody(_) | crate::input::InputStorage::MacroArgument { .. }, .. }
                     if !matches!(row.behavior(), crate::input::TokenBehavior::VTemplate)
                         && level.stored_is_exhausted() == Some(true))
             })

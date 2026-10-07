@@ -119,6 +119,71 @@ fn pending_insertion_moves_its_suffix_onto_the_stack() {
 }
 
 #[test]
+fn individual_replay_owns_its_spelling_across_capture_without_vector_bookkeeping() {
+    let mut command = crate::CommandState::<()>::default();
+    let parent = command.push_token_level(
+        transient_replay([traced('a'), traced('b')]),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::Inserted,
+    );
+    let context = tex_state::packed_input::SourceContext::new(
+        tex_state::SourceId::new(7),
+        tex_state::packed_input::SourceRole::UserDocumentInclude,
+    );
+    command
+        .input
+        .levels
+        .rows
+        .last_mut()
+        .expect("parent replay")
+        .set_source_context(Some(context));
+    let vector = command.input.levels.words.clone();
+    let capacity = command.input.levels.words.capacity();
+    let spelling = traced('x');
+    let treatment = BackupTreatment::SuppressExpandableControlSequence;
+    let identity = command.push_token_level(
+        spelling,
+        TokenBehavior::BackedUp(treatment),
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    assert_eq!(command.input.levels.words, vector);
+    assert_eq!(command.input.levels.words.capacity(), capacity);
+    let capture = command.input.levels.checkpoint_copy();
+    let row = capture.rows.last().expect("captured replay");
+    assert_eq!(row.identity(), identity);
+    assert_eq!(row.source_context(), Some(context));
+    assert_eq!(row.behavior(), TokenBehavior::BackedUp(treatment));
+    assert_eq!(capture.row_word_at(row, 0), Some(spelling));
+    assert_eq!(capture.row_word_at(row, 1), None);
+
+    command.input.levels.pop_resident();
+    assert_eq!(command.input.levels.words, vector);
+    assert_eq!(
+        command.input.levels.rows.last().expect("parent").identity(),
+        parent
+    );
+    command.input.levels.install_checkpoint(&capture);
+    let row = command
+        .input
+        .levels
+        .rows
+        .last_mut()
+        .expect("restored replay");
+    assert_eq!(row.source_context(), Some(context));
+    assert_eq!(row.behavior(), TokenBehavior::BackedUp(treatment));
+    row.frame.advance_resident();
+    assert_eq!(row.stored_is_exhausted(), Some(true));
+    command.input.levels.pop_resident();
+    assert_eq!(command.input.levels.words, vector);
+    assert_eq!(
+        command.input.levels.rows.last().expect("parent").identity(),
+        parent
+    );
+}
+
+#[test]
 fn packed_cursor_keeps_delivery_retirement_and_trace_orthogonal() {
     let behavior = TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence);
     let retirement = RetirementBehavior::StopAtEnd;

@@ -256,7 +256,8 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let Some(
             row @ InputLevel {
                 storage:
-                    InputStorage::List { .. }
+                    InputStorage::Word { .. }
+                    | InputStorage::List { .. }
                     | InputStorage::StoredList { .. }
                     | InputStorage::MacroBody(_)
                     | InputStorage::MacroArgument { .. },
@@ -268,7 +269,9 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         };
         if !matches!(
             row.storage,
-            crate::input::InputStorage::List { .. } | crate::input::InputStorage::StoredList { .. }
+            crate::input::InputStorage::Word { .. }
+                | crate::input::InputStorage::List { .. }
+                | crate::input::InputStorage::StoredList { .. }
         ) || !matches!(row.behavior(), TokenBehavior::BackedUp(_))
             || levels.pending_token_word(levels.rows.len() - 1).is_some()
             || !matches!(
@@ -493,37 +496,23 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
     /// The top row §§325 and 390 would retire, with its end-of-level action.
     #[inline(always)]
     pub(super) fn depleted_input_top(&self) -> Option<(InputLevelId, RetirementBehavior)> {
-        match self.command.input.levels.rows.last() {
-            Some(
-                level @ row @ InputLevel {
-                    storage:
-                        InputStorage::List { .. }
-                        | InputStorage::StoredList { .. }
-                        | InputStorage::MacroBody(_)
-                        | InputStorage::MacroArgument { .. },
-                    ..
-                },
-            ) if !matches!(
-                row.kind(),
+        let row = self.command.input.levels.rows.last()?;
+        if row.frame.position() < row.frame.limit() {
+            return None;
+        }
+        match &row.storage {
+            InputStorage::Source(_) => None,
+            InputStorage::MacroBody(_) | InputStorage::MacroArgument { .. } => {
+                Some((row.identity(), RetirementBehavior::Pop))
+            }
+            InputStorage::Word { kind, .. }
+            | InputStorage::List { kind, .. }
+            | InputStorage::StoredList { kind, .. } => (!matches!(
+                kind,
                 tex_state::packed_input::InputFrameKind::AlignmentVTemplate
                     | tex_state::packed_input::InputFrameKind::OmitTemplate
-            ) && level.stored_is_exhausted() == Some(true) =>
-            {
-                Some((row.identity(), row.retirement()))
-            }
-            Some(InputLevel {
-                storage:
-                    InputStorage::List { .. }
-                    | InputStorage::StoredList { .. }
-                    | InputStorage::MacroBody(_)
-                    | InputStorage::MacroArgument { .. },
-                ..
-            })
-            | Some(InputLevel {
-                storage: InputStorage::Source(_),
-                ..
-            })
-            | None => None,
+            ))
+            .then(|| (row.identity(), row.retirement())),
         }
     }
 

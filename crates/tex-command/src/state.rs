@@ -1735,7 +1735,8 @@ impl<G> CommandState<G> {
             }
             | InputLevel {
                 storage:
-                    InputStorage::List { .. }
+                    InputStorage::Word { .. }
+                    | InputStorage::List { .. }
                     | InputStorage::StoredList { .. }
                     | InputStorage::MacroBody(_)
                     | InputStorage::MacroArgument { .. },
@@ -1761,7 +1762,8 @@ impl<G> CommandState<G> {
                 } => Some(level),
                 InputLevel {
                     storage:
-                        InputStorage::List { .. }
+                        InputStorage::Word { .. }
+                        | InputStorage::List { .. }
                         | InputStorage::StoredList { .. }
                         | InputStorage::MacroBody(_)
                         | InputStorage::MacroArgument { .. },
@@ -2006,7 +2008,8 @@ impl<G> CommandState<G> {
                     ),
                     InputLevel {
                         storage:
-                            InputStorage::List { .. }
+                            InputStorage::Word { .. }
+                            | InputStorage::List { .. }
                             | InputStorage::StoredList { .. }
                             | InputStorage::MacroBody(_)
                             | InputStorage::MacroArgument { .. },

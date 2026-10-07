@@ -361,6 +361,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         let position = frame.position() as usize;
         let word = match &row.storage {
             InputStorage::Source(_) => None,
+            InputStorage::Word { word, .. } => (frame.position() == 0).then(|| word.token_word()),
             crate::input::InputStorage::MacroBody(body) => body.body.word_at(frame.position()),
             crate::input::InputStorage::StoredList { list, .. } => {
                 list.words().get(position).copied()

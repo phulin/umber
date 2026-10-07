@@ -205,22 +205,17 @@ impl<G> PackedTokenSpanSource<G> for TracedTokenWord {
     #[inline]
     fn admit(
         self,
-        words: &mut Vec<TracedTokenWord>,
+        _: &mut Vec<TracedTokenWord>,
         _: TokenSources<'_, G>,
         identity: InputLevelId,
         source: Option<SourceContext>,
         kind: InputFrameKind,
         flags: InputFrameFlags,
     ) -> InputLevel<G> {
-        let list_start = words.len();
-        assert!(list_start <= u32::MAX as usize, "input words exceed u32");
-        let list_start = list_start as u32;
-        words.push(self);
         InputLevel {
             frame: PackedInputFrame::tokens(identity.0, 1, source),
-            storage: InputStorage::List {
-                start: list_start,
-                ownership: PackedTokenOwnership::BackedUp,
+            storage: InputStorage::Word {
+                word: self,
                 kind,
                 flags,
             },

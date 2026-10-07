@@ -149,6 +149,12 @@ impl<G> MacroBodyCursor<G> {
 pub(crate) enum InputStorage<G> {
     /// Sole owner of variable external source state.
     Source(Box<SourceSlot<G>>),
+    /// Owns an individual replay spelling without a shared-vector allocation.
+    Word {
+        word: TracedTokenWord,
+        kind: InputFrameKind,
+        flags: InputFrameFlags,
+    },
     /// Owns the final span of the shared transient word vector.
     List {
         start: u32,
@@ -179,14 +185,18 @@ impl<G> InputLevel<G> {
             InputStorage::Source(_) => InputFrameKind::Source,
             InputStorage::MacroBody(_) => InputFrameKind::Macro,
             InputStorage::MacroArgument { .. } => InputFrameKind::Parameter,
-            InputStorage::List { kind, .. } | InputStorage::StoredList { kind, .. } => *kind,
+            InputStorage::Word { kind, .. }
+            | InputStorage::List { kind, .. }
+            | InputStorage::StoredList { kind, .. } => *kind,
         }
     }
 
     #[inline(always)]
     pub(crate) fn flags(&self) -> InputFrameFlags {
         match &self.storage {
-            InputStorage::List { flags, .. } | InputStorage::StoredList { flags, .. } => *flags,
+            InputStorage::Word { flags, .. }
+            | InputStorage::List { flags, .. }
+            | InputStorage::StoredList { flags, .. } => *flags,
             _ => InputFrameFlags::empty(),
         }
     }
@@ -262,7 +272,8 @@ impl<G> InputLevel<G> {
                 .union(InputFrameFlags::AWAITING_V_TEMPLATE_RETIREMENT),
         });
         match &mut self.storage {
-            InputStorage::List { flags: saved, .. }
+            InputStorage::Word { flags: saved, .. }
+            | InputStorage::List { flags: saved, .. }
             | InputStorage::StoredList { flags: saved, .. } => *saved = flags,
             _ => unreachable!("only replay lists change retirement treatment"),
         }
@@ -324,6 +335,11 @@ impl<G> InputLevel<G> {
                 InputStorage::Source(slot) => {
                     InputStorage::Source(Box::new(slot.checkpoint_copy()))
                 }
+                InputStorage::Word { word, kind, flags } => InputStorage::Word {
+                    word: *word,
+                    kind: *kind,
+                    flags: *flags,
+                },
                 InputStorage::List {
                     start,
                     ownership,
