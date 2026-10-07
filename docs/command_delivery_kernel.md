@@ -169,10 +169,10 @@ first word. The caller has charged that word; the traversal charges each next
 word after acceptance. There is no separate first-word admission followed by
 a second suffix admission path. Consumers that require full access read their
 single word directly before releasing the input loan.
-The traversal is one outlined function for all retained consumers. Its actual
-frame, fuel and admission loans have independent register lifetimes from full
-interpretation. There is no inline-versus-outlined policy or forwarding
-wrapper around that traversal.
+The selected storage loan traverses its actual words directly with the concrete
+consumer. Frame, fuel and admission loans end before full interpretation. The
+separately outlined traversal and its borrowed-reference closure packet are
+deleted; no traversal policy or forwarding wrapper remains.
 
 ## Recoverable command preflight
 
