@@ -260,10 +260,6 @@ pub struct CommandProcessor<
     pub(crate) expansion_depth: u32,
     /// pdfTeX section 57's dynamically scoped control-sequence-name flag.
     pub(crate) is_in_csname: bool,
-    /// Whether this bounded processor episode runs inside TeX82's active
-    /// output routine. Page dimensions remain observable there after §1012
-    /// clears the page list and until §991 freezes the next page.
-    pub(crate) output_routine_active: bool,
     /// Canonical glue-node identity retained only while an internal glue or
     /// e-TeX expression result remains pointer-identical to its source.
     pub(crate) scanned_glue_identity: Option<tex_state::GlueId<G>>,
@@ -721,7 +717,6 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
             eof_recovered_while_matching: false,
             expansion_depth: 0,
             is_in_csname: false,
-            output_routine_active: false,
             scanned_glue_identity: None,
             scanned_glue_register: None,
             scanned_glue_shared_zero: false,
@@ -729,15 +724,6 @@ impl<'episode, 'admission, G, Facts: crate::CommandHostFacts<G>>
             synchronous_error_reported: false,
             create_source_control_sequences: false,
         }
-    }
-
-    /// Supplies TeX82's executor-owned output-routine state to scalar scans.
-    ///
-    /// The command processor does not own the mode/group stack that makes
-    /// this fact authoritative. Main control therefore lends the detached
-    /// boolean for this episode instead of duplicating that state here.
-    pub fn set_output_routine_active(&mut self, active: bool) {
-        self.output_routine_active = active;
     }
 
     /// Publishes already-complete command diagnostics before operand scans.

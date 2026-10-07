@@ -1307,6 +1307,8 @@ impl CommandHostCapabilities {
 /// command processor retains this borrow only for its synchronous episode, so
 /// no mode/list owner or fact payload can enter command state or suspension.
 pub trait CommandHostFacts<G> {
+    /// TeX82 §418's live output state at a page-quantity scan.
+    fn output_routine_active(&mut self) -> bool;
     fn conditional_state(&mut self) -> ConditionalState;
     fn space_factor(&mut self) -> Option<i32>;
     /// Returns the executor mode name at a cold diagnostic report boundary.
@@ -1326,6 +1328,9 @@ pub trait CommandHostFacts<G> {
 }
 
 impl<G, Facts: CommandHostFacts<G> + ?Sized> CommandHostFacts<G> for &mut Facts {
+    fn output_routine_active(&mut self) -> bool {
+        (**self).output_routine_active()
+    }
     fn conditional_state(&mut self) -> ConditionalState {
         (**self).conditional_state()
     }
@@ -1376,6 +1381,9 @@ pub trait ResourceProvider<G> {
 pub struct InitialCommandHostFacts;
 
 impl<G> CommandHostFacts<G> for InitialCommandHostFacts {
+    fn output_routine_active(&mut self) -> bool {
+        false
+    }
     fn command_trace_mode_prefix(&mut self, _deferred_write: bool) -> Option<&'static str> {
         None
     }

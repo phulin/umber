@@ -485,7 +485,6 @@ struct CommandMachine<'a, 'provider, G> {
     observations: Option<&'a mut dyn CommandObserver>,
     diagnostic_effects: &'a mut DiagnosticEffects,
     emit_dvi_override: Option<bool>,
-    output_routine_active: bool,
 }
 
 fn reborrow_observer<'loan>(
@@ -513,7 +512,6 @@ impl<G> CommandMachine<'_, '_, G> {
             host_facts,
             observations,
             diagnostic_effects,
-            output_routine_active,
             ..
         } = self;
         let observer = reborrow_observer(observations);
@@ -533,7 +531,6 @@ impl<G> CommandMachine<'_, '_, G> {
         };
         let mut processor =
             CommandProcessor::new(state, context, host, fuel, observer, diagnostic_effects);
-        processor.set_output_routine_active(*output_routine_active);
         use_processor(&mut processor)
     }
 
@@ -553,7 +550,6 @@ impl<G> CommandMachine<'_, '_, G> {
             declined_resource_attempt,
             host_facts,
             observations,
-            output_routine_active,
             ..
         } = self;
         let observer = reborrow_observer(observations);
@@ -573,7 +569,6 @@ impl<G> CommandMachine<'_, '_, G> {
         };
         let mut processor =
             CommandProcessor::new(state, context, host, fuel, observer, diagnostic_effects);
-        processor.set_output_routine_active(*output_routine_active);
         use_processor(&mut processor)
     }
 
@@ -895,6 +890,7 @@ impl<G> MainControl<G> {
         let mut host_facts = ExecutorHostFacts {
             modes: &self.execution.modes,
             shown_mode: &mut self.execution.shown_mode,
+            output_routine_active: &self.execution.boxes.output_routine_active,
             pdf_ignore_depth: self.execution.pdf_ignore_depth,
             telemetry: &mut self.execution.episode_telemetry,
         };
@@ -1610,6 +1606,7 @@ impl<G> MainControl<G> {
             host_facts: ExecutorHostFacts {
                 modes: &self.execution.modes,
                 shown_mode: &mut self.execution.shown_mode,
+                output_routine_active: &self.execution.boxes.output_routine_active,
                 pdf_ignore_depth: self.execution.pdf_ignore_depth,
                 telemetry: &mut self.execution.episode_telemetry,
             },
@@ -1621,8 +1618,6 @@ impl<G> MainControl<G> {
             diagnostic_effects,
 
             emit_dvi_override: self.execution.emit_dvi_override,
-
-            output_routine_active: self.execution.boxes.output_routine_active,
         }
     }
 
@@ -2161,6 +2156,7 @@ impl<G> MainControl<G> {
                 let mut host_facts = ExecutorHostFacts {
                     modes: &self.execution.modes,
                     shown_mode: &mut self.execution.shown_mode,
+                    output_routine_active: &self.execution.boxes.output_routine_active,
                     pdf_ignore_depth: self.execution.pdf_ignore_depth,
                     telemetry: &mut self.execution.episode_telemetry,
                 };
@@ -2388,6 +2384,7 @@ impl<G> MainControl<G> {
                         host_facts: ExecutorHostFacts {
                             modes: &self.execution.modes,
                             shown_mode: &mut self.execution.shown_mode,
+                            output_routine_active: &self.execution.boxes.output_routine_active,
                             pdf_ignore_depth: self.execution.pdf_ignore_depth,
                             telemetry: &mut self.execution.episode_telemetry,
                         },
@@ -2399,8 +2396,6 @@ impl<G> MainControl<G> {
                         diagnostic_effects,
 
                         emit_dvi_override: self.execution.emit_dvi_override,
-
-                        output_routine_active: self.execution.boxes.output_routine_active,
                     };
                     let publication = shipout_replay_box(page, stores, &mut command)?;
                     // Detached output no longer owns runtime nodes. Establish
@@ -2422,6 +2417,7 @@ impl<G> MainControl<G> {
                     let mut host_facts = ExecutorHostFacts {
                         modes: &self.execution.modes,
                         shown_mode: &mut self.execution.shown_mode,
+                        output_routine_active: &self.execution.boxes.output_routine_active,
                         pdf_ignore_depth: self.execution.pdf_ignore_depth,
                         telemetry: &mut self.execution.episode_telemetry,
                     };
@@ -2658,6 +2654,7 @@ impl<G> MainControl<G> {
             let mut host_facts = ExecutorHostFacts {
                 modes: &self.execution.modes,
                 shown_mode: &mut self.execution.shown_mode,
+                output_routine_active: &self.execution.boxes.output_routine_active,
                 pdf_ignore_depth: self.execution.pdf_ignore_depth,
                 telemetry: &mut self.execution.episode_telemetry,
             };
@@ -2724,6 +2721,7 @@ impl<G> MainControl<G> {
         let mut host_facts = ExecutorHostFacts {
             modes: &self.execution.modes,
             shown_mode: &mut self.execution.shown_mode,
+            output_routine_active: &self.execution.boxes.output_routine_active,
             pdf_ignore_depth: self.execution.pdf_ignore_depth,
             telemetry: &mut self.execution.episode_telemetry,
         };

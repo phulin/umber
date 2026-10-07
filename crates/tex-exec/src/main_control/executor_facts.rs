@@ -17,6 +17,7 @@ pub(super) struct EffectiveTailFacts {
 pub(super) struct ExecutorHostFacts<'episode, G, Modes = &'episode ModeNest> {
     pub(super) modes: Modes,
     pub(super) shown_mode: &'episode mut Option<Mode>,
+    pub(super) output_routine_active: &'episode bool,
     pub(super) pdf_ignore_depth: Option<tex_state::PrimitiveHandle<G>>,
     pub(super) telemetry: &'episode mut crate::EpisodeTelemetry,
 }
@@ -24,8 +25,12 @@ pub(super) struct ExecutorHostFacts<'episode, G, Modes = &'episode ModeNest> {
 // Both implementations read their actual owner. The macro shares query
 // semantics without constructing a projection for each request.
 macro_rules! implement_host_facts {
-    (($($implementation:tt)*), $this:ident, $modes:expr, $telemetry:expr, $ignore_depth:expr, $shown_mode:expr) => {
+    (($($implementation:tt)*), $this:ident, $modes:expr, $telemetry:expr, $ignore_depth:expr, $shown_mode:expr, $output_active:expr) => {
         $($implementation)* {
+    fn output_routine_active(&mut $this) -> bool {
+        ($telemetry).record_host_fact_query();
+        $output_active
+    }
     fn conditional_state(&mut $this) -> tex_command::ConditionalState {
         ($telemetry).record_host_fact_query();
         ($modes).conditional_state()
@@ -112,7 +117,8 @@ implement_host_facts!(
     self.modes.borrow(),
     self.telemetry,
     self.pdf_ignore_depth,
-    &mut *self.shown_mode
+    &mut *self.shown_mode,
+    *self.output_routine_active
 );
 
 implement_host_facts!(
@@ -121,7 +127,8 @@ implement_host_facts!(
     &self.modes,
     self.episode_telemetry,
     self.pdf_ignore_depth,
-    &mut self.shown_mode
+    &mut self.shown_mode,
+    self.boxes.output_routine_active
 );
 
 /// Samples TeX82 §424 and e-TeX [26.424] from one effective-tail walk.

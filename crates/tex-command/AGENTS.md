@@ -57,6 +57,9 @@ crate changes an owner or exact reclamation point.
 
 Host capabilities are borrow-scoped through `CommandHostContext` and must
 never enter snapshots, formats, durable summaries, or owned command state.
+Page-quantity scans query the live output-routine flag through `CommandHostFacts`.
+The processor output-state copy and setter are deleted: native execution can
+close an output routine and continue scanning within the same processor loan.
 Private state-machine modules must not be widened for compatibility with
 retired input or expansion APIs.
 

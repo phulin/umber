@@ -3,6 +3,61 @@
 use super::*;
 
 #[test]
+fn page_dimensions_sample_output_state_after_a_native_routine_closes() {
+    // TeX82 §418: empty-page quantities use max_dimen/zero only outside
+    // output_active. §1026 closes the output group before fetching the next
+    // command, even when both commands share one native processor borrow.
+    for operations in [1, 256] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(
+                &mut control,
+                br"\vsize=20pt\topskip=0pt
+                   \output={\global\dimen2=\pagegoal\global\dimen3=\pagetotal
+                            \global\setbox0=\box255\global\deadcycles=0}
+                   \hbox{\vrule height10pt width1pt depth0pt}\penalty-10000
+                   \dimen0=\pagegoal\dimen1=\pagetotal\end",
+            );
+            let mut ended = false;
+            for _ in 0..TEST_STEP_LIMIT {
+                match control
+                    .advance_chunk(stores, operations, None)
+                    .expect("native output")
+                {
+                    StepResult::Progress(MainControlStep::End) => {
+                        ended = true;
+                        break;
+                    }
+                    StepResult::Progress(MainControlStep::Continue) => {}
+                    other => panic!("unexpected output boundary: {other:?}"),
+                }
+            }
+            assert!(ended);
+            assert_eq!(
+                stores.dimension(2).expect("inside goal"),
+                Scaled::from_raw(20 * Scaled::UNITY)
+            );
+            assert_eq!(
+                stores.dimension(3).expect("inside total"),
+                Scaled::from_raw(10 * Scaled::UNITY)
+            );
+            assert_eq!(
+                stores.dimension(0).expect("outside goal"),
+                Scaled::MAX_DIMEN,
+                "operations={operations}"
+            );
+            assert_eq!(
+                stores.dimension(1).expect("outside total"),
+                Scaled::from_raw(0),
+                "operations={operations}"
+            );
+            let terminal = terminal_text(stores);
+            assert!(!terminal.contains("! "), "{terminal}");
+        });
+    }
+}
+
+#[test]
 fn automatic_output_box_remains_page_owned_until_shipout() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

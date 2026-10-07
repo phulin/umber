@@ -130,6 +130,14 @@ assertion during a panic.
 
 ## Mode marks
 
+Command scanners read the current output-routine flag from the existing executor
+host-fact borrow. A native processor can close the output group and keep reading
+commands in the same invocation, so an entry-time copy is not authoritative.
+TeX82 §418 exposes the old page totals inside the output routine, but empty-page
+quantities become `max_dimen`/zero immediately after §1026 closes that group.
+The processor owns no output-state field or setter. Cold component loans borrow
+the same execution flag; scanner-only hosts describe the initial inactive state.
+
 A live `ModeList` pairs every nonempty page-list coordinate it carries with the
 identity of the one admitting `PageRegion`. Node publication validates each
 direct parent/child edge against that region; admission can therefore validate

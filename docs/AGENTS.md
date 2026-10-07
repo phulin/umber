@@ -242,6 +242,10 @@ coordinates. It supersedes page-batch dependency/refcount designs. Page successi
 copies: frozen pool-owned regions, borrowed child coordinates, append-only
 region borrow logs, and shallow `\copy`/`\unhcopy`/`\unvcopy`.
 
+`mode_page_checkpoint_ownership.md` defines mode/page checkpoint authority and
+live command queries. Output-state queries borrow the real execution flag;
+the processor carries no entry-time copy across output-group closure.
+
 `durable_box_root_mutation.md` records the TeX82 basis for scalar box-root
 mutation and destructive box/unbox transfer through current, group, checkpoint,
 and operation owners.

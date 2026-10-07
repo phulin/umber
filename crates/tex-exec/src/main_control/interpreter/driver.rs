@@ -11,6 +11,7 @@ impl<G> MainControl<G> {
         let mut facts = ExecutorHostFacts {
             modes: &self.execution.modes,
             shown_mode: &mut self.execution.shown_mode,
+            output_routine_active: &self.execution.boxes.output_routine_active,
             pdf_ignore_depth: self.execution.pdf_ignore_depth,
             telemetry: &mut self.execution.episode_telemetry,
         };
@@ -160,7 +161,6 @@ impl<G> MainControl<G> {
                 &mut context,
             )
         };
-        processor.set_output_routine_active(output_routine_active);
         let mut result = interpret(&mut processor, &mut receipts);
         drop(processor);
         drop(context);

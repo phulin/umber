@@ -61,6 +61,8 @@ not allocate a vector merely to publish one already-complete node.
   wrapper or temporary replacement owner remains. Constructors initialize each
   actual owner once, including checkpoint forks. The execution owner implements
   live host fact queries; component-only cold loans share those exact queries.
+  Output-state queries read the real box owner; cold component loans borrow its
+  flag directly. The command processor carries no entry-time output-state copy.
 - `src/main_control/interpreter/`: sole replacement core under construction.
   `delimiters.rs` scans actual delimiters and unsaves math-left groups
   through the live processor. Right boundaries append into the actual closed
