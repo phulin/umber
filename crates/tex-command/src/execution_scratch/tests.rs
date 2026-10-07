@@ -9,9 +9,7 @@ fn undelimited_admission_completes_on_its_sole_token_or_closing_brace() {
         let letter = |ch| char_word(ch, Catcode::Letter);
         let open = char_word('{', Catcode::BeginGroup);
         let close = char_word('}', Catcode::EndGroup);
-        let admission = || {
-            ArgumentRunAdmission::with_commands(&context, None, None, 1).completing_undelimited()
-        };
+        let admission = || ArgumentRunAdmission::with_commands(&context, None, None);
 
         let mut arena = crate::input::ArgumentArena::<()>::default();
         let matching = arena.begin_match().expect("argument match");

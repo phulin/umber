@@ -429,21 +429,28 @@ impl<G> ArgumentArena<G> {
     }
 }
 impl<G> PlainRunSink<G> for ArgumentCursor {
+    const ARGUMENT: bool = true;
+    const CLOSE_FLOOR: u32 = 0;
+
     #[inline(always)]
     fn brace_depth(&self) -> u32 {
         self.cursor.brace_depth()
     }
     #[inline(always)]
+    fn argument_started(&self) -> bool {
+        self.cursor.argument_started()
+    }
+    #[inline(always)]
     fn settle_admitted_word(&mut self, delta: i8) {
         self.cursor.settle_argument_delta(delta);
     }
-    fn consume_region_span(
+    fn consume_region_span<const SCANNING: bool>(
         &mut self,
         arena: &mut ArgumentArena<G>,
         source: ArgumentRegionId,
         slot: u8,
         range: core::ops::Range<usize>,
-        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G, SCANNING>,
     ) -> Result<usize, ScratchError> {
         let mut count = 0;
         for word in arena
@@ -462,12 +469,12 @@ impl<G> PlainRunSink<G> for ArgumentCursor {
         }
         Ok(count)
     }
-    fn consume_token_span(
+    fn consume_token_span<const SCANNING: bool>(
         &mut self,
         arena: &mut ArgumentArena<G>,
         body: &tex_state::ResidentMacroBody<G>,
         range: core::ops::Range<usize>,
-        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G, SCANNING>,
     ) -> Result<usize, ScratchError> {
         if self.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);

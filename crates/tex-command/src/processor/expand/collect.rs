@@ -186,7 +186,7 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
             return Ok(false);
         };
         // The body's own closing brace (depth one) ends the run.
-        let mut admission = ArgumentRunAdmission::with_commands(self.state, None, None, 1)
+        let mut admission = ArgumentRunAdmission::with_commands(self.state, None, None)
             .stopping_at_parameters(macro_definition);
         if self.command.delivery_mode.alignment_active() {
             admission.restrict_to_characters();

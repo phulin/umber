@@ -21,6 +21,10 @@ enum OuterGroup {
 }
 
 impl ScannerCursor {
+    pub(crate) const fn argument_started(self) -> bool {
+        !matches!(self.outer_group, OuterGroup::Unstarted)
+    }
+
     pub(crate) const fn brace_depth(self) -> u32 {
         self.brace_depth
     }

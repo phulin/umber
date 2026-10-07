@@ -964,6 +964,14 @@ can simplify at their caller. Spelling-only raw reads skip meaning resolution
 outside active scanner validation; actual alignment, suppression, recovery and
 observation still resolve their needed meaning. No unused ordinary meaning loan
 is delivered.
+Resident argument admission borrows live meaning rows for outer validity and
+updates brace/outer-group/completion facts only for braces or depth-zero words.
+Accepted interior nonbraces perform no inert grammar writes or temporary meaning
+construction; their final argument range and exact fuel remain authoritative.
+The actual sink supplies its static argument role and brace floor; admission
+derives completion from the sole scanner cursor's depth and existing start fact.
+Duplicate admission completion/undelimited/floor fields and their setters are
+deleted.
 `consume_main_source_characters` lends the actual source suffix to the live
 horizontal builder with explicit operation and fuel bounds. It shares the
 canonical source cursor and constructs no ordinary command or token list.

@@ -357,6 +357,28 @@ is retained. Publication applies the enclosing-pair trim directly to the final
 range; tracing and observation borrow that range afterwards. Recovery borrows
 unfinished raw material before publication.
 
+Resident admission changes brace grammar only on a brace or a depth-zero word.
+An accepted nonbrace inside a group preserves depth, enclosing-pair candidacy,
+net brace delta and undelimited completion. Admission therefore does not write
+those facts for such a word. The final range still owns and accounts for every
+accepted spelling; this removes inert bookkeeping rather than deferring it.
+Control-sequence admission borrows the live dense meaning row only to test
+outerness. Active characters first select their existing active symbol; an
+unregistered active character is undefined and nonouter. No temporary undefined
+meaning is constructed and overwritten before this query. Paragraph and
+delimiter spelling rejection remain in the same admission grammar.
+
+The actual sink supplies its brace rule at compile time: argument writers admit
+closing braces at every positive depth; definition writers stop before the brace
+that closes their body. An argument without a delimiter finishes when its actual
+cursor has started and reaches depth zero. The cursor's existing enclosing-pair
+state supplies the started fact. Admission carries no separate completion flag,
+undelimited flag or brace floor, and callers do not reconstruct those policies.
+Character-only span transfer is a distinct compile-time admission policy and
+does not finish a TeX argument. Restricting an actual scanner to characters
+preserves its scanning policy, including undelimited completion. Both policies
+use the same reader, sink and final backing transfer.
+
 Scalar capture queries the live input row only when an actual source lease can
 extend. Accepted writes update only the actual arena range and brace grammar,
 with no local visible-end counter.

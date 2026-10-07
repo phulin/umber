@@ -296,21 +296,10 @@ impl<G, Facts: crate::CommandHostFacts<G>> CommandProcessor<'_, '_, G, Facts> {
         paragraph_token: Option<TokenWord>,
         stop_word: Option<TokenWord>,
     ) -> Result<crate::input::ResidentRun, CommandError> {
-        // An undelimited argument (no delimiter stop word) ends at its own
-        // closing brace, which its run admits last; a delimited argument may
-        // close any group it opened.
-        let close_floor = u32::from(stop_word.is_none());
-        let admission = ArgumentRunAdmission::with_commands(
-            self.state,
-            paragraph_token,
-            stop_word,
-            close_floor,
-        );
-        let mut admission = if stop_word.is_none() {
-            admission.completing_undelimited()
-        } else {
-            admission
-        };
+        // The actual writer owns brace depth and completion. A missing
+        // delimiter makes its sole token or enclosing group the argument.
+        let mut admission =
+            ArgumentRunAdmission::with_commands(self.state, paragraph_token, stop_word);
         if self.command.delivery_mode.alignment_active() || self.outer_recovered_while_matching {
             admission.restrict_to_characters();
         }

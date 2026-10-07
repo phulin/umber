@@ -972,11 +972,11 @@ impl<G> crate::CommandState<G> {
     /// commands, parameter substitution, closing braces, or input exhaustion. The
     /// scanner therefore appends into its final destination once for the
     /// whole admitted physical span rather than once per ordinary token.
-    pub(crate) fn consume_plain_resident_run(
+    pub(crate) fn consume_plain_resident_run<const SCANNING: bool>(
         &mut self,
         writer: &mut impl crate::execution_scratch::PlainRunSink<G>,
         fuel: &mut crate::fuel::CommandFuel,
-        mut admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
+        mut admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G, SCANNING>,
     ) -> Result<ResidentRun, crate::CommandError> {
         let InputStack {
             rows, arguments, ..

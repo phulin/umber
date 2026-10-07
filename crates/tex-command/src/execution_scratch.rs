@@ -83,22 +83,26 @@ impl<G> ExecutionScratch<G> {
 /// context only literal non-brace, non-active characters are admitted.
 /// Destination of one batched run of plain resident words.
 pub(crate) trait PlainRunSink<G> {
+    const ARGUMENT: bool;
+    const CLOSE_FLOOR: u32;
+
     fn brace_depth(&self) -> u32;
+    fn argument_started(&self) -> bool;
     fn settle_admitted_word(&mut self, brace_delta: i8);
-    fn consume_region_span(
+    fn consume_region_span<const SCANNING: bool>(
         &mut self,
         arena: &mut crate::input::ArgumentArena<G>,
         source: crate::input::ArgumentRegionId,
         slot: u8,
         range: core::ops::Range<usize>,
-        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G, SCANNING>,
     ) -> Result<usize, ScratchError>;
-    fn consume_token_span(
+    fn consume_token_span<const SCANNING: bool>(
         &mut self,
         arena: &mut crate::input::ArgumentArena<G>,
         body: &tex_state::ResidentMacroBody<G>,
         range: core::ops::Range<usize>,
-        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G, SCANNING>,
     ) -> Result<usize, ScratchError>;
 }
 
@@ -110,9 +114,16 @@ pub(crate) struct DefinitionReplacementSink<'w, G> {
 }
 
 impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
+    const ARGUMENT: bool = false;
+    const CLOSE_FLOOR: u32 = 1;
+
     #[inline(always)]
     fn brace_depth(&self) -> u32 {
         self.cursor.brace_depth()
+    }
+
+    fn argument_started(&self) -> bool {
+        false
     }
 
     #[inline(always)]
@@ -121,13 +132,13 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
             self.cursor.advance_balanced_depth(i32::from(brace_delta));
         }
     }
-    fn consume_region_span(
+    fn consume_region_span<const SCANNING: bool>(
         &mut self,
         arena: &mut crate::input::ArgumentArena<G>,
         source: crate::input::ArgumentRegionId,
         slot: u8,
         range: core::ops::Range<usize>,
-        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G, SCANNING>,
     ) -> Result<usize, ScratchError> {
         let words = arena
             .words(source, slot)
@@ -146,12 +157,12 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
         Ok(count)
     }
 
-    fn consume_token_span(
+    fn consume_token_span<const SCANNING: bool>(
         &mut self,
         _: &mut crate::input::ArgumentArena<G>,
         body: &tex_state::ResidentMacroBody<G>,
         range: core::ops::Range<usize>,
-        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G, SCANNING>,
     ) -> Result<usize, ScratchError> {
         let mut count = 0;
         for &word in &body.replacement_from(range.start as u32)[..range.len()] {
@@ -182,18 +193,25 @@ impl CsnameNameSink<'_> {
 }
 
 impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
+    const ARGUMENT: bool = false;
+    const CLOSE_FLOOR: u32 = 0;
+
     fn brace_depth(&self) -> u32 {
         0
     }
 
+    fn argument_started(&self) -> bool {
+        false
+    }
+
     fn settle_admitted_word(&mut self, _: i8) {}
-    fn consume_region_span(
+    fn consume_region_span<const SCANNING: bool>(
         &mut self,
         arena: &mut crate::input::ArgumentArena<G>,
         source: crate::input::ArgumentRegionId,
         slot: u8,
         range: core::ops::Range<usize>,
-        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G, SCANNING>,
     ) -> Result<usize, ScratchError> {
         let words = arena
             .words(source, slot)
@@ -210,12 +228,12 @@ impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
         Ok(count)
     }
 
-    fn consume_token_span(
+    fn consume_token_span<const SCANNING: bool>(
         &mut self,
         _: &mut crate::input::ArgumentArena<G>,
         body: &tex_state::ResidentMacroBody<G>,
         range: core::ops::Range<usize>,
-        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G, SCANNING>,
     ) -> Result<usize, ScratchError> {
         let mut count = 0;
         for &word in &body.replacement_from(range.start as u32)[..range.len()] {
@@ -229,44 +247,33 @@ impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
     }
 }
 
-pub(crate) struct ArgumentRunAdmission<'a, 'admission, G> {
+pub(crate) struct ArgumentRunAdmission<'a, 'admission, G, const SCANNING: bool> {
     state: Option<&'a tex_state::CommandContext<'admission, G>>,
     paragraph_token: Option<TokenWord>,
     stop_word: Option<TokenWord>,
-    /// The lowest depth a closing brace may leave: 1 inside an undelimited
-    /// argument's group, whose final brace ends the argument, and 0 for a
-    /// delimited argument.
-    close_floor: u32,
     brace_delta: i32,
     /// A macro definition's replacement text gives §479 meaning to parameter
     /// characters, so its runs stop before them.
     stop_at_parameter: bool,
-    /// An undelimited argument's run may admit the word that completes the
-    /// argument: its sole token at depth zero, or the brace closing its
-    /// group. `closed` then refuses every later word.
-    completes_undelimited: bool,
-    closed: bool,
 }
 
-impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
+impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G, true> {
     pub(crate) const fn with_commands(
         state: &'a tex_state::CommandContext<'admission, G>,
         paragraph_token: Option<TokenWord>,
         stop_word: Option<TokenWord>,
-        close_floor: u32,
     ) -> Self {
         Self {
             state: Some(state),
             paragraph_token,
             stop_word,
-            close_floor,
             brace_delta: 0,
             stop_at_parameter: false,
-            completes_undelimited: false,
-            closed: false,
         }
     }
+}
 
+impl<G> ArgumentRunAdmission<'_, '_, G, false> {
     /// Literal characters only, outside any group: every brace, alignment
     /// tab, active character, and control sequence stops the run.
     pub(crate) const fn characters() -> Self {
@@ -274,25 +281,13 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
             state: None,
             paragraph_token: None,
             stop_word: None,
-            close_floor: 0,
             brace_delta: 0,
             stop_at_parameter: false,
-            completes_undelimited: false,
-            closed: false,
         }
     }
+}
 
-    /// An undelimited argument's admission, which also admits the word that
-    /// completes it (TeX82 §392-§394). A space before the argument, a stray
-    /// closing brace, and every word the ordinary admission refuses stay with
-    /// the scalar matcher.
-    pub(crate) const fn completing_undelimited(self) -> Self {
-        Self {
-            completes_undelimited: true,
-            ..self
-        }
-    }
-
+impl<'a, 'admission, G, const SCANNING: bool> ArgumentRunAdmission<'a, 'admission, G, SCANNING> {
     /// The same admission, also stopping before parameter characters.
     pub(crate) const fn stopping_at_parameters(self, stop: bool) -> Self {
         Self {
@@ -313,9 +308,15 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn admits(&mut self, word: TokenWord, sink: &mut impl PlainRunSink<G>) -> bool {
+    pub(crate) fn admits<Sink: PlainRunSink<G>>(
+        &mut self,
+        word: TokenWord,
+        sink: &mut Sink,
+    ) -> bool {
         let depth = sink.brace_depth();
-        if self.closed || (depth == 0 && Some(word) == self.stop_word) {
+        let undelimited = SCANNING && Sink::ARGUMENT && self.stop_word.is_none();
+        if depth == 0 && ((undelimited && sink.argument_started()) || Some(word) == self.stop_word)
+        {
             return false;
         }
         let mut delta = 0;
@@ -324,14 +325,11 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
                 delta = 1;
                 true
             }
-            Some(Catcode::EndGroup)
-                if self.state.is_some()
-                    && (depth > self.close_floor || (self.completes_undelimited && depth == 1)) =>
-            {
+            Some(Catcode::EndGroup) if self.state.is_some() && depth > Sink::CLOSE_FLOOR => {
                 delta = -1;
                 true
             }
-            Some(Catcode::Space) if self.completes_undelimited && depth == 0 => false,
+            Some(Catcode::Space) if undelimited && depth == 0 => false,
             Some(Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab) => false,
             Some(Catcode::Parameter) => !self.stop_at_parameter,
             Some(Catcode::Active) => self.admits_command(word),
@@ -342,10 +340,9 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
                     && self.admits_command(word)
             }
         };
-        if admitted {
+        if admitted && (delta != 0 || depth == 0) {
             sink.settle_admitted_word(delta);
             self.brace_delta += i32::from(delta);
-            self.closed = self.completes_undelimited && sink.brace_depth() == 0;
         }
         admitted
     }
@@ -355,10 +352,14 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
         let Some(state) = self.state else {
             return false;
         };
-        let mut meaning =
-            tex_state::meaning::MeaningWord::from_static(tex_state::meaning::Meaning::Undefined);
-        state.write_packed_token_command_into(word, &mut meaning);
-        !meaning.is_outer()
+        let symbol = word.control_sequence().or_else(|| {
+            state.active_character_symbol(word.literal_char().expect("active token scalar"))
+        });
+        symbol.is_none_or(|symbol| {
+            !state
+                .compact_control_sequence_meaning_word(symbol)
+                .is_outer()
+        })
     }
 }
 
