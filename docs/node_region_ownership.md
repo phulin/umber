@@ -104,6 +104,13 @@ serial; region generations, batch boundaries, chunk incarnations, dependency
 floors, and the move-only mark provide the actual checks. A rejected paired
 transfer returns the original mark before changing either lane.
 
+Page succession also waits for the actual active box stack to empty. An open
+box owns its construction boundary even before it publishes a node, so empty
+mode lists alone do not authorize retiring or advancing its region. This cold
+boundary reads the existing stack length; it adds no root registry or hot-loop
+bookkeeping. TeX82 §§1086/1089 and pdfTeX's corresponding `box_end`/`package`
+keep that construction live until the box is packaged into its destination.
+
 A move of the entire envelope transfers that envelope directly. Splitting at
 zero and appending to an empty owner do not allocate or rebuild key and gap
 vectors. Partial and interleaved moves preserve their original logical offsets,

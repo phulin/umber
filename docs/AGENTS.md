@@ -236,7 +236,7 @@ checkpoint/group/candidate/definition authority to the aggregate contract.
 contract. It preserves exact paragraph restart while defining exclusive page
 and durable regions, TeX move/copy transitions, two-lineage suffix settlement,
 held-over evacuation, and the static prohibition on naked owning list
-coordinates. It supersedes page-batch dependency/refcount designs.
+coordinates. It supersedes page-batch dependency/refcount designs. Page succession also respects actual empty box construction owners before advancing their region.
 
 `shared_box_closures.md` amends the ownership contract for explicit box
 copies: frozen pool-owned regions, borrowed child coordinates, append-only

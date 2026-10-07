@@ -139,9 +139,9 @@ pub(super) struct ExecutionState<G> {
     pub(super) prepared_pdf_form: Option<tex_state::PdfFormRecord<G>>,
     /// Actual terminal notices, moved once after command admission ends.
     pub(super) pending_job_end: Option<(bool, Vec<tex_command::IncompleteCondition>)>,
-    /// A detached page has committed, but a live mode still owns page-region
-    /// coordinates. Succession waits until that mode closure is consumed into
-    /// PageBuilder state; it never copies or scans the mode payload.
+    /// A detached page has committed, but live modes or box construction
+    /// owners still depend on its region. Succession waits for mode roots and
+    /// actual box owners to retire; it never copies or scans their payload.
     pub(super) page_region_succession_pending: bool,
     /// Named safe boundaries committed by the last direct operation. The
     /// host drains these only after `advance` has committed, so a resource

@@ -466,7 +466,9 @@ report/recovery boundaries restore actual spelling when required. Forbidden
 setbox still leaves the body head unread after its actual optional-equals scan.
 `src/main_control/tests/box_prefix.rs` pins packing versus brace expansion
 group ownership, case/category-independent keyword behavior, failed-prefix
-recovery, brace aliases, tracing and everybox mode ordering.
+recovery, brace aliases, tracing and everybox mode ordering. Empty
+constructions retain their actual region authority; page succession checks
+the existing box stack before retiring a rootless predecessor.
 
 Full-access word callbacks in native operand grammars lend a synchronous
 `dyn FnMut` through `terminal_consumer`; their closure types no longer

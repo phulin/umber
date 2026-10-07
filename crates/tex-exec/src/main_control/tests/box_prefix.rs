@@ -200,3 +200,34 @@ fn box_prefix_opens_group_before_brace_expansion_and_enters_mode_after_it() {
         assert_eq!(stores.count(0).expect("everyhbox assignment"), 1);
     });
 }
+
+#[test]
+fn page_succession_waits_for_empty_box_construction_owners() {
+    // Ownership regression, not a TeX output oracle: stage the deferred page
+    // transition while a real §1083 box has no nodes yet. §§1086/1089 keep its
+    // construction live through package and the final register assignment.
+    for kind in ["hbox", "vbox", "vtop"] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            let source = format!("\\setbox0=\\{kind}{{\\kern1pt}}\\end");
+            register_source(&mut control, source.as_bytes());
+            control.advance(stores).expect("open real box construction");
+            assert_eq!(control.execution.boxes.active_boxes.len(), 1);
+            assert!(!control.execution.modes.retains_page_node_handles());
+
+            control.execution.page_region_succession_pending = true;
+            control.finish_pending_page_region_succession(stores);
+            assert!(control.execution.page_region_succession_pending);
+
+            run_to_end(&mut control, stores);
+            assert!(control.execution.boxes.active_boxes.is_empty());
+            assert!(!control.execution.page_region_succession_pending);
+            let children = box_child_nodes(stores, 0);
+            let [Node::Kern { amount, .. }] = children.as_slice() else {
+                panic!("completed {kind} retains its body");
+            };
+            assert_eq!(amount.raw(), Scaled::UNITY);
+            assert!(!terminal_text(stores).contains("! "));
+        });
+    }
+}
