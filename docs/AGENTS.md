@@ -1,5 +1,10 @@
 # Docs Guidance
 
+`radical_simplification_review.md` records the October 2026 independent
+subsystem audit, ranked deletion proposals, existing flat-machine overlap,
+performance mechanisms and proof requirements. It is a proposal review,
+not a replacement for current semantic contracts or a benchmark receipt.
+
 `radical_hot_loop.md` proposes the flat machine: `u32` tokens, one `u64` eqtb
 with epoch/level metadata, one token memory, compact frames, a LIFO argument
 bank, first-touch checkpoint undo and in-band halts. It records the
